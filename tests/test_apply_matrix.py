@@ -384,6 +384,46 @@ def test_a_park_after_a_send_is_within_the_invariants_only_when_it_cannot_send_t
     assert h.invariant_breaks(_Out(status, reason), rec, sends) == []
 
 
+_CSR = apply_run.CHECK_SENT_REASON
+
+
+@pytest.mark.parametrize("reason, note, flagged", [
+    # final review C N1: the parks `_send_evidence` gives the check-sent note
+    # carry its words as a clause of their own after other words
+    (f"the emailed code was not accepted (the code screen came back, 0.90); {_CSR}", "", False),
+    (f"an error page after the submit click (0.90; Oops); {_CSR}; a request left after the "
+     "click: POST http://127.0.0.1/submit", "", False),
+    # the note alone: the account page's park after its submit
+    ("after the account page's submit the page reads as other (0.40)", "CHECK_SENT_NOTE", False),
+    # the page's words quoted in a park that asks for a re-queue
+    (f"required field without an answer: Salary (the page says '{_CSR}')", "LINK_NOTE", True),
+    ("required field without an answer: Salary", "", True)])
+def test_a_check_whether_park_after_a_send_is_known_by_its_clause_or_its_note(
+        reason, note, flagged):
+    rec, sends = _clean(park=False)
+    sends.events.append(h.Send("post", "/submit/post_redirect", True))
+    note = getattr(apply_run, note) if note else ""
+    codes = _codes(h.invariant_breaks(_Out("needs_human", reason), rec, sends, tab_note=note))
+    assert ("REQUEUABLE-AFTER-SEND" in codes) is flagged, codes
+
+
+@pytest.mark.parametrize("reason, confirmed, code", [
+    ("submitted (unconfirmed): the page after submit reads as other (0.50)", False,
+     "FALSE-SUBMITTED"),
+    ("submitted (unconfirmed): the page after submit reads as other (0.50)", False,
+     "SUBMITTED-WITHOUT-SEND"),
+    ("confirmation page", True, "SUBMITTED-WITHOUT-SEND")])
+def test_a_submitted_end_after_only_a_send_the_site_refused_breaks(reason, confirmed, code):
+    # final review C N2: a post the site refused (or one that never made its
+    # connection) sent nothing, so a submitted end after it alone is lost
+    rec, sends = _clean(park=False, confirmed=confirmed)
+    sends.events.append(h.Send("post", "/submit/server_validation", True, False))
+    assert code in _codes(h.invariant_breaks(_Out("submitted", reason), rec, sends))
+    sends.events.append(h.Send("post", "/submit/post_redirect", True))
+    assert not {"FALSE-SUBMITTED", "SUBMITTED-WITHOUT-SEND"} & set(
+        _codes(h.invariant_breaks(_Out("submitted", reason), rec, sends)))
+
+
 def test_a_loop_clicking_its_submit_outside_the_gate_is_caught_end_to_end(
         _browser, flow_server, tmp_path, monkeypatch):
     real = apply_run._JobRun._form_buttons
@@ -614,7 +654,29 @@ def test_enter_and_escape_that_send_nothing_break_nothing():
     # SP6 review I4: a way on still disabled with every field answered is a dead end
     ("needs_human", "the Submit application button stays disabled after the fill", True),
     ("needs_human", "required field without an answer: Referral code (the Submit application "
-                    "button stays disabled after the fill)", True)])
+                    "button stays disabled after the fill)", True),
+    # final review A R2-M4: the window or the tab closed, or the judge down,
+    # after any step that may have sent (`_stopped_after_send`'s shapes)
+    ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the run stopped after the submit click "
+                    "(judge unavailable: APIError 500 at verify); no request was seen leaving",
+     True),
+    ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the run stopped after the code step "
+                    "(the browser window was closed); the run was not watching requests at "
+                    "this step", True),
+    ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the run stopped after the final-worded "
+                    "step (the job's tab was closed); the run was not watching requests at "
+                    "this step", True),
+    ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the run stopped after the link step "
+                    "(the browser window was closed); the run was not watching requests at "
+                    "this step", True),
+    # an error of the run's own is no dead end, and the shape quoted is none
+    ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the run stopped after the final-worded "
+                    "step (TimeoutError at verify); the run was not watching requests at this "
+                    "step", False),
+    ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the run stopped after the submit click "
+                    "(the browser window was closed by a script); a request left", False),
+    ("needs_human", f"no submit button (the page says '{apply_run.CHECK_SENT_REASON}: the run "
+                    "stopped after the submit click (the browser window was closed)')", False)])
 def test_policy_parks_are_told_apart_from_the_rest(status, reason, policy):
     assert h.policy_park(status, reason) is policy
 

@@ -183,11 +183,13 @@ def test_a_replay_leaves_out_a_flow_no_recording_holds_yet_and_a_recording_takes
     h.run_matrix(flows, h.judges((), fake=False, real=record), browser=None, server=None,
                  workdir=tmp_path)
     assert calls == [("steady", "real"), ("new", "real")], "a recording runs it"
-    # the cycle 17 final review's code and link steps after the answers and
-    # its method=get sign-in (C-M1), added in a round that records nothing
+    # the cycle 17 final review's code and link steps after the answers (the
+    # submit-mode link step from its second round, A Known Minor 5) and its
+    # method=get sign-in (C-M1), added in rounds that record nothing
     assert [f.name for f in h.FLOWS if not f.recorded] == [
-        "link_after_submit", "link_after_answers_park", "code_after_answers",
-        "code_after_answers_park", "email_code_first_park", "login_get_park"]
+        "link_after_submit", "link_after_answers_park", "link_after_answers",
+        "code_after_answers", "code_after_answers_park", "email_code_first_park",
+        "login_get_park"]
 
 
 # --- the real column in the rates and the summary -------------------------------------------

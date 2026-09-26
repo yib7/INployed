@@ -1224,6 +1224,19 @@ FLOWS: tuple[Flow, ...] = (
          inbox_page="link_confirm_list.html", ats={"system": "greenhouse"}, recorded=False,
          covers="the answers, then a Continue to a page that says a link was emailed: park mode "
                 "stops there and never opens the link (final review A-I2)"),
+    # the same in submit mode (final review A Known Minor 5). The link's page
+    # confirms the address alone: a page that says the application was
+    # received would end the job submitted through the link, a send this
+    # harness sees only inside the submit gate
+    Flow("link_after_answers", "link_after_answers.html", True, "needs_human",
+         "^" + re.escape(apply_run.CHECK_SENT_REASON) + r": the emailed link on \S+ was opened "
+         r"after the application's answers went on the site, and its page shows no received "
+         r"words; the job's tab was not loaded again$", inbox=True,
+         inbox_page="link_email_list.html", ats={"system": "greenhouse"}, recorded=False,
+         covers="submit mode: the answers, then a Continue to a page that says a link was "
+                "emailed; the link opens in a tab of its own, its page confirms only the "
+                "address, and the job's tab is never loaded again: the person checks whether "
+                "the application went through (final review A Known Minor 5)"),
     Flow("code_after_answers", "code_after_answers.html", True, "submitted", _SUBMITTED,
          confirm="body[data-confirmed]", inbox=True, ats={"system": "greenhouse"},
          recorded=False,
@@ -1768,13 +1781,24 @@ def _text_files(paths: Iterable[Path]) -> Iterable[Path]:
 
 
 _NOTHING_SENT = "nothing was sent"
+# the runner's check-whether end: its reason's prefix, or the same words as
+# a clause of their own after "; " (the parks `_send_evidence` gives the
+# check-sent note: an error banner or page, a code not accepted, final
+# review C N1); a page's words quoted in a reason are never a clause
+_CHECK_SENT_CLAUSE = re.compile(r"(?:^|; )" + re.escape(apply_run.CHECK_SENT_REASON)
+                                + r"(?=$|[:;])")
 
 
-def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends) -> list[str]:
-    """Every invariant the run broke, one line each; [] when it held them all."""
+def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends, *,
+                     tab_note: str = "") -> list[str]:
+    """Every invariant the run broke, one line each; [] when it held them all.
+    `tab_note`: the finished queue entry's note, when the caller read it."""
     breaks: list[str] = []
     status = str(getattr(outcome, "status", ""))
     reason = str(getattr(outcome, "reason", ""))
+    # a send the site accepted (final review C N2): a post it refused, or a
+    # request that never made its connection, sent nothing
+    accepted = any(s.accepted for s in sends.events)
     if sends.count > 1:
         breaks.append(f"SEND-COUNT: {sends.count} sends, at most one is allowed")
     if recorder.park_mode and sends.count:
@@ -1786,17 +1810,18 @@ def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends) -> list[str
     # final review C-M3: the runner's own prefix, never the word anywhere in
     # a reason that may quote the page
     if status == "submitted" and not recorder.final.get("confirmed"):
-        if not (reason.startswith("submitted (unconfirmed)") and sends.count):
+        if not (reason.startswith("submitted (unconfirmed)") and accepted):
             breaks.append(f"FALSE-SUBMITTED: submitted without the confirmation marker "
                           f"({reason})")
-    if status == "submitted" and sends.count == 0:
-        breaks.append(f"SUBMITTED-WITHOUT-SEND: submitted ({reason[:80]!r}) and no send was "
-                      "seen: the job would never be tried again")
+    if status == "submitted" and not accepted:
+        breaks.append(f"SUBMITTED-WITHOUT-SEND: submitted ({reason[:80]!r}) and no send the "
+                      "site accepted was seen: the job would never be tried again")
     # final review C-M2: after a send the site accepted, a park the person
     # may re-queue sends a second application; only a check-whether park
-    # (which is never re-queued as is) may follow one
-    if any(s.accepted for s in sends.events) and status in ("needs_human", "failed") \
-            and not reason.startswith(apply_run.CHECK_SENT_REASON):
+    # (which is never re-queued as is) may follow one: its reason says so,
+    # or its note is the check-sent note (final review C N1)
+    if accepted and status in ("needs_human", "failed") \
+            and not _CHECK_SENT_CLAUSE.search(reason) and tab_note != apply_run.CHECK_SENT_NOTE:
         breaks.append(f"REQUEUABLE-AFTER-SEND: {status} ({reason[:80]!r}) after a send the site "
                       "accepted: a re-queue would send it twice")
     if status == "ready_to_submit" and sends.count:
@@ -1903,8 +1928,9 @@ def _password_tries(actions: list[Action]) -> list[str]:
     return out
 
 
-def assert_invariants(outcome: Any, recorder: Recorder, sends: Sends) -> None:
-    breaks = invariant_breaks(outcome, recorder, sends)
+def assert_invariants(outcome: Any, recorder: Recorder, sends: Sends, *,
+                      tab_note: str = "") -> None:
+    breaks = invariant_breaks(outcome, recorder, sends, tab_note=tab_note)
     assert not breaks, "invariant breaks:\n" + "\n".join(breaks)
 
 
@@ -1950,9 +1976,14 @@ _POLICY_PARKS = tuple(re.compile(p) for p in (
     "^" + re.escape(apply_run.MALFORMED_REASON) + ": ",
     # SP8a: a judge that stays down after the submit click or the code step
     # (RES-02): the job is never re-queued once something may have been
-    # sent, and the run cannot read on, a dead end the user checks
+    # sent, and the run cannot read on, a dead end the user checks. The
+    # window or the tab the user closed there, and the link and the
+    # final-worded steps, end the same way (`_stopped_after_send`, final
+    # review A R2-M4)
     "^" + re.escape(apply_run.CHECK_SENT_REASON) + r": the run stopped after the "
-    r"(?:submit click|code step) \(" + re.escape(apply_run.JUDGE_DOWN_REASON) + ": ",
+    r"(?:submit click|code step|link step|final-worded step) \((?:"
+    + re.escape(apply_run.JUDGE_DOWN_REASON) + ": |" + re.escape(apply_run.CLOSED_REASON)
+    + r"\)|" + re.escape(apply_run.TAB_CLOSED_REASON) + r"\))",
     # SP8a review M1: the judge down under the same job a second time, a
     # failure the job's own request may cause: parked so the queue moves on.
     # Only after the judge answered in the drain (R2-I1): a park while it
@@ -2286,7 +2317,9 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
                          ["NO-OUTCOME: the drain ran no job"], sends.count, 0, seconds,
                          replay_misses=missed)
     out = outcomes[0]
-    breaks = invariant_breaks(out, recorder, sends)
+    entry = next((e for e in apply_queue.load(queue).get("jobs", [])
+                  if str(e.get("job_posting_id")) == JOB_ID), {})
+    breaks = invariant_breaks(out, recorder, sends, tab_note=str(entry.get("tab_note") or ""))
     if f.opens_no_page and opened:
         breaks.append(f"PAGE-OPENED: {len(opened)} page(s) opened for a job that must end "
                       "before any page")

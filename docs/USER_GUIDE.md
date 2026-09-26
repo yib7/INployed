@@ -62,6 +62,11 @@ honors it. A **"Bullets by strength"** box sizes projects by how strongly each r
 the engine uses its built-in defaults but your saved targets are kept, so you can
 **A/B test** whether your custom layout helps without throwing the configuration away.
 
+Adding an entry or achievement (**+ Add entry** / **+ Add achievement**) flags a problem as
+you type, using the same rules Save enforces, and keeps OK disabled until it clears;
+**+ Add achievement** also refuses an em dash anywhere in what you typed. A write that fails
+leaves what you typed in the dialog so you can fix it and try again.
+
 ### Find skills you forgot to list
 The JD-gap helper surfaces skills a posting wants that aren't yet in your master
 file, screens them to non-identifying skills, and (only on your
@@ -259,7 +264,8 @@ opened) alongside **Restore defaults**, and **Save tells you exactly which field
 **When something is wrong, it is flagged where it is.** A rejected value outlines the box
 in red with a note underneath, the form scrolls to the first one you can act on, and the
 status line counts them ("2 settings need fixing"). There is no modal listing every problem and
-pointing at none of them. Fields are re-checked when you tab out of them, not only at Save. If a
+pointing at none of them. Fields are re-checked the moment you edit them, and Save stays
+disabled while any problem remains. If a
 number you hand-edited into a config file is outside the allowed range, the spin box shows
 the clamped value **and tells you** what the file actually holds; nothing is rewritten
 quietly on the next Save.
@@ -498,8 +504,7 @@ clicks the final submit.** At a login / account / verification / CAPTCHA wall it
 asks you to do that one step, then resumes. Where the form asks for an electronic signature
 it types your name + today's date; a required field with no answer gets a `XXXXX`
 placeholder it flags for you. Manage your reusable answers (including address) in the
-**Apply Answers** tab: add your own, and mark each *fixed* (never changed) or *open-ended*
-(adaptable per job).
+**Apply Answers** tab (see *Your saved answers* below).
 
 CLI equivalent (from `local/`): `python -m resume_tailor.apply --job-id <id> --open`.
 
@@ -512,6 +517,37 @@ job still gets a conversation scoped to its description alone. The same 13 AI-wr
 that guide the cover letter ride in the chat's own system prompt, and an answer of 60 words
 or longer runs through the same deterministic checks: a flash-tier repair call fires once
 when one trips, and em dashes are stripped from every answer regardless.
+
+### Your saved answers (Apply Answers tab)
+The **Apply Answers** tab holds every reusable answer the apply helper can put on a form: the
+built-in screening questions (work authorization, sponsorship, relocation, on-site work, years
+of experience, a written work-authorization statement, the EEO questions, how you heard about
+the role, and your mailing address) plus any custom question you add. Each row is typed to
+match its question: a Yes/No picker, a number box, a dropdown of options, or a multi-line text
+box, so a saved answer can only be read one way. A yes/no or number row also takes a short,
+optional note. The line under each row reads "Forms will get: ..." (or says why it will not)
+so you always see what a run would actually type.
+
+A built-in question cannot be deleted, and **Add answer** refuses a new question that repeats
+a built-in's own topic. The top line counts how many answers are not set and how many are not
+confirmed, and those rows carry the warning highlight; **Confirm all** confirms every row that
+already holds an answer. A damaged answers file shows the tab as damaged and offers **Restore
+backup** when a good `.bak` copy sits next to it.
+
+**Confirmed marks an answer ready.** The auto-apply run and Test my answers only ever fill a
+field from an answer that is both set and confirmed. An answer you typed but left unconfirmed,
+or left blank, reads as not set: an optional field it would have filled stays blank, and a
+required one stops the job for you (see *Where a drain stops* below).
+
+**Test my answers.** Click **Test my answers** to run the shipped screening questions against
+your saved, confirmed answers, off the UI thread, with the judge your Auto-apply judge setting
+names. The dialog lists what each question would get filled with, or "stops here" when nothing
+in your answers covers it. One click with the live judge costs under a cent.
+
+**After an upgrade.** An older answers file converts to the typed store the first time you open
+this tab. Check the review banner it shows: it lists each answer the conversion touched and
+what it read the old text as, so you can confirm or fix any it got wrong, then click **I've
+checked these**, which also saves.
 
 ### Auto-apply (batch, Jev-judged)
 The **Auto-apply** tab is a live view of a batch apply queue: right-click jobs in any
@@ -562,8 +598,13 @@ decisions live in `local/apply_judge.py`, with the live answers they were tuned 
    it is compared by length only after the fill, and it never reaches a file, a log,
    the record or Jev. Keep it a password you use for job applications only.
 
-**What a drain does.** `python local/apply_run.py drain` (the **Start auto-apply run**
-button) takes the queued jobs in queue order, one at a time, up to the batch cap (`--cap N`,
+**What a drain does.** Before it claims any job, a drain reads the **Apply Answers** file once:
+a damaged file stops it there, before the first job runs, and it lists which built-in answers
+are not set or not confirmed, since a job asking one of those questions will stop for you. The
+run fills a field only from an answer that is both set and confirmed; anything else leaves an
+optional field blank and stops a required one. `python local/apply_run.py drain` (the
+**Start auto-apply run** button) takes the queued jobs in queue order, one at a time, up to
+the batch cap (`--cap N`,
 else Settings > **Max jobs queued per batch**, 10 by default). For each job it opens the
 job's apply address in the run's own Chrome profile; on LinkedIn it follows the posting's
 external Apply. Then it works page by page:

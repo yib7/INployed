@@ -1298,13 +1298,14 @@ class SettingsForm(QtWidgets.QWidget):
         markers.
 
         SP5 (ED-11): the re-check is what shows a new problem the moment it is
-        typed, rather than waiting for focus-out. `_validate_field` runs the
-        exact same rule Save runs (`settings.field_problem`, via `validate`), so
+        typed, live on every keystroke, ahead of focus-out. `_validate_field`
+        runs the exact same rule Save runs (`settings.field_problem`, via `validate`), so
         the two can never disagree about what counts as a problem. The note is
         still cleared unconditionally first: a clamp WARNING describes a value
         that is now history the instant they edit (`_flag_a_rewritten_int`'s
         contract), and clearing before re-validating is what lets an ERROR note
-        replace it rather than the two fighting over the same label.
+        replace it cleanly: both notes share the same label, so only one shows
+        at a time.
 
         The one narrow per-key hook, as P5 promised it would be — the dirty
         markers extend it rather than opening a second pass of connections over

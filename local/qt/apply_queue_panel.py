@@ -324,7 +324,8 @@ class _DetailsPanel(QtWidgets.QFrame):
                 f'<b>Missing answer{"s" if len(questions) > 1 else ""}</b><br>'
                 f'{listed}<br>'
                 f'<span style="color:{theme.MUTED}">Your answer is saved to the '
-                f'answer bank and reused on future applications.</span>')
+                f'answer bank, and fills this question again wherever a later '
+                f'application words it the same way.</span>')
         self.callout.setVisible(bool(questions))
 
         arts = e.get("artifacts") or {}

@@ -980,9 +980,9 @@ def _coerce_ok(f: Field, value: Any) -> bool:
         return isinstance(value, str)
     if f.type == "choice":
         # Membership is `field_problem`'s job, with its own "Not allowed: ..."
-        # message -- this only guards the PYTHON TYPE, exactly like every other
-        # branch here, so a wrong-type value (an int, a list) still reads as
-        # "Expected choice, got ..." instead of the membership message.
+        # message; this only guards the PYTHON TYPE, exactly like every other
+        # branch here, so a wrong-type value (an int, a list) reads as its own
+        # "Expected choice, got ...", kept separate from the membership message.
         return isinstance(value, str)
     if f.type == "editable_choice":
         # editable: any string is allowed (pick from choices OR type a custom id).
@@ -997,10 +997,10 @@ def field_problem(f: Field, value: Any) -> str | None:
 
     Every per-field rule `validate()` enforces, in one place: the Python type,
     `choice` membership, `multichoice` membership, `int` min/max, the .env
-    line-break rule, and `pattern`. `validate()` is a thin loop over this so a
-    caller with ONE field and ONE candidate value -- the Settings tab, re-checking
-    as the user edits -- gets the exact same message Save would, rather than a
-    second, hand-kept copy of the rules that can drift from it.
+    line-break rule, and `pattern`. `validate()` is a thin loop over this, so a
+    caller with ONE field and ONE candidate value (the Settings tab, re-checking
+    as the user edits) gets the exact same message Save would: one shared source
+    for the rules, not a second, hand-kept copy that can drift from it.
     """
     if not _coerce_ok(f, value):
         return f"Expected {f.type}, got {type(value).__name__}."
@@ -1009,9 +1009,9 @@ def field_problem(f: Field, value: Any) -> str | None:
     # An .env value is one physical KEY=VALUE line and envfile.read parses line by
     # line, so a newline does not round-trip: it writes a second line the reader
     # takes for a whole new assignment. envfile.update refuses it too, but that
-    # raise happens mid-save with some targets already written, and it is one
-    # message rather than a mark against the offending field. Catch it here so
-    # the form says which box is wrong before anything is written.
+    # raise happens mid-save with some targets already written, producing one
+    # message with no way to mark which field caused it. Catch it here so the
+    # form says which box is wrong before anything is written.
     if f.target in ENV_TARGETS and isinstance(value, str) and _CONTROL_RE.search(value):
         return ("No line breaks: this is stored as a single line in "
                 ".env. (Several keys go on one line, comma-separated.)")
@@ -1025,8 +1025,9 @@ def field_problem(f: Field, value: Any) -> str | None:
         if bad:
             return f"Not allowed: {', '.join(bad)}."
     elif f.type in TEXT_TYPES and f.pattern is not None:
-        # fullmatch, not search: a rule satisfied by a PREFIX would pass
-        # "30,50,70 and some junk" and write it straight to config.json.
+        # `fullmatch` checks the WHOLE string, so a rule satisfied by only a
+        # PREFIX cannot pass "30,50,70 and some junk" through and write it
+        # straight to config.json.
         if re.fullmatch(f.pattern, value) is None:
             return f.pattern_help or "Not in the expected format."
     return None

@@ -557,7 +557,7 @@ def test_a_long_lists_pick_question_carries_a_shortlist_for_the_value():
 
 @pytest.mark.parametrize("want, options, index", [
     # final review B-M2: the last fallback holds the value as whole words,
-    # and the shortest option that does wins
+    # and an option that names it as one of its own parts wins
     ("chicago", ["Chicago Heights, IL", "Chicago, IL", "Chicagoland"], 1),
     ("heights", ["Chicago Heights, IL", "Heightsville"], 0),
     ("anytown", ["Anytownship, CA", "Anytown, CA, United States"], 1),
@@ -566,8 +566,11 @@ def test_a_long_lists_pick_question_carries_a_shortlist_for_the_value():
     # a comma part may be a name the option's part goes by
     ("Anytown, CA", ["Anyville, Texas", "Anytown, California, United States"], 1),
     ("Springfield, IL", ["Springfield, MO", "Springfield, Illinois"], 1),
+    # equal fits keep the site's order: the length of a state's name picks
+    # no place (the real judge's typeahead_editor recording holds the first)
+    ("anytown", ["Anytown, California, United States", "Anytown, New York, United States"], 0),
     ("", ["Anything"], -1)])
-def test_the_last_match_is_a_whole_word_one_and_the_shortest(want, options, index):
+def test_the_last_match_is_a_whole_word_one_and_the_closest(want, options, index):
     assert apply_fill._ci_match(want, options) == index
 
 

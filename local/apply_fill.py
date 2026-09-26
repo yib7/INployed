@@ -294,9 +294,12 @@ def _ci_match(want: str, candidates: list[str]) -> int:
     """Index of the candidate equal to `want` case-insensitively (whitespace
     folded), else the one a name of `want` matches (`apply_judge.match_option`:
     USA for United States, CA for California, a decline for a decline;
-    FILL-07), else the shortest one that holds it (`_holds`: "no" is never
-    inside "None", and "Chicago, IL" wins over "Chicago Heights, IL"; final
-    review B-M2), else -1."""
+    FILL-07), else the closest one that holds it (`_holds`: "no" is never
+    inside "None"), else -1. The closest names each of the value's comma
+    parts as one of its own ("Chicago, IL" for "chicago", never "Chicago
+    Heights, IL"; `_names_each`); among equal fits ("Anytown, California"
+    and "Anytown, New York" for "anytown") the site's own order stands
+    (final review B-M2)."""
     w = " ".join((want or "").split()).lower()
     folded = [" ".join(str(c).split()).lower() for c in candidates]
     if w in folded:
@@ -308,20 +311,34 @@ def _ci_match(want: str, candidates: list[str]) -> int:
     if not parts:
         return -1
     held = [i for i, c in enumerate(folded) if _holds(parts, c)]
-    return min(held, key=lambda i: (len(folded[i]), i)) if held else -1
+    closest = [i for i in held if _names_each(parts, folded[i])]
+    return (closest or held or [-1])[0]
+
+
+def _pieces(option: str) -> set[str]:
+    return {apply_judge._norm_option(p) for p in option.split(",")}
 
 
 def _holds(parts: list[str], option: str) -> bool:
     """Every comma part of a value is in `option` as whole words, or is a
     name one of the option's comma parts goes by ("Anytown, CA" in
     "Anytown, California, United States"; `apply_judge._alias_set`)."""
-    pieces = {apply_judge._norm_option(p) for p in option.split(",")}
+    pieces = _pieces(option)
     for part in parts:
         if re.search(r"(?<!\w)" + re.escape(part) + r"(?!\w)", option):
             continue
         if not apply_judge._alias_set(part) & pieces:
             return False
     return True
+
+
+def _names_each(parts: list[str], option: str) -> bool:
+    """Is every comma part of a value one of `option`'s own comma parts, or
+    a name one of them goes by ("chicago" in "Chicago, IL", never in
+    "Chicago Heights, IL")?"""
+    pieces = _pieces(option)
+    return all(apply_judge._norm_option(part) in pieces
+               or apply_judge._alias_set(part) & pieces for part in parts)
 
 
 # --- the actions ------------------------------------------------------------------

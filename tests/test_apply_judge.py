@@ -3263,3 +3263,81 @@ def test_the_company_name_reaches_the_pick_question_and_the_second_look(tmp_path
                                    "Are you willing to work on-site 6 days per week?"])
 def test_six_or_seven_days_a_week_is_no_set_phrase(label):
     assert "DAYSWEEK" not in apply_facts.question_tokens(label)
+
+
+# --- cycle 18 SP6c round 7, rule 4: a label with no verb settles only a plain Yes / No --------
+
+_STATUS_OPTIONS = ("U.S. Citizen", "Permanent Resident", "H-1B", "F-1 OPT", "TN", "Other")
+_NOUN_LABELS = ["Work authorization", "US Work Authorization", "Employment authorization",
+                "Work authorisation", "Work Authorization (Required)"]
+
+
+@pytest.mark.parametrize("label, noun", [
+    *[(label, True) for label in _NOUN_LABELS],
+    ("Sponsorship", True), ("Relocation", True), ("Right to work in the US", True),
+    ("Visa sponsorship needed *", True), ("Work authorization status", True),
+    ("Are you authorized to work in the US?", False), ("Authorized to work in the US?", False),
+    ("Do you need sponsorship?", False), ("Willing to relocate", False),
+    ("Will you require visa sponsorship?", False), ("", False),
+])
+def test_noun_phrase_reads_a_label_with_no_verb(label, noun):
+    assert apply_facts.noun_phrase(label) is noun
+
+
+@pytest.mark.parametrize("answers", [{}, _SPONSOR])
+@pytest.mark.parametrize("label", _NOUN_LABELS)
+@pytest.mark.parametrize("type_", ["select", "radio"])
+def test_a_status_list_under_a_noun_phrase_label_gets_no_yes_no_pick(tmp_path, answers, label,
+                                                                    type_):
+    cat = _profile_catalog(tmp_path, **answers)
+    digest = _field_with(label, type_=type_, options=_STATUS_OPTIONS)
+    mapped = _page_answers(digest, {0: ("work_authorized", 1.0)})
+    p = apply_judge.plan(digest, cat, mapped)
+    # the pick is never asked of the judge ...
+    assert apply_judge.option_questions(digest, p, catalog=cat)[1] == {}
+    assert apply_judge.reask_targets(digest, cat, mapped, p, what="pick") == []
+    # ... and a pick that came back anyway is not used
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("work_authorized", 1.0)},
+                                                    options={0: ("U.S. Citizen", 1.0)}))
+    pf = p.fields[0]
+    assert (pf.action, pf.option, pf.fact_key) == ("skip", None, None)
+    assert p.park_reason == f"required field without an answer: {label}"
+
+
+def test_a_text_box_under_a_noun_phrase_label_gets_no_yes_no_value(tmp_path):
+    cat = _profile_catalog(tmp_path)
+    digest = _field_with("Work authorization", type_="text", options=())
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("work_authorized", 1.0)}))
+    assert (p.fields[0].action, p.fields[0].value, p.fields[0].fact_key) == ("skip", "", None)
+
+
+def test_a_custom_yes_no_answer_under_a_noun_phrase_settles_only_a_plain_yes_no(tmp_path):
+    bank = standard_bank() + [custom("clearance", "Security clearance", "Yes", type="yes_no")]
+    cat = apply_facts.build(tmp_path, answers=bank, today=date(2026, 9, 21))
+    digest = _field_with("Security clearance", type_="select",
+                         options=("Secret", "Top Secret", "None"))
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("answer_clearance", 1.0)},
+                                                    options={0: ("Top Secret", 1.0)}))
+    assert (p.fields[0].action, p.fields[0].option) == ("skip", None)
+    digest = _field_with("Security clearance")
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("answer_clearance", 1.0)}))
+    assert (p.fields[0].action, p.fields[0].option) == ("select", "Yes")
+
+
+@pytest.mark.parametrize("answers", [{}, _SPONSOR])
+@pytest.mark.parametrize("label", _NOUN_LABELS)
+def test_a_plain_yes_no_under_a_noun_phrase_label_still_settles_in_code(tmp_path, answers,
+                                                                       label):
+    cat = _profile_catalog(tmp_path, **answers)
+    digest = _field_with(label, type_="select", options=("Yes", "No"))
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("work_authorized", 1.0)}))
+    assert (p.fields[0].action, p.fields[0].option) == ("select", "Yes")
+    assert p.park_reason == ""
+
+
+def test_a_status_list_under_a_question_label_still_goes_to_the_judge(tmp_path):
+    cat = _profile_catalog(tmp_path)
+    label = "Are you legally authorized to work in the United States?"
+    digest = _field_with(label, type_="select", options=_STATUS_OPTIONS)
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("work_authorized", 1.0)}))
+    assert list(apply_judge.option_questions(digest, p, catalog=cat)[1]) == ["field_0_pick"]

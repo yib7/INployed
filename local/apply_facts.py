@@ -173,6 +173,11 @@ class FactCatalog:
                  if isinstance(e, dict) and str(e.get("id", "")).strip() == eid]
         return next((t for t in types if t in GATED_CUSTOM_TYPES), types[0] if types else "")
 
+    def yes_no(self, key: str) -> bool:
+        """Is `key` a yes / no fact: a named one (`YES_NO_KEYS`) or a custom
+        yes / no answer?"""
+        return key in YES_NO_KEYS or self.custom_type(key) == "yes_no"
+
     def answers_field(self, key: str, label: str, help_text: str = "", *,
                       value: str | None = None, partial: bool = False,
                       company: str = "") -> bool:
@@ -993,6 +998,26 @@ def answers_question(fact_key: str | None, value: str, label: str,
         settles = OWN_QUESTIONS[fact_key].settles_narrower
         return bool(settles) and (value or "").strip().lower() == settles.lower()
     return fit == "own"
+
+
+# the words that make a label a clause (round 7): an auxiliary, a modal, a
+# copula, "need" or "require" as a verb, or "to"
+_VERBS = frozenset(("am", "is", "are", "was", "were", "be", "been", "being", "do", "does", "did",
+                    "have", "has", "had", "will", "would", "can", "could", "cannot", "shall",
+                    "should", "may", "might", "must", "need", "needs", "require", "requires",
+                    "to"))
+
+
+def noun_phrase(label: str) -> bool:
+    """Is `label` a noun phrase ("Work authorization", "US Work
+    Authorization", "Sponsorship", "Right to work in the US")? Its words
+    (`question_tokens`: the trailing neutral sentences dropped, a set phrase
+    one token, a contraction spelled out) hold none of `_VERBS`. Such a
+    label heads a status list (US Citizen / Permanent Resident / H-1B ...)
+    as often as a Yes / No, so its yes / no fact settles only a plain Yes /
+    No in code (`apply_judge.plan`, round 7)."""
+    words = question_tokens(label)
+    return bool(words) and not set(words) & _VERBS
 
 
 def same_question(label: str, help_text: str, saved: str) -> bool:

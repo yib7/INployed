@@ -63,7 +63,7 @@ from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 from apply_facts import (DESCRIPTIONS, STORED_YES_NO_KEYS, YES_NO_KEYS, FactCatalog,
-                         answers_question, quick_map)
+                         answers_question, noun_phrase, quick_map)
 # the own-question gate's other names, re-exported for the judge's callers
 from apply_facts import asks_own_question as asks_own_question
 from apply_facts import question_fit as question_fit
@@ -1805,7 +1805,10 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
     pick does not override it (cycle 18, SP6c); nor does a custom yes / no or
     number answer under a question other than its saved one, or any of them under
     a cut label (`FactCatalog.answers_field`); the job's `company` name in a
-    question reads as the company (round 7). Buttons
+    question reads as the company (round 7). A yes / no fact under a label
+    with no verb (`apply_facts.noun_phrase`: "Work authorization") settles
+    only a plain Yes / No in code (`code_pick`): a status list or a text box
+    there gets no value from it. Buttons
     keep the highest-confidence n per role. The one
     park reason is a required field without an answer; the flags are recorded only. A
     button of the site's header or top bar (`Button.chrome`) holds a role only
@@ -1888,6 +1891,15 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
             log.debug("field %d %r: %s does not answer its question; no value",
                       f.n, f.label, fact_key)
             fact_key, pf.fact_key = None, None
+        elif fact_key and catalog.has(fact_key) and _yes_no_fact(catalog, fact_key) \
+                and noun_phrase(f.label) and code_pick(catalog.value(fact_key), f.options) is None:
+            # a label with no verb ("Work authorization") heads a status list
+            # (US Citizen / Permanent Resident / H-1B ...) as often as a Yes /
+            # No: its yes / no fact settles only a plain Yes / No in code,
+            # never the judge's pick nor a text box (cycle 18 SP6c, round 7)
+            log.debug("field %d %r: %s under a label with no verb and no Yes / No; no value",
+                      f.n, f.label, fact_key)
+            fact_key, pf.fact_key = None, None
         elif fact_key == "needs_generation":
             pf.action = "generate" if generation_enabled else "skip"
         elif fact_key == "consent_attest":
@@ -1952,6 +1964,12 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
     return out
 
 
+def _yes_no_fact(catalog: FactCatalog | None, key: str) -> bool:
+    """Is `key` a yes / no fact (`FactCatalog.yes_no`; `YES_NO_KEYS` with no
+    catalog)?"""
+    return catalog.yes_no(key) if catalog is not None else key in YES_NO_KEYS
+
+
 # --- the second request: option picks for model-mapped fields ------------------------
 
 def option_questions(digest: FormDigest, fill_plan: FillPlan,
@@ -1963,9 +1981,11 @@ def option_questions(digest: FormDigest, fill_plan: FillPlan,
     one of them). A pick code settles (`code_pick`) is never asked, nor one
     for a fact whose value does not answer the field's question
     (`FactCatalog.answers_field`, or `answers_question` with no catalog; the
-    job's `company` name reads as the company, as in `plan`). Empty when
-    there is nothing to ask; merge the answers over the first request's and
-    call `plan` again."""
+    job's `company` name reads as the company, as in `plan`), nor one for a
+    yes / no fact under a label with no verb (`apply_facts.noun_phrase`: a
+    status list there is no yes / no question). Empty when there is nothing
+    to ask; merge the answers over the first request's and call `plan`
+    again."""
     by_n = {f.n: f for f in digest.fields}
     state: dict[str, Any] = {"fields": []}
     questions: dict[str, Any] = {}
@@ -1984,6 +2004,8 @@ def option_questions(digest: FormDigest, fill_plan: FillPlan,
                                     company=company)
         if code_pick(pf.value, f.options) is not None or not fits:
             continue
+        if _yes_no_fact(catalog, pf.fact_key) and noun_phrase(f.label):
+            continue            # a status list under a label with no verb (`plan`)
         i = len(state["fields"])
         state["fields"].append(_compact_field(f))
         questions[f"field_{f.n}_pick"] = _option_question(

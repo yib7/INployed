@@ -55,7 +55,7 @@ QUESTIONS = apply_screening.load_questions()
 SEEDS = (1, 2, 3, 4, 5)
 
 # Share of non-null expectations picked correctly, at the rate the final run
-# measured (109 questions, 128 non-null expectations over both profiles),
+# measured (128 questions, 130 non-null expectations over both profiles),
 # rounded down to two places. Cycle 18 SP6c lowered them from 0.61 and
 # {0.60, 0.60, 0.60, 0.61, 0.59} (63; 62 62 62 63 61 of 103): a yes / no or
 # years fact now gives no value to a question it does not answer
@@ -77,9 +77,16 @@ SEEDS = (1, 2, 3, 4, 5)
 # questions (the review's wrong-settle forms, where the code before gave 29
 # wrong answers and now gives none; five expect a Yes for the citizen
 # profile), and the picks on the 90 questions before are unchanged (66 of
-# 121; 69 of 128 with the new ones).
-FAKE_PICK_FLOOR = 0.53                                        # 69 of 128
-NOISY_PICK_FLOOR = {1: 0.53, 2: 0.53, 3: 0.53, 4: 0.53, 5: 0.53}  # 68 68 68 69 68
+# 121; 69 of 128 with the new ones). Round 7 added 19 questions: the
+# recheck's wrong-settle forms (a status word with no authorization word, a
+# job move, an office the candidate works in now, seven days a week, a years
+# count at one job) and two status lists under a label with no verb
+# (auth_noun_status, auth_noun_status_radio). The code before gave 34 wrong
+# answers on them and now gives none; the picks on the 109 questions before
+# are unchanged (69 of 128), and the status lists count as expected but
+# unpicked, since the fake maps no fact to them.
+FAKE_PICK_FLOOR = 0.53                                        # 69 of 130
+NOISY_PICK_FLOOR = {1: 0.52, 2: 0.52, 3: 0.52, 4: 0.53, 5: 0.52}  # 68 68 68 69 68 of 130
 # The real judge's floor: None reports the rate and checks nothing. The
 # orchestrator sets it from the recording (TS-3).
 REAL_PICK_FLOOR: float | None = None
@@ -244,8 +251,9 @@ def test_every_question_is_well_formed():
 def test_the_set_covers_the_topics_the_spec_names():
     # cycle 18 SP6c round 3 added the review's wrong-answer forms and the
     # plain forms each vocabulary passes (69 to 90), round 5 the second
-    # review's wrong-settle forms (90 to 109)
-    assert 55 <= len(QUESTIONS) <= 115
+    # review's wrong-settle forms (90 to 109), round 7 the recheck's (109 to
+    # 128)
+    assert 55 <= len(QUESTIONS) <= 135
     assert {q["widget"] for q in QUESTIONS} == set(apply_screening.WIDGETS)
     prefixes = {q["id"].split("_")[0] for q in QUESTIONS}
     assert {"auth", "spon", "reloc", "onsite", "years", "gender", "race", "veteran",

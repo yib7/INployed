@@ -190,11 +190,13 @@ class FactCatalog:
         gated type (`GATED_CUSTOM_TYPES`), or a value code settles whatever
         the type (`code_settled`: a yes / no or a plain number; final review
         C1: a v1 answer migrates as Text, and Text is the Add dialog's
-        default)?"""
+        default), or a value that opens with a yes or a no ("No, I would need
+        a work permit"; final re-review N1)?"""
         if not self._custom(key):
             return False
-        return self.custom_type(key) in GATED_CUSTOM_TYPES or code_settled(
-            self.value(key)) or (value is not None and code_settled(value))
+        return self.custom_type(key) in GATED_CUSTOM_TYPES or any(
+            code_settled(v) or opens_yes_no(v)
+            for v in (self.value(key), value) if v is not None)
 
     def answers_field(self, key: str, label: str, help_text: str = "", *,
                       value: str | None = None, partial: bool = False,
@@ -824,6 +826,13 @@ def yes_no_form(value: str) -> bool:
     punctuation and spacing aside?"""
     words = _FORM_NORM.sub(" ", str(value or "").lower().replace("'", " ")).split()
     return " ".join(words) in YES_NO_FORMS
+
+
+def opens_yes_no(value: str) -> bool:
+    """Does `value` open with a yes or a no word ("Yes, I hold an H-1B visa",
+    "No. I would need a permit"), case and punctuation aside?"""
+    words = _FORM_NORM.sub(" ", str(value or "").lower().replace("'", " ")).split()
+    return bool(words) and words[0] in YES_NO_FORMS
 
 
 def code_settled(value: str) -> bool:

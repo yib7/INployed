@@ -355,13 +355,30 @@ def test_confirm_all_leaves_the_untouched_legal_seeds_for_their_own_tick(qtbot, 
     _seed_v2(store, apply_answers.seed_defaults())
     ed = _editor(qtbot, store)
     ed._confirm_all_clicked()
-    for eid in ("work_authorized", "requires_sponsorship", "years_experience"):
+    for eid in ("work_authorized", "requires_sponsorship", "years_experience",
+                "authorization_statement"):
         assert _row(ed, eid)["confirmed_cb"].isChecked() is False, eid
     for eid in ("willing_to_relocate", "gender", "how_did_you_hear", "address_country"):
         assert _row(ed, eid)["confirmed_cb"].isChecked() is True, eid
     assert ed.status.text() == (
         "Confirmed the rest. These still hold the starting value, so tick each one "
-        "yourself: work authorization, sponsorship, years of experience.")
+        "yourself: work authorization, sponsorship, years of experience, "
+        "work-authorization statement.")
+
+
+def test_confirm_all_leaves_the_seeded_statement_after_the_user_sets_sponsorship(
+        qtbot, tmp_path):
+    # final re-review N2: the seeded statement says no sponsorship is needed,
+    # so a Yes to sponsorship must not carry it through Confirm all
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, apply_answers.seed_defaults())
+    ed = _editor(qtbot, store)
+    _row(ed, "requires_sponsorship")["answer_widget"].setCurrentText("Yes")
+    _row(ed, "work_authorized")["confirmed_cb"].setChecked(True)
+    ed._confirm_all_clicked()
+    assert _row(ed, "authorization_statement")["confirmed_cb"].isChecked() is False
+    assert ed.status.text().endswith(
+        ": years of experience, work-authorization statement.")
 
 
 def test_confirm_all_confirms_a_legal_answer_the_user_changed(qtbot, tmp_path):

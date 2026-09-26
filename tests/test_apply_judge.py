@@ -3401,6 +3401,36 @@ def test_a_text_custom_yes_no_or_number_answers_only_its_own_saved_question(
         assert (pf.action, pf.value) == ("fill", value)
 
 
+# final re-review N1: a Text custom whose value opens with a yes or a no is a
+# yes / no answer too, and settles only its saved question
+_CANADA = "Are you legally authorized to work in Canada?"
+_US_AUTH = "Are you legally authorized to work in the United States?"
+
+
+@pytest.mark.parametrize("eid,saved,value,asked,type_,options,pick", [
+    ("canada", _CANADA, "No, I would need a work permit", _US_AUTH, "select", ("Yes", "No"), "No"),
+    ("hold_h1b", _H1B_HOLD, "Yes, I hold an H-1B visa", _F1_HOLD, "select", ("Yes", "No"),
+     "Yes"),
+    ("hold_h1b", _H1B_HOLD, "Yes, I hold an H-1B visa", _F1_HOLD, "text", (), None),
+])
+def test_a_text_custom_opening_with_yes_or_no_answers_only_its_own_saved_question(
+        tmp_path, eid, saved, value, asked, type_, options, pick):
+    bank = standard_bank() + [custom(eid, saved, value)]
+    cat = apply_facts.build(tmp_path, answers=bank, today=date(2026, 9, 21))
+    key = f"answer_{eid}"
+    assert cat.custom_type(key) == "text"
+    digest = _field_with(asked, type_=type_, options=options)
+    picks = {0: (pick, 0.9)} if pick else None
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: (key, 0.8)}, options=picks))
+    pf = p.fields[0]
+    assert (pf.action, pf.option, pf.value, pf.fact_key) == ("skip", None, "", None)
+    assert p.park_reason == f"required field without an answer: {asked}"
+    # its own question, word for word, still takes the sentence
+    own = _field_with(saved, type_="text", options=())
+    p = apply_judge.plan(own, cat, _page_answers(own, {0: (key, 0.8)}))
+    assert (p.fields[0].action, p.fields[0].value) == ("fill", value)
+
+
 def test_a_prose_text_custom_answer_still_fills_its_mapped_field(tmp_path):
     bank = standard_bank() + [custom("heard", "How did you hear about us?", "LinkedIn")]
     cat = apply_facts.build(tmp_path, answers=bank, today=date(2026, 9, 21))

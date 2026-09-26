@@ -57,7 +57,8 @@ _US_COUNTRY = "United States"
 # while they still hold the seed value, with the name the status line gives each.
 _OWN_TICK = {"work_authorized": "work authorization",
              "requires_sponsorship": "sponsorship",
-             "years_experience": "years of experience"}
+             "years_experience": "years of experience",
+             "authorization_statement": "work-authorization statement"}
 
 
 def builtin_answering(question: str) -> str:

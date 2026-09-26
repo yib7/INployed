@@ -535,8 +535,8 @@ A built-in question cannot be deleted, and **Add answer** refuses a new question
 run already fills it from a built-in answer, and names that answer; a question about another
 country, a city, a visa type or years of one skill is yours to add. The top line counts how many answers are not set and how many are not
 confirmed, and those rows carry the warning highlight; **Confirm all** confirms every row that
-already holds an answer, except work authorization, sponsorship and years of experience: those
-three keep their own tick for as long as they still hold the value they started with. A damaged
+already holds an answer, except work authorization, sponsorship, years of experience and the
+work-authorization statement: those four keep their own tick for as long as they still hold the value they started with. A damaged
 answers file shows the tab as damaged and offers **Restore backup** when a good `.bak` copy sits
 next to it; restoring first saves the damaged file beside it as `apply_answers.json.damaged`, so
 nothing is lost. If you fix the file by hand outside the dashboard, reopen the dashboard

@@ -21,13 +21,16 @@ checked these" clears it and saves.
 
 "Test my answers" (`ED-9`, SP6) runs the shipped screening set
 (`apply_screening.run_screening`) over the answers on disk -- the saved,
-confirmed ones, never this tab's unsaved widget state -- with the live judge
-the dashboard's auto-apply run already builds (`jev.get("typesafe")`), on a
-worker thread (`qt.workers.run_async`), and shows the picks in
-`TestAnswersDialog`. No `TYPESAFE_API_KEY` -> the button is disabled with a
-tooltip naming the setting. `apply_screening` is imported lazily inside the
-worker closure (a sibling module built alongside this one); the judge factory
-is a constructor parameter so tests inject `jev.FakeJev` and never the live one.
+confirmed ones, never this tab's unsaved widget state -- with the judge the
+Auto-apply judge setting names (`_current_jev_mode`, the same
+`auto_apply_jev_mode` key `local/apply_run.py`'s own `load_settings()` reads),
+on a worker thread (`qt.workers.run_async`), and shows the picks in
+`TestAnswersDialog` with the mode named in the result line. The key check that
+disables the button only applies to the "typesafe" (live) mode; a "fake" or
+"replay" mode leaves it enabled and never touches the key.
+`apply_screening` is imported lazily inside the worker closure (a sibling
+module built alongside this one); the judge factory is a constructor
+parameter so tests inject `jev.FakeJev` and never the live one.
 """
 from __future__ import annotations
 
@@ -80,11 +83,28 @@ def _typesafe_key_present() -> bool:
     return bool(os.environ.get(jev.KEY_ENV, "").strip())
 
 
+def _current_jev_mode() -> str:
+    """The Auto-apply judge setting (`local/settings.py`'s
+    `auto_apply_jev_mode` field), the same key and "typesafe" fallback
+    `local/apply_run.py`'s own `load_settings()` reads. `apply_run.py` is not
+    imported here to get it: it pulls in the whole auto-apply module graph
+    (`apply_form`, `apply_queue`, `apply_trace`, `ats_accounts`, Playwright-
+    adjacent code) just to read one config key, far more than this tab needs,
+    so this mirrors `load_settings()`'s two-line settings read instead."""
+    try:
+        import settings
+        return str(settings.load().get("auto_apply_jev_mode") or "typesafe").strip().lower()
+    except Exception:      # noqa: BLE001 - a broken settings backend must not crash the tab
+        return "typesafe"
+
+
 def _default_judge_factory():
-    """The live judge: the same `jev.get` factory `local/apply_run.py` calls
-    for a real auto-apply run, pinned to "typesafe" (this button always tests
-    the live judge, regardless of the auto-apply mode currently configured)."""
-    return jev.get("typesafe")
+    """The judge the Auto-apply judge setting names, via the same `jev.get`
+    factory `local/apply_run.py` calls for a real run. "fake" (and "replay")
+    build a key-free, no-live-request judge -- safe to construct for real;
+    "typesafe" is the only mode the key check in `_refresh_test_answers_state`
+    guards."""
+    return jev.get(_current_jev_mode())
 
 
 def _usage_delta(before: dict, after: dict) -> dict:
@@ -93,15 +113,18 @@ def _usage_delta(before: dict, after: dict) -> dict:
             "usd": after["usd"] - before["usd"]}
 
 
-def _spend_text(delta: dict) -> str:
-    """The run's spend line: the judge's reported cost, or the request count
-    when the run made no billed request (a fake or replayed judge)."""
+def _spend_text(mode: str, delta: dict) -> str:
+    """The run's result line: the configured judge mode, then its reported
+    cost, or the request count when the run made no billed request (a fake or
+    replayed judge)."""
     usd = delta.get("usd") or 0.0
     requests = int(delta.get("requests") or 0)
     noun = "request" if requests == 1 else "requests"
     if usd:
-        return "This run cost about $%.4f (%d %s)." % (usd, requests, noun)
-    return "%d live %s made (no cost reported)." % (requests, noun)
+        body = "This run cost about $%.4f (%d %s)." % (usd, requests, noun)
+    else:
+        body = "%d live %s made (no cost reported)." % (requests, noun)
+    return "Judge: %s. %s" % (mode, body)
 
 
 class TestAnswersDialog(QtWidgets.QDialog):
@@ -765,24 +788,37 @@ class AnswersEditor(QtWidgets.QWidget):
     # ---- ED-9: "Test my answers" ----------------------------------------------------
 
     def _refresh_test_answers_state(self) -> None:
-        present = _typesafe_key_present()
-        self.test_answers_btn.setEnabled(present and not self.load_error)
-        if not present:
-            self.test_answers_btn.setToolTip(
-                "Set 'TypeSafe API key (Jev judge)' in Settings > Auto-apply to use this.")
-        elif self.load_error:
+        mode = _current_jev_mode()
+        live = mode == "typesafe"
+        # The key is only ever a "typesafe" concern -- a fake/replay mode
+        # never touches it (`_typesafe_key_present` short-circuits away here).
+        key_ok = _typesafe_key_present() if live else True
+        self.test_answers_btn.setEnabled(key_ok and not self.load_error)
+        if self.load_error:
             self.test_answers_btn.setToolTip("Fix the damaged answers file first.")
+        elif live and not key_ok:
+            self.test_answers_btn.setToolTip(
+                "Uses the Auto-apply judge setting (currently: %s). Set 'TypeSafe "
+                "API key (Jev judge)' in Settings > Auto-apply to use this." % mode)
+        elif live:
+            self.test_answers_btn.setToolTip(
+                "Uses the Auto-apply judge setting (currently: %s). Runs the "
+                "shipped screening questions against your saved, confirmed "
+                "answers here (not any unsaved edits in this tab) with the live "
+                "judge. Costs a small live-request fee per click." % mode)
         else:
             self.test_answers_btn.setToolTip(
-                "Runs the shipped screening questions against your saved, confirmed "
-                "answers here (not any unsaved edits in this tab) with the live judge. "
-                "Costs a small live-request fee per click.")
+                "Uses the Auto-apply judge setting (currently: %s). Runs the "
+                "shipped screening questions against your saved, confirmed "
+                "answers here (not any unsaved edits in this tab). This mode "
+                "makes no live request and costs nothing." % mode)
 
     def _test_answers_clicked(self) -> None:
         store_path = self.store_path
         judge_factory = self._judge_factory
+        mode = _current_jev_mode()
         self.test_answers_btn.setEnabled(False)
-        self.status.setText("Testing your answers with the live judge...")
+        self.status.setText("Testing your answers (%s judge)..." % mode)
 
         def work():
             import apply_screening   # Agent A's sibling module; not yet present at import time
@@ -793,14 +829,15 @@ class AnswersEditor(QtWidgets.QWidget):
             after = jev.usage()
             return rows, _usage_delta(before, after)
 
-        workers.run_async(self, work, on_done=self._test_answers_done,
+        workers.run_async(self, work,
+                          on_done=lambda result: self._test_answers_done(result, mode),
                           on_error=self._test_answers_failed)
 
-    def _test_answers_done(self, result) -> None:
+    def _test_answers_done(self, result, mode: str) -> None:
         rows, spend = result
         self._refresh_test_answers_state()
         self.status.setText("Tested your answers.")
-        TestAnswersDialog(rows, _spend_text(spend), parent=self).exec()
+        TestAnswersDialog(rows, _spend_text(mode, spend), parent=self).exec()
 
     def _test_answers_failed(self, exc) -> None:
         self._refresh_test_answers_state()

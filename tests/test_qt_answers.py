@@ -672,7 +672,10 @@ def test_collect_preserves_an_unknown_key_on_a_loaded_entry(qtbot, tmp_path):
 # name (`import apply_screening`, the same top-level-sibling style every
 # other `local/` module uses) via `sys.modules`. A FakeJev (or a plain stub)
 # is injected through `AnswersEditor`'s `judge_factory` constructor parameter;
-# the real (paid) judge factory is never exercised here.
+# the real (paid) judge factory is never exercised here. `_current_jev_mode`
+# is monkeypatched in every test below (rather than left to read the real,
+# absent-in-this-worktree `local/config.json`) so the mode-dependent gating is
+# never left to an ambient file.
 
 _Row = namedtuple("Row", "qid question answer")
 
@@ -687,6 +690,7 @@ def _stub_apply_screening(monkeypatch, *, rows=None, fn=None):
 def test_test_answers_button_disabled_without_a_key(qtbot, tmp_path, monkeypatch):
     store = tmp_path / "apply_answers.json"
     _seed_v2(store, [])
+    monkeypatch.setattr(at, "_current_jev_mode", lambda: "typesafe")
     monkeypatch.setattr(at, "_typesafe_key_present", lambda: False)
     ed = _editor(qtbot, store)
     assert ed.test_answers_btn.isEnabled() is False
@@ -696,6 +700,7 @@ def test_test_answers_button_disabled_without_a_key(qtbot, tmp_path, monkeypatch
 def test_test_answers_button_enabled_with_a_key(qtbot, tmp_path, monkeypatch):
     store = tmp_path / "apply_answers.json"
     _seed_v2(store, [])
+    monkeypatch.setattr(at, "_current_jev_mode", lambda: "typesafe")
     monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
     ed = _editor(qtbot, store)
     assert ed.test_answers_btn.isEnabled() is True
@@ -704,15 +709,26 @@ def test_test_answers_button_enabled_with_a_key(qtbot, tmp_path, monkeypatch):
 def test_test_answers_tooltip_names_the_saved_confirmed_answers(qtbot, tmp_path, monkeypatch):
     store = tmp_path / "apply_answers.json"
     _seed_v2(store, [])
+    monkeypatch.setattr(at, "_current_jev_mode", lambda: "typesafe")
     monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
     ed = _editor(qtbot, store)
     tip = ed.test_answers_btn.toolTip().lower()
     assert "saved" in tip and "confirmed" in tip
 
 
+def test_test_answers_tooltip_names_the_auto_apply_judge_setting(qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [])
+    monkeypatch.setattr(at, "_current_jev_mode", lambda: "typesafe")
+    monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
+    ed = _editor(qtbot, store)
+    assert "Auto-apply judge setting" in ed.test_answers_btn.toolTip()
+
+
 def test_test_answers_disabled_on_a_damaged_store_even_with_a_key(qtbot, tmp_path, monkeypatch):
     store = tmp_path / "apply_answers.json"
     store.write_text("not json{", encoding="utf-8")
+    monkeypatch.setattr(at, "_current_jev_mode", lambda: "typesafe")
     monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
     ed = _editor(qtbot, store)
     assert ed.test_answers_btn.isEnabled() is False
@@ -722,6 +738,7 @@ def test_test_answers_click_hands_the_work_to_run_async_not_the_ui_thread(
         qtbot, tmp_path, monkeypatch):
     store = tmp_path / "apply_answers.json"
     _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    monkeypatch.setattr(at, "_current_jev_mode", lambda: "typesafe")
     monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
     calls = []
     _stub_apply_screening(monkeypatch, fn=lambda answers, judge: (calls.append(1), [])[1])
@@ -743,6 +760,7 @@ def test_test_answers_click_hands_the_work_to_run_async_not_the_ui_thread(
 def test_test_answers_button_disables_itself_while_a_run_is_in_flight(qtbot, tmp_path, monkeypatch):
     store = tmp_path / "apply_answers.json"
     _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    monkeypatch.setattr(at, "_current_jev_mode", lambda: "typesafe")
     monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
     _stub_apply_screening(monkeypatch, rows=[])
     captured = {}
@@ -758,6 +776,7 @@ def test_test_answers_button_disables_itself_while_a_run_is_in_flight(qtbot, tmp
 def test_test_answers_runs_against_the_saved_store_not_unsaved_edits(qtbot, tmp_path, monkeypatch):
     store = tmp_path / "apply_answers.json"
     _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    monkeypatch.setattr(at, "_current_jev_mode", lambda: "typesafe")
     monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
     seen = {}
     _stub_apply_screening(
@@ -778,6 +797,7 @@ def test_test_answers_runs_against_the_saved_store_not_unsaved_edits(qtbot, tmp_
 def test_test_answers_shows_a_table_of_the_run_picks_or_stops_here(qtbot, tmp_path, monkeypatch):
     store = tmp_path / "apply_answers.json"
     _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    monkeypatch.setattr(at, "_current_jev_mode", lambda: "typesafe")
     monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
     rows = [_Row("q1", "Are you authorized to work in the US?", "Yes"),
             _Row("q2", "Do you require sponsorship?", None)]
@@ -805,6 +825,7 @@ def test_test_answers_spend_falls_back_to_a_request_count_with_no_reported_cost(
         qtbot, tmp_path, monkeypatch):
     store = tmp_path / "apply_answers.json"
     _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    monkeypatch.setattr(at, "_current_jev_mode", lambda: "typesafe")
     monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
     jev.reset_usage()   # FakeJev never counts a live request (jev.py's own contract)
     _stub_apply_screening(monkeypatch, rows=[])
@@ -828,6 +849,7 @@ def test_test_answers_spend_falls_back_to_a_request_count_with_no_reported_cost(
 def test_test_answers_spend_shows_the_cost_the_judge_reports(qtbot, tmp_path, monkeypatch):
     store = tmp_path / "apply_answers.json"
     _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    monkeypatch.setattr(at, "_current_jev_mode", lambda: "typesafe")
     monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
     jev.reset_usage()
 
@@ -855,6 +877,7 @@ def test_test_answers_failure_shows_a_message_and_re_enables_the_button(
         qtbot, tmp_path, monkeypatch):
     store = tmp_path / "apply_answers.json"
     _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    monkeypatch.setattr(at, "_current_jev_mode", lambda: "typesafe")
     monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
     monkeypatch.setattr(QtWidgets.QMessageBox, "critical", lambda *a, **k: None)
     captured = {}
@@ -868,3 +891,63 @@ def test_test_answers_failure_shows_a_message_and_re_enables_the_button(
     captured["on_error"](RuntimeError("boom"))
     assert ed.test_answers_btn.isEnabled() is True
     assert "failed" in ed.status.text().lower()
+
+
+# --- Fix round 1: the judge the Auto-apply judge setting names, not a hard-coded
+# "typesafe" ---------------------------------------------------------------------
+
+def test_test_answers_fake_mode_builds_the_fake_judge_and_skips_the_key_check(
+        qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    monkeypatch.setattr(at, "_current_jev_mode", lambda: "fake")
+    key_checks = []
+    monkeypatch.setattr(at, "_typesafe_key_present",
+                        lambda: key_checks.append(1) or False)
+    seen = {}
+    _stub_apply_screening(
+        monkeypatch,
+        fn=lambda answers, judge: (seen.setdefault("judge", judge), [])[1])
+    captured = {}
+    monkeypatch.setattr(
+        at.workers, "run_async",
+        lambda owner, fn, on_done=None, on_error=None: captured.update(fn=fn))
+    # No judge_factory override: the DEFAULT factory must itself build the
+    # fake judge from the configured mode -- `jev.get("fake")` is safe to call
+    # for real (no key, no live request), unlike the typesafe path.
+    ed = AnswersEditor(store_path=store)
+    qtbot.addWidget(ed)
+    assert ed.test_answers_btn.isEnabled() is True   # fake mode: enabled with no key
+    ed.test_answers_btn.click()
+    captured["fn"]()
+    assert isinstance(seen["judge"], jev.FakeJev)
+    assert key_checks == []   # the key is never checked for a non-live mode
+
+
+def test_test_answers_typesafe_mode_without_a_key_stays_disabled(qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [])
+    monkeypatch.setattr(at, "_current_jev_mode", lambda: "typesafe")
+    monkeypatch.setattr(at, "_typesafe_key_present", lambda: False)
+    ed = _editor(qtbot, store)
+    assert ed.test_answers_btn.isEnabled() is False
+
+
+def test_test_answers_result_line_names_the_judge_mode(qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    monkeypatch.setattr(at, "_current_jev_mode", lambda: "fake")
+    _stub_apply_screening(monkeypatch, rows=[])
+    captured = {}
+    monkeypatch.setattr(
+        at.workers, "run_async",
+        lambda owner, fn, on_done=None, on_error=None: captured.update(fn=fn, on_done=on_done))
+    seen = {}
+    monkeypatch.setattr(at.QtWidgets.QDialog, "exec",
+                        lambda self: seen.setdefault("dialog", self))
+    ed = AnswersEditor(store_path=store, judge_factory=lambda: jev.FakeJev())
+    qtbot.addWidget(ed)
+    ed.test_answers_btn.click()
+    result = captured["fn"]()
+    captured["on_done"](result)
+    assert "fake" in seen["dialog"].spend_label.text().lower()

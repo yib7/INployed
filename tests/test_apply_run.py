@@ -2276,6 +2276,26 @@ def test_write_record_hides_a_password_field_value(tmp_path):
     assert "- Security code: <hidden>" in text and "MKPZ3QRA" not in text
 
 
+def test_write_record_lists_a_cleared_value_apart_from_the_filled_ones(tmp_path):
+    # final review M8 (G5 item 6): an optional answer taken out after its
+    # check failed, or a box the page wrote and the run emptied, is no value
+    # the employer received
+    entry = apply_queue.new_entry("7", company="Acme", title="Engineer",
+                                  apply_url="https://jobs.example.com/7")
+    pages = [{"url": "https://jobs.example.com/apply", "state": "application_form",
+              "confidence": 0.9,
+              "filled": [{"n": 0, "label": "Email", "value": "jane@example.com",
+                          "type": "email", "id_or_name": "email", "upload": False},
+                         {"n": 1, "label": "Nickname", "value": "JD",
+                          "type": "text", "id_or_name": "nick", "upload": False}],
+              "cleared": ["Nickname", "Headline"]}]
+    text = apply_run.write_record(tmp_path, entry, "needs_human", "x", pages, {}, "",
+                                  missing=[]).read_text(encoding="utf-8")
+    assert "- Filled:\n  - Email: jane@example.com\n" in text
+    assert "JD" not in text
+    assert "- Cleared:\n  - Nickname\n  - Headline\n" in text
+
+
 # --- _finish survives a failing queue write ------------------------------------------------
 
 def test_finish_retries_the_queue_write_once_after_a_second(
@@ -3084,6 +3104,10 @@ def test_an_optional_answer_that_failed_its_check_is_cleared(
     assert run.pages[-1]["cleared"] == ["Nickname"]
     assert nick.n not in run._last_filled
     assert [ev["fields"] for what, ev in seen if what == "cleared_optional"] == [["Nickname"]]
+    # final review M8: the record lists the value under Cleared alone
+    text = apply_run.write_record(tmp_path / "record", {}, "needs_human", "x", run.pages, {},
+                                  "", missing=[]).read_text(encoding="utf-8")
+    assert "Nickname: JD" not in text and "- Cleared:\n  - Nickname\n" in text
 
 
 def test_an_optional_answer_that_failed_its_check_and_cannot_be_cleared_parks(

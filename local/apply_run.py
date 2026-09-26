@@ -3997,7 +3997,12 @@ def write_record(folder: Path, entry: dict, outcome_status: str, reason: str,
         if trace_dir:
             lines.append(f"{_TRACE_LINE}[page-{i}.json]({trace_dir}/page-{i}.json), "
                          f"[page-{i}.jpg]({trace_dir}/page-{i}.jpg)")
-        filled = [r for r in p.get("filled", []) if not r.get("upload")]
+        # a value taken out again (an optional answer that failed its check,
+        # a box the page wrote and the run emptied) is no value the employer
+        # received: listed under Cleared and dropped from Filled (final review M8)
+        cleared = [str(c) for c in p.get("cleared") or []]
+        filled = [r for r in p.get("filled", [])
+                  if not r.get("upload") and str(r.get("label", "")) not in cleared]
         uploads = [r for r in p.get("filled", []) if r.get("upload")]
         if filled:
             lines.append("- Filled:")
@@ -4005,6 +4010,9 @@ def write_record(folder: Path, entry: dict, outcome_status: str, reason: str,
                 value = HIDDEN if r.get("hidden") or _is_password(r) else str(r.get("value", ""))
                 mark = " (generated)" if r.get("generated") else ""
                 lines.append(f"  - {r.get('label', '')}: {value}{mark}")
+        if cleared:
+            lines.append("- Cleared:")
+            lines.extend(f"  - {label}" for label in cleared)
         if uploads:
             lines.append("- Uploads:")
             for r in uploads:

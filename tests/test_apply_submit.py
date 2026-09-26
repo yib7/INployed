@@ -1729,6 +1729,27 @@ def test_a_link_page_read_as_a_confirmation_is_still_the_emailed_link_step(
     assert r.ok and not r.breaks, r
 
 
+def test_an_all_set_page_that_says_check_your_inbox_after_the_submit_waits_for_the_link(
+        context, tmp_path):
+    # final review M7: a thank-you worded outside the received words that
+    # also says "Check your inbox" is the emailed link step after the submit;
+    # with no link in the inbox the person checks the send, and the job never
+    # reads as submitted on that page alone
+    posts = _Posts(context, {"/apply/42": _form("Submit application", """
+      document.getElementById('go').onclick = function () {
+        fetch('/apply/42/send', {method: 'POST', body: '{}'}).then(function () {
+          document.getElementById('app').outerHTML = "<h2>You're all set!</h2>"
+            + '<p>Check your inbox for a confirmation email.</p>';
+        });
+      };""")})
+    out, _, _ = _drain(context, tmp_path, APPLY_URL, judge=_reads("all set", "confirmation"))
+    assert posts.count == 1
+    assert out.status == "needs_human", out
+    assert out.reason.startswith(apply_run.CHECK_SENT_REASON), out
+    remaps = _trace_decisions(_trace_dir(tmp_path), "remap")
+    assert remaps and remaps[0]["to"] == "code_gate", remaps
+
+
 def test_a_confirmation_before_any_submit_never_reads_as_submitted(tmp_path):
     digest = apply_form.FormDigest("jobs.example", "Thanks", "Thank you for applying.")
     answers = {"page_state": jev.Answer(kind="choice", choice="confirmation", confidence=1.0,

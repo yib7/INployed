@@ -2796,16 +2796,50 @@ def test_the_read_back_check_takes_a_qualified_pick_and_no_yes_inside_one():
 
 # --- cycle 18: the Ashby-style replica, answered from the typed store -----------------------
 
-def test_the_ashby_relocation_replica_parks_on_a_job_location_the_run_cannot_check(
+def test_the_ashby_relocation_replica_fills_and_verifies_from_the_typed_answers(
         _browser, flow_server, tmp_path):
     # the Contoso incident's questions: legal authorization among qualified
     # options only, where a stored Yes is none of "Yes - on a work visa
-    # (OPT/H-1B)", sponsorship on Yes / No buttons (settled in code by the
-    # alias set) and relocation among combined options. SP6c round 5: the
-    # plan cannot reach the job's location, so "the job location (New York)"
-    # is another question than the stored relocation answer; the run parks
-    # on it by the user's policy, before it fills or sends anything
+    # (OPT/H-1B)" (the judge's pick over every yes / no fact takes "U.S.
+    # citizen or permanent resident ..."; before cycle 18 the bare "Yes"
+    # took the visa, SP3 fix round 1), sponsorship on Yes / No buttons
+    # (settled in code by the alias set) and relocation among combined
+    # options; the confirmation marker shows only for the store's answers.
+    # The relocation label names no place, so the gate reads it as the
+    # stored relocation fact's own question and the run confirms it end to
+    # end with the other two (SP6c round 5 had a place-named copy of this
+    # form park instead: test_the_ashby_relocation_place_replica_parks_on_a_
+    # job_location_the_run_cannot_check)
     f = h.flow("ashby_relocation")
+    assert (f.submit, f.status) == (True, "submitted")
+    assert f.confirm.startswith("body[data-auth=citizen][data-sponsor=no]"
+                                "[data-relocate=willing]")
+    r = h.run_flow(f, jev.FakeJev(), "fake", browser=_browser, server=flow_server,
+                   workdir=tmp_path)
+    assert r.ok and not r.breaks, r
+    assert r.reason == "confirmation page"
+    pages = [json.loads(p.read_text(encoding="utf-8"))
+             for p in sorted(Path(r.trace).glob("page-*.json"),
+                             key=lambda p: int(p.stem.split("-")[1]))]
+    events = [e for p in pages for e in p["events"]]
+    verified = {v["label"]: v["ok"] for e in events if e["kind"] == "verify"
+                for v in e["results"]}
+    for label in ("Are you legally authorized to work in the United States?",
+                  "Will you now or in the future require visa sponsorship?",
+                  "Are you willing to relocate to the job location?"):
+        assert verified.get(label) is True, (label, verified)
+
+
+# --- cycle 18 SP6c round 5: a place-named copy parks on a job location the run cannot check ---
+
+def test_the_ashby_relocation_place_replica_parks_on_a_job_location_the_run_cannot_check(
+        _browser, flow_server, tmp_path):
+    # the same form, its relocation label naming a place ("the job location
+    # (New York)"): the plan cannot reach the job's location, so "the job
+    # location (New York)" is another question than the stored relocation
+    # answer; the run parks on it by the user's policy, before it fills or
+    # sends anything
+    f = h.flow("ashby_relocation_place")
     assert (f.submit, f.status) == (True, "needs_human")
     r = h.run_flow(f, jev.FakeJev(), "fake", browser=_browser, server=flow_server,
                    workdir=tmp_path)

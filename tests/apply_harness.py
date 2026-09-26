@@ -1029,20 +1029,29 @@ FLOWS: tuple[Flow, ...] = (
                 "parser's own upload left alone"),
     # the Contoso incident's form; the marker shows only for the
     # answers the typed store holds (a citizen or permanent resident: no
-    # sponsorship, authorized; relocates). SP6c round 5: the plan cannot
-    # reach the job's location, so "the job location (New York)" is another
-    # question than the stored relocation answer, and the run parks on it by
-    # the user's policy (a required question the data cannot answer)
-    Flow("ashby_relocation", "ashby_relocation.html", True, "needs_human",
+    # sponsorship, authorized; relocates). The relocation label names no
+    # place, so the gate reads it as the stored fact's own question and the
+    # run confirms all three answers end to end
+    Flow("ashby_relocation", "ashby_relocation.html", True, "submitted", _SUBMITTED,
+         confirm="body[data-auth=citizen][data-sponsor=no][data-relocate=willing] "
+                 "#thanks:visible",
+         recorded=False,
+         covers="legal authorization among qualified options only (a Yes on a work visa "
+                "is no Yes), sponsorship on Yes / No buttons settled by the alias set, and "
+                "relocation: it confirms authorization, sponsorship and relocation from the "
+                "typed answers"),
+    # cycle 18 SP6c round 5: the same form, its relocation label naming a
+    # place ("the job location (New York)"). The plan cannot reach the job's
+    # location, so the gate reads it as another question than the stored
+    # relocation answer, and the run parks on it by the user's policy (a
+    # required question the data cannot answer)
+    Flow("ashby_relocation_place", "ashby_relocation_place.html", True, "needs_human",
          r"^required field without an answer: Are you willing to relocate to the job location "
          r"\(New York\)\?$",
          confirm="body[data-auth=citizen][data-sponsor=no][data-relocate=willing] "
                  "#thanks:visible",
          recorded=False,
-         covers="legal authorization among qualified options only (a Yes on a work visa "
-                "is no Yes), sponsorship on Yes / No buttons settled by the alias set, and a "
-                "relocation question naming a place the run cannot check: it parks there and "
-                "sends nothing"),
+         covers="the place-named relocation question parks and sends nothing"),
     Flow("greenhouse_react_select", "greenhouse_react_select.html", True, "submitted",
          _SUBMITTED, confirm="#thanks:visible",
          covers="react-select dropdowns (the pick shown in a sibling, a hidden required twin), "

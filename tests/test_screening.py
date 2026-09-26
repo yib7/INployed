@@ -18,9 +18,9 @@ correctly keeps a run that picks nothing from passing.
 - real (the `jev_judge` fixture, `AUTO_APPLY_TEST_JEV` record or replay; the
   runner target of `scripts/jev_record.ps1` records it): no wrong pick outside
   REAL_MISREADS (empty). The rule raises `pytest.fail`, which the harness
-  never turns into a recorded divergence (an xfail). REAL_PICK_FLOOR is None
-  (report only) until the orchestrator sets it from the recording; the rate
-  prints either way. The fixture pins the catalog's `today` to the recording
+  never turns into a recorded divergence (an xfail). REAL_PICK_FLOOR is the
+  recording's rate (cycle 18 SP6: 96 of 130, no wrong pick); the rate prints
+  either way. The fixture pins the catalog's `today` to the recording
   day, as it does for the runner tests. In fake mode the test skips: its judge
   would be the fake, which the fake test holds already.
 
@@ -87,9 +87,9 @@ SEEDS = (1, 2, 3, 4, 5)
 # unpicked, since the fake maps no fact to them.
 FAKE_PICK_FLOOR = 0.53                                        # 69 of 130
 NOISY_PICK_FLOOR = {1: 0.52, 2: 0.52, 3: 0.52, 4: 0.53, 5: 0.52}  # 68 68 68 69 68 of 130
-# The real judge's floor: None reports the rate and checks nothing. The
-# orchestrator sets it from the recording (TS-3).
-REAL_PICK_FLOOR: float | None = None
+# The real judge's floor, from cycle 18's recording (SP6, 2026-09-26): 96 of
+# 130 expected picks and no wrong one. None would report the rate only.
+REAL_PICK_FLOOR: float | None = 0.73                          # 96 of 130
 # (question id, profile) cases where a wrong pick by the real judge is
 # accepted, each with its cause. Empty: every wrong pick fails.
 REAL_MISREADS: frozenset[tuple[str, str]] = frozenset()

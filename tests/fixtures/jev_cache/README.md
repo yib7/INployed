@@ -8,12 +8,14 @@ request key, and the replay then names the miss.
 
 | cache | requests of | replay |
 |---|---|---|
-| `cache.json` | the runner tests (`tests/test_apply_run.py`, `tests/test_apply_run_boundaries.py`) | `scripts/jev_record.ps1 -Mode replay` |
+| `cache.json` | the runner tests (`tests/test_apply_run.py`, `tests/test_apply_run_boundaries.py`) and the screening set's real judge (`tests/test_screening.py`) | `scripts/jev_record.ps1 -Mode replay` |
 | `matrix_cache.json` | the flow matrix's real column (`scripts/apply_matrix.py --real`), one run per registered flow | `scripts/jev_record.ps1 -Target matrix -Mode replay` |
 
-`cache.json` was first recorded 2026-09-22 (SP8, jev-1.13.0, 38 requests) and
-re-recorded 2026-09-25 (SP8b, 72 requests). `matrix_cache.json` was recorded
-2026-09-25 (SP8b, 322 requests over the 106 flows a replay runs). Both hold
+`cache.json` was first recorded 2026-09-22 (SP8, jev-1.13.0, 38 requests),
+re-recorded 2026-09-25 (SP8b, 72 requests) and again 2026-09-26 (cycle 18 SP6,
+276 requests, the screening set's among them). `matrix_cache.json` was recorded
+2026-09-25 (SP8b, 322 requests over the 106 flows a replay runs) and again
+2026-09-26 (cycle 18 SP6, 350 requests over 115 flows). Both hold
 only the requests today's replay reaches: an entry no replay asks for is
 dropped after a re-record. The third target, the page read over the local captures
 (`tests/test_capture_reads.py`), keeps its cache beside the captures in
@@ -25,11 +27,11 @@ machine that holds them, and so do their answers.
 Every request that lists the fact catalog carries today's date (the `today`
 fact, `local/apply_facts.py`), so the same request made on another day has
 another key. A record or replay run reads today as `RECORDED_TODAY` in
-`tests/jev_harness.py`, 2026-09-25, the day both caches were recorded: the
-runner tests through the `jev_judge` fixture, the matrix's real column through
-`apply_harness.hermetic`. Both caches then replay on any later day. A new
-recording keeps that date; a recording on a new date moves the constant and
-re-records both caches. The fake and noisy judges and production read the
+`tests/jev_harness.py`, 2026-09-25: the runner tests through the `jev_judge`
+fixture, the matrix's real column through `apply_harness.hermetic`. A
+recording made on a later day runs pinned to that date too (the 2026-09-26 one
+did), so both caches replay on any day. Moving the constant turns every entry
+into a miss; a change to it re-records both caches. The fake and noisy judges and production read the
 real date. The captures' page reads list no facts, so their cache needs no
 pin.
 

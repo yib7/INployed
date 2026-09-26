@@ -1035,7 +1035,6 @@ FLOWS: tuple[Flow, ...] = (
     Flow("ashby_relocation", "ashby_relocation.html", True, "submitted", _SUBMITTED,
          confirm="body[data-auth=citizen][data-sponsor=no][data-relocate=willing] "
                  "#thanks:visible",
-         recorded=False,
          covers="legal authorization among qualified options only (a Yes on a work visa "
                 "is no Yes), sponsorship on Yes / No buttons settled by the alias set, and "
                 "relocation: it confirms authorization, sponsorship and relocation from the "
@@ -1050,7 +1049,6 @@ FLOWS: tuple[Flow, ...] = (
          r"\(New York\)\?$",
          confirm="body[data-auth=citizen][data-sponsor=no][data-relocate=willing] "
                  "#thanks:visible",
-         recorded=False,
          covers="the place-named relocation question parks and sends nothing"),
     Flow("greenhouse_react_select", "greenhouse_react_select.html", True, "submitted",
          _SUBMITTED, confirm="#thanks:visible",
@@ -1275,20 +1273,17 @@ FLOWS: tuple[Flow, ...] = (
          covers="a sign-in whose header carries a job-alerts sign-up link: the screen's own "
                 "Create Account button makes the account, never the alerts link (ACC-01)"),
     # --- cycle 17 final review: the code and link steps after the answers (A Known
-    # Minor 5). Added after the real judge's last recording, and this round
-    # records nothing: `recorded=False` until the next one ---
+    # Minor 5), recorded in cycle 18 (SP6) ---
     Flow("link_after_submit", "link_after_submit.html", True, "submitted",
          r"^submitted \(unconfirmed\): the emailed link's page on \S+ says "
          r"'application has been received'", inbox=True, inbox_page="link_confirm_list.html",
-         ats={"system": "greenhouse"}, recorded=False,
-         covers="a form post answered with no redirect by a page that says a link was emailed: "
+         ats={"system": "greenhouse"},         covers="a form post answered with no redirect by a page that says a link was emailed: "
                 "the link opens in a tab of its own, its page is the confirmation, and the job's "
                 "tab is never loaded again, so one post goes (final review A-C1)"),
     Flow("link_after_answers_park", "link_after_answers.html", False, "ready_to_submit",
          r"^auto_apply_submit is off; the emailed link from \S+ is the step that may send the "
          r"application", gate="#link-sent:visible", inbox=True,
-         inbox_page="link_confirm_list.html", ats={"system": "greenhouse"}, recorded=False,
-         covers="the answers, then a Continue to a page that says a link was emailed: park mode "
+         inbox_page="link_confirm_list.html", ats={"system": "greenhouse"},         covers="the answers, then a Continue to a page that says a link was emailed: park mode "
                 "stops there and never opens the link (final review A-I2)"),
     # the same in submit mode (final review A Known Minor 5). The link's page
     # confirms the address alone: a page that says the application was
@@ -1298,34 +1293,29 @@ FLOWS: tuple[Flow, ...] = (
          "^" + re.escape(apply_run.CHECK_SENT_REASON) + r": the emailed link on \S+ was opened "
          r"after the application's answers went on the site, and its page shows no received "
          r"words; the job's tab was not loaded again$", inbox=True,
-         inbox_page="link_email_list.html", ats={"system": "greenhouse"}, recorded=False,
-         covers="submit mode: the answers, then a Continue to a page that says a link was "
+         inbox_page="link_email_list.html", ats={"system": "greenhouse"},         covers="submit mode: the answers, then a Continue to a page that says a link was "
                 "emailed; the link opens in a tab of its own, its page confirms only the "
                 "address, and the job's tab is never loaded again: the person checks whether "
                 "the application went through (final review A Known Minor 5)"),
     Flow("code_after_answers", "code_after_answers.html", True, "submitted", _SUBMITTED,
          confirm="body[data-confirmed]", inbox=True, ats={"system": "greenhouse"},
-         recorded=False,
          covers="the answers, a Continue to an emailed-code step, the code typed and its Verify "
                 "clicked once, then the last step sent through the gate (final review A-I2)"),
     Flow("code_after_answers_park", "code_after_answers.html", False, "ready_to_submit",
          r"^auto_apply_submit is off; the emailed code is entered and its button \(Verify\) is "
          r"the step that may send the application", gate="#btn-verify:visible", inbox=True,
-         ats={"system": "greenhouse"}, recorded=False,
-         covers="the same in park mode: the code is typed and its button never clicked, "
+         ats={"system": "greenhouse"},         covers="the same in park mode: the code is typed and its button never clicked, "
                 "whatever role the judge gave it (final review A-I2, A Known Minor 10)"),
     # a master password is stored, as for every flow with an address screen: a
     # noisy read of that screen as a login wall takes the account step's way
     # through it (the 20-seed matrix of the fix round found seeds 6 and 18 so)
     Flow("email_code_first_park", "email_code_first.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible", inbox=True, password=True,
-         ats={"system": "greenhouse"}, recorded=False,
-         covers="an email-first start, its emailed code, then the application: the address alone "
+         ats={"system": "greenhouse"},         covers="an email-first start, its emailed code, then the application: the address alone "
                 "is no application on the site, so park mode passes the code step and stops at "
                 "the submit (final review A-I2)"),
     Flow("login_get_park", "login_get_form.html", False, "ready_to_submit", _PARKED,
          confirm="#received:visible", gate="#btn-submit:visible", password=True,
-         recorded=False,
          covers="a sign-in form sent with method=get, whose next page's query carries the "
                 "password: the trace keeps each URL without its query, so PASSWORD-LEAK "
                 "covers it (final review C-M1)"),

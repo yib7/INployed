@@ -825,13 +825,6 @@ def _clock_reads(monkeypatch, day):
     monkeypatch.setattr(apply_facts, "date", _Day)
 
 
-# Cycle 18 (FL-5) rewrote three fact descriptions and added the onsite_ok
-# fact; the descriptions are part of each request's cache key, so the committed
-# cache misses until SP6 re-records it. Strict: the re-recorded cache makes
-# this test pass, and the mark has to go then.
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="the committed replay cache predates cycle 18's fact descriptions; "
-                          "SP6 re-records it")
 def test_the_real_columns_replay_on_a_later_day_still_hits_the_committed_cache(
         _browser, flow_server, tmp_path, monkeypatch):
     # post_form's placeholder check lists the facts, today's date among them:

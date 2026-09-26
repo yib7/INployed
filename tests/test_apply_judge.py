@@ -1594,12 +1594,14 @@ _OWN_QUESTIONS = [
     ("onsite_ok", "Are you able to work in the office 3 days a week?", True),
     ("onsite_ok", "Are you able to work on-site / in the office (3 days a week)?", True),
     ("onsite_ok", "Are you able to work in person at our office five days a week?", True),
-    # round 3: "comfortable", an acknowledgement, a team: other words
+    # round 4: "comfortable" with on-site work is its own question
     ("onsite_ok", "This role requires working in the office 3 days a week. Are you "
-                  "comfortable with this?", False),
+                  "comfortable with this?", True),
+    # round 3: an acknowledgement, a team: other words
     ("onsite_ok", "I understand this position is fully on-site and I am able to work in the "
                   "office.", False),
     ("onsite_ok", "Our team works from the office. Which describes you?", False),
+    # hybrid work is a narrower question: a Yes to on-site work settles it
     ("onsite_ok", "Are you comfortable with a hybrid schedule?", False),
     ("onsite_ok", "Are you looking for a fully remote position only?", False),
     ("onsite_ok", "What is your preferred work arrangement?", False),
@@ -2015,7 +2017,8 @@ _WORDS = [
     ("onsite_ok", "Would you rather work remotely than in the office?", "", "other"),
     ("remote_only", "Would you rather work remotely than in the office?", "", "other"),
     ("onsite_ok", "Are you willing to work on-site in New York?", "", "other"),
-    ("onsite_ok", "Are you comfortable working on-site?", "", "other"),
+    # round 4: "comfortable" with on-site work is its own question
+    ("onsite_ok", "Are you comfortable working on-site?", "", "own"),
     # Minor 1: plain forms that pass
     ("work_authorized", "Are you able to work in the US?", "", "own"),
     ("authorized_without_sponsorship", "Are you authorized to work in the US and will not "
@@ -2353,3 +2356,93 @@ def test_a_custom_yes_no_list_mapped_by_hand_asks_the_judge_nothing_for_another_
         assert list(apply_judge.option_questions(digest, kept, catalog=cat)[1]) == asked, label
         assert apply_judge.reask_targets(digest, cat, {}, kept, what="pick") == (
             [0] if asked else []), label
+
+
+# --- cycle 18 SP6c round 4: "comfortable" with on-site work -----------------------------------
+
+_COMFORT_OFFICE = ("This role requires working in the office 3 days a week. Are you "
+                   "comfortable with this?")
+_COMFORT_HYBRID = "Are you comfortable with a hybrid schedule?"
+_COMFORT_ONSITE = "Are you comfortable working on-site?"
+_COMFORT_AUSTIN = "This role is on-site in our Austin office. Are you comfortable with this?"
+_COMFORT_NOT = "This role is not in the office. Are you comfortable with this?"
+_COMFORT_COMMUTE = "Are you comfortable commuting to our office?"
+
+# (fact, label, fit): the on-site "comfortable" shape is on-site work's own
+# question; a remote role, a city, a negation or a commute is another, and
+# the new words open no other fact
+_COMFORT = [
+    ("onsite_ok", _COMFORT_OFFICE, "own"),
+    ("onsite_ok", _COMFORT_ONSITE, "own"),
+    ("onsite_ok", "This position requires working on-site. Are you comfortable with that?",
+     "own"),
+    # hybrid stays one-sided: a Yes to on-site work settles it, a No does not
+    ("onsite_ok", _COMFORT_HYBRID, "narrower"),
+    ("onsite_ok", "This role is hybrid. Are you comfortable with this?", "narrower"),
+    # refused
+    ("onsite_ok", _REMOTE_PREAMBLE, "other"),
+    ("remote_only", _REMOTE_PREAMBLE, "other"),
+    ("onsite_ok", _COMFORT_AUSTIN, "other"),
+    ("onsite_ok", _COMFORT_NOT, "other"),
+    ("onsite_ok", _COMFORT_COMMUTE, "other"),
+    ("onsite_ok", "Are you comfortable working remotely?", "other"),
+    ("onsite_ok", "This role requires working 3 days a week. Are you comfortable with this?",
+     "other"),
+    ("onsite_ok", "Are you comfortable with this?", "other"),
+    # the new words are on-site work's alone
+    ("remote_only", "This role is fully remote. Are you comfortable with this?", "other"),
+    ("remote_only", "Are you comfortable working remotely only?", "other"),
+    ("willing_to_relocate", "This role requires relocating. Are you comfortable with that?",
+     "other"),
+    ("work_authorized", "This role requires working in the US. Are you comfortable with this?",
+     "other"),
+    ("years_experience", "This role requires 5 years of experience. Are you comfortable with "
+                         "this?", "other"),
+    ("requires_sponsorship", "This role is not eligible for sponsorship. Are you comfortable "
+                             "with that?", "other"),
+]
+
+
+@pytest.mark.parametrize("key, label, fit", _COMFORT)
+def test_comfortable_with_on_site_work_is_its_own_question_and_no_other_facts(key, label, fit):
+    assert apply_judge.question_fit(key, label) == fit
+    assert apply_judge.asks_own_question(key, label) is (fit == "own")
+
+
+@pytest.mark.parametrize("label", [_COMFORT_OFFICE, _COMFORT_ONSITE])
+@pytest.mark.parametrize("value", ["Yes", "No"])
+def test_comfortable_with_on_site_work_takes_the_on_site_answer(tmp_path, label, value):
+    cat = _profile_catalog(tmp_path, onsite_ok=value)
+    digest = _field_with(label)
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("onsite_ok", 1.0)}))
+    pf = p.fields[0]
+    assert (pf.action, pf.option, pf.fact_key) == ("select", value, "onsite_ok")
+    assert p.park_reason == ""
+
+
+@pytest.mark.parametrize("value, action, option", [("Yes", "select", "Yes"),
+                                                   ("No", "skip", None)])
+def test_comfortable_with_a_hybrid_schedule_takes_yes_to_on_site_alone(tmp_path, value, action,
+                                                                      option):
+    cat = _profile_catalog(tmp_path, onsite_ok=value)
+    digest = _field_with(_COMFORT_HYBRID)
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("onsite_ok", 1.0)},
+                                                    options={0: ("Yes", 1.0)}))
+    assert (p.fields[0].action, p.fields[0].option) == (action, option)
+
+
+@pytest.mark.parametrize("label, key", [
+    (_REMOTE_PREAMBLE, "onsite_ok"), (_REMOTE_PREAMBLE, "remote_only"),
+    (_COMFORT_AUSTIN, "onsite_ok"), (_COMFORT_NOT, "onsite_ok"),
+    (_COMFORT_COMMUTE, "onsite_ok")])
+def test_comfortable_with_a_remote_role_a_city_a_negation_or_a_commute_gets_no_value(
+        tmp_path, label, key):
+    cat = _profile_catalog(tmp_path)
+    digest = _field_with(label)
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: (key, 1.0)},
+                                                    options={0: ("Yes", 1.0)}))
+    pf = p.fields[0]
+    assert (pf.action, pf.option, pf.value, pf.fact_key) == ("skip", None, "", None)
+    assert p.park_reason == f"required field without an answer: {label}"
+    assert apply_judge.option_questions(digest, p, catalog=cat)[1] == {}
+    assert apply_judge.reask_targets(digest, cat, {}, p, what="pick") == []

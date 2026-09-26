@@ -547,8 +547,8 @@ def _quick_key(label: str, id_or_name: str, type_: str) -> str | None:
 # neutral tails are dropped, set phrases become one token (`_PHRASES`), the
 # shared filler goes, and any word left outside the fact's vocabulary makes it
 # another question: a country, a city, a skill, "commute", "assistance",
-# "comfortable", "rather", "clearance", a parenthetical scope or an
-# instruction such as "Answer No if ...".
+# "comfortable" beside anything but on-site work, "rather", "clearance", a
+# parenthetical scope or an instruction such as "Answer No if ...".
 
 @dataclass(frozen=True)
 class _OwnQuestion:
@@ -639,7 +639,11 @@ OWN_QUESTIONS: dict[str, _OwnQuestion] = {
         (frozenset(("relocate", "relocating", "relocation", "move", "moving")),)),
     "onsite_ok": _OwnQuestion(
         frozenset(("ONSITE", "office", "hybrid", "work", "working", "our", "at", "into", "come",
-                   "report", "from", "DAYSWEEK", "schedule", "willing", "open", "NOW")),
+                   "report", "from", "DAYSWEEK", "schedule", "willing", "open", "NOW",
+                   # "This role requires working in the office 3 days a week. Are
+                   # you comfortable with this?" (round 4)
+                   "comfortable", "with", "this", "that", "role", "position", "requires",
+                   "requiring", "is")),
         (frozenset(("ONSITE", "office", "hybrid")),),
         narrower=frozenset(("hybrid",)), settles_narrower="Yes"),
     "remote_only": _OwnQuestion(

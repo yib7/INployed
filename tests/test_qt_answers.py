@@ -25,6 +25,7 @@ import types
 from collections import namedtuple
 
 import jev
+import pytest
 from PySide6 import QtGui, QtWidgets
 
 from qt import answers_tab as at
@@ -157,6 +158,73 @@ def test_typing_into_the_note_field_moves_the_counter_toward_note_max(qtbot, tmp
     assert row["note_counter"].text() == "10/%d" % apply_answers.NOTE_MAX
 
 
+def _write_v2(path, entries):
+    """A version 2 file written by hand, with no validate pass."""
+    path.write_text(json.dumps({"version": 2, "answers": entries, "review": []}),
+                    encoding="utf-8")
+
+
+def test_a_spaced_or_cased_option_shows_and_saves_as_its_option(qtbot, tmp_path, monkeypatch):
+    # final review UI I2: the run reads "Yes " as Yes, so the editor does too,
+    # and the next save writes the option in place of an empty answer
+    store = tmp_path / "apply_answers.json"
+    _write_v2(store, [_entry("work_authorized", "yes_no", "Yes ", confirmed=True),
+                      _entry("gender", "choice", "female ", confirmed=True),
+                      _entry("years_experience", "number", "2", confirmed=True)])
+    ed = _editor(qtbot, store)
+    assert _row(ed, "work_authorized")["answer_widget"].currentText() == "Yes"
+    assert _row(ed, "gender")["answer_widget"].currentText() == "Female"
+    assert _row(ed, "work_authorized")["confirmed_cb"].isChecked() is True
+    _row(ed, "years_experience")["answer_widget"].setText("4")
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", lambda *a, **k: None)
+    assert ed.save() is True
+    saved = {e["id"]: e for e in apply_answers.load(store)}
+    assert (saved["work_authorized"]["answer"], saved["work_authorized"]["confirmed"]) == \
+        ("Yes", True)
+    assert (saved["gender"]["answer"], saved["gender"]["confirmed"]) == ("Female", True)
+
+
+def test_a_stored_value_that_names_no_option_is_kept_and_flagged(qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _write_v2(store, [_entry("work_authorized", "yes_no", "maybe", confirmed=True),
+                      _entry("years_experience", "number", "2", confirmed=True)])
+    before = store.read_bytes()
+    ed = _editor(qtbot, store)
+    row = _row(ed, "work_authorized")
+    assert row["answer_widget"].currentText() == "maybe"
+    assert row["preview_label"].text() == \
+        "Forms will get nothing: 'maybe' is not one of the options, so pick one"
+    assert row["frame"].property("callout") == "warning"
+    assert ed.collect()[0]["answer"] == "maybe"
+    _row(ed, "years_experience")["answer_widget"].setText("4")
+    monkeypatch.setattr(QtWidgets.QMessageBox, "critical", lambda *a, **k: None)
+    assert ed.save() is False
+    assert store.read_bytes() == before                  # the file keeps "maybe"
+    row["answer_widget"].setCurrentText("Yes")
+    assert row["preview_label"].text() == "Forms will get: Yes"
+
+
+def test_a_long_migrated_note_loads_whole_and_blocks_save_until_shortened(
+        qtbot, tmp_path, monkeypatch):
+    # final review UI I3 / S2: the note is the user's own version 1 text
+    store = tmp_path / "apply_answers.json"
+    _seed_v1(store, [{"id": "work_authorized", "question": "x",
+                      "answer": "Yes, " + "a" * 467}])
+    before = store.read_bytes()
+    ed = _editor(qtbot, store)
+    row = _row(ed, "work_authorized")
+    assert row["note_edit"].text() == "a" * 467
+    assert row["note_counter"].text() == "467/300"
+    shown = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "critical", lambda *a: shown.append(a[2]))
+    assert ed.save() is False
+    assert "the note is 467 of 300 characters" in shown[0]
+    assert store.read_bytes() == before
+    row["note_edit"].setText("a" * 300)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", lambda *a, **k: None)
+    assert ed.save() is True
+
+
 def test_address_state_is_a_combo_when_the_country_is_the_us(qtbot, tmp_path):
     store = tmp_path / "apply_answers.json"
     _seed_v2(store, [_entry("address_country", "choice", "United States", confirmed=True),
@@ -272,12 +340,41 @@ def test_the_user_can_untick_confirmed(qtbot, tmp_path):
 
 def test_confirm_all_ticks_every_set_row_but_not_unset_rows(qtbot, tmp_path):
     store = tmp_path / "apply_answers.json"
-    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=False),
+    _seed_v2(store, [_entry("onsite_ok", "yes_no", "Yes", confirmed=False),
                      _entry("willing_to_relocate", "yes_no", "", confirmed=False)])
     ed = _editor(qtbot, store)
     ed._confirm_all_clicked()
-    assert _row(ed, "work_authorized")["confirmed_cb"].isChecked() is True
+    assert _row(ed, "onsite_ok")["confirmed_cb"].isChecked() is True
     assert _row(ed, "willing_to_relocate")["confirmed_cb"].isChecked() is False
+
+
+def test_confirm_all_leaves_the_untouched_legal_seeds_for_their_own_tick(qtbot, tmp_path):
+    # final review UI I1: the seeds claim authorization, no sponsorship and
+    # zero years, so each needs the user's own tick
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, apply_answers.seed_defaults())
+    ed = _editor(qtbot, store)
+    ed._confirm_all_clicked()
+    for eid in ("work_authorized", "requires_sponsorship", "years_experience"):
+        assert _row(ed, eid)["confirmed_cb"].isChecked() is False, eid
+    for eid in ("willing_to_relocate", "gender", "how_did_you_hear", "address_country"):
+        assert _row(ed, eid)["confirmed_cb"].isChecked() is True, eid
+    assert ed.status.text() == (
+        "Confirmed the rest. These still hold the starting value, so tick each one "
+        "yourself: work authorization, sponsorship, years of experience.")
+
+
+def test_confirm_all_confirms_a_legal_answer_the_user_changed(qtbot, tmp_path):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("requires_sponsorship", "yes_no", "Yes"),
+                     _entry("years_experience", "number", "4"),
+                     _entry("work_authorized", "yes_no", "Yes")])
+    ed = _editor(qtbot, store)
+    ed._confirm_all_clicked()
+    assert _row(ed, "requires_sponsorship")["confirmed_cb"].isChecked() is True
+    assert _row(ed, "years_experience")["confirmed_cb"].isChecked() is True
+    assert _row(ed, "work_authorized")["confirmed_cb"].isChecked() is False
+    assert ed.status.text().endswith(": work authorization.")
 
 
 def test_counts_line_reports_unset_and_unconfirmed(qtbot, tmp_path):
@@ -337,15 +434,104 @@ def test_add_dialog_ok_disabled_until_a_question_is_entered(qtbot, tmp_path):
     assert dlg.ok_button.isEnabled() is False
 
 
-def test_add_dialog_refuses_a_question_a_builtin_already_covers(qtbot, tmp_path):
+@pytest.mark.parametrize("question", [
+    "Are you legally authorized to work in the US?",       # the built-in's own words
+    "are you legally authorized to work in the us",
+    "Are you authorized to work in the US?",               # the run answers it the same way
+])
+def test_add_dialog_refuses_a_question_the_run_fills_from_a_builtin(qtbot, tmp_path, question):
     store = tmp_path / "apply_answers.json"
     _seed_v2(store, apply_answers.with_missing_builtins([]))
     ed = _editor(qtbot, store)
     dlg = AddAnswerDialog(ed.collect())
     qtbot.addWidget(dlg)
-    dlg.question_edit.setText("Are you authorized to work in the US?")
+    dlg.question_edit.setText(question)
     assert dlg.ok_button.isEnabled() is False
-    assert apply_answers.BUILTINS["work_authorized"].question in dlg.message_label.text()
+    text = dlg.message_label.text()
+    assert text == ("The built-in answer 'Are you legally authorized to work in the US?' "
+                    "already answers this question, and the run fills it from that answer.")
+    assert "Edit that answer" not in text
+
+
+def test_add_dialog_refuses_a_years_heading_the_run_fills_from_the_number(qtbot, tmp_path):
+    # a heading with no verb heads a status list only for a yes / no built-in;
+    # the run fills a years box from the years_experience number
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, apply_answers.with_missing_builtins([]))
+    ed = _editor(qtbot, store)
+    dlg = AddAnswerDialog(ed.collect())
+    qtbot.addWidget(dlg)
+    dlg.question_edit.setText("Years of experience")
+    dlg.answer_widget.setText("an answer")
+    assert dlg.ok_button.isEnabled() is False
+    assert dlg.message_label.text().startswith(
+        "The built-in answer '%s'" % apply_answers.BUILTINS["years_experience"].question)
+
+
+@pytest.mark.parametrize("question", [
+    "Are you legally authorized to work in Canada?",       # another country
+    "Are you willing to relocate to Austin, TX?",          # a city
+    "Will you require H-1B visa sponsorship?",             # a visa type
+    "How many years of experience do you have with Python?",   # years of a skill
+    "How many years of experience do you have in your current role?",   # the current job
+    "Work authorization",                                  # a status list heading
+    "State your desired salary",
+    "Country of citizenship",
+])
+def test_add_dialog_accepts_a_question_the_run_hands_to_a_custom_answer(qtbot, tmp_path,
+                                                                       question):
+    # final review UI C1: the guide tells the user to add these word for word
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, apply_answers.with_missing_builtins([]))
+    ed = _editor(qtbot, store)
+    dlg = AddAnswerDialog(ed.collect())
+    qtbot.addWidget(dlg)
+    dlg.question_edit.setText(question)
+    dlg.answer_widget.setText("an answer")
+    assert dlg.message_label.text() == ""
+    assert dlg.ok_button.isEnabled() is True
+
+
+def test_add_dialog_names_a_custom_answer_that_already_has_the_question(qtbot, tmp_path):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_custom("github", "What is your GitHub?", answer="x", confirmed=True)])
+    ed = _editor(qtbot, store)
+    dlg = AddAnswerDialog(ed.collect())
+    qtbot.addWidget(dlg)
+    dlg.question_edit.setText("what is your github")
+    assert dlg.ok_button.isEnabled() is False
+    assert dlg.message_label.text() == \
+        "Your custom answer 'What is your GitHub?' already has this question."
+
+
+def test_a_version_1_store_holding_a_narrower_custom_question_saves(qtbot, tmp_path,
+                                                                   monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v1(store, [{"id": "work_authorized", "question": "x", "answer": "Yes"},
+                     {"id": "canada", "question": "Are you authorized to work in Canada?",
+                      "answer": "No"}])
+    ed = _editor(qtbot, store)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", lambda *a, **k: None)
+    assert ed.save() is True
+    saved = {e["id"]: e for e in apply_answers.load(store)}
+    assert saved["canada"]["answer"] == "No"
+
+
+def test_save_refuses_a_custom_question_edited_into_a_builtins_question(qtbot, tmp_path,
+                                                                        monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True),
+                     _custom("q", "Are you over 18?", "yes_no", "Yes", confirmed=True)])
+    before = store.read_bytes()
+    ed = _editor(qtbot, store)
+    _row(ed, "q")["question_widget"].setText("Are you authorized to work in the US?")
+    shown = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "critical", lambda *a: shown.append(a[2]))
+    assert ed.save() is False
+    assert store.read_bytes() == before
+    assert ("answer 'q': the built-in answer 'Are you legally authorized to work in the US?' "
+            "already answers this question, and the run fills it from that answer; delete "
+            "this custom answer or change its question") in shown[0]
 
 
 def test_add_dialog_ok_enabled_for_a_clean_new_question(qtbot, tmp_path):
@@ -827,7 +1013,8 @@ def test_test_answers_spend_falls_back_to_a_request_count_with_no_reported_cost(
     _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
     monkeypatch.setattr(at, "_current_jev_mode", lambda: "typesafe")
     monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
-    jev.reset_usage()   # FakeJev never counts a live request (jev.py's own contract)
+    # a counter of this test's own: the process-global one belongs to the session
+    monkeypatch.setattr(jev, "_USAGE", {"requests": 0, "input_tokens": 0})
     _stub_apply_screening(monkeypatch, rows=[])
     captured = {}
     monkeypatch.setattr(
@@ -851,7 +1038,11 @@ def test_test_answers_spend_shows_the_cost_the_judge_reports(qtbot, tmp_path, mo
     _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
     monkeypatch.setattr(at, "_current_jev_mode", lambda: "typesafe")
     monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
-    jev.reset_usage()
+    # final review S5: a counter of this test's own, so the simulated request
+    # stays out of the session's usage summary
+    session = jev._USAGE
+    session_before = dict(session)
+    monkeypatch.setattr(jev, "_USAGE", {"requests": 0, "input_tokens": 0})
 
     def fn(answers, judge):
         jev.count_usage(1000)   # simulate one live request the run just made
@@ -871,6 +1062,7 @@ def test_test_answers_spend_shows_the_cost_the_judge_reports(qtbot, tmp_path, mo
     result = captured["fn"]()
     captured["on_done"](result)
     assert "$" in seen["dialog"].spend_label.text()
+    assert session == session_before
 
 
 def test_test_answers_failure_shows_a_message_and_re_enables_the_button(
@@ -951,3 +1143,144 @@ def test_test_answers_result_line_names_the_judge_mode(qtbot, tmp_path, monkeypa
     result = captured["fn"]()
     captured["on_done"](result)
     assert "fake" in seen["dialog"].spend_label.text().lower()
+
+
+# --- final review fixes: the banner, Restore backup, Test my answers ------------------
+
+def test_review_banner_tells_the_user_to_tick_confirmed_and_its_button_confirms_nothing(
+        qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v1(store, [{"id": "requires_sponsorship", "question": "x",
+                      "answer": "No, but I will need H-1B sponsorship after my OPT ends"}])
+    ed = _editor(qtbot, store)
+    assert ed.review_label.text().startswith(
+        "The update read these answers from your old file. Tick Confirmed on each one "
+        "that is right: the run leaves an answer out until you confirm it.\n")
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", lambda *a, **k: None)
+    ed._review_confirmed_clicked()
+    assert ed.review_banner.isHidden() is True
+    (saved,) = apply_answers.load(store)
+    assert (saved["answer"], saved["confirmed"]) == ("No", False)
+
+
+def test_the_review_banner_stays_when_the_save_behind_its_button_fails(
+        qtbot, tmp_path, monkeypatch):
+    # final review UI M9
+    store = tmp_path / "apply_answers.json"
+    _seed_v1(store, [{"id": "work_authorized", "question": "x",
+                      "answer": "Yes, " + "a" * 467}])
+    ed = _editor(qtbot, store)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "critical", lambda *a, **k: None)
+    ed._review_confirmed_clicked()
+    assert ed.review
+    assert ed.review_banner.isHidden() is False
+
+
+def _damaged_with_bak(tmp_path):
+    store = tmp_path / "apply_answers.json"
+    bak = store.with_name(store.name + ".bak")
+    apply_answers.save([_entry("work_authorized", "yes_no", "Yes", confirmed=True)], bak)
+    store.write_text("my newest answers, damaged{", encoding="utf-8")
+    return store, bak
+
+
+def test_restore_backup_keeps_the_damaged_file_and_names_it(qtbot, tmp_path, monkeypatch):
+    # final review UI I4
+    store, bak = _damaged_with_bak(tmp_path)
+    damaged = store.with_name(store.name + ".damaged")
+    damaged.write_text("an older damaged copy", encoding="utf-8")
+    ed = _editor(qtbot, store)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question",
+                        lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Yes)
+    ed._restore_backup_clicked()
+    assert damaged.read_text(encoding="utf-8") == "my newest answers, damaged{"
+    assert store.read_bytes() == bak.read_bytes()
+    assert ed.status.text() == ("Restored apply_answers.json.bak. The damaged file is kept "
+                                "as apply_answers.json.damaged.")
+
+
+def test_revert_after_a_restore_goes_back_to_the_restored_answers(qtbot, tmp_path,
+                                                                  monkeypatch):
+    store, bak = _damaged_with_bak(tmp_path)
+    restored = bak.read_bytes()
+    ed = _editor(qtbot, store)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question",
+                        lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Yes)
+    ed._restore_backup_clicked()
+    assert ed.snapshot == restored
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", lambda *a, **k: None)
+    _row(ed, "work_authorized")["answer_widget"].setCurrentText("No")
+    assert ed.save() is True
+    ed.revert()
+    assert store.read_bytes() == restored
+    assert not ed.load_error
+
+
+def test_a_save_during_a_test_run_leaves_the_button_off_until_the_run_ends(
+        qtbot, tmp_path, monkeypatch):
+    # final review UI I7: one run at a time
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    monkeypatch.setattr(at, "_current_jev_mode", lambda: "typesafe")
+    monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
+    _stub_apply_screening(monkeypatch, rows=[])
+    captured = {}
+    monkeypatch.setattr(
+        at.workers, "run_async",
+        lambda owner, fn, on_done=None, on_error=None: captured.update(fn=fn, on_done=on_done))
+    monkeypatch.setattr(at.QtWidgets.QDialog, "exec", lambda self: None)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", lambda *a, **k: None)
+    ed = AnswersEditor(store_path=store, judge_factory=lambda: jev.FakeJev())
+    qtbot.addWidget(ed)
+    ed.test_answers_btn.click()
+    _row(ed, "work_authorized")["answer_widget"].setCurrentText("No")
+    assert ed.save() is True
+    assert ed.test_answers_btn.isEnabled() is False
+    captured["on_done"](captured["fn"]())
+    assert ed.test_answers_btn.isEnabled() is True
+
+
+def test_a_settings_save_refreshes_the_test_answers_button(qtbot, tmp_path, monkeypatch):
+    # final review UI I8: a key set in Settings turns the button on at once
+    from types import SimpleNamespace
+
+    from qt import main_window as mw
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [])
+    monkeypatch.setattr(at, "_current_jev_mode", lambda: "typesafe")
+    monkeypatch.setattr(at, "_typesafe_key_present", lambda: False)
+    ed = _editor(qtbot, store)
+    assert ed.test_answers_btn.isEnabled() is False
+    monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
+    for name in ("load_min_score", "load_repost_window_days", "load_followup_days"):
+        monkeypatch.setattr(mw, name, lambda: 0)
+    window = SimpleNamespace(answers_tab=ed, reload_data_async=lambda: None,
+                             resume_data_tab=SimpleNamespace(refresh_push_state=lambda: None))
+    mw.MainWindow._on_settings_saved(window)
+    assert ed.test_answers_btn.isEnabled() is True
+
+
+def test_the_fake_judge_result_line_says_it_is_free_and_makes_no_requests():
+    # final review U3
+    text = at._spend_text("fake", {"requests": 0, "input_tokens": 0, "usd": 0.0})
+    assert text == "Judge: fake. The fake judge is free and makes no requests."
+    assert "live" not in at._spend_text("replay", {"requests": 0, "usd": 0.0})
+    assert at._spend_text("typesafe", {"requests": 2, "usd": 0.0}) == \
+        "Judge: typesafe. 2 live requests made (no cost reported)."
+
+
+def test_test_answers_wording_names_saved_answers_in_plain_words(qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [])
+    monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
+    for mode in ("typesafe", "fake"):
+        monkeypatch.setattr(at, "_current_jev_mode", lambda m=mode: m)
+        ed = _editor(qtbot, store)
+        tip = ed.test_answers_btn.toolTip()
+        assert "Uses your saved, confirmed answers. Save first to include new edits." in tip
+        assert "not any unsaved edits" not in tip
+    blurbs = [w.text() for w in ed.findChildren(QtWidgets.QLabel)]
+    assert any(t.endswith("so a form gets the answer you picked, or a blank.") for t in blurbs)
+    dlg = at.TestAnswersDialog([], "Judge: fake.")
+    qtbot.addWidget(dlg)
+    assert not any("live judge" in w.text() for w in dlg.findChildren(QtWidgets.QLabel))

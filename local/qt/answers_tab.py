@@ -1,8 +1,7 @@
 """The Apply Answers editor (Qt): manage the master answer store from the dashboard.
 
 Cycle 18 (SP4) rebuilds this tab around the version 2 typed store (SP1): one row
-per answer, widgeted by its type so the run can never read a saved answer more
-than one way. A yes/no row is a combo of Not set/Yes/No; a number row is a line
+per answer, widgeted by its type so the run reads a saved answer one way only. A yes/no row is a combo of Not set/Yes/No; a number row is a line
 edit shaped to the store's number pattern; a choice row is a combo of Not set
 plus its options (`address_state` swaps between the US state list and free text
 as the address_country row changes); a text row is a multi-line box with a live
@@ -12,25 +11,27 @@ a preview line reads `apply_answers.fact_value` on the row's current, unsaved
 state. Changing an answer confirms its row; the top line counts unset and
 unconfirmed answers, and those rows carry the theme's warning highlight.
 "Add answer" opens `AddAnswerDialog`, whose OK stays disabled while the
-candidate collides with a built-in's topic or another custom question, or
-fails `validate`. Save runs `validate` (blocking on problems) and shows
-`warnings` after a clean write. A damaged store shows its error, never renders
-or saves defaults over it, and offers "Restore backup" only when a good
-`.bak` sits next to it. A migration's review list shows as a banner; "I've
-checked these" clears it and saves.
+candidate is a question the run fills from a built-in (`builtin_answering`)
+or another custom answer's question, or fails `validate`. Save runs the same
+checks (blocking on problems) and shows `warnings` after a clean write. A
+damaged store shows its error, keeps its file as it is (no defaults drawn or
+saved over it), and offers "Restore backup" only when a good `.bak` sits next to it; the restore
+keeps the damaged file as `<name>.damaged`. A migration's review list shows as
+a banner that asks the user to tick Confirmed on each answer; "I've checked
+these" dismisses it and saves.
 
 "Test my answers" (`ED-9`, SP6) runs the shipped screening set
-(`apply_screening.run_screening`) over the answers on disk -- the saved,
-confirmed ones, never this tab's unsaved widget state -- with the judge the
-Auto-apply judge setting names (`_current_jev_mode`, the same
-`auto_apply_jev_mode` key `local/apply_run.py`'s own `load_settings()` reads),
-on a worker thread (`qt.workers.run_async`), and shows the picks in
+(`apply_screening.run_screening`) over the saved, confirmed answers on disk
+with the judge the Auto-apply judge setting names (`_current_jev_mode`, the
+same `auto_apply_jev_mode` key `local/apply_run.py`'s own `load_settings()`
+reads), on a worker thread (`qt.workers.run_async`), and shows the picks in
 `TestAnswersDialog` with the mode named in the result line. The key check that
 disables the button only applies to the "typesafe" (live) mode; a "fake" or
-"replay" mode leaves it enabled and never touches the key.
-`apply_screening` is imported lazily inside the worker closure (a sibling
-module built alongside this one); the judge factory is a constructor
-parameter so tests inject `jev.FakeJev` and never the live one.
+"replay" mode leaves it enabled and skips the key. The button stays off while
+a run is going (`_test_running`), and `refresh_test_answers_state` re-reads the
+mode and the key after a Settings save.
+`apply_screening` is imported inside the worker closure; the judge factory is
+a constructor parameter so tests inject `jev.FakeJev`.
 """
 from __future__ import annotations
 
@@ -41,23 +42,80 @@ from typing import Callable
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+import apply_facts
 import errmsg
 import jev
 from qt import theme, workers
 from resume_tailor import apply_answers
 
-# The built-in's own text is authoritative for the address rules; hard-coded
-# here (rather than importing answer_tables) because BUILTINS["address_country"]
-# already documents it as one of its own options.
+# The built-in's own text is authoritative for the address rules. It is
+# hard-coded here: BUILTINS["address_country"] already lists it as one of its
+# own options.
 _US_COUNTRY = "United States"
+
+# The legal and experience seeds "Confirm all" leaves for the user's own tick
+# while they still hold the seed value, with the name the status line gives each.
+_OWN_TICK = {"work_authorized": "work authorization",
+             "requires_sponsorship": "sponsorship",
+             "years_experience": "years of experience"}
+
+
+def builtin_answering(question: str) -> str:
+    """The question text of the built-in answer the run fills `question` from,
+    or "": the built-in's own words (`apply_answers.find_collision`), or a
+    question `apply_facts.question_fit` reads as that built-in's own. A
+    narrower question (another country, a city, a visa type, years of one
+    skill) is "", so a custom answer can hold it. So is a heading with no verb
+    over a yes / no built-in ("Work authorization", `apply_facts.noun_phrase`):
+    it heads a status list as often as a Yes / No, and the run fills a status
+    list there from a custom answer."""
+    hit = apply_answers.find_collision(question, [])
+    if hit:
+        return hit
+    for key in apply_facts.OWN_QUESTIONS:
+        builtin = apply_answers.BUILTINS.get(key)
+        if builtin is None or apply_facts.question_fit(key, question) != "own":
+            continue
+        if builtin.type == "yes_no" and apply_facts.noun_phrase(question):
+            continue
+        return builtin.question
+    return ""
+
+
+# "The <this>." in the Add answer dialog, "the <this>; ..." in a Save message.
+_ANSWERED_BY = ("built-in answer '%s' already answers this question, and the run "
+                "fills it from that answer")
+
+
+def _own_question_problems(answers: list[dict]) -> list[str]:
+    """Save's check that no custom answer holds a question the run fills from a
+    built-in in other words (the store's `validate` checks the exact words)."""
+    problems = []
+    for e in answers:
+        eid = str(e.get("id", "")).strip()
+        question = str(e.get("question", "") or "").strip()
+        if eid in apply_answers.BUILTINS or not question:
+            continue
+        if apply_answers.find_collision(question, []):
+            continue      # `validate` names it
+        hit = builtin_answering(question)
+        if hit:
+            problems.append("answer '%s': the %s; delete this custom answer or change "
+                            "its question" % (eid, _ANSWERED_BY % hit))
+    return problems
+
+
+# The review banner's first line, above one "We read ..." line per answer.
+_REVIEW_HEAD = ("The update read these answers from your old file. Tick Confirmed on "
+                "each one that is right: the run leaves an answer out until you confirm it.")
 
 # The custom-answer type picker's labels, in `apply_answers.CUSTOM_TYPES` order.
 _TYPE_LABELS = {"text": "Text", "yes_no": "Yes/No", "number": "Number"}
 _LABEL_TYPES = {v: k for k, v in _TYPE_LABELS.items()}
 
 # ST-1's number shape (`\d{1,2}(\.5)?`), written so every valid prefix a user
-# types is already a complete match -- there is no "not yet, but keep typing"
-# state to model. The 0-60 range is a separate check `validate()` makes at save.
+# types is already a complete match, with no "keep typing" state to model. The
+# 0-60 range is a separate check `validate()` makes at save.
 _NUMBER_SHAPE = r"^\d{0,2}(\.5?)?$"
 
 
@@ -72,7 +130,7 @@ def _number_validator(parent=None) -> QtGui.QRegularExpressionValidator:
 # --- ED-9: "Test my answers" -------------------------------------------------------
 
 def _typesafe_key_present() -> bool:
-    """Whether `jev.KEY_ENV` (TYPESAFE_API_KEY) is set -- presence only, the
+    """Whether `jev.KEY_ENV` (TYPESAFE_API_KEY) is set: presence only, the
     value itself is never read, printed or logged here."""
     try:
         import settings
@@ -86,11 +144,10 @@ def _typesafe_key_present() -> bool:
 def _current_jev_mode() -> str:
     """The Auto-apply judge setting (`local/settings.py`'s
     `auto_apply_jev_mode` field), the same key and "typesafe" fallback
-    `local/apply_run.py`'s own `load_settings()` reads. `apply_run.py` is not
-    imported here to get it: it pulls in the whole auto-apply module graph
-    (`apply_form`, `apply_queue`, `apply_trace`, `ats_accounts`, Playwright-
-    adjacent code) just to read one config key, far more than this tab needs,
-    so this mirrors `load_settings()`'s two-line settings read instead."""
+    `local/apply_run.py`'s own `load_settings()` reads. It mirrors that
+    function's two-line settings read: importing `apply_run.py` would pull in
+    the whole auto-apply module graph (`apply_form`, `apply_queue`,
+    `apply_trace`, `ats_accounts`, Playwright-adjacent code) to read one key."""
     try:
         import settings
         return str(settings.load().get("auto_apply_jev_mode") or "typesafe").strip().lower()
@@ -101,9 +158,9 @@ def _current_jev_mode() -> str:
 def _default_judge_factory():
     """The judge the Auto-apply judge setting names, via the same `jev.get`
     factory `local/apply_run.py` calls for a real run. "fake" (and "replay")
-    build a key-free, no-live-request judge -- safe to construct for real;
-    "typesafe" is the only mode the key check in `_refresh_test_answers_state`
-    guards."""
+    build a key-free judge that makes no live request, safe to construct for
+    real; "typesafe" is the only mode the key check in
+    `refresh_test_answers_state` guards."""
     return jev.get(_current_jev_mode())
 
 
@@ -114,9 +171,11 @@ def _usage_delta(before: dict, after: dict) -> dict:
 
 
 def _spend_text(mode: str, delta: dict) -> str:
-    """The run's result line: the configured judge mode, then its reported
-    cost, or the request count when the run made no billed request (a fake or
-    replayed judge)."""
+    """The run's result line: the configured judge mode, then, for the live
+    judge, its reported cost or its request count. A fake or replay judge is
+    free and makes no requests, and the line says so."""
+    if mode != "typesafe":
+        return "Judge: %s. The %s judge is free and makes no requests." % (mode, mode)
     usd = delta.get("usd") or 0.0
     requests = int(delta.get("requests") or 0)
     noun = "request" if requests == 1 else "requests"
@@ -137,7 +196,7 @@ class TestAnswersDialog(QtWidgets.QDialog):
         v = QtWidgets.QVBoxLayout(self)
         note = QtWidgets.QLabel(
             "Ran the shipped screening questions against your saved, confirmed "
-            "answers with the live judge.")
+            "answers.")
         note.setWordWrap(True)
         note.setProperty("muted", True)
         v.addWidget(note)
@@ -165,10 +224,12 @@ class TestAnswersDialog(QtWidgets.QDialog):
 
 class AddAnswerDialog(QtWidgets.QDialog):
     """"Add answer" (ED-4): question, type, answer, and a note where the type
-    has one. OK stays disabled while the question collides with a built-in's
-    topic or another custom question (`apply_answers.find_collision`), or the
-    candidate entry fails `apply_answers.validate` run against the existing
-    answers -- either way the reason shows under the fields.
+    has one. OK stays disabled while the run would fill the question from a
+    built-in (`builtin_answering`), another custom answer already has it
+    (`apply_answers.find_collision`), or the candidate entry fails
+    `apply_answers.validate` run against the existing answers; the reason
+    shows under the fields. A narrower question the run hands to a custom
+    answer (another country, a city, a visa type) is accepted.
     """
 
     def __init__(self, existing_answers: list[dict], parent=None) -> None:
@@ -268,10 +329,12 @@ class AddAnswerDialog(QtWidgets.QDialog):
             self.message_label.setText("")
             self.ok_button.setEnabled(False)
             return
-        hit = apply_answers.find_collision(question, self._existing)
-        if hit:
+        owner = builtin_answering(question)
+        custom = "" if owner else apply_answers.find_collision(question, self._existing)
+        if owner or custom:
             self.message_label.setText(
-                "Already covered by '%s'. Edit that answer instead." % hit)
+                "The %s." % (_ANSWERED_BY % owner) if owner else
+                "Your custom answer '%s' already has this question." % custom)
             self.ok_button.setEnabled(False)
             return
         errs = apply_answers.validate(self._existing + [self.result_entry()])
@@ -300,6 +363,7 @@ class AnswersEditor(QtWidgets.QWidget):
         self.review: list[dict] = []
         # ED-9: the live judge by default; tests pass a fake/stub factory.
         self._judge_factory = judge_factory or _default_judge_factory
+        self._test_running = False      # a Test my answers run is going
 
         self._build_shell()
         self.reload()
@@ -316,7 +380,7 @@ class AnswersEditor(QtWidgets.QWidget):
         top.addWidget(title)
         blurb = QtWidgets.QLabel(
             "Reusable answers the apply helper fills into forms. Every answer is "
-            "typed, so a form gets exactly what you mean or nothing at all.")
+            "typed, so a form gets the answer you picked, or a blank.")
         blurb.setProperty("muted", True)
         blurb.setWordWrap(True)
         top.addWidget(blurb, 1)
@@ -389,7 +453,7 @@ class AnswersEditor(QtWidgets.QWidget):
             self._update_damaged_controls()
             self._refresh_counts()
             self._update_review_banner()
-            self._refresh_test_answers_state()
+            self.refresh_test_answers_state()
             return
         entries = store["answers"]
         if self._merge_defaults:
@@ -405,23 +469,41 @@ class AnswersEditor(QtWidgets.QWidget):
         self._update_damaged_controls()
         self._refresh_counts()
         self._update_review_banner()
-        self._refresh_test_answers_state()
+        self.refresh_test_answers_state()
 
     # ---- rows ------------------------------------------------------------------
 
     def _row_by_id(self, eid: str) -> dict | None:
         return next((r for r in self.rows if r["id"] == eid), None)
 
-    def _make_state_answer_widget(self, us: bool, value: str) -> QtWidgets.QWidget:
+    @staticmethod
+    def _option_combo(options, value: str) -> tuple[QtWidgets.QComboBox, str]:
+        """A combo of Not set plus `options`, on the option `value` names
+        (`apply_answers.match_option`: "Yes " and "yes" are Yes). A stored value
+        that names no option is added as its own item and selected, so a save
+        keeps it and `validate` names it; the second item of the pair is that
+        value, else ""."""
+        widget = QtWidgets.QComboBox()
+        widget.addItems(["Not set", *options])
+        raw = (value or "").strip()
+        option = apply_answers.match_option(raw, tuple(options))
+        if option:
+            widget.setCurrentText(option)
+            return widget, ""
+        if not raw:
+            return widget, ""
+        widget.addItem(raw)
+        widget.setCurrentIndex(widget.count() - 1)
+        return widget, raw
+
+    def _make_state_answer_widget(self, us: bool,
+                                  value: str) -> tuple[QtWidgets.QWidget, str]:
+        """The address_state answer widget and its unmatched stored value."""
         if us:
-            widget = QtWidgets.QComboBox()
-            options = apply_answers.BUILTINS["address_state"].options
-            widget.addItems(["Not set", *options])
-            widget.setCurrentText(value if value in options else "Not set")
-            return widget
+            return self._option_combo(apply_answers.BUILTINS["address_state"].options, value)
         widget = QtWidgets.QLineEdit(value[:apply_answers.STATE_TEXT_MAX])
         widget.setMaxLength(apply_answers.STATE_TEXT_MAX)
-        return widget
+        return widget, ""
 
     def _build_row(self, entry: dict, *, us_hint: bool | None = None) -> dict:
         eid = str(entry.get("id", "")).strip()
@@ -458,24 +540,18 @@ class AnswersEditor(QtWidgets.QWidget):
         note_edit = None
         note_counter = None
         counter_label = None
-        if etype == "yes_no":
-            answer_widget: QtWidgets.QWidget = QtWidgets.QComboBox()
-            answer_widget.addItems(["Not set", *apply_answers.YES_NO])
-            answer_widget.setCurrentText(answer if answer in apply_answers.YES_NO else "Not set")
+        unmatched = ""
+        if etype in ("yes_no", "number"):
+            if etype == "yes_no":
+                answer_widget, unmatched = self._option_combo(apply_answers.YES_NO, answer)
+            else:
+                answer_widget = QtWidgets.QLineEdit(answer)
+                answer_widget.setValidator(_number_validator(answer_widget))
             answer_line.addWidget(answer_widget, 1)
+            # No max length: a loaded note keeps every character (a migrated
+            # note is the user's own old text); the counter and Save's
+            # `validate` hold it to NOTE_MAX.
             note_edit = QtWidgets.QLineEdit(str(entry.get("note", "") or ""))
-            note_edit.setMaxLength(apply_answers.NOTE_MAX)
-            note_edit.setPlaceholderText("Note (optional)")
-            answer_line.addWidget(note_edit, 1)
-            note_counter = QtWidgets.QLabel("")
-            note_counter.setProperty("muted", True)
-            answer_line.addWidget(note_counter)
-        elif etype == "number":
-            answer_widget = QtWidgets.QLineEdit(answer)
-            answer_widget.setValidator(_number_validator(answer_widget))
-            answer_line.addWidget(answer_widget, 1)
-            note_edit = QtWidgets.QLineEdit(str(entry.get("note", "") or ""))
-            note_edit.setMaxLength(apply_answers.NOTE_MAX)
             note_edit.setPlaceholderText("Note (optional)")
             answer_line.addWidget(note_edit, 1)
             note_counter = QtWidgets.QLabel("")
@@ -484,12 +560,10 @@ class AnswersEditor(QtWidgets.QWidget):
         elif etype == "choice":
             if eid == "address_state":
                 us = True if us_hint is None else us_hint
-                answer_widget = self._make_state_answer_widget(us, answer)
+                answer_widget, unmatched = self._make_state_answer_widget(us, answer)
             else:
                 options = builtin.options if builtin is not None else ()
-                answer_widget = QtWidgets.QComboBox()
-                answer_widget.addItems(["Not set", *options])
-                answer_widget.setCurrentText(answer if answer in options else "Not set")
+                answer_widget, unmatched = self._option_combo(options, answer)
             answer_line.addWidget(answer_widget, 1)
         else:  # text
             answer_widget = QtWidgets.QPlainTextEdit(answer)
@@ -509,7 +583,8 @@ class AnswersEditor(QtWidgets.QWidget):
                "answer_widget": answer_widget, "answer_line": answer_line,
                "note_edit": note_edit, "note_counter": note_counter,
                "counter_label": counter_label, "confirmed_cb": confirmed_cb,
-               "delete_btn": delete_btn, "preview_label": preview_label}
+               "delete_btn": delete_btn, "preview_label": preview_label,
+               "unmatched": unmatched}
 
         self._wire_answer_widget(row)
         self._wire_note_edit(row)
@@ -566,7 +641,7 @@ class AnswersEditor(QtWidgets.QWidget):
         return widget.text().strip()
 
     def _entry_snapshot(self, row: dict) -> dict:
-        """The entry this row would save right now -- unsaved, live widget state."""
+        """The entry this row would save right now, read from the live widgets."""
         entry = dict(row["entry"])
         entry["id"] = row["id"]
         entry["type"] = row["type"]
@@ -585,6 +660,9 @@ class AnswersEditor(QtWidgets.QWidget):
         answer = self._row_answer_text(row)
         if not answer:
             return "Forms will get nothing (not set)"
+        if self._is_unmatched(row, answer):
+            return ("Forms will get nothing: '%s' is not one of the options, so pick one"
+                    % answer)
         value = apply_answers.fact_value(self._entry_snapshot(row))
         if not value:
             return "Forms will get nothing until you confirm"
@@ -603,9 +681,15 @@ class AnswersEditor(QtWidgets.QWidget):
             row["counter_label"].setText(
                 "%d/%d" % (len(row["answer_widget"].toPlainText()), apply_answers.TEXT_MAX))
 
+    @staticmethod
+    def _is_unmatched(row: dict, answer: str) -> bool:
+        """True while a combo shows the stored value that names none of its options."""
+        return bool(row.get("unmatched")) and answer == row["unmatched"]
+
     def _refresh_row_highlight(self, row: dict) -> None:
         answer = self._row_answer_text(row)
-        warn = (not answer) or (not row["confirmed_cb"].isChecked())
+        warn = ((not answer) or (not row["confirmed_cb"].isChecked())
+                or self._is_unmatched(row, answer))
         frame = row["frame"]
         frame.setProperty("card", not warn)
         frame.setProperty("callout", "warning" if warn else None)
@@ -649,11 +733,11 @@ class AnswersEditor(QtWidgets.QWidget):
             return
         old_value = self._row_answer_text(state_row)
         if us:
-            keep = (old_value
-                    if old_value in apply_answers.BUILTINS["address_state"].options else "")
+            keep = apply_answers.match_option(
+                old_value, apply_answers.BUILTINS["address_state"].options) or ""
         else:
             keep = old_value if len(old_value) <= apply_answers.STATE_TEXT_MAX else ""
-        new_widget = self._make_state_answer_widget(us, keep)
+        new_widget, state_row["unmatched"] = self._make_state_answer_widget(us, keep)
         self._replace_answer_widget(state_row, new_widget)
         self._wire_answer_widget(state_row)
         self._update_row_preview(state_row)
@@ -665,10 +749,25 @@ class AnswersEditor(QtWidgets.QWidget):
         return [self._entry_snapshot(row) for row in self.rows]
 
     def _confirm_all_clicked(self) -> None:
+        # The legal answers still holding their starting value wait for their
+        # own tick: a seed the user has not looked at is a guess about them.
+        seeds = {e["id"]: e["answer"] for e in apply_answers.seed_defaults()}
+        left = []
         for row in self.rows:
-            if self._row_answer_text(row):
-                row["confirmed_cb"].setChecked(True)
+            answer = self._row_answer_text(row)
+            if not answer or row["confirmed_cb"].isChecked():
+                continue
+            if row["id"] in _OWN_TICK and answer == seeds.get(row["id"]):
+                left.append(_OWN_TICK[row["id"]])
+                continue
+            row["confirmed_cb"].setChecked(True)
         self._refresh_counts()
+        if left:
+            self.status.setText(
+                "Confirmed the rest. These still hold the starting value, so tick "
+                "each one yourself: %s." % ", ".join(left))
+        else:
+            self.status.setText("Confirmed every answer that is set.")
 
     def _add_answer_clicked(self) -> None:
         dialog = AddAnswerDialog(self.collect(), parent=self)
@@ -698,7 +797,7 @@ class AnswersEditor(QtWidgets.QWidget):
             QtWidgets.QMessageBox.critical(self, "Apply answers", self.load_error)
             return False
         answers = self.collect()
-        errs = apply_answers.validate(answers)
+        errs = apply_answers.validate(answers) + _own_question_problems(answers)
         if errs:
             self.status.setText("Not saved; see the error.")
             QtWidgets.QMessageBox.critical(self, "Apply answers",
@@ -762,38 +861,62 @@ class AnswersEditor(QtWidgets.QWidget):
             return False
         return True
 
+    def _damaged_copy_path(self) -> Path:
+        return self.store_path.with_name(self.store_path.name + ".damaged")
+
     def _restore_backup_clicked(self) -> None:
         bak = self._backup_path()
+        damaged = self._damaged_copy_path()
         if QtWidgets.QMessageBox.question(
-                self, "Restore backup", "Replace the damaged file with %s?" % bak.name
+                self, "Restore backup",
+                "Replace the damaged file with %s? The damaged file is kept as %s."
+                % (bak.name, damaged.name)
         ) != QtWidgets.QMessageBox.StandardButton.Yes:
             return
-        shutil.copy2(str(bak), str(self.store_path))
+        try:
+            # The damaged bytes may hold the newest answers; keep them first.
+            shutil.copyfile(str(self.store_path), str(damaged))
+            shutil.copy2(str(bak), str(self.store_path))
+            restored = self.store_path.read_bytes()
+        except OSError as exc:
+            self.status.setText("Restore failed.")
+            QtWidgets.QMessageBox.critical(self, "Restore backup", errmsg.for_user(exc))
+            return
         self.reload()
+        # Revert now goes back to the restored answers.
+        self.snapshot = restored
+        self.status.setText("Restored %s. The damaged file is kept as %s."
+                            % (bak.name, damaged.name))
 
     def _update_review_banner(self) -> None:
         if self.review:
             lines = ["We read '%s' as %s" % (r["before"], r["after"]) for r in self.review]
-            self.review_label.setText("\n".join(lines))
+            self.review_label.setText("\n".join([_REVIEW_HEAD, *lines]))
             self.review_banner.setVisible(True)
         else:
             self.review_label.setText("")
             self.review_banner.setVisible(False)
 
     def _review_confirmed_clicked(self) -> None:
+        """Dismiss the review list. It confirms no answer; each keeps its own tick."""
+        keep = self.review
         self.review = []
+        if not self.save():
+            self.review = keep
         self._update_review_banner()
-        self.save()
 
     # ---- ED-9: "Test my answers" ----------------------------------------------------
 
-    def _refresh_test_answers_state(self) -> None:
+    def refresh_test_answers_state(self) -> None:
+        """Re-read the judge mode and the key and set the button. The main
+        window calls it after a Settings save, so a key set there counts at once."""
         mode = _current_jev_mode()
         live = mode == "typesafe"
-        # The key is only ever a "typesafe" concern -- a fake/replay mode
-        # never touches it (`_typesafe_key_present` short-circuits away here).
+        # Only the "typesafe" mode needs the key; a fake or replay mode skips
+        # the key check.
         key_ok = _typesafe_key_present() if live else True
-        self.test_answers_btn.setEnabled(key_ok and not self.load_error)
+        self.test_answers_btn.setEnabled(
+            key_ok and not self.load_error and not self._test_running)
         if self.load_error:
             self.test_answers_btn.setToolTip("Fix the damaged answers file first.")
         elif live and not key_ok:
@@ -803,26 +926,27 @@ class AnswersEditor(QtWidgets.QWidget):
         elif live:
             self.test_answers_btn.setToolTip(
                 "Uses the Auto-apply judge setting (currently: %s). Runs the "
-                "shipped screening questions against your saved, confirmed "
-                "answers here (not any unsaved edits in this tab) with the live "
-                "judge. Costs a small live-request fee per click." % mode)
+                "shipped screening questions with the live judge. Uses your saved, "
+                "confirmed answers. Save first to include new edits. Costs a small "
+                "live-request fee per click." % mode)
         else:
             self.test_answers_btn.setToolTip(
                 "Uses the Auto-apply judge setting (currently: %s). Runs the "
-                "shipped screening questions against your saved, confirmed "
-                "answers here (not any unsaved edits in this tab). This mode "
-                "makes no live request and costs nothing." % mode)
+                "shipped screening questions. Uses your saved, confirmed answers. "
+                "Save first to include new edits. This mode makes no live request "
+                "and costs nothing." % mode)
 
     def _test_answers_clicked(self) -> None:
         store_path = self.store_path
         judge_factory = self._judge_factory
         mode = _current_jev_mode()
+        self._test_running = True
         self.test_answers_btn.setEnabled(False)
         self.status.setText("Testing your answers (%s judge)..." % mode)
 
         def work():
-            import apply_screening   # Agent A's sibling module; not yet present at import time
-            answers = apply_answers.load(store_path)   # the saved, confirmed store, not this tab
+            import apply_screening   # imported inside the worker
+            answers = apply_answers.load(store_path)   # the saved, confirmed store
             judge = judge_factory()
             before = jev.usage()
             rows = apply_screening.run_screening(answers, judge)
@@ -835,11 +959,13 @@ class AnswersEditor(QtWidgets.QWidget):
 
     def _test_answers_done(self, result, mode: str) -> None:
         rows, spend = result
-        self._refresh_test_answers_state()
+        self._test_running = False
+        self.refresh_test_answers_state()
         self.status.setText("Tested your answers.")
         TestAnswersDialog(rows, _spend_text(mode, spend), parent=self).exec()
 
     def _test_answers_failed(self, exc) -> None:
-        self._refresh_test_answers_state()
+        self._test_running = False
+        self.refresh_test_answers_state()
         self.status.setText("Test my answers failed.")
         QtWidgets.QMessageBox.critical(self, "Test my answers", errmsg.for_user(exc))

@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ruamel.yaml import YAML
+from ruamel.yaml import YAML, YAMLError
 
 from . import assets, config
 
@@ -78,9 +78,26 @@ def _path(path: Optional[Path]) -> Path:
 
 
 def _load_doc(path: Path):
+    """Parse `path` with the round-trip loader.
+
+    A hand-edited master that is no longer valid YAML raises ruamel's own
+    `YAMLError`, which is not a `ValueError` and so slips past every write
+    handler's `except (ValueError, OSError)`: the add dialogs lose what the
+    user typed, and Save appears to do nothing (I6). Re-raised here as a
+    `ValueError` naming the line and column, one fix covers every caller below.
+    """
     y = _yaml()
-    with path.open(encoding="utf-8") as fh:
-        return y, y.load(fh)
+    try:
+        with path.open(encoding="utf-8") as fh:
+            return y, y.load(fh)
+    except YAMLError as exc:
+        problem = getattr(exc, "problem", None) or str(exc).splitlines()[0]
+        mark = getattr(exc, "problem_mark", None)
+        if mark is not None:
+            raise ValueError(
+                "Invalid YAML at line %d, column %d: %s"
+                % (mark.line + 1, mark.column + 1, problem)) from exc
+        raise ValueError("Invalid YAML: %s" % problem) from exc
 
 
 # ── shared atomic write + timestamped backup ring ─────────────────────────────
@@ -284,14 +301,15 @@ def atom_problems(section: str, index: int, atom: Dict[str, Any],
     """Every problem with `atom` as a new achievement for section[index] ([] means
     it's fine).
 
-    entry_problems' twin for a single atom added through `add_atom` rather than
-    the first achievement of a new entry: the same "needs a 'what'" / "needs at
-    least one angle" rules the add-atom dialog has always enforced on submit (an
-    atom missing either renders as an empty line in `assets.atom_line()` and is
+    entry_problems' twin, covering a single atom added through `add_atom` to an
+    existing entry (entry_problems itself covers the first achievement of a
+    brand new entry): the same "needs a 'what'" / "needs at least one angle"
+    rules the add-atom dialog has always enforced on submit (an
+    atom missing either one renders as an empty line in `assets.atom_line()` and is
     silently dropped, never reaching the tailored resume), the target entry must
     exist when `doc` is given (the same check `add_atom`'s `_entry()` raises on
     today, surfaced here before any write is attempted so `add_atom` can refuse
-    up front instead of failing partway through), and an em dash anywhere in the
+    in one clean step, fully up front), and an em dash anywhere in the
     atom's own text is flagged, since the user's style rule bans it from resume
     text -- this only reports the problem, it never rewrites what the user typed.
 

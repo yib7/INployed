@@ -8,6 +8,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from ruamel.yaml import YAMLError
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
@@ -345,3 +346,21 @@ def test_add_atom_rejects_an_em_dash(master):
     with pytest.raises(ValueError, match="em dash"):
         master_edit.add_atom("projects", 0, {"what": "shipped it—fast", "angles": ["a"]})
     assert master.read_bytes() == before
+
+
+# --- I6 (final review): a broken master's YAMLError must escape as a ValueError
+# carrying the line and column, so the Qt editor's existing
+# `except (ValueError, OSError)` handlers catch it and keep what the user
+# typed, where a bare ruamel.yaml.YAMLError would fall through every one of
+# them. -------------------------------------------------------------------
+
+def test_a_broken_master_raises_valueerror_with_line_and_column(master):
+    master.write_text("basics:\n  name: b: c\n", encoding="utf-8")
+    with pytest.raises(ValueError) as exc_info:
+        master_edit.append_entry("projects", {
+            "name": "New Proj", "dates": "2025-01 / 2025-05",
+            "achievements": [{"what": "did X", "angles": ["llm"]}],
+        })
+    assert not isinstance(exc_info.value, YAMLError)
+    msg = str(exc_info.value)
+    assert "line" in msg and "column" in msg

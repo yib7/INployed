@@ -199,10 +199,13 @@ class Patches:
 
 
 @contextmanager
-def hermetic(rundir: Path, *, password: bool = False):
+def hermetic(rundir: Path, *, password: bool = False, today: Any = None):
     """The run's stores in `rundir` (the queue, the account ledger), the
     synthetic answer bank for every catalog, and the synthetic master
-    password when the flow signs in (else none is stored)."""
+    password when the flow signs in (else none is stored). With `today`
+    (a `datetime.date`), every catalog reads it as today's date: the real
+    column passes the day its cache was recorded
+    (`jev_harness.RECORDED_TODAY`)."""
     import apply_run
     import ats_accounts
     p = Patches()
@@ -214,6 +217,8 @@ def hermetic(rundir: Path, *, password: bool = False):
 
         def _build(folder, **kw):
             kw.setdefault("answers", answers)
+            if today is not None:
+                kw.setdefault("today", today)
             return real_build(folder, **kw)
         p.setattr(apply_run.apply_facts, "build", _build)
         p.setattr(ats_accounts, "_get_master_password",
@@ -2222,7 +2227,13 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
     sends = Sends(recorder)
     start = time.monotonic()
     with ExitStack() as stack:
-        stack.enter_context(hermetic(rundir, password=f.password))
+        # the real column's cache keys carry the catalog's date: it reads the
+        # day the cache was recorded, the fake and the noisy seeds the real one
+        today = None
+        if judge_name == REAL:
+            import jev_harness
+            today = jev_harness.RECORDED_TODAY
+        stack.enter_context(hermetic(rundir, password=f.password, today=today))
         if fast:
             stack.enter_context(fast_timing(f.settle_s, f.timing))
         if f.on_read:

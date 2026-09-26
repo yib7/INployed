@@ -10,6 +10,10 @@ judge factory, which is also `jev_harness.judge()` for helpers without fixture
 access. `AUTO_APPLY_TEST_JEV` picks the mode; see `jev_harness` for the
 contract. In `fake` mode the hooks below do nothing.
 
+In `record` and `replay` mode the fixture also pins the fact catalog's date
+to the day the cache was recorded (`jev_harness.RECORDED_TODAY`), so the
+committed cache replays on any later day.
+
 Hooks, active in `record` and `replay` mode only:
 
 - collection: in `record` mode, one line with the number of tests that use
@@ -108,11 +112,21 @@ def jev_judge(request, monkeypatch):
     jev_harness.activate(session)
     if session.soft:
         _capture_outcomes(monkeypatch, record)
+        _pin_today(monkeypatch)
     try:
         yield session.judge
     finally:
         jev_harness.deactivate()
         session.end(request.node.nodeid)
+
+
+def _pin_today(monkeypatch):
+    """Every catalog the test builds reads today as the day the cache was
+    recorded (`jev_harness.RECORDED_TODAY`): the `today` fact is in each
+    request that lists the facts, so the real date would miss the cache on
+    every day after the recording."""
+    import apply_facts
+    monkeypatch.setattr(apply_facts, "build", jev_harness.pinned_build(apply_facts.build))
 
 
 def _capture_outcomes(monkeypatch, record):

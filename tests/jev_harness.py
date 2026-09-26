@@ -38,7 +38,8 @@ import os
 import shutil
 import sys
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +61,25 @@ RUNNER_TESTS = "tests/test_apply_run.py tests/test_apply_run_boundaries.py"
 # the recording command a miss points at: the script sets the cap, exports
 # the key for one run and runs the runner tests serially
 RECORD_COMMAND = r".\scripts\jev_record.ps1 -Target runner -Cap <USD>"
+
+# The day both committed caches (`cache.json`, `matrix_cache.json`) were
+# recorded on. The fact catalog lists today's date (`apply_facts.build`, the
+# `today` fact) in every request that carries the facts, so a request made on
+# another day has another key. A record or replay run (the runner tests here,
+# the matrix's real column through `apply_harness.hermetic`) reads today as
+# this day, and the caches replay on any later day. A new recording keeps this
+# date, or moves it together with every cache it re-records. The fake and the
+# noisy judges and production keep the real date.
+RECORDED_TODAY = date(2026, 9, 25)
+
+
+def pinned_build(build: Callable[..., Any], today: date = RECORDED_TODAY) -> Callable[..., Any]:
+    """`build` (`apply_facts.build`) with `today` as the catalog's date when
+    the caller names none."""
+    def _build(folder, **kw):
+        kw.setdefault("today", today)
+        return build(folder, **kw)
+    return _build
 
 
 def mode_from(env: Mapping[str, str]) -> str:

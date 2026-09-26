@@ -20,6 +20,19 @@ dropped after a re-record. The third target, the page read over the local captur
 `tests/fixtures/local_captures/_jev/`: real third-party pages stay on the
 machine that holds them, and so do their answers.
 
+## The recording day
+
+Every request that lists the fact catalog carries today's date (the `today`
+fact, `local/apply_facts.py`), so the same request made on another day has
+another key. A record or replay run reads today as `RECORDED_TODAY` in
+`tests/jev_harness.py`, 2026-09-25, the day both caches were recorded: the
+runner tests through the `jev_judge` fixture, the matrix's real column through
+`apply_harness.hermetic`. Both caches then replay on any later day. A new
+recording keeps that date; a recording on a new date moves the constant and
+re-records both caches. The fake and noisy judges and production read the
+real date. The captures' page reads list no facts, so their cache needs no
+pin.
+
 ## The runner tests' judge
 
 `AUTO_APPLY_TEST_JEV` picks the judge for every runner in the two modules:

@@ -726,3 +726,46 @@ def test_a_matrix_run_prints_no_drain_table_and_writes_no_drain_report(
     assert r.ok, r
     assert "| # | job |" not in capsys.readouterr().out
     assert not list(tmp_path.rglob(f"{apply_run.DRAIN_REPORT_PREFIX}*.md"))
+
+
+# --- R-DATE: the committed real-column cache replays on any day after its recording --------------
+
+def _clock_reads(monkeypatch, day):
+    """`apply_facts`'s clock reads `day` as today."""
+    import datetime
+
+    import apply_facts
+
+    class _Day(datetime.date):
+        @classmethod
+        def today(cls):
+            return cls(day.year, day.month, day.day)
+    monkeypatch.setattr(apply_facts, "date", _Day)
+
+
+def test_the_real_columns_replay_on_a_later_day_still_hits_the_committed_cache(
+        _browser, flow_server, tmp_path, monkeypatch):
+    # post_form's placeholder check lists the facts, today's date among them:
+    # a replay on the day after the recording missed it (the controller's
+    # checkpoint, 2026-09-26: 94 misses over 106 flows)
+    import datetime
+
+    import jev_harness
+    _clock_reads(monkeypatch, jev_harness.RECORDED_TODAY + datetime.timedelta(days=30))
+    r = h.run_flow(h.flow("post_form"), h.real_judge("replay").judge, h.REAL, browser=_browser,
+                   server=flow_server, workdir=tmp_path)
+    assert r.replay_misses == 0 and r.ok, r
+
+
+def test_only_the_real_column_reads_the_recording_day(tmp_path, monkeypatch):
+    import datetime
+
+    import apply_run
+    import jev_harness
+    later = jev_harness.RECORDED_TODAY + datetime.timedelta(days=30)
+    _clock_reads(monkeypatch, later)
+    folder = h.write_job_folder(tmp_path / "job")
+    with h.hermetic(tmp_path):
+        assert apply_run.apply_facts.build(folder).value("today") == later.isoformat()
+    with h.hermetic(tmp_path, today=jev_harness.RECORDED_TODAY):
+        assert apply_run.apply_facts.build(folder).value("today") == "2026-09-25"

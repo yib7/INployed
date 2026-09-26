@@ -633,6 +633,65 @@ def test_fixture_in_replay_mode_replays_and_turns_a_divergence_into_an_xfail(
     assert "jev replay" in result.stdout.str()
 
 
+_INNER_LATER_DAY = '''
+import datetime
+import apply_facts
+pytest_plugins = ["conftest_jev"]
+
+STATE = STATE_HERE
+QUESTIONS = QUESTIONS_HERE
+
+
+class _Later(datetime.date):
+    @classmethod
+    def today(cls):
+        return cls(2026, 10, 1)
+
+
+def test_a_later_day(jev_judge, tmp_path, monkeypatch):
+    monkeypatch.setattr(apply_facts, "date", _Later)
+    catalog = apply_facts.build(tmp_path, answers=[])
+    jev_judge().judge(dict(STATE, facts=catalog.verification_excerpt(["today"])), QUESTIONS)
+    assert catalog.value("today") == EXPECTED_HERE
+'''
+
+
+def _inner_later_day(pytester, expected: str):
+    pytester.syspathinsert(TESTS)
+    pytester.syspathinsert(REPO / "local")
+    pytester.makepyfile(test_inner=_INNER_LATER_DAY.replace("STATE_HERE", repr(STATE))
+                        .replace("QUESTIONS_HERE", repr(QUESTIONS))
+                        .replace("EXPECTED_HERE", repr(expected)))
+
+
+def test_a_replay_whose_clock_reads_a_later_day_still_hits_the_cache(
+        pytester, monkeypatch, tmp_path):
+    # R-DATE: the catalog lists today's date in every request that carries
+    # the facts; a replay on the day after the recording missed each one.
+    # The cache holds a request recorded on the pinned day, the inner test's
+    # clock reads 2026-10-01, and the replay still hits it.
+    import apply_facts
+    cache = tmp_path / "cache.json"
+    catalog = apply_facts.build(tmp_path, answers=[], today=jev_harness.RECORDED_TODAY)
+    jev.ReplayJev(jev.FakeJev(), cache).judge(
+        dict(STATE, facts=catalog.verification_excerpt(["today"])), QUESTIONS)
+    monkeypatch.setenv(jev_harness.MODE_ENV, "replay")
+    monkeypatch.setenv(jev.CACHE_ENV, str(cache))
+    _inner_later_day(pytester, jev_harness.RECORDED_TODAY.isoformat())
+    result = pytester.runpytest_inprocess("-q", "-p", "no:cacheprovider")
+    result.assert_outcomes(passed=1)
+    assert "replay hits 1, misses 0" in result.stdout.str()
+
+
+def test_the_fake_mode_catalog_keeps_the_clocks_own_date(pytester, monkeypatch, tmp_path):
+    monkeypatch.delenv(jev_harness.MODE_ENV, raising=False)
+    monkeypatch.setenv(jev.CACHE_ENV, str(tmp_path / "cache.json"))
+    _inner_later_day(pytester, "2026-10-01")
+    result = pytester.runpytest_inprocess("-q", "-p", "no:cacheprovider")
+    result.assert_outcomes(passed=1)
+    assert not (tmp_path / "cache.json").exists()
+
+
 def test_fixture_in_record_mode_without_a_key_skips_every_test(pytester, monkeypatch, tmp_path):
     monkeypatch.setenv(jev_harness.MODE_ENV, "record")
     monkeypatch.delenv(jev.KEY_ENV, raising=False)

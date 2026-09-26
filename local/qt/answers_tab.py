@@ -3,8 +3,14 @@
 A table over `apply_answers.json`: one row per screening-question answer (question,
 answer, kind fixed/open-ended). Add / edit / delete. Save validates via
 `apply_answers.validate` and backs up to `.bak`; "Revert to opening state" restores
-the snapshot taken when the editor opened. Every row is saved active — the
+the snapshot taken when the editor opened. Every row is saved active; the
 needs-review status (and its filter) was retired.
+
+Cycle 18 moved the store to version 2 (typed, confirmed answers). Until SP4
+rebuilds this tab, the rows keep their plain widgets: `collect()` carries each
+loaded entry's other fields (type, note, confirmed, unknown keys) through, a new
+row is a text answer, and a changed answer is confirmed. A damaged store shows
+its error and is never saved over.
 """
 from __future__ import annotations
 
@@ -89,8 +95,23 @@ class AnswersEditor(QtWidgets.QWidget):
         for row in self.rows:
             row["frame"].setParent(None)
         self.rows.clear()
-        loader = apply_answers.load_with_defaults if self._merge_defaults else apply_answers.load
-        for entry in loader(self.store_path):
+        self.load_error = ""
+        self.review: list[dict] = []
+        try:
+            store = apply_answers.load_store(self.store_path)
+        except apply_answers.AnswerStoreError as exc:
+            # A damaged file is shown, never replaced by defaults or saved over.
+            self.load_error = (f"The Apply Answers file is damaged ({exc.path}): {exc.reason}. "
+                               f"Restore {Path(exc.path).name}.bak or fix the file, then "
+                               "reopen this tab.")
+            self.status.setText(self.load_error)
+            return
+        entries = store["answers"]
+        if self._merge_defaults:
+            entries = apply_answers.with_missing_builtins(entries)
+        # kept for the next save, so a migrated store's review list is not lost
+        self.review = store["review"]
+        for entry in entries:
             self._add_row_widgets(entry)
 
     def _add_row_widgets(self, entry: dict) -> dict:
@@ -112,16 +133,19 @@ class AnswersEditor(QtWidgets.QWidget):
         h.addWidget(answer, 4)
         h.addWidget(kind, 1)
         h.addWidget(delete, 1)
+        # "entry" is the loaded record, so collect() carries its other fields
+        # (type, note, confirmed and any key this table does not show) through.
         row = {"id": str(entry.get("id", "")), "question": question, "answer": answer,
-               "kind": kind, "frame": frame}
+               "kind": kind, "frame": frame, "entry": dict(entry),
+               "loaded_answer": answer.text()}
         delete.clicked.connect(lambda _=False, r=row: self._delete_row(r))
         self._rows_box.insertWidget(self._rows_box.count() - 1, frame)  # before the stretch
         self.rows.append(row)
         return row
 
     def add_row(self, entry: dict | None = None) -> dict:
-        entry = entry or {"id": "", "question": "", "answer": "",
-                          "kind": "open-ended", "status": "active"}
+        entry = entry or {"id": "", "question": "", "type": "text", "answer": "", "note": "",
+                          "confirmed": False, "kind": "open-ended", "status": "active"}
         row = self._add_row_widgets(entry)
         return row
 
@@ -144,14 +168,25 @@ class AnswersEditor(QtWidgets.QWidget):
             if rid in taken:
                 rid = apply_answers.new_id(question or rid, taken)
             taken.add(rid)
-            out.append({"id": rid, "question": question, "answer": answer,
-                        "kind": row["kind"].currentText(), "status": "active"})
+            entry = dict(row["entry"])
+            entry.update({"id": rid, "question": question, "answer": answer,
+                          "kind": row["kind"].currentText(), "status": "active"})
+            entry.setdefault("type", "text")
+            entry.setdefault("note", "")
+            entry["confirmed"] = entry.get("confirmed") is True
+            if answer != row["loaded_answer"]:
+                entry["confirmed"] = True       # the user changed it, so they confirmed it
+            out.append(entry)
         return out
 
     def validate(self) -> list[str]:
         return apply_answers.validate(self.collect())
 
     def save(self) -> bool:
+        if self.load_error:
+            self.status.setText("Not saved: the answers file is damaged.")
+            QtWidgets.QMessageBox.critical(self, "Apply answers", self.load_error)
+            return False
         answers = self.collect()
         errs = apply_answers.validate(answers)
         if errs:
@@ -160,8 +195,8 @@ class AnswersEditor(QtWidgets.QWidget):
                                            "Problems found:\n\n- " + "\n- ".join(errs))
             return False
         try:
-            apply_answers.save(answers, self.store_path)
-        except (ValueError, OSError) as exc:
+            apply_answers.save(answers, self.store_path, review=self.review)
+        except (ValueError, OSError, apply_answers.AnswerStoreError) as exc:
             self.status.setText("Save failed.")
             QtWidgets.QMessageBox.critical(self, "Apply answers", errmsg.for_user(exc))
             return False

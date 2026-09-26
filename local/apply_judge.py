@@ -64,6 +64,8 @@ from urllib.parse import urlsplit
 from apply_facts import FactCatalog, quick_map
 from apply_form import FormDigest, password_box
 from jev import APOSTROPHES, PAGE_KIND_NOULS, Answer, request_fits
+# pure data (no package imports, no .env): the one US state list the store shares
+from resume_tailor.answer_tables import US_STATES as _US_STATES
 
 log = logging.getLogger("apply_judge")
 
@@ -555,18 +557,9 @@ def _compact_field(f) -> dict[str, Any]:
 
 AUTOFILL_PARSER = "autofill parser"     # the extractor's help for a resume parser's upload
 
-_US_STATES = {
-    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas", "CA": "California",
-    "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware", "FL": "Florida", "GA": "Georgia",
-    "HI": "Hawaii", "ID": "Idaho", "IL": "Illinois", "IN": "Indiana", "IA": "Iowa",
-    "KS": "Kansas", "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
-    "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi",
-    "MO": "Missouri", "MT": "Montana", "NE": "Nebraska", "NV": "Nevada", "NH": "New Hampshire",
-    "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York", "NC": "North Carolina",
-    "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma", "OR": "Oregon", "PA": "Pennsylvania",
-    "RI": "Rhode Island", "SC": "South Carolina", "SD": "South Dakota", "TN": "Tennessee",
-    "TX": "Texas", "UT": "Utah", "VT": "Vermont", "VA": "Virginia", "WA": "Washington",
-    "WV": "West Virginia", "WI": "Wisconsin", "WY": "Wyoming", "DC": "District of Columbia"}
+# _US_STATES (code -> full name, DC included) is the answer store's own list
+# (`resume_tailor.answer_tables.US_STATES`, imported above): a saved state and a
+# form's state options are matched against the same names.
 # Names one answer goes by: each set is one meaning (normalised as `_norm_option` does)
 _ALIASES: tuple[frozenset[str], ...] = tuple(frozenset(g) for g in (
     ("united states", "us", "usa", "u s", "u s a", "united states of america", "america"),

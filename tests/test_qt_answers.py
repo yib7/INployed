@@ -1,15 +1,26 @@
-"""The Qt Apply Answers editor — load/collect round-trip, validate, revert.
+"""The Qt Apply Answers editor: load/collect round-trip, validate, revert.
 
 Cycle 13 retired the needs-review status: the editor has no status dropdown and no
 needs-review filter; every row is saved active. A legacy needs-review entry still
 loads and round-trips to active.
+
+Cycle 18 (SP1) moved the store to version 2 (typed, confirmed answers). Until SP4
+rebuilds this tab, `collect()` carries each loaded entry's other fields through, a
+new row is text, and a changed answer is confirmed; a damaged store shows its
+error and is never saved over. `_seed` writes a version 1 file, which the store
+migrates in memory on load.
 """
+import json
+
+from PySide6 import QtWidgets
+
 from qt.answers_tab import AnswersEditor
 from resume_tailor import apply_answers
 
 
 def _seed(path, entries):
-    apply_answers.save(entries, path)
+    """A version 1 store on disk (no "version" key); load migrates it."""
+    path.write_text(json.dumps({"answers": entries}), encoding="utf-8")
 
 
 def _editor(qtbot, path):
@@ -102,3 +113,76 @@ def test_revert_restores_snapshot(qtbot, tmp_path):
     ed.save()
     ed.revert()
     assert ed.rows[0]["answer"].text() == "orig"
+
+
+# --- cycle 18 (SP1): the version 2 bridge ---------------------------------------------
+
+def _v2_store(path):
+    entries = [{"id": "work_authorized",
+                "question": apply_answers.BUILTINS["work_authorized"].question,
+                "type": "yes_no", "answer": "Yes", "note": "I am a US citizen",
+                "confirmed": False, "status": "active", "extra_key": [1, 2]},
+               {"id": "github", "question": "What is your GitHub?", "type": "text",
+                "answer": "https://github.com/x", "note": "", "confirmed": True,
+                "status": "active"}]
+    apply_answers.save(entries, path)
+    return entries
+
+
+def test_collect_carries_the_typed_fields_through(qtbot, tmp_path):
+    store = tmp_path / "apply_answers.json"
+    _v2_store(store)
+    ed = _editor(qtbot, store)
+    auth, github = ed.collect()
+    assert auth["type"] == "yes_no" and auth["note"] == "I am a US citizen"
+    assert auth["extra_key"] == [1, 2]                  # an unknown key survives
+    assert auth["confirmed"] is False                   # unchanged answers keep their flag
+    assert github["confirmed"] is True and github["type"] == "text"
+
+
+def test_a_changed_answer_is_confirmed(qtbot, tmp_path):
+    store = tmp_path / "apply_answers.json"
+    _v2_store(store)
+    ed = _editor(qtbot, store)
+    ed.rows[0]["answer"].setText("No")
+    assert ed.save() is True
+    saved = apply_answers.load(store)[0]
+    assert (saved["answer"], saved["confirmed"], saved["type"]) == ("No", True, "yes_no")
+    assert saved["note"] == "I am a US citizen"
+
+
+def test_a_new_row_is_a_confirmed_text_answer(qtbot, tmp_path):
+    store = tmp_path / "apply_answers.json"
+    _seed(store, [])
+    ed = _editor(qtbot, store)
+    row = ed.add_row()
+    row["question"].setText("What is your GitHub?")
+    row["answer"].setText("https://github.com/x")
+    (entry,) = ed.collect()
+    assert entry["type"] == "text" and entry["confirmed"] is True
+    assert ed.save() is True
+
+
+def test_saving_a_migrated_store_keeps_its_review_list(qtbot, tmp_path):
+    store = tmp_path / "apply_answers.json"
+    _seed(store, [{"id": "work_authorized", "question": "Work auth?",
+                   "answer": "Yes, I am a US citizen", "kind": "fixed", "status": "active"}])
+    ed = _editor(qtbot, store)
+    assert ed.save() is True
+    data = json.loads(store.read_text(encoding="utf-8"))
+    assert data["version"] == 2
+    assert [r["before"] for r in data["review"]] == ["Yes, I am a US citizen"]
+
+
+def test_a_damaged_store_shows_its_error_and_is_never_saved_over(qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    store.write_text("not json{", encoding="utf-8")
+    shown = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "critical",
+                        lambda *a, **k: shown.append(a[2]))
+    ed = _editor(qtbot, store)                          # opens without raising
+    assert ed.rows == []
+    assert "damaged" in ed.status.text() and str(store) in ed.status.text()
+    assert ed.save() is False
+    assert shown and "damaged" in shown[0]
+    assert store.read_text(encoding="utf-8") == "not json{"

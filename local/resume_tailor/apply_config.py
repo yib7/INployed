@@ -31,6 +31,7 @@ DEFAULTS: Dict[str, Any] = {
     "requires_sponsorship": False,
     "years_experience": "0",
     "willing_to_relocate": True,
+    "onsite_ok": True,
     "authorization_statement":
         "Authorized to work in the United States; no visa sponsorship required.",
     "gender": "Decline to self-identify",

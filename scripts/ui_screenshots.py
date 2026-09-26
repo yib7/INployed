@@ -299,7 +299,7 @@ def _sanitize_personal_tabs(tmp_dir: Path) -> None:
     # block rendered with only a country) until 8B caught it in a frame.
     fictional = {
         "years_experience": "3", "address_street": "100 Example Street",
-        "address_city": "Springfield", "address_state": "IL", "address_zip": "00000",
+        "address_city": "Springfield", "address_state": "Illinois", "address_zip": "00000",
         "address_country": "United States", "how_did_you_hear": "LinkedIn",
     }
     for e in answers:

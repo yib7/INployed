@@ -159,6 +159,17 @@ def validate_answers(answers: List[Dict[str, Any]]) -> List[str]:
     return apply_answers.validate(answers)
 
 
+def _answers_problems() -> List[str]:
+    """The live answer store's problems. A damaged file is one problem that says
+    how to recover; it never falls back to checking the defaults."""
+    try:
+        answers = apply_answers.load()
+    except apply_answers.AnswerStoreError as exc:
+        return [f"The Apply Answers file is damaged ({exc.path}): {exc.reason}. "
+                "Open the dashboard's Apply Answers tab to restore the backup."]
+    return validate_answers(answers)
+
+
 def check_setup() -> Dict[str, List[str]]:
     """Run both validators against the live files for the dashboard.
 
@@ -178,9 +189,9 @@ def check_setup() -> Dict[str, List[str]]:
                 "else's career. Add yours on the Resume Data tab, or run "
                 "scripts/setup.ps1."
             ],
-            "answers": validate_answers(apply_answers.load()),
+            "answers": _answers_problems(),
         }
     return {
         "master": validate_master(assets.load_master()),
-        "answers": validate_answers(apply_answers.load()),
+        "answers": _answers_problems(),
     }

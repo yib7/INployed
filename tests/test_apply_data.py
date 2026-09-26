@@ -138,11 +138,13 @@ def test_write_includes_structured_address(tmp_path, monkeypatch):
     by = {e["id"]: e for e in ans}
     by["address_street"]["answer"] = "1 Main St"
     by["address_city"]["answer"] = "Boston"
-    by["address_state"]["answer"] = "MA"
+    # a version 2 store holds a US state by its full name (the abbreviation is
+    # read once, when a version 1 store migrates)
+    by["address_state"]["answer"] = "Massachusetts"
     by["address_zip"]["answer"] = "02100"
     apply_answers.save(ans, store)
     text = apply_data.write(_JOB, tmp_path).read_text(encoding="utf-8")
-    for part in ("1 Main St", "Boston", "MA", "02100", "United States"):
+    for part in ("1 Main St", "Boston", "Massachusetts", "02100", "United States"):
         assert part in text
 
 
@@ -153,18 +155,21 @@ def test_write_standard_answers_render_bools_and_exclude_address(tmp_path):
 
 
 def test_write_standard_answers_read_worded_yes_no_answers(tmp_path, monkeypatch):
+    # A version 1 store with worded yes/no answers migrates on load (cycle 18):
+    # "Yes, I am a US citizen" is Yes plus a note, and an answer with no yes or
+    # no in front ("Open to NYC") is not set, so the sheet leaves it out.
     store = tmp_path / "apply_answers.json"
     monkeypatch.setattr(apply_answers, "STORE_PATH", store)
-    ans = apply_answers.seed_defaults()
-    by = {e["id"]: e for e in ans}
-    by["work_authorized"]["answer"] = "Yes, I am a US citizen"
-    by["requires_sponsorship"]["answer"] = "No, I am a US citizen"
-    by["willing_to_relocate"]["answer"] = "Open to NYC"
-    apply_answers.save(ans, store)
+    ids = ("work_authorized", "requires_sponsorship", "willing_to_relocate")
+    words = ("Yes, I am a US citizen", "No, I am a US citizen", "Open to NYC")
+    v1 = [{"id": eid, "question": apply_answers.BUILTINS[eid].question, "answer": word,
+           "kind": "fixed", "status": "active"} for eid, word in zip(ids, words)]
+    store.write_text(json.dumps({"answers": v1}), encoding="utf-8")
     text = apply_data.write(_JOB, tmp_path).read_text(encoding="utf-8")
     assert "- **Are you legally authorized to work in the US?** Yes\n" in text
     assert "- **Will you now or in the future require visa sponsorship?** No\n" in text
-    assert "- **Are you willing to relocate?** Open to NYC\n" in text
+    assert "Are you willing to relocate?" not in text
+    assert "Open to NYC" not in text
 
 
 def test_write_has_no_documents_or_upload_language(tmp_path):

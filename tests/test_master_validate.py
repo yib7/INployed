@@ -94,6 +94,21 @@ def test_check_setup_returns_two_keys():
     assert all(isinstance(v, list) for v in out.values())
 
 
+def test_check_setup_reports_a_damaged_answer_store_as_one_problem(tmp_path, monkeypatch):
+    # cycle 18: a damaged store raises AnswerStoreError instead of falling back
+    # to defaults; Check setup names it once and says how to recover
+    from resume_tailor import apply_answers
+    store = tmp_path / "apply_answers.json"
+    store.write_text("not json{", encoding="utf-8")
+    monkeypatch.setattr(apply_answers, "STORE_PATH", store)
+    problems = mv.check_setup()["answers"]
+    assert len(problems) == 1
+    assert problems[0].startswith(
+        f"The Apply Answers file is damaged ({store}): it is not valid JSON")
+    assert problems[0].endswith(
+        ". Open the dashboard's Apply Answers tab to restore the backup.")
+
+
 def test_no_personal_master_is_reported_not_silently_passed(tmp_path, monkeypatch):
     """The example fallback used to make Check setup say "all good" on demo data.
 

@@ -568,6 +568,11 @@ def test_migrate_keeps_an_unreadable_yes_no_as_a_note_for_review():
     ("100", "", "100"),
     ("75", "", "75"),
     ("3 1/2 years", "", "3 1/2 years"),          # a fraction after a space is unreadable
+    # SP1 fix round 2: a years answer starting with 0 and naming a range stays unreadable
+    ("0 to 5 years", "", "0 to 5 years"),
+    ("0-1 years", "", "0-1 years"),
+    ("0 or 1 years", "", "0 or 1 years"),
+    ("0.5 to 1 years", "", "0.5 to 1 years"),
     # words for zero years of experience migrate to "0", the full text kept as the note
     ("less than 1 year", "0", "less than 1 year"),
     ("Less than one year", "0", "Less than one year"),

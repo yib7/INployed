@@ -1,8 +1,8 @@
-"""Tests for local/resume_tailor/master_validate.py — the setup linter.
+"""Tests for local/resume_tailor/master_validate.py: the setup linter.
 
 `validate_master` catches the structural mistakes a non-technical user could make
-in master_experience.yaml so the dashboard can show a clear error instead of the
-pipeline failing later. `validate_answers` delegates to the answer store, and
+in master_experience.yaml so the dashboard can show a clear error when the
+pipeline would fail later. `validate_answers` delegates to the answer store, and
 `check_setup` runs both against the live files for the dashboard's Check setup.
 """
 import sys

@@ -95,7 +95,7 @@ def test_default_store_editor_shows_full_standard_set(qtbot, tmp_path, monkeypat
 
 
 def test_explicit_store_editor_is_exact(qtbot, tmp_path):
-    # An explicit store_path (tests/tools) is loaded verbatim — no default merge.
+    # An explicit store_path (tests/tools) is loaded verbatim without merging defaults.
     store = tmp_path / "apply_answers.json"
     _seed(store, [{"id": "only", "question": "Q", "answer": "a",
                    "kind": "fixed", "status": "active"}])

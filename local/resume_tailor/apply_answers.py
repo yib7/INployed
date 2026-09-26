@@ -273,7 +273,7 @@ _NUMBER_TAIL_BAD = re.compile(
 # a years_experience answer with no leading digit (or one an unreadable tail
 # rules out) that still means zero
 _ZERO_EXPERIENCE_RE = re.compile(
-    r"^(?:less than (?:1|one)|under 1|<\s?1|none|no experience|0)\b", re.I)
+    r"^(?:less than (?:1|one)|under 1|<\s?1|none|no experience)\b", re.I)
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 
 
@@ -321,7 +321,7 @@ def _read_v1(eid: str, etype: str, raw: str, us: bool) -> Tuple[str, str, bool]:
             rest = raw[m.end():]
             if not _NUMBER_TAIL_BAD.match(rest) and float(m.group(0)) <= NUMBER_MAX:
                 return m.group(0), rest.strip(), True
-        if eid == "years_experience" and _ZERO_EXPERIENCE_RE.match(raw):
+        elif eid == "years_experience" and _ZERO_EXPERIENCE_RE.match(raw):
             return "0", raw, True
         return "", raw, False
     if etype == "choice":

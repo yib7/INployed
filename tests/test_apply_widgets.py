@@ -545,11 +545,16 @@ def test_a_yes_or_no_picks_no_qualified_option_and_the_judges_pick_does(browser_
     # moved on purpose (cycle 18, FM-1): fix round 3 picked "No, I do not
     # require sponsorship" for a stored "No" as the one option holding it.
     # A yes or a no now matches only an option in its own alias set: a
-    # typeahead keeps the typed words, and a radio group chooses nothing
+    # typeahead is emptied and says so (`OptionsUnread`, SP3 fix round 1:
+    # a required field parks, an optional one stays blank), and a radio
+    # group chooses nothing. A free-text value keeps its typed words
     browser_page.set_content(_SPONSORSHIP)
     frame = browser_page.main_frame
-    apply_fill._type_ahead(browser_page, frame, browser_page.locator("#spon"), "No")
-    assert browser_page.locator("#spon").input_value() == "No"
+    with pytest.raises(apply_fill.OptionsUnread):
+        apply_fill._type_ahead(browser_page, frame, browser_page.locator("#spon"), "No")
+    assert browser_page.locator("#spon").input_value() == ""
+    apply_fill._type_ahead(browser_page, frame, browser_page.locator("#spon"), "Anytown")
+    assert browser_page.locator("#spon").input_value() == "Anytown"
     with pytest.raises(LookupError):
         apply_fill._check_radio(browser_page, browser_page.locator("input[name=need]"), "No")
     assert browser_page.locator("input[name=need]:checked").count() == 0
@@ -560,6 +565,38 @@ def test_a_yes_or_no_picks_no_qualified_option_and_the_judges_pick_does(browser_
     apply_fill._check_radio(browser_page, browser_page.locator("input[name=need]"), pick)
     assert browser_page.locator("input[value=sponsor_no]").is_checked()
     assert not browser_page.locator("input[value=sponsor_yes]").is_checked()
+
+
+def test_a_yes_or_no_is_never_matched_by_an_options_hidden_value(browser_page):
+    # SP3 fix round 1: a radio's or a select's value attribute ("yes") sat
+    # behind the words "Yes - on a work visa (OPT/H-1B)" and took a stored Yes
+    browser_page.set_content("""<body><form>
+      <fieldset><legend>Work authorization</legend>
+        <label><input type="radio" name="auth" value="yes"> Yes - on a work visa
+          (OPT/H-1B)</label>
+        <label><input type="radio" name="auth" value="citizen"> U.S. citizen or permanent
+          resident</label></fieldset>
+      <select id="auth-list"><option value="">Select...</option>
+        <option value="yes">Yes - on a work visa (OPT/H-1B)</option>
+        <option value="citizen">U.S. citizen or permanent resident</option></select>
+      <select id="auth-hidden" style="display:none"><option value="">Select...</option>
+        <option value="yes">Yes - on a work visa (OPT/H-1B)</option>
+        <option value="citizen">U.S. citizen or permanent resident</option></select>
+      <fieldset><legend>Relocate?</legend>
+        <input type="radio" name="bare" value="Yes"><input type="radio" name="bare"
+          value="No"></fieldset></form></body>""")
+    with pytest.raises(LookupError):
+        apply_fill._check_radio(browser_page, browser_page.locator("input[name=auth]"), "Yes")
+    assert browser_page.locator("input[name=auth]:checked").count() == 0
+    with pytest.raises(LookupError):
+        apply_fill._select_native(browser_page.locator("#auth-list"), "Yes")
+    with pytest.raises(LookupError):
+        apply_fill._select_hidden(browser_page.locator("#auth-hidden"), "Yes")
+    assert browser_page.locator("#auth-list").input_value() == ""
+    assert browser_page.locator("#auth-hidden").input_value() == ""
+    # a radio with no words of its own is named by its value, and a yes takes it
+    apply_fill._check_radio(browser_page, browser_page.locator("input[name=bare]"), "Yes")
+    assert browser_page.locator("input[name=bare][value=Yes]").is_checked()
 
 
 def test_a_line_break_typed_key_by_key_never_submits_the_form(browser_page):
@@ -722,8 +759,11 @@ def test_a_long_lists_pick_question_carries_a_shortlist_for_the_value():
     ("No", ["Yes, I will require sponsorship", "No, I do not require sponsorship"], -1),
     ("no", ["Yes, I will need sponsorship", "No, I don't need sponsorship"], -1),
     ("Yes", ["Yes, but I will require sponsorship", "No"], -1),
+    # every option that holds the value turns it, each its own way: a tie,
+    # as before (SP3 fix round 1: a typeahead is emptied and a required
+    # field parks)
     ("Yes", ["Yes, but I will require sponsorship",
-             "Yes, I am authorized and do not require sponsorship", "No"], -1),
+             "Yes, I am authorized and do not require sponsorship", "No"], "tie"),
     ("No", ["Yes, I will require sponsorship", "N"], 1),
     ("I do not want to answer", ["Decline to answer", "I don't wish to answer",
                                  "I do not want to answer"], 2),

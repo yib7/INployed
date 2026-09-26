@@ -707,18 +707,18 @@ def _sections(fields) -> list[dict[str, Any]]:
     return out
 
 
-def _option_question(i: int, options: list[str], candidate_answer: str,
+def _option_question(i: int, options: list[str], answer: str,
                      value: str | None = None) -> dict[str, Any]:
     """The pick among a field's options for a known fact value; the answer
-    (`candidate_answer`, every yes / no fact for one of them) rides in the
-    instruction so the question is self-contained. A list past
-    `OPTIONS_CAP` is cut to the shortlist for `value` (the fact's own
-    value; the answer when None)."""
+    (`candidate_answer()`'s text, every yes / no fact for one of them)
+    rides in the instruction as `candidate_answer` so the question is
+    self-contained. A list past `OPTIONS_CAP` is cut to the shortlist for
+    `value` (the fact's own value; the answer when None)."""
     criteria: dict[str, Any] = {
-        o: None for o in shortlist(options, candidate_answer if value is None else value)}
+        o: None for o in shortlist(options, answer if value is None else value)}
     criteria["no_match"] = NO_MATCH_DESCRIPTION
     instructions = {
-        "candidate_answer": candidate_answer,
+        "candidate_answer": answer,
         "question": f"Which of these choices means the same as `candidate_answer`, "
                     f"as an answer to the form field `fields[{i}].label`?"}
     return {"type": "choice", "instructions": instructions, "criteria": criteria}

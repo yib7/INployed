@@ -482,3 +482,27 @@ def test_a_list_that_shows_its_options_only_when_typed_in_is_left_blank(browser_
     assert [e["error"] for e in errors] == ["OptionsUnread"]
     # the words typed to bring the options are taken out again
     assert browser_page.locator("#auth-input").input_value() == ""
+
+
+def test_a_list_that_shows_nothing_keeps_a_typed_place_and_takes_out_a_typed_yes(browser_page):
+    # SP3 fix round 1: a list whose menu never opens raises `NothingShown`
+    # (a type, no longer its message). A place typed to bring its options
+    # stays for the read-back, as before; a yes or a no is taken out
+    # (`OptionsUnread`): no typed guess stands as the answer
+    browser_page.set_content(_UNREAD_LIST.replace(
+        "box.addEventListener('click', open);", "").replace(
+        "input.addEventListener('input', open);", ""))
+    d = apply_form.extract(browser_page)
+    auth = next(f for f in d.fields if f.label.startswith("Work authorization"))
+    pf = _planned(auth, "fill", "Anytown", fact_key="location")
+    pf.options = []
+    errors: list[dict] = []
+    apply_fill.apply(browser_page, FillPlan(fields=[pf]), errors=errors)
+    assert [e["error"] for e in errors] == ["NothingShown"]
+    assert issubclass(apply_fill.NothingShown, LookupError)
+    assert browser_page.locator("#auth-input").input_value() == "Anytown"
+    pf.value, pf.fact_key = "Yes", "work_authorized"
+    errors = []
+    apply_fill.apply(browser_page, FillPlan(fields=[pf]), errors=errors)
+    assert [e["error"] for e in errors] == ["OptionsUnread"]
+    assert browser_page.locator("#auth-input").input_value() == ""

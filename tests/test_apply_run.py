@@ -2798,12 +2798,15 @@ def test_the_read_back_check_takes_a_qualified_pick_and_no_yes_inside_one():
 
 def test_the_ashby_relocation_replica_fills_and_verifies_from_the_typed_answers(
         _browser, flow_server, tmp_path):
-    # the Contoso incident's two questions: legal authorization on Yes / No
-    # buttons (settled in code by the alias set) and relocation among
-    # combined options (the judge's pick over every yes / no fact); the
-    # flow's confirmation marker shows only for the answers the store holds
+    # the Contoso incident's questions: legal authorization among qualified
+    # options only, where a stored Yes is none of "Yes - on a work visa
+    # (OPT/H-1B)" (the judge's pick over every yes / no fact takes "U.S.
+    # citizen or permanent resident ..."; before cycle 18 the bare "Yes"
+    # took the visa, SP3 fix round 1), sponsorship on Yes / No buttons
+    # (settled in code by the alias set) and relocation among combined
+    # options; the confirmation marker shows only for the store's answers
     f = h.flow("ashby_relocation")
-    assert f.confirm.startswith("body[data-auth=yes][data-sponsor=no]"
+    assert f.confirm.startswith("body[data-auth=citizen][data-sponsor=no]"
                                 "[data-relocate=willing]")
     r = h.run_flow(f, jev.FakeJev(), "fake", browser=_browser, server=flow_server,
                    workdir=tmp_path)
@@ -2937,6 +2940,78 @@ def test_a_list_whose_options_could_not_be_read_parks_or_stays_blank(
     assert [m["question"] for m in run.missing] == ["Work authorization"]
     assert [ev["fields"] for what, ev in seen if what == "options_unread"] == [
         ["Work authorization"]]
+
+
+# a list whose menu never opens: neither a click nor typing shows an option
+_NEVER_OPENS = """<body><form>
+  <span id="auth-label">Work authorization</span>
+  <div id="auth" role="combobox" aria-labelledby="auth-label" aria-expanded="false"
+       aria-haspopup="listbox" aria-controls="auth-menu" tabindex="0">
+    <input id="auth-input" type="text" autocomplete="off" aria-labelledby="auth-label"></div>
+  <ul id="auth-menu" role="listbox" hidden></ul></form></body>"""
+
+# a typeahead that offers only qualified answers for whatever is typed (the
+# Contoso pattern)
+_QUALIFIED_TYPEAHEAD = """<body><form>
+  <label for="spon">Will you now or in the future require sponsorship?</label>
+  <input id="spon" autocomplete="off"><ul id="spon-list" class="dropdown-results"></ul>
+  <script>
+    const box = document.getElementById('spon'), list = document.getElementById('spon-list');
+    box.addEventListener('input', () => { list.innerHTML = '';
+      if (!box.value) return;
+      ['Yes, I will require sponsorship', 'No, I do not require sponsorship'].forEach((c) => {
+        const li = document.createElement('li'); li.textContent = c;
+        li.onclick = () => { box.value = c; }; list.appendChild(li); }); });
+  </script></form></body>"""
+
+
+def _typed_yes_no_parks_or_stays_blank(run, seen, digest, field, box, value, required,
+                                       label):
+    """Fill `value` into `field` with no options read ahead, and check the
+    yes / no left no typed guess: a required field parks on it, an optional
+    one comes back unverified and blank; either way it is an open question."""
+    plan = FillPlan(fields=[PlannedField(n=field.n, locator=field.locator, label=label,
+                                         required=required, fact_key="work_authorized",
+                                         value=value, option=None, confidence=0.95,
+                                         action="fill", widget=field.widget)])
+    if required:
+        with pytest.raises(apply_run._Parked) as parked:
+            run._fill_and_verify(digest, plan, run.pages[-1])
+        assert (parked.value.status, parked.value.reason) == (
+            "needs_human", f"required field without an answer: {label} (its options could "
+                           "not be read)")
+    else:
+        assert run._fill_and_verify(digest, plan, run.pages[-1]) == []
+    assert run.page.locator(box).input_value() == ""
+    assert [m["question"] for m in run.missing] == [label]
+    assert [ev["fields"] for what, ev in seen if what == "options_unread"] == [[label]]
+
+
+@pytest.mark.parametrize("required", [True, False])
+def test_a_yes_or_no_typed_into_a_list_that_never_opens_is_taken_out(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch, required):
+    # SP3 fix round 1 (FM-2): the list showed nothing, so the "Yes" typed to
+    # bring its options stayed in the box and read back as a verified answer
+    run = _unit_run(context, tmp_path, job_folder, _NEVER_OPENS)
+    seen = _decisions(monkeypatch, run)
+    digest = apply_form.extract(run.page)
+    auth = next(f for f in digest.fields if f.label.startswith("Work authorization"))
+    _typed_yes_no_parks_or_stays_blank(run, seen, digest, auth, "#auth-input", "Yes", required,
+                                       "Work authorization")
+
+
+@pytest.mark.parametrize("required", [True, False])
+def test_a_yes_or_no_typed_into_a_typeahead_of_qualified_answers_is_taken_out(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch, required):
+    # SP3 fix round 1 (FM-2): the typeahead offered only "Yes, I will ..." and
+    # "No, I do not ...", and the typed "No" stayed as the answer
+    run = _unit_run(context, tmp_path, job_folder, _QUALIFIED_TYPEAHEAD)
+    seen = _decisions(monkeypatch, run)
+    digest = apply_form.extract(run.page)
+    spon = next(f for f in digest.fields if f.label.startswith("Will you now"))
+    assert spon.widget == "typeahead"
+    _typed_yes_no_parks_or_stays_blank(run, seen, digest, spon, "#spon", "No", required,
+                                       "Sponsorship")
 
 
 # --- cycle 18 FM-4: an optional answer that failed its check is taken out -------------------

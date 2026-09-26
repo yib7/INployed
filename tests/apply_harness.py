@@ -1028,13 +1028,16 @@ FLOWS: tuple[Flow, ...] = (
          covers="Yes / No button pairs with aria-pressed, radios sharing one id, a resume "
                 "parser's own upload left alone"),
     # the Contoso incident's form; the marker shows only for the
-    # answers the typed store holds (authorized, no sponsorship, relocates)
+    # answers the typed store holds (a citizen or permanent resident: no
+    # sponsorship, authorized; relocates)
     Flow("ashby_relocation", "ashby_relocation.html", True, "submitted", _SUBMITTED,
-         confirm="body[data-auth=yes][data-sponsor=no][data-relocate=willing] #thanks:visible",
+         confirm="body[data-auth=citizen][data-sponsor=no][data-relocate=willing] "
+                 "#thanks:visible",
          recorded=False,
-         covers="legal authorization on Yes / No buttons settled by the alias set, and a "
-                "relocation question among combined options picked over every yes / no "
-                "fact, both verified"),
+         covers="legal authorization among qualified options only (a Yes on a work visa "
+                "is no Yes), sponsorship on Yes / No buttons settled by the alias set, and a "
+                "relocation question among combined options, both picks over every yes / "
+                "no fact, all verified"),
     Flow("greenhouse_react_select", "greenhouse_react_select.html", True, "submitted",
          _SUBMITTED, confirm="#thanks:visible",
          covers="react-select dropdowns (the pick shown in a sibling, a hidden required twin), "

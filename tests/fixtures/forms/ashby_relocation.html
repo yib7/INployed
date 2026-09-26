@@ -4,12 +4,13 @@
 <meta charset="utf-8">
 <title>Data Engineer @ Fabrikam</title>
 <!-- A synthetic replica of the Contoso (Ashby) form of the 2026-09-26
-     incident: legal authorization and sponsorship as Yes / No button pairs
-     with aria-pressed and a hidden checkbox, and a relocation question whose
-     options combine relocation with office work, the negative one first.
-     The submit writes the answers it got on the body (data-auth,
-     data-sponsor, data-relocate); the flow's confirmation marker names the
-     answers the typed store holds. -->
+     incident: legal authorization among qualified options only (a "Yes" on
+     a work visa, a U.S. citizen or permanent resident, "No"), sponsorship
+     as a Yes / No button pair with aria-pressed and a hidden checkbox, and
+     a relocation question whose options combine relocation with office
+     work, the negative one first. The submit writes the answers it got on
+     the body (data-auth, data-sponsor, data-relocate); the flow's
+     confirmation marker names the answers the typed store holds. -->
 <style>
   body { font-family: sans-serif; margin: 24px; }
   .field-entry { margin: 16px 0; }
@@ -37,14 +38,12 @@
     <label class="title _required_k2q" for="_systemfield_resume">Resume</label>
     <input id="_systemfield_resume" name="_systemfield_resume" type="file">
   </div>
-  <div class="field-entry" id="q-auth">
-    <label class="title _required_k2q" for="q-auth-none">Are you legally authorized to work in the United States?</label>
-    <div class="yesno">
-      <button type="button" aria-pressed="false">Yes</button>
-      <button type="button" aria-pressed="false">No</button>
-    </div>
-    <input class="visually-hidden-box" type="checkbox" name="q_auth" tabindex="-1">
-  </div>
+  <fieldset class="field-entry" style="border: 0; padding: 0">
+    <legend class="title _required_k2q">Are you legally authorized to work in the United States?</legend>
+    <div><input type="radio" id="q_auth_visa" name="q_auth" value="visa"><label for="q_auth_visa">Yes - on a work visa (OPT/H-1B)</label></div>
+    <div><input type="radio" id="q_auth_citizen" name="q_auth" value="citizen"><label for="q_auth_citizen">U.S. citizen or permanent resident (no visa sponsorship required)</label></div>
+    <div><input type="radio" id="q_auth_no" name="q_auth" value="no"><label for="q_auth_no">No</label></div>
+  </fieldset>
   <div class="field-entry" id="q-sponsor">
     <label class="title _required_k2q" for="q-sponsor-none">Will you now or in the future require visa sponsorship?</label>
     <div class="yesno">
@@ -84,6 +83,8 @@
     document.querySelectorAll('input[type=checkbox][name^=q_]').forEach(function (box) {
       if (!box.dataset.answered) missing.push(box.name);
     });
+    var auth = document.querySelector('input[name=q_auth]:checked');
+    if (!auth) missing.push('q_auth');
     var relocate = document.querySelector('input[name=q_relocate]:checked');
     if (!relocate) missing.push('relocate');
     if (missing.length) {
@@ -95,7 +96,7 @@
     var yes = function (name) {
       return document.querySelector('input[name=' + name + ']').checked ? 'yes' : 'no';
     };
-    document.body.setAttribute('data-auth', yes('q_auth'));
+    document.body.setAttribute('data-auth', auth.value);
     document.body.setAttribute('data-sponsor', yes('q_sponsor'));
     document.body.setAttribute('data-relocate', relocate.value);
     document.body.setAttribute('data-submitted', '1');

@@ -34,7 +34,10 @@ its message asks; `apply` reports how it acted on each field (`outcomes`).
 
 Cycle 18: a yes or a no picks only an option in its own alias set (FM-1);
 a list the plan read no options for takes no option code cannot match
-(`OptionsUnread`, FM-2); a number box takes a plain number only (FM-5);
+(`OptionsUnread`, FM-2), and a yes or a no typed into a list or a
+typeahead that offers no option of its own is taken out again, never kept
+as the answer, nor matched by an option's hidden value (SP3 fix round 1);
+a number box takes a plain number only (FM-5);
 `clear(page, pf)` takes an answer out again (FM-4).
 
 `click_button(page, digest, n)` clicks a digest button and waits for a
@@ -310,9 +313,15 @@ class OptionTie(LookupError):
 class OptionsUnread(LookupError):
     """A list whose options were never read ahead (the plan holds none, so
     no judge picked among them) shows none that code matches to the value
-    (cycle 18, FM-2): none is chosen, the words typed to bring the options
-    are taken out, and the runner parks a required box and leaves an
-    optional one blank."""
+    (cycle 18, FM-2), or a yes or a no finds no option of its own alias set
+    in a list or a typeahead, whatever it showed (SP3 fix round 1): none is
+    chosen, the words typed to bring the options are taken out, and the
+    runner parks a required box and leaves an optional one blank."""
+
+
+class NothingShown(LookupError):
+    """A list that showed no option, neither when clicked nor when typed
+    in (`_pick_listbox`)."""
 
 
 # the words that turn an option against a value that lacks them: a negation
@@ -362,16 +371,22 @@ def _ci_match(want: str, candidates: list[str]) -> int:
 
     A yes or a no (`apply_judge.yes_no`) matches only an option in its own
     alias set (cycle 18, FM-1): "Yes" is none of "Yes - on a work visa" and
-    "Yes, without sponsorship", and a qualified option is the judge's pick."""
+    "Yes, without sponsorship", and a qualified option is the judge's pick.
+    Two or more different options that each hold it and each turn it still
+    tie (`OPTION_TIE`, SP3 fix round 1), as they did before FM-1."""
     w = " ".join((want or "").split()).lower()
     folded = [" ".join(str(c).split()).lower() for c in candidates]
     if w in folded:
         return folded.index(w)
+    mine = _qualifiers(w)
     if apply_judge.yes_no(want):
         texts = [str(c) for c in candidates]
         found = apply_judge.match_option(want, texts)
-        return texts.index(found) if found is not None else -1
-    mine = _qualifiers(w)
+        if found is not None:
+            return texts.index(found)
+        held = [i for i, c in enumerate(folded) if _holds([w], c)]
+        turned = bool(held) and all(_qualifiers(folded[i]) - mine for i in held)
+        return OPTION_TIE if turned and len({folded[i] for i in held}) > 1 else -1
     parts = [p.strip() for p in w.split(",") if p.strip()]
     held = [i for i, c in enumerate(folded) if parts and _holds(parts, c)]
     # the options that hold the value and leave it unturned
@@ -538,10 +553,20 @@ def _fill(loc, kind: dict[str, str], value: str) -> str:
     return how
 
 
+def _by_label_then_value(want: str, labels: list[str], values: list[str]) -> list:
+    """The tries for an option's pick: its words, then its hidden value;
+    a yes or a no by the words alone (SP3 fix round 1: value="yes" behind
+    "Yes - on a work visa" is no Yes)."""
+    tries = [(want, labels)]
+    if not apply_judge.yes_no(want):
+        tries.append((want, values))
+    return tries
+
+
 def _select_native(loc, want: str) -> None:
     options = loc.first.evaluate(_SELECT_OPTIONS_JS, timeout=ACTION_TIMEOUT_MS)
     labels = [o[0] for o in options]
-    i = _ci_first([(want, labels), (want, [o[1] for o in options])])
+    i = _ci_first(_by_label_then_value(want, labels, [o[1] for o in options]))
     if i < 0:
         raise _no_option(want, i, labels)
     loc.first.select_option(value=options[i][1], timeout=ACTION_TIMEOUT_MS)
@@ -572,7 +597,9 @@ def _ticked(loc) -> bool:
 def _check_radio(page, loc, want: str, pf: PlannedField | None = None) -> None:
     labels = loc.evaluate_all(_RADIO_LABELS_JS)
     i = _ci_match(want, labels)
-    if i < 0:
+    if i < 0 and not apply_judge.yes_no(want):
+        # a yes or a no by the words alone (SP3 fix round 1): value="yes"
+        # behind "Yes - on a work visa" is no Yes
         values = loc.evaluate_all("els => els.map(e => e.value)")
         j = _ci_match(want, values)
         i = j if j >= 0 or i == -1 else i       # a tie among the labels stands
@@ -935,15 +962,12 @@ def _type_to_filter(page, frame, loc, want: str):
     return options
 
 
-NOTHING_SHOWN = "the listbox showed no options"
-
-
 def _pick_listbox(page, frame, loc, want: str, *, popup: bool = False, face=None) -> None:
     options = _open_menu(frame, loc, popup=popup, face=face)
     if options is None and not popup:
         options = _type_to_filter(page, frame, loc, want)
     if options is None:
-        raise LookupError(NOTHING_SHOWN)
+        raise NothingShown("the listbox showed no options")
     texts = [t.strip() for t in options.all_inner_texts()]
     i = _ci_match(want, texts)
     if i < 0:
@@ -996,9 +1020,13 @@ _TYPEAHEAD_OPTIONS_JS = """el => {
 
 def _type_ahead(page, frame, loc, value: str) -> None:
     """Type the value into a typeahead (study G7), wait for its matches and
-    click the one that fits; with no match the typed value stays. Matches
-    that tie and differ in meaning (`OPTION_TIE`) leave the box empty and
-    raise `OptionTie` (final review B R2 M2)."""
+    click the one that fits; with no match the typed value stays (a place
+    the site does not list). Matches that tie and differ in meaning
+    (`OPTION_TIE`) leave the box empty and raise `OptionTie` (final review
+    B R2 M2). A yes or a no that finds no option of its own alias set,
+    whether the box showed matches or none, leaves the box empty and raises
+    `OptionsUnread` (SP3 fix round 1, FM-2): a typed "No" is no answer
+    beside "No, I do not require sponsorship"."""
     keys = _keys_for(loc, value)
     loc.first.fill("", timeout=ACTION_TIMEOUT_MS)
     loc.first.press_sequentially(keys, delay=10, timeout=ACTION_TIMEOUT_MS)
@@ -1009,14 +1037,15 @@ def _type_ahead(page, frame, loc, value: str) -> None:
         if texts:
             break
         page.wait_for_timeout(100)
-    if not texts:
-        return
     first = (value or "").split(",")[0].strip()
-    i = _ci_first([(value, texts), (first, texts)])
+    i = _ci_first([(value, texts), (first, texts)]) if texts else -1
     if i == OPTION_TIE:
         loc.first.fill("", timeout=ACTION_TIMEOUT_MS)
         raise _no_option(value, i, texts)
     if i < 0:
+        if apply_judge.yes_no(value):
+            loc.first.fill("", timeout=ACTION_TIMEOUT_MS)
+            raise OptionsUnread(f"no option of the typeahead is {value!r}: {texts}")
         return
     frame.locator(f'[data-apply-option="{i}"]').first.click(timeout=ACTION_TIMEOUT_MS)
 
@@ -1034,7 +1063,7 @@ def _select_hidden(loc, want: str) -> None:
     forced past the actionability check, else set and announced by script."""
     options = loc.first.evaluate(_SELECT_OPTIONS_JS, timeout=ACTION_TIMEOUT_MS)
     labels = [o[0] for o in options]
-    i = _ci_first([(want, labels), (want, [o[1] for o in options])])
+    i = _ci_first(_by_label_then_value(want, labels, [o[1] for o in options]))
     if i < 0:
         raise _no_option(want, i, labels)
     try:
@@ -1089,27 +1118,47 @@ def _upload(page, locator: tuple[int, str], path: str) -> None:
     frame.set_input_files(str(locator[1]), path, timeout=ACTION_TIMEOUT_MS)
 
 
-def _pick_unread(pf: PlannedField, loc, pick: Callable[[], None]) -> None:
-    """`pick` a list's option; on a list whose options the plan never read
-    (`pf.options` empty) and that shows options none of which code matches
-    to the value, the miss is `OptionsUnread` (cycle 18, FM-2), and the
-    words typed to bring its options are taken out of its box. A tie, a
-    refused popup and a list that shows nothing keep their own errors (the
-    last one is filled once more and checked, as before)."""
+def _take_out_typed(loc) -> None:
+    """Empty the text box of a list (the control itself or the input inside
+    it) when it holds words: the ones typed to bring its options."""
+    try:
+        tag = loc.first.evaluate("el => el.tagName", timeout=ACTION_TIMEOUT_MS) or ""
+        box = loc.first if tag == "INPUT" else loc.first.locator("input").first
+        if box.count() and str(box.input_value(timeout=ACTION_TIMEOUT_MS) or ""):
+            box.fill("", timeout=ACTION_TIMEOUT_MS)
+    except Exception:       # noqa: BLE001  (the read-back reports what stays)
+        pass
+
+
+def _pick_unread(pf: PlannedField, loc, want: str, pick: Callable[[], None]) -> None:
+    """`pick` `want` among a list's options. The misses that leave no typed
+    guess behind (cycle 18, FM-2), the words typed to bring the options
+    taken out of the box first:
+
+    - a yes or a no (`apply_judge.yes_no`) that no option matches exactly
+      or by its alias set, whether the list showed nothing (`NothingShown`),
+      only other options, or options that tie (SP3 fix round 1): the error
+      is `OptionsUnread` on a list whose options the plan never read
+      (`pf.options` empty), else its own (a tie's `OptionTie`; a plain miss
+      on a list read ahead, whose empty box then fails its check);
+    - any other value on a list whose options the plan never read that
+      shows options none of which code matches: `OptionsUnread`.
+
+    A refused popup, and any other value's tie or list that shows nothing,
+    keep their own errors (a place typed into a list that shows nothing
+    stays and is checked, as before)."""
     try:
         pick()
     except LookupError as e:
-        if pf.options or isinstance(e, (OptionTie, PopupRefused)) or str(e) == NOTHING_SHOWN:
+        if isinstance(e, PopupRefused):
             raise
-        try:
-            tag = loc.first.evaluate("el => el.tagName", timeout=ACTION_TIMEOUT_MS) or ""
-            box = loc.first if tag == "INPUT" else loc.first.locator("input").first
-            if box.count() and str(box.input_value(timeout=ACTION_TIMEOUT_MS) or ""):
-                box.fill("", timeout=ACTION_TIMEOUT_MS)
-        except Exception:       # noqa: BLE001  (the read-back reports what stays)
-            pass
-        raise OptionsUnread(f"the options of {pf.label!r} were never read and none "
-                            f"is the answer") from e
+        if not apply_judge.yes_no(want) and (
+                pf.options or isinstance(e, (OptionTie, NothingShown))):
+            raise
+        _take_out_typed(loc)
+        if pf.options or isinstance(e, OptionTie):
+            raise
+        raise OptionsUnread(f"no option of {pf.label!r} is its answer in code") from e
 
 
 def _act(page, pf: PlannedField, loc, kind: dict[str, str]) -> str:
@@ -1136,11 +1185,11 @@ def _act(page, pf: PlannedField, loc, kind: dict[str, str]) -> str:
         _choose(page, pf, want)
         return "option click"
     if widget == "popup":
-        _pick_unread(pf, loc, lambda: _pick_listbox(page, frame, loc, want, popup=True))
+        _pick_unread(pf, loc, want, lambda: _pick_listbox(page, frame, loc, want, popup=True))
         return "menu pick"
     if widget == "combo":
-        _pick_unread(pf, loc, lambda: _pick_listbox(
-            page, frame, loc, pf.value if pf.action == "fill" else want))
+        typed = pf.value if pf.action == "fill" else want
+        _pick_unread(pf, loc, typed, lambda: _pick_listbox(page, frame, loc, typed))
         return "list pick"
     if widget == "typeahead":
         _type_ahead(page, frame, loc, pf.value if pf.action == "fill" else want)
@@ -1169,7 +1218,7 @@ def _act(page, pf: PlannedField, loc, kind: dict[str, str]) -> str:
     if role in ("combobox", "listbox"):
         face = _clicked(page, pf.click_locator[0], pf.click_locator[1]) \
             if pf.click_locator else None
-        _pick_unread(pf, loc, lambda: _pick_listbox(page, frame, loc, want, face=face))
+        _pick_unread(pf, loc, want, lambda: _pick_listbox(page, frame, loc, want, face=face))
         return "list pick"
     if tag == "INPUT" and typ == "file":
         raise LookupError("a file input takes an upload action")

@@ -255,3 +255,119 @@ def test_push_outcome_distinguishes_success_and_failure():
     assert ResumeDataEditor._push_outcome(ok) == (True, "resume.md pushed to the VM.")
     failed, msg = ResumeDataEditor._push_outcome(bad)
     assert failed is False and "unable to open" in msg
+
+
+# --- SP5 (ED-10): Save validates every entry/basics it is about to write BEFORE
+# writing anything, reusing entry_problems -- the same rules append_entry and the
+# add-entry dialog enforce -- instead of writing first and validating after. -----
+
+def test_save_blocks_and_writes_nothing_when_an_entry_field_is_blanked(
+        qtbot, master_tmp, monkeypatch):
+    monkeypatch.setattr(rdt.QtWidgets.QMessageBox, "critical", staticmethod(lambda *a, **k: None))
+    ed = _editor(qtbot, master_tmp)
+    before = master_tmp.read_bytes()
+    ed._entry_edits[("experience", 0, "dates")].setText("")
+    ed._basics_edits["name"].setText("New Name")   # a would-be VALID change too
+    assert ed.save() is False
+    assert master_tmp.read_bytes() == before       # nothing written -- not even basics
+
+
+def test_save_blocks_and_writes_nothing_when_a_changed_atoms_what_is_blanked(
+        qtbot, master_tmp, monkeypatch):
+    monkeypatch.setattr(rdt.QtWidgets.QMessageBox, "critical", staticmethod(lambda *a, **k: None))
+    ed = _editor(qtbot, master_tmp)
+    before = master_tmp.read_bytes()
+    ed._atom_edits[("a1", "what")].setText("")     # fixture atom under experience[0]
+    assert ed.save() is False
+    assert master_tmp.read_bytes() == before
+
+
+def test_save_blocks_and_writes_nothing_when_basics_name_is_blanked(
+        qtbot, master_tmp, monkeypatch):
+    monkeypatch.setattr(rdt.QtWidgets.QMessageBox, "critical", staticmethod(lambda *a, **k: None))
+    ed = _editor(qtbot, master_tmp)
+    before = master_tmp.read_bytes()
+    ed._basics_edits["name"].setText("")
+    assert ed.save() is False
+    assert master_tmp.read_bytes() == before
+
+
+def test_save_still_writes_a_valid_change(qtbot, master_tmp, tmp_path, monkeypatch):
+    import jobsdata
+    monkeypatch.setattr(jobsdata, "HERE", tmp_path)
+    ed = _editor(qtbot, master_tmp)
+    ed._entry_edits[("experience", 0, "dates")].setText("2024-06 / 2024-09")
+    assert ed.save() is True
+    data = yaml.safe_load(master_tmp.read_text(encoding="utf-8"))
+    assert data["experience"][0]["dates"] == "2024-06 / 2024-09"
+
+
+def test_save_blocks_when_basics_email_is_blanked(qtbot, master_tmp_broken, monkeypatch):
+    # master_tmp_broken has no `basics` at all yet; filling in a name but leaving
+    # email blank must still be blocked by the same name/email check Save now
+    # runs on the projected basics before writing anything.
+    monkeypatch.setattr(rdt.QtWidgets.QMessageBox, "critical", staticmethod(lambda *a, **k: None))
+    ed = _editor(qtbot, master_tmp_broken)
+    before = master_tmp_broken.read_bytes()
+    ed._basics_edits["name"].setText("Someone")
+    assert ed.save() is False
+    assert master_tmp_broken.read_bytes() == before
+
+
+# --- SP5 (ED-10): the add-entry dialog validates inline and disables OK until
+# valid, and keeps every field intact when the write itself fails. `QDialog.exec`
+# is faked (never a real modal loop) so the test drives the widgets directly and
+# never blocks headless. -----------------------------------------------------
+
+def test_add_entry_dialog_ok_disabled_until_every_rule_passes(qtbot, master_tmp, monkeypatch):
+    ed = _editor(qtbot, master_tmp)
+    seen = {}
+
+    def fake_exec(self):
+        ok_btn = self.findChild(rdt.QtWidgets.QDialogButtonBox).button(
+            rdt.QtWidgets.QDialogButtonBox.StandardButton.Ok)
+        seen["initially_disabled"] = not ok_btn.isEnabled()
+        self.findChild(rdt.QtWidgets.QLineEdit, "add_entry_name").setText("New Proj")
+        self.findChild(rdt.QtWidgets.QLineEdit, "add_entry_dates").setText("2025")
+        self.findChild(rdt.QtWidgets.QLineEdit, "add_entry_what").setText("built it")
+        seen["still_disabled_without_an_angle"] = not ok_btn.isEnabled()
+        self.findChild(rdt.QtWidgets.QLineEdit, "add_entry_angles").setText("backend")
+        seen["enabled_once_valid"] = ok_btn.isEnabled()
+        return rdt.QtWidgets.QDialog.DialogCode.Rejected   # cancel; nothing written
+
+    monkeypatch.setattr(rdt.QtWidgets.QDialog, "exec", fake_exec)
+    ed._add_entry_dialog("projects")
+    assert seen == {"initially_disabled": True, "still_disabled_without_an_angle": True,
+                    "enabled_once_valid": True}
+
+
+def test_add_entry_dialog_keeps_input_on_a_failed_write(qtbot, master_tmp, monkeypatch):
+    ed = _editor(qtbot, master_tmp)
+    monkeypatch.setattr(rdt.QtWidgets.QMessageBox, "critical", staticmethod(lambda *a, **k: None))
+    monkeypatch.setattr(rdt.master_edit, "append_entry",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    calls = {"n": 0}
+
+    def fake_exec(self):
+        calls["n"] += 1
+        name_edit = self.findChild(rdt.QtWidgets.QLineEdit, "add_entry_name")
+        dates_edit = self.findChild(rdt.QtWidgets.QLineEdit, "add_entry_dates")
+        what_edit = self.findChild(rdt.QtWidgets.QLineEdit, "add_entry_what")
+        angles_edit = self.findChild(rdt.QtWidgets.QLineEdit, "add_entry_angles")
+        if calls["n"] == 1:
+            name_edit.setText("New Proj")
+            dates_edit.setText("2025")
+            what_edit.setText("built it")
+            angles_edit.setText("backend")
+            return rdt.QtWidgets.QDialog.DialogCode.Accepted
+        # second round, after the failed write: every field must still hold what
+        # the user typed -- nothing here re-created the dialog or cleared it.
+        assert name_edit.text() == "New Proj"
+        assert dates_edit.text() == "2025"
+        assert what_edit.text() == "built it"
+        assert angles_edit.text() == "backend"
+        return rdt.QtWidgets.QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(rdt.QtWidgets.QDialog, "exec", fake_exec)
+    ed._add_entry_dialog("projects")
+    assert calls["n"] == 2   # the SAME dialog re-opened after the failed write

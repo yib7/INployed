@@ -256,3 +256,34 @@ def test_update_atom_clears_alias_caches(master):
 def test_validation_raises(master, section, data, msg):
     with pytest.raises(ValueError, match=msg):
         master_edit.append_entry(section, data)
+
+
+# --- SP5 (ED-10): entry_problems is the pure, ALL-problems form of the same
+# checks, so the add-entry dialog can list every problem inline instead of only
+# the first one `_validate` raises on. -----------------------------------------
+
+def test_entry_problems_empty_for_a_valid_entry():
+    assert master_edit.entry_problems("projects", {
+        "name": "P", "dates": "2025",
+        "achievements": [{"what": "x", "angles": ["a"]}]}) == []
+
+
+def test_entry_problems_lists_every_problem_not_only_the_first():
+    problems = master_edit.entry_problems("projects", {
+        "name": "", "dates": "",
+        "achievements": [{"what": "", "angles": []}]})
+    assert "name is required" in problems
+    assert "dates is required" in problems
+    assert "each achievement needs a 'what'" in problems
+    assert "each achievement needs at least one angle" in problems
+    assert len(problems) == 4    # every rule fired, none short-circuited another
+
+
+def test_entry_problems_unknown_section_is_the_only_problem():
+    assert master_edit.entry_problems("bogus", {"name": "P"}) == ["unknown section 'bogus'"]
+
+
+def test_validate_still_raises_on_the_first_problem_only():
+    # append_entry's contract (raise ValueError, first problem) is unchanged.
+    with pytest.raises(ValueError, match="name is required"):
+        master_edit._validate("projects", {"name": "", "dates": ""})

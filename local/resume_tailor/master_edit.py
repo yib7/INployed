@@ -175,22 +175,43 @@ def _del_list_item(seq: Any, index: int) -> None:
 
 # ── append (existing behaviour, now via the shared backup-then-write) ──────────
 
-def _validate(section: str, data: Dict[str, Any]) -> None:
+def entry_problems(section: str, data: Dict[str, Any]) -> List[str]:
+    """Every problem with `data` as an entry for `section` ([] means it's fine).
+
+    The pure, ALL-problems form of the checks `append_entry` has always enforced
+    (name/dates required, at least one achievement, each achievement needs a
+    'what' and an angle): `_validate` below raises on the first one so
+    `append_entry`'s contract is unchanged, while this is what the add-entry
+    dialog calls on every keystroke (to list every problem inline and keep OK
+    disabled until there are none) and what the tab's Save calls, before
+    writing anything, over every entry it is about to change.
+    """
     if section not in _SECTIONS:
-        raise ValueError("unknown section %r" % section)
+        return ["unknown section %r" % section]
+    problems: List[str] = []
     name = (data.get(_NAME_KEY[section]) or "").strip()
     if not name:
-        raise ValueError("%s is required" % _NAME_KEY[section])
+        problems.append("%s is required" % _NAME_KEY[section])
     if not (data.get("dates") or "").strip():
-        raise ValueError("dates is required")
+        problems.append("dates is required")
     achs = data.get("achievements") or []
     if not achs:
-        raise ValueError("at least one achievement is required")
+        problems.append("at least one achievement is required")
     for a in achs:
+        if not isinstance(a, dict):
+            problems.append("each achievement must be a record")
+            continue
         if not (a.get("what") or "").strip():
-            raise ValueError("each achievement needs a 'what'")
+            problems.append("each achievement needs a 'what'")
         if not [x for x in (a.get("angles") or []) if str(x).strip()]:
-            raise ValueError("each achievement needs at least one angle")
+            problems.append("each achievement needs at least one angle")
+    return problems
+
+
+def _validate(section: str, data: Dict[str, Any]) -> None:
+    problems = entry_problems(section, data)
+    if problems:
+        raise ValueError(problems[0])
 
 
 def append_entry(section: str, data: Dict[str, Any], path: Optional[Path] = None) -> None:

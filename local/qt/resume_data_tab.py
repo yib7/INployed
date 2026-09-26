@@ -11,6 +11,7 @@ LLM call injectable so tests never spend a credit.
 """
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 from typing import Callable
 
@@ -89,6 +90,10 @@ class ResumeDataEditor(QtWidgets.QWidget):
         self._atom_orig: dict[tuple, str] = {}
         self._atom_impact: dict[str, QtWidgets.QPlainTextEdit] = {}
         self._atom_impact_orig: dict[str, str] = {}
+        # SP5 (ED-10): which entry (section, index) each atom id belongs to, so
+        # Save can find and re-check the owning entry when only one of its atoms
+        # changed -- populated in `_entry_block`/`_atom_block`, keyed by atom id.
+        self._atom_owner: dict[str, tuple] = {}
         self._layout_section_edits: dict[str, QtWidgets.QLineEdit] = {}
         self._layout_project_edits: dict[str, QtWidgets.QLineEdit] = {}
         # B8: stale custom-layout rows (name no longer in the master) — (kind, name,
@@ -191,6 +196,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         self._atom_orig.clear()
         self._atom_impact.clear()
         self._atom_impact_orig.clear()
+        self._atom_owner.clear()
         self._layout_section_edits.clear()
         self._layout_project_edits.clear()
         self._verbatim_edits.clear()
@@ -279,7 +285,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         ah.addWidget(cap)
         for atom in entry.get("achievements") or []:
             if isinstance(atom, dict):
-                self._atom_block(ah, atom)
+                self._atom_block(ah, atom, (section, idx))
         abar = QtWidgets.QHBoxLayout()
         add_a = QtWidgets.QPushButton("+ Add achievement")
         add_a.clicked.connect(lambda _=False, s=section, i=idx: self._add_atom_dialog(s, i))
@@ -358,8 +364,9 @@ class ResumeDataEditor(QtWidgets.QWidget):
                 out.pop(name, None)
         return out
 
-    def _atom_block(self, bv, atom: dict) -> None:
+    def _atom_block(self, bv, atom: dict, owner: tuple) -> None:
         aid = str(atom.get("id", ""))
+        self._atom_owner[aid] = owner
         frame = QtWidgets.QFrame()
         form = QtWidgets.QFormLayout(frame)
         what = QtWidgets.QLineEdit(str(atom.get("what", "") or ""))
@@ -650,32 +657,94 @@ class ResumeDataEditor(QtWidgets.QWidget):
     def _set_status(self, text: str) -> None:
         self.status.setText(text)
 
+    def _pending_changes(self) -> tuple[dict, dict, dict]:
+        """The edits Save is about to write, read straight off the widgets: basics
+        (key -> new text), entries ((section, idx) -> {field: new text}) and atoms
+        (id -> {field: new value}, angles/impact already parsed to lists) --
+        pure, no I/O, so both `save()` and its pre-write check read one source."""
+        b_changes = {k: e.text() for k, e in self._basics_edits.items()
+                     if e.text() != self._basics_orig.get(k, "")}
+
+        entry_changes: dict[tuple, dict] = {}
+        for (sec, idx, k), e in self._entry_edits.items():
+            if e.text() != self._entry_orig[(sec, idx, k)]:
+                entry_changes.setdefault((sec, idx), {})[k] = e.text()
+
+        atom_changes: dict[str, dict] = {}
+        for (aid, k), e in self._atom_edits.items():
+            if e.text() != self._atom_orig[(aid, k)]:
+                val = e.text()
+                if k == "angles":
+                    val = [a.strip() for a in val.split(",") if a.strip()]
+                atom_changes.setdefault(aid, {})[k] = val
+        for aid, txt in self._atom_impact.items():
+            current = txt.toPlainText()
+            if current != self._atom_impact_orig.get(aid, ""):
+                atom_changes.setdefault(aid, {})["impact"] = [
+                    ln.strip() for ln in current.splitlines() if ln.strip()]
+        return b_changes, entry_changes, atom_changes
+
+    def _pending_problems(self, b_changes: dict, entry_changes: dict,
+                          atom_changes: dict) -> list[str]:
+        """Every problem with what Save is about to write, checked against the
+        FULL projected value (the on-disk entry/basics merged with the pending
+        edits) -- `update_entry`/`update_atom` write unchecked today, so this is
+        what actually stops a blanked-out required field from ever reaching disk.
+
+        Basics reuses `master_validate.validate_master` (the same check the
+        Validate button already runs) on a document holding only the projected
+        `basics`, so absent `experience`/`projects`/`leadership`/`tailor`/`skills`
+        keys read as empty rather than pulling in unrelated pre-existing
+        problems elsewhere in the file. Each touched entry reuses
+        `master_edit.entry_problems` -- the SAME rules `append_entry` and the
+        add-entry dialog enforce -- over the entry as it will read once its
+        pending field AND atom edits both land.
+        """
+        problems: list[str] = []
+        data = self._read()
+
+        if b_changes:
+            basics = dict(data.get("basics") or {})
+            basics.update(b_changes)
+            problems += master_validate.validate_master({"basics": basics})
+
+        touched: set = set(entry_changes)
+        for aid in atom_changes:
+            owner = self._atom_owner.get(aid)
+            if owner is not None:
+                touched.add(owner)
+
+        for sec, idx in sorted(touched):
+            entries = data.get(sec) or []
+            if not (0 <= idx < len(entries)) or not isinstance(entries[idx], dict):
+                continue
+            entry = copy.deepcopy(entries[idx])
+            entry.update(entry_changes.get((sec, idx), {}))
+            achievements = []
+            for atom in entry.get("achievements") or []:
+                if isinstance(atom, dict) and atom.get("id") in atom_changes:
+                    atom = {**atom, **atom_changes[atom["id"]]}
+                achievements.append(atom)
+            entry["achievements"] = achievements
+            name = str(entry.get(_NAME_KEY[sec], "") or "").strip() or ("%s[%d]" % (sec, idx))
+            problems += ["%s: %s" % (name, p) for p in master_edit.entry_problems(sec, entry)]
+        return problems
+
     def save(self) -> bool:
+        b_changes, entry_changes, atom_changes = self._pending_changes()
+
+        problems = self._pending_problems(b_changes, entry_changes, atom_changes)
+        if problems:
+            self._set_status(f"{len(problems)} problem(s); nothing was saved.")
+            QtWidgets.QMessageBox.critical(
+                self, "Résumé data", "Problems found:\n\n- " + "\n- ".join(problems))
+            return False
+
         try:
-            b_changes = {k: e.text() for k, e in self._basics_edits.items()
-                         if e.text() != self._basics_orig.get(k, "")}
             if b_changes:
                 master_edit.update_basics(b_changes, self.master_path)
-
-            entry_changes: dict[tuple, dict] = {}
-            for (sec, idx, k), e in self._entry_edits.items():
-                if e.text() != self._entry_orig[(sec, idx, k)]:
-                    entry_changes.setdefault((sec, idx), {})[k] = e.text()
             for (sec, idx), fields in entry_changes.items():
                 master_edit.update_entry(sec, idx, fields, self.master_path)
-
-            atom_changes: dict[str, dict] = {}
-            for (aid, k), e in self._atom_edits.items():
-                if e.text() != self._atom_orig[(aid, k)]:
-                    val = e.text()
-                    if k == "angles":
-                        val = [a.strip() for a in val.split(",") if a.strip()]
-                    atom_changes.setdefault(aid, {})[k] = val
-            for aid, txt in self._atom_impact.items():
-                current = txt.toPlainText()
-                if current != self._atom_impact_orig.get(aid, ""):
-                    atom_changes.setdefault(aid, {})["impact"] = [
-                        ln.strip() for ln in current.splitlines() if ln.strip()]
             for aid, fields in atom_changes.items():
                 master_edit.update_atom(aid, fields, self.master_path)
         except (ValueError, OSError) as exc:
@@ -786,32 +855,64 @@ class ResumeDataEditor(QtWidgets.QWidget):
         edits = {}
         for k, label in _SECTION_FIELDS[section]:
             edits[k] = QtWidgets.QLineEdit()
+            edits[k].setObjectName(f"add_entry_{k}")
             form.addRow(label, edits[k])
         what = QtWidgets.QLineEdit()
+        what.setObjectName("add_entry_what")
         angles = QtWidgets.QLineEdit()
+        angles.setObjectName("add_entry_angles")
         impact = QtWidgets.QLineEdit()
+        impact.setObjectName("add_entry_impact")
         form.addRow("First achievement (what)", what)
         form.addRow("Angles (comma-separated)", angles)
         form.addRow("Impact (comma-separated, optional)", impact)
+        problems_label = QtWidgets.QLabel("")
+        problems_label.setObjectName("add_entry_problems")
+        problems_label.setWordWrap(True)
+        problems_label.setProperty("danger", True)
+        form.addRow(problems_label)
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel)
         form.addRow(buttons)
+        ok_btn = buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Ok)
+
+        def _collect() -> dict:
+            data = {k: e.text().strip() for k, e in edits.items() if e.text().strip()}
+            achievement = {"what": what.text().strip(),
+                           "angles": [a.strip() for a in angles.text().split(",") if a.strip()]}
+            imp = [s.strip() for s in impact.text().split(",") if s.strip()]
+            if imp:
+                achievement["impact"] = imp
+            data["achievements"] = [achievement]
+            return data
+
+        # SP5 (ED-10): re-check on every keystroke with the same rules
+        # `append_entry` enforces, so a problem is visible (and OK is disabled)
+        # before the user ever tries to submit, not only after a rejected write.
+        def _recheck() -> None:
+            problems = master_edit.entry_problems(section, _collect())
+            problems_label.setText("\n".join(problems))
+            ok_btn.setEnabled(not problems)
+
+        for e in list(edits.values()) + [what, angles, impact]:
+            e.textChanged.connect(_recheck)
+        _recheck()
+
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)
-        if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
-            return
-        data = {k: e.text().strip() for k, e in edits.items() if e.text().strip()}
-        achievement = {"what": what.text().strip(),
-                       "angles": [a.strip() for a in angles.text().split(",") if a.strip()]}
-        imp = [s.strip() for s in impact.text().split(",") if s.strip()]
-        if imp:
-            achievement["impact"] = imp
-        data["achievements"] = [achievement]
-        try:
-            master_edit.append_entry(section, data, self.master_path)
-        except (ValueError, OSError) as exc:
-            QtWidgets.QMessageBox.critical(self, "Add entry", errmsg.for_user(exc))
-            return
+        # Looped rather than a single exec(): a failed WRITE (e.g. the file
+        # became unwritable) must keep the dialog open with every field the user
+        # typed still intact, not discard it and force them to retype everything.
+        while True:
+            if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+                return
+            data = _collect()
+            try:
+                master_edit.append_entry(section, data, self.master_path)
+            except (ValueError, OSError) as exc:
+                QtWidgets.QMessageBox.critical(self, "Add entry", errmsg.for_user(exc))
+                continue
+            break
         self.reload()
         self._set_status(f"Added a {section} entry.")
 

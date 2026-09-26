@@ -570,9 +570,11 @@ def requeue(job_id: str, *, refresh_answers: bool = False,
                 from resume_tailor import apply_answers, apply_data
                 apply_data.refresh_answer_sections(Path(folder), apply_answers.load())
             except Exception as exc:  # never fail the requeue over the sheet
-                msg = (f"WARNING: standard-answers refresh FAILED "
-                       f"({type(exc).__name__}: {exc}); apply.md answers may be "
-                       f"stale; regenerate from the dashboard before draining.")
+                msg = (f"WARNING: the sheet's answers were not refreshed "
+                       f"({type(exc).__name__}: {exc}); the runner refreshes them "
+                       f"before each job.")
+                if type(exc).__name__ == "AnswerStoreError":
+                    msg += " Open the dashboard's Apply Answers tab to restore the backup."
                 print(f"apply_queue: refresh_answer_sections failed for "
                       f"{folder}: {exc}", file=sys.stderr)
                 # Surface it on the entry so it's visible in the panel, not just stderr.
@@ -581,6 +583,32 @@ def requeue(job_id: str, *, refresh_answers: bool = False,
                 except Exception:  # never let the surfacing fail the requeue
                     pass
     return entry
+
+
+def refresh_answers(job_id: str, path: Optional[Path] = None) -> bool:
+    """Re-splice `job_id`'s apply.md Standard answers section and Address
+    block from the current answer store (`apply_data.refresh_answer_sections`),
+    the same rendering the runner does before each job. For a manual drain
+    (`.claude/skills/auto-apply/SKILL.md`) that reads a claimed job's sheet
+    directly, calling this first keeps the sheet from ever handing a stale or
+    unconfirmed answer to that job.
+
+    Raises `UnknownJobError` for an unknown id, and
+    `apply_answers.AnswerStoreError` when the store is damaged (nothing is
+    spliced then). Read-only on the queue itself: this never mutates the
+    entry. Returns what `refresh_answer_sections` returns: True when the
+    sections were spliced (or already matched the store); False when the
+    entry has no folder, or its apply.md, Standard answers heading or
+    signature heading is missing.
+    """
+    data = load(path)
+    e = _find(data, job_id)
+    folder = (e.get("artifacts") or {}).get("folder") or ""
+    from resume_tailor import apply_answers, apply_data
+    answers = apply_answers.load()      # raises AnswerStoreError on a damaged file
+    if not folder:
+        return False
+    return apply_data.refresh_answer_sections(Path(folder), answers)
 
 
 def remove(job_id: str, path: Optional[Path] = None) -> None:
@@ -746,7 +774,12 @@ def _print_entry(e: Dict[str, Any], as_json: bool) -> None:
 def main(argv: Optional[List[str]] = None) -> int:
     """Exit codes: 0 ok · 1 unexpected error (one line on stderr) · 2 unknown
     job id · 3 lock timeout · 4 claim on an empty queue. Every verb accepts
-    --queue PATH to override the default."""
+    --queue PATH to override the default.
+
+    `refresh-answers` has its own two exit codes, layered onto the same
+    numbers: 2 when the answer store is damaged (the spec's message, an
+    entry unaffected) and 1 when the entry's apply.md could not be refreshed
+    (no folder, or its Standard answers or signature heading is missing)."""
     _force_utf8_stdio()
     ap = argparse.ArgumentParser(
         prog="apply_queue",
@@ -793,6 +826,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--refresh-answers", action="store_true",
                    help="re-splice the folder's apply.md standard answers and address "
                         "from the answer store")
+
+    p = add("refresh-answers", help="re-splice one entry's apply.md standard answers "
+                                    "and address from the answer store, without "
+                                    "requeuing it")
+    p.add_argument("job_id")
 
     p = add("remove", help="delete an entry")
     p.add_argument("job_id")
@@ -843,6 +881,20 @@ def main(argv: Optional[List[str]] = None) -> int:
                    record=args.record, notes=args.notes, path=qp)
         elif args.verb == "requeue":
             requeue(args.job_id, refresh_answers=args.refresh_answers, path=qp)
+        elif args.verb == "refresh-answers":
+            from resume_tailor import apply_answers as _aa
+            try:
+                ok = refresh_answers(args.job_id, path=qp)
+            except _aa.AnswerStoreError as exc:
+                print(f"The Apply Answers file is damaged ({exc.path}): {exc.reason}. Open "
+                      f"the dashboard's Apply Answers tab to restore the backup.",
+                      file=sys.stderr)
+                return 2
+            if not ok:
+                print(f"apply_queue: apply.md for {args.job_id} could not be refreshed "
+                      f"(no folder, or its Standard answers or signature heading is "
+                      f"missing)", file=sys.stderr)
+                return 1
         elif args.verb == "remove":
             remove(args.job_id, path=qp)
         elif args.verb == "stats":

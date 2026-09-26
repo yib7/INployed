@@ -123,11 +123,15 @@ def _kv(label: str, value: Any, *, always: bool = False) -> str:
 def _address_lines(answers: List[Dict[str, Any]]) -> str:
     """Render the mailing address (combined line + structured components) from
     the store's address answers, each read through `apply_answers.fact_value`:
-    a part that is not set or not confirmed is left out."""
+    a part that is not set or not confirmed is left out. A duplicate id takes
+    its value from the FIRST entry that carries it; any entry after it is
+    ignored, confirmed or not."""
     val = {k: "" for k in ADDRESS_KEYS}
+    seen: set = set()
     for e in answers or []:
         eid = e.get("id") if isinstance(e, dict) else None
-        if eid in val and not val[eid]:
+        if eid in val and eid not in seen:
+            seen.add(eid)
             val[eid] = apply_answers.fact_value(e)
     street, city, state, zc, country = (val["address_street"], val["address_city"],
                                         val["address_state"], val["address_zip"],

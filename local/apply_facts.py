@@ -113,6 +113,7 @@ _BASICS_KEYS = {"full_name": "name", "email": "email", "phone": "phone",
                 "github_url": "github", "website_url": "website"}
 
 _H2_RE = re.compile(r"(?m)^##\s+(?P<name>[^\n]+?)\s*$")
+_ADDRESS_H3_RE = re.compile(r"(?m)^###\s+Address\s*$")
 _EM_DASH = chr(0x2014)
 _DOT = chr(0xB7)
 _YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
@@ -131,9 +132,11 @@ class Fact:
 class FactCatalog:
     """The facts for one job folder, keyed by fact key."""
 
-    def __init__(self, facts: Iterable[Fact] = (), sheet_text: str = ""):
+    def __init__(self, facts: Iterable[Fact] = (), sheet_text: str = "",
+                answers: list[dict] | None = None):
         self.facts: dict[str, Fact] = {f.key: f for f in facts}
         self._sheet_text = sheet_text or ""
+        self._bank = answers or []
 
     def has(self, key: str) -> bool:
         f = self.facts.get(key)
@@ -149,13 +152,29 @@ class FactCatalog:
 
     def sheet_excerpt(self, max_chars: int = 6000) -> str:
         """The candidate, answers, education and achievement source sections
-        for grounding drafts. Generated cover-letter prose is excluded. Longer than
-        `max_chars`, it is cut at the last line end at or before the cap (a
-        first line longer than the cap is cut at the cap)."""
+        for grounding drafts. The Standard answers section and the Address
+        block are rendered fresh from the answer store (the same renderer
+        `apply_data` uses for the sheet), never read from the sheet's own
+        text: a sheet a refresh left stale never hands a drafting call an
+        answer the store does not currently confirm. Generated cover-letter
+        prose is excluded. Longer than `max_chars`, it is cut at the last
+        line end at or before the cap (a first line longer than the cap is
+        cut at the cap)."""
+        from resume_tailor import apply_data  # lazy: config.py loads .env at import
         sections = _h2_sections(self._sheet_text)
-        parts = [sections[name] for name in ("candidate", "standard answers", "education",
-                                             "work experience", "projects", "leadership")
-                 if name in sections]
+        parts = []
+        for name in ("candidate", "standard answers", "education",
+                    "work experience", "projects", "leadership"):
+            if name not in sections:
+                continue
+            if name == "candidate":
+                address = apply_data._address_lines(self._bank).strip()
+                candidate = _strip_nested_address(sections[name])
+                parts.append(candidate + (f"\n\n{address}" if address else ""))
+            elif name == "standard answers":
+                parts.append(apply_data._standard_answer_lines(self._bank).strip())
+            else:
+                parts.append(sections[name])
         text = "\n\n".join(parts).strip()
         if len(text) <= max_chars:
             return text
@@ -207,8 +226,12 @@ def build(folder: Path, *, answers: list[dict] | None = None,
 
     # The answers and the address: the store's, through `fact_value` ("" when
     # an answer is not set, not confirmed or does not fit its type). A sheet
-    # written before a change in the store never outranks it (cycle 18).
+    # written before a change in the store never outranks it (cycle 18). A
+    # duplicate id takes its value from the FIRST entry that carries it (a
+    # well-formed store never has one; `validate` rejects it) and ignores any
+    # entry after it, confirmed or not.
     answer_facts: list[Fact] = []
+    seen_named: set[str] = set()
     for entry in bank:
         eid = str(entry.get("id", "")).strip()
         if not eid:
@@ -216,6 +239,9 @@ def build(folder: Path, *, answers: list[dict] | None = None,
         question = str(entry.get("question", "") or "").strip()
         value = apply_answers.fact_value(entry)
         if eid in _NAMED_BANK_IDS:
+            if eid in seen_named:
+                continue
+            seen_named.add(eid)
             values[eid] = value
         else:
             answer_facts.append(Fact(key=f"answer_{eid}", value=value,
@@ -234,7 +260,16 @@ def build(folder: Path, *, answers: list[dict] | None = None,
     facts = [Fact(key=k, value=values.get(k, ""), description=desc,
                   kind=_KIND_BY_KEY.get(k, "text"))
              for k, desc in DESCRIPTIONS.items()]
-    return FactCatalog(facts + answer_facts, sheet_text=text)
+    return FactCatalog(facts + answer_facts, sheet_text=text, answers=bank)
+
+
+def _strip_nested_address(candidate_section: str) -> str:
+    """The `## Candidate` section's text with its nested `### Address`
+    sub-block (build_markdown puts it right after the candidate fields) cut
+    off, so `sheet_excerpt` can splice in the store's own address rendering
+    instead of the sheet's stale one."""
+    m = _ADDRESS_H3_RE.search(candidate_section)
+    return candidate_section[:m.start()].rstrip() if m else candidate_section
 
 
 def _h2_sections(text: str) -> dict[str, str]:

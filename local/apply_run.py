@@ -5072,8 +5072,9 @@ class _JobRun:
         try:
             from resume_tailor import apply_data
             if not apply_data.refresh_answer_sections(self.folder, answers):
-                self.log.warning("job %s: apply.md has no Standard answers section to "
-                                 "refresh", self.job_id)
+                self.log.warning("job %s: the sheet's answer sections were not refreshed "
+                                 "(no apply.md, or its Standard answers or signature "
+                                 "heading is missing)", self.job_id)
         except Exception as e:      # noqa: BLE001  (the sheet is a view; the job goes on)
             self.log.warning("job %s: the apply.md answers were not refreshed (%s)",
                              self.job_id, type(e).__name__)

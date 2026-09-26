@@ -257,6 +257,19 @@ def test_build_reads_an_answer_only_through_fact_value(tmp_path, entry):
     assert cat.value("work_authorized") == ""
 
 
+def test_build_a_duplicate_named_id_the_first_entry_wins(folder):
+    # fix round 1, item 5: a duplicate id used to let the LAST entry win;
+    # now the FIRST one does, confirmed or not (a well-formed store never
+    # has one; `apply_answers.validate` rejects it)
+    bank = _bank()
+    by_id = {e["id"]: e for e in bank}
+    first = dict(by_id["onsite_ok"], answer="", confirmed=False)
+    second = dict(by_id["onsite_ok"], answer="No", confirmed=True)
+    bank = [e for e in bank if e["id"] != "onsite_ok"] + [first, second]
+    cat = apply_facts.build(folder, answers=bank)
+    assert cat.value("onsite_ok") == ""
+
+
 def test_build_a_named_answer_is_never_a_custom_fact_too(folder):
     cat = apply_facts.build(folder, answers=_bank())
     named = [k for k in cat.facts if k.startswith("answer_")
@@ -352,6 +365,45 @@ def test_sheet_excerpt_includes_grounding_evidence_from_experience_and_education
     assert "State University" in ex and "Computer Science" in ex
     assert "## Cover letter" not in ex
     assert len(cat.sheet_excerpt(max_chars=100)) <= 100
+
+
+_STALE_SHEET_NO_SIGNATURE = """\
+# Apply sheet: Engineer @ Acme
+
+## Candidate
+- **Name:** Jane Doe
+- **Email:** jane.doe@example.com
+
+### Address
+- **Street:** 1 Stale Ave
+
+## Education
+- State University — B.S., Computer Science · 2024
+
+## Standard answers
+- **Are you willing to relocate?** No
+- **Are you willing to work on-site (in the office)?** Yes
+"""
+
+
+def test_sheet_excerpt_renders_answers_and_address_from_the_store_never_the_sheet(tmp_path):
+    # fix round 1, item 1: a sheet with no signature heading (so a refresh
+    # leaves it exactly as it is) must never hand its own stale or
+    # unconfirmed Standard answers or Address text to a drafting call
+    (tmp_path / "apply.md").write_text(_STALE_SHEET_NO_SIGNATURE, encoding="utf-8")
+    assert apply_data.refresh_answer_sections(tmp_path, standard_bank()) is False
+
+    bank = unconfirmed(standard_bank(), "onsite_ok") + [
+        custom("motivation", "Why this role?", "a distinctive store answer", confirmed=False)]
+    cat = apply_facts.build(tmp_path, answers=bank)
+    ex = cat.sheet_excerpt()
+
+    assert "1 Stale Ave" not in ex
+    assert "- **Are you willing to relocate?** No" not in ex
+    assert "- **Are you willing to relocate?** Yes" in ex
+    assert "123 Main Street" in ex
+    assert "work on-site" not in ex          # onsite_ok is unconfirmed: the line is left out
+    assert "a distinctive store answer" not in ex
 
 
 def test_verification_evidence_includes_bank_fallbacks_and_artifact_names(folder):

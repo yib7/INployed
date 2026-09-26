@@ -636,7 +636,10 @@ def test_requeue_refresh_names_a_damaged_store_on_the_entry(tmp_path, monkeypatc
     apply_queue.set_artifacts("1", {"folder": str(folder)}, path=q)
     got = apply_queue.requeue("1", refresh_answers=True, path=q)
     assert got["status"] == "queued"
-    assert "refresh FAILED" in got["notes"] and "AnswerStoreError" in got["notes"]
+    # fix round 1, item 3: say the sheet's answers were not refreshed, and for
+    # a damaged store point to the Apply Answers tab's backup restore (FL-4)
+    assert "were not refreshed" in got["notes"] and "AnswerStoreError" in got["notes"]
+    assert "restore the backup" in got["notes"]
     assert (folder / "apply.md").read_text(encoding="utf-8") == _STALE_SHEET
 
 
@@ -654,11 +657,105 @@ def test_requeue_refresh_hook_failure_is_tolerated(tmp_path, monkeypatch):
     assert got["status"] == "queued"
     # P2 #14: the failure is surfaced IN-BAND on the entry's notes (dashboard-
     # visible), not only stderr — so a human doesn't assume the answers refreshed.
-    assert "refresh FAILED" in got["notes"]
+    assert "were not refreshed" in got["notes"]
     assert "store on fire" in got["notes"]
+    # fix round 1, item 3: a plain RuntimeError is not the store; no backup-
+    # restore pointer for it
+    assert "restore the backup" not in got["notes"]
     # And it's persisted on the stored entry, not just the returned copy.
     stored = apply_queue._find(apply_queue.load(q), "1")
-    assert "refresh FAILED" in stored["notes"]
+    assert "were not refreshed" in stored["notes"]
+
+
+# --- refresh-answers: a stale sheet the SKILL.md drain must refresh itself -------
+
+_NO_SIGNATURE_SHEET = """\
+## Standard answers
+- **Are you willing to relocate?** Yes
+"""
+
+
+def test_refresh_answers_function_splices_the_store_and_returns_true(tmp_path, monkeypatch):
+    _store(tmp_path, monkeypatch, willing_to_relocate="No", address_street="9 New Street")
+    folder = tmp_path / "gen"
+    folder.mkdir()
+    (folder / "apply.md").write_text(_STALE_SHEET, encoding="utf-8")
+    q = _q(tmp_path)
+    _finished_entry(q)
+    apply_queue.set_artifacts("1", {"folder": str(folder)}, path=q)
+    assert apply_queue.refresh_answers("1", path=q) is True
+    text = (folder / "apply.md").read_text(encoding="utf-8")
+    assert "- **Are you willing to relocate?** No\n" in text
+    assert "9 New Street" in text
+
+
+def test_refresh_answers_function_false_when_the_sheet_cannot_be_refreshed(tmp_path, monkeypatch):
+    _store(tmp_path, monkeypatch)
+    folder = tmp_path / "gen"
+    folder.mkdir()
+    (folder / "apply.md").write_text(_NO_SIGNATURE_SHEET, encoding="utf-8")
+    q = _q(tmp_path)
+    _finished_entry(q)
+    apply_queue.set_artifacts("1", {"folder": str(folder)}, path=q)
+    assert apply_queue.refresh_answers("1", path=q) is False
+
+
+def test_refresh_answers_function_raises_for_a_damaged_store(tmp_path, monkeypatch):
+    from resume_tailor import apply_answers
+    store = tmp_path / "apply_answers.json"
+    store.write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(apply_answers, "STORE_PATH", store)
+    q = _q(tmp_path)
+    _finished_entry(q)
+    apply_queue.set_artifacts("1", {"folder": str(tmp_path / "gen")}, path=q)
+    with pytest.raises(apply_answers.AnswerStoreError):
+        apply_queue.refresh_answers("1", path=q)
+
+
+def test_refresh_answers_function_raises_for_an_unknown_job(tmp_path, monkeypatch):
+    _store(tmp_path, monkeypatch)
+    q = _q(tmp_path)
+    with pytest.raises(apply_queue.UnknownJobError):
+        apply_queue.refresh_answers("nope", path=q)
+
+
+def test_refresh_answers_cli_exits_0_on_success(tmp_path, monkeypatch):
+    _store(tmp_path, monkeypatch, willing_to_relocate="No")
+    folder = tmp_path / "gen"
+    folder.mkdir()
+    (folder / "apply.md").write_text(_STALE_SHEET, encoding="utf-8")
+    q = _q(tmp_path)
+    _finished_entry(q)
+    apply_queue.set_artifacts("1", {"folder": str(folder)}, path=q)
+    assert apply_queue.main(["refresh-answers", "--queue", str(q), "1"]) == 0
+    text = (folder / "apply.md").read_text(encoding="utf-8")
+    assert "- **Are you willing to relocate?** No\n" in text
+
+
+def test_refresh_answers_cli_exits_1_when_the_sheet_cannot_be_refreshed(
+        tmp_path, monkeypatch, capsys):
+    _store(tmp_path, monkeypatch)
+    folder = tmp_path / "gen"
+    folder.mkdir()
+    (folder / "apply.md").write_text(_NO_SIGNATURE_SHEET, encoding="utf-8")
+    q = _q(tmp_path)
+    _finished_entry(q)
+    apply_queue.set_artifacts("1", {"folder": str(folder)}, path=q)
+    assert apply_queue.main(["refresh-answers", "--queue", str(q), "1"]) == 1
+    assert "apply_queue" in capsys.readouterr().err
+
+
+def test_refresh_answers_cli_exits_2_on_a_damaged_store(tmp_path, monkeypatch, capsys):
+    from resume_tailor import apply_answers
+    store = tmp_path / "apply_answers.json"
+    store.write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(apply_answers, "STORE_PATH", store)
+    q = _q(tmp_path)
+    _finished_entry(q)
+    apply_queue.set_artifacts("1", {"folder": str(tmp_path / "gen")}, path=q)
+    assert apply_queue.main(["refresh-answers", "--queue", str(q), "1"]) == 2
+    err = capsys.readouterr().err
+    assert "damaged" in err and "restore the backup" in err
 
 
 # --- remove / clear_finished / stats ----------------------------------------------

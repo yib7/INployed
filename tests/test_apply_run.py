@@ -2633,6 +2633,20 @@ def test_prepare_goes_on_when_the_sheet_refresh_fails(
     assert "synthetic-refresh-detail" not in logged
 
 
+def test_prepare_logs_a_plain_reason_when_the_sheet_lacks_a_refreshable_section(
+        context, job_folder, tmp_path, monkeypatch, caplog):
+    # fix round 1, item 2: say what is known ("the sheet's answer sections
+    # were not refreshed"), not a guess at which heading is missing
+    monkeypatch.setattr(apply_data, "refresh_answer_sections", lambda folder, answers: False)
+    e = _enqueue(job_folder, "https://boards.greenhouse.io/acme/jobs/1")
+    run = apply_run._JobRun(_runner(context, tmp_path), context, e)
+    assert run._prepare() == "https://boards.greenhouse.io/acme/jobs/1"
+    assert run.catalog.facts["work_authorized"].value == "Yes"
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    assert "the sheet's answer sections were not refreshed" in logged
+    assert "no Standard answers section" not in logged
+
+
 def test_the_runner_reads_the_store_once_per_drain(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
     reads = []

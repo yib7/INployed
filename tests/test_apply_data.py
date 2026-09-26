@@ -684,6 +684,21 @@ def test_address_renders_from_fact_value_only(tmp_path, monkeypatch):
         "zip / postal": "12345", "country": "United States"}
 
 
+def test_address_duplicate_id_the_first_entry_wins(tmp_path, monkeypatch):
+    # fix round 1, item 5: a duplicate id used to let a later, confirmed
+    # entry win over an earlier, unconfirmed one; now the first entry with
+    # that id is read, confirmed or not
+    monkeypatch.setattr(apply_config, "APPLY_CONFIG", tmp_path / "missing.json")
+    bank = standard_bank()
+    by_id = {e["id"]: e for e in bank}
+    first = dict(by_id["address_street"], answer="", confirmed=False)
+    second = dict(by_id["address_street"], answer="9 Second Street", confirmed=True)
+    bank = [e for e in bank if e["id"] != "address_street"] + [first, second]
+    md = apply_data.build_markdown(_MASTER, _JOB, bank)
+    assert "9 Second Street" not in md
+    assert "- **Street:**" not in md
+
+
 # --- the `## Cover letter` section (replaces the old _Cover_Letter.txt) ---------
 
 # What coverletter.cover_letter_text() hands over: the paste-ready letter, header

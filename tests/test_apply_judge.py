@@ -1594,12 +1594,16 @@ _OWN_QUESTIONS = [
     # onsite_ok
     ("onsite_ok", "Are you willing to work on-site?", True),
     ("onsite_ok", "Are you willing to work on-site (in the office)?", True),
-    ("onsite_ok", "Are you able to work in the office 3 days a week?", True),
-    ("onsite_ok", "Are you able to work on-site / in the office (3 days a week)?", True),
-    ("onsite_ok", "Are you able to work in person at our office five days a week?", True),
+    # final review I2: a count of days a week is a narrower form (the hybrid
+    # question), which a Yes alone settles
+    ("onsite_ok", "Are you able to work in the office 3 days a week?", False),
+    ("onsite_ok", "Are you able to work on-site / in the office (3 days a week)?", False),
+    ("onsite_ok", "Are you able to work in person at our office five days a week?", False),
     # round 4: "comfortable" with on-site work is its own question
+    ("onsite_ok", "This role requires working in the office. Are you comfortable with this?",
+     True),
     ("onsite_ok", "This role requires working in the office 3 days a week. Are you "
-                  "comfortable with this?", True),
+                  "comfortable with this?", False),
     # round 3: an acknowledgement, a team: other words
     ("onsite_ok", "I understand this position is fully on-site and I am able to work in the "
                   "office.", False),
@@ -1621,6 +1625,11 @@ _OWN_QUESTIONS = [
     ("remote_only", "Are you open to remote work?", False),
     ("remote_only", "Are you willing to work on-site?", False),
     ("remote_only", "What is your preferred work arrangement?", False),
+    # final review I1: "can you" and "would you" ask about accepting remote work
+    ("remote_only", "Can you work remotely only?", False),
+    ("remote_only", "Can you work remote only?", False),
+    ("remote_only", "Would you work remote only?", False),
+    ("remote_only", "Would you work fully remotely only?", False),
     # years_experience: generic qualifiers pass, a named skill, tool or field does not
     ("years_experience", "How many years of professional experience do you have?", True),
     ("years_experience", "How many years of relevant experience do you have?", True),
@@ -2066,7 +2075,7 @@ _WORDS = [
     # plan cannot check it is the job's location)
     ("willing_to_relocate", "Are you willing to relocate to the job location (New York)?", "",
      "other"),
-    ("onsite_ok", "Are you willing to come into the office 3 days per week?", "", "own"),
+    ("onsite_ok", "Are you willing to come into the office 3 days per week?", "", "narrower"),
     ("onsite_ok", "Are you able to report to our office in person?", "", "own"),
     ("onsite_ok", "Can you work onsite?", "", "own"),
     # hybrid is a narrower form of on-site work: a Yes to on-site settles it
@@ -2391,7 +2400,8 @@ _COMFORT_COMMUTE = "Are you comfortable commuting to our office?"
 # question; a remote role, a city, a negation or a commute is another, and
 # the new words open no other fact
 _COMFORT = [
-    ("onsite_ok", _COMFORT_OFFICE, "own"),
+    # a count of days a week is the hybrid question (final review I2)
+    ("onsite_ok", _COMFORT_OFFICE, "narrower"),
     ("onsite_ok", _COMFORT_ONSITE, "own"),
     ("onsite_ok", "This position requires working on-site. Are you comfortable with that?",
      "own"),
@@ -2435,6 +2445,12 @@ def test_comfortable_with_on_site_work_takes_the_on_site_answer(tmp_path, label,
     digest = _field_with(label)
     p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("onsite_ok", 1.0)}))
     pf = p.fields[0]
+    if label == _COMFORT_OFFICE and value == "No":
+        # 3 days a week is the hybrid question: a No to on-site work leaves
+        # it to the person (final review I2)
+        assert (pf.action, pf.option, pf.fact_key) == ("skip", None, None)
+        assert p.park_reason == f"required field without an answer: {label}"
+        return
     assert (pf.action, pf.option, pf.fact_key) == ("select", value, "onsite_ok")
     assert p.park_reason == ""
 
@@ -2552,9 +2568,9 @@ _NOTHING_DROPPED = [
     ("authorized_without_sponsorship", "Are you authorized to work in the US and won't need "
                                        "sponsorship?", "", "own"),
     ("remote_only", "Are you looking for a fully remote position only?", "", "own"),
-    ("onsite_ok", "Are you able to work in the office 3 days a week?", "", "own"),
+    ("onsite_ok", "Are you able to work in the office 3 days a week?", "", "narrower"),
     ("onsite_ok", f"Are you willing to work on{_NBHYPHEN}site?", "", "own"),
-    ("onsite_ok", f"Can you work on-site 3{_EN}4 days a week?", "", "own"),
+    ("onsite_ok", f"Can you work on-site 3{_EN}4 days a week?", "", "narrower"),
     ("years_experience", "How many years of experience do you have?", "", "own"),
     ("years_experience", "How many years of experience do you have in similar positions?", "",
      "own"),
@@ -3154,7 +3170,7 @@ _ROUND7_KEPT = [
     ("onsite_ok", "Are you currently able to work on-site?", "", "own"),
     ("onsite_ok", "Are you currently open to working on-site?", "", "own"),
     ("onsite_ok", "Are you currently comfortable working in an office?", "", "own"),
-    ("onsite_ok", "Are you able to work in the office 5 days a week?", "", "own"),
+    ("onsite_ok", "Are you able to work in the office 5 days a week?", "", "narrower"),
     ("onsite_ok", "Can you work onsite?", "", "own"),
     ("remote_only", "Do you require a fully remote role?", "", "own"),
     ("years_experience", "How many years of experience relevant to this role?", "", "own"),
@@ -3341,3 +3357,180 @@ def test_a_status_list_under_a_question_label_still_goes_to_the_judge(tmp_path):
     digest = _field_with(label, type_="select", options=_STATUS_OPTIONS)
     p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("work_authorized", 1.0)}))
     assert list(apply_judge.option_questions(digest, p, catalog=cat)[1]) == ["field_0_pick"]
+
+
+# --- cycle 18 final review: C1, I1, I2, M1 and M5 of the own-question gate --------------------
+
+_TRAVEL = "Are you willing to travel?"
+_TRAVEL_FAR = "Are you willing to travel up to 75% of the time internationally?"
+_F1_PETITIONS = "How many F-1 petitions have you had?"
+
+
+@pytest.mark.parametrize("eid, saved, value, asked, type_, options", [
+    # the reviewer's repros: a Text custom answer holding a yes / no
+    ("hold_h1b", _H1B_HOLD, "No", _F1_HOLD, "select", ("Yes", "No")),
+    ("hold_h1b", _H1B_HOLD, "No", _F1_HOLD, "text", ()),
+    ("travel", _TRAVEL, "Yes", _TRAVEL_FAR, "radio", ("Yes", "No")),
+    ("travel", _TRAVEL, "y", _TRAVEL_FAR, "radio", ("Yes", "No")),
+    # and a plain number
+    ("petitions", _H1B_PETITIONS, "1", _F1_PETITIONS, "text", ()),
+])
+@pytest.mark.parametrize("same", [False, True])
+def test_a_text_custom_yes_no_or_number_answers_only_its_own_saved_question(
+        tmp_path, eid, saved, value, asked, type_, options, same):
+    # final review C1: every migrated v1 answer and every answer added with
+    # the default type is Text, and the gate read only the typed ones
+    bank = standard_bank() + [custom(eid, saved, value)]
+    cat = apply_facts.build(tmp_path, answers=bank, today=date(2026, 9, 21))
+    key = f"answer_{eid}"
+    assert cat.custom_type(key) == "text" and cat.value(key) == value
+    label = saved if same else asked
+    digest = _field_with(label, type_=type_, options=options)
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: (key, 0.9)},
+                                                    options={0: (value, 1.0)}))
+    pf = p.fields[0]
+    if not same:
+        assert (pf.action, pf.option, pf.value, pf.fact_key) == ("skip", None, "", None)
+        assert p.park_reason == f"required field without an answer: {label}"
+        assert apply_judge.option_questions(digest, p, catalog=cat)[1] == {}
+        return
+    assert p.park_reason == ""
+    if options:
+        assert (pf.action, pf.option) == ("select", "Yes" if value == "y" else value)
+    else:
+        assert (pf.action, pf.value) == ("fill", value)
+
+
+def test_a_prose_text_custom_answer_still_fills_its_mapped_field(tmp_path):
+    bank = standard_bank() + [custom("heard", "How did you hear about us?", "LinkedIn")]
+    cat = apply_facts.build(tmp_path, answers=bank, today=date(2026, 9, 21))
+    digest = _field_with("How did you first learn about this position?", type_="text",
+                         options=())
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("answer_heard", 0.9)}))
+    assert (p.fields[0].action, p.fields[0].value) == ("fill", "LinkedIn")
+    assert p.park_reason == ""
+
+
+@pytest.mark.parametrize("type_", ["yes_no", "text"])
+def test_a_text_custom_yes_under_a_noun_phrase_settles_only_a_plain_yes_no(tmp_path, type_):
+    bank = standard_bank() + [custom("clearance", "Security clearance", "Yes", type=type_)]
+    cat = apply_facts.build(tmp_path, answers=bank, today=date(2026, 9, 21))
+    assert cat.yes_no("answer_clearance")
+    digest = _field_with("Security clearance", type_="select",
+                         options=("Secret", "Top Secret", "None"))
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("answer_clearance", 1.0)},
+                                                    options={0: ("Top Secret", 1.0)}))
+    assert (p.fields[0].action, p.fields[0].option) == ("skip", None)
+    assert apply_judge.option_questions(digest, p, catalog=cat)[1] == {}
+
+
+# final review I1: "can you" and "would you" ask whether the candidate
+# accepts a remote role; the saved fact says the candidate wants remote only
+_REMOTE_ACCEPT = ["Can you work remotely only?", "Can you work remote only?",
+                  "Would you work remote only?", "Would you work fully remotely only?"]
+
+
+@pytest.mark.parametrize("answers", [{}, _SPONSOR, {"onsite_ok": "No"}])
+@pytest.mark.parametrize("label", _REMOTE_ACCEPT)
+def test_can_you_work_remote_only_gets_no_value_from_remote_only(tmp_path, answers, label):
+    cat = _profile_catalog(tmp_path, **answers)
+    digest = _field_with(label)
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("remote_only", 1.0)},
+                                                    options={0: ("No", 1.0)}))
+    assert (p.fields[0].action, p.fields[0].option, p.fields[0].fact_key) == ("skip", None, None)
+    assert p.park_reason == f"required field without an answer: {label}"
+
+
+@pytest.mark.parametrize("label", ["Are you looking for a fully remote position only?",
+                                   "Are you seeking remote-only roles?",
+                                   "Do you require a fully remote role?"])
+def test_the_candidates_own_remote_search_still_settles_remote_only(label):
+    assert apply_judge.question_fit("remote_only", label) == "own"
+
+
+# final review I2: a part-week office schedule is the hybrid question, so a
+# No to on-site work says nothing about it
+_OFFICE_DAYS = ["Are you willing to work in the office 2 days a week?",
+                "Are you able to come into the office 3 days a week?",
+                "Can you work in the office 1 day a week?",
+                "Would you come into the office 3 days a week?",
+                "Can you work from our office 3 days a week?"]
+
+
+@pytest.mark.parametrize("required", [True, False])
+@pytest.mark.parametrize("label", _OFFICE_DAYS)
+def test_a_days_a_week_office_question_settles_only_a_yes_to_on_site_work(
+        tmp_path, label, required):
+    assert apply_judge.question_fit("onsite_ok", label) == "narrower"
+    digest = _field_with(label, required=required)
+    no = _profile_catalog(tmp_path, onsite_ok="No")
+    p = apply_judge.plan(digest, no, _page_answers(digest, {0: ("onsite_ok", 1.0)},
+                                                   options={0: ("No", 1.0)}))
+    assert (p.fields[0].action, p.fields[0].option, p.fields[0].fact_key) == ("skip", None, None)
+    assert p.park_reason == (f"required field without an answer: {label}" if required else "")
+    yes = _profile_catalog(tmp_path, onsite_ok="Yes")
+    p = apply_judge.plan(digest, yes, _page_answers(digest, {0: ("onsite_ok", 1.0)},
+                                                    options={0: ("Yes", 1.0)}))
+    assert (p.fields[0].action, p.fields[0].option) == ("select", "Yes")
+    assert p.park_reason == ""
+
+
+# final review M1: a one-word company named for a place reads as the place
+@pytest.mark.parametrize("company, key, label", [
+    ("Canada", "work_authorized", "Are you legally authorized to work in Canada?"),
+    ("Texas", "work_authorized", "Are you legally authorized to work in Texas?"),
+    ("New York", "onsite_ok", "Are you willing to work on-site in New York?"),
+    # a place the tables do not list, read as one after "in"
+    ("Boston", "work_authorized", "Are you legally authorized to work in Boston?"),
+])
+def test_a_company_named_for_a_place_reads_as_the_place(company, key, label):
+    assert apply_judge.question_fit(key, label, company=company) == "other"
+
+
+@pytest.mark.parametrize("key, label, fit", [
+    ("work_authorized", "Are you legally authorized to work in Canada?", "other"),
+    ("work_authorized", "Are you legally authorized to work for Acme?", "own"),
+    ("onsite_ok", "Are you willing to work on-site at Acme?", "own"),
+])
+def test_a_company_named_for_no_place_still_reads_as_the_company(key, label, fit):
+    assert apply_judge.question_fit(key, label, company="Acme") == fit
+
+
+# final review M5: status options under a verb label; the yes / no lines say
+# Yes to three of them, and the saved authorization statement tells them apart
+_STATUS_VERB_OPTIONS = ("Yes, I am a U.S. citizen", "Yes, I am a permanent resident (green card)",
+                        "Yes, I have a work visa", "No")
+_STATEMENT = "I am a U.S. citizen."
+
+
+def _pick_request(cat, options):
+    digest = _field_with(_AUTH, type_="select", options=options)
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("work_authorized", 1.0)}))
+    return apply_judge.option_questions(digest, p, catalog=cat)[1]["field_0_pick"]
+
+
+def test_status_options_under_a_verb_label_carry_the_authorization_statement(tmp_path):
+    cat = _profile_catalog(tmp_path, authorization_statement=_STATEMENT)
+    answer = _pick_request(cat, _STATUS_VERB_OPTIONS)["instructions"]["candidate_answer"]
+    lines = answer.split("\n")
+    assert lines[:-1] == apply_judge.candidate_answer(cat, "work_authorized", "Yes").split("\n")
+    assert lines[-1] == f"{apply_judge.STATEMENT_LINE}: {_STATEMENT}"
+    # with no statement saved the request is the yes / no story alone
+    bare = _profile_catalog(tmp_path, authorization_statement="")
+    assert not bare.has(apply_judge.STATEMENT_KEY)
+    assert _pick_request(bare, _STATUS_VERB_OPTIONS)["instructions"]["candidate_answer"] == \
+        apply_judge.candidate_answer(bare, "work_authorized", "Yes")
+
+
+@pytest.mark.parametrize("options", [
+    ("Yes, I am authorized", "No, I am not authorized"),
+    # one Yes option with a status (the Contoso replica, a recorded screening item)
+    ("Yes - on a work visa (OPT/H-1B)",
+     "U.S. citizen or permanent resident (no visa sponsorship required)", "No"),
+])
+def test_a_list_the_yes_no_story_reads_keeps_its_request_byte_for_byte(tmp_path, options):
+    cat = _profile_catalog(tmp_path, authorization_statement=_STATEMENT)
+    old = apply_judge._option_question(
+        0, list(options), apply_judge.candidate_answer(cat, "work_authorized", "Yes"), "Yes")
+    assert json.dumps(_pick_request(cat, options), sort_keys=True) == \
+        json.dumps(old, sort_keys=True)

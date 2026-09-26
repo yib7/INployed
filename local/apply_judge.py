@@ -62,8 +62,11 @@ from typing import Any, Mapping
 
 from urllib.parse import urlsplit
 
-from apply_facts import (DESCRIPTIONS, STORED_YES_NO_KEYS, YES_NO_KEYS, FactCatalog,
-                         answers_question, noun_phrase, quick_map)
+# PLAIN_NUMBER (a number box's answer: "3", "1.5"; "5+", "$120,000" and "3-5"
+# are no number, cycle 18 FM-5) and the yes and no forms are the own-question
+# gate's too, so both read one list (final review C1)
+from apply_facts import (DESCRIPTIONS, NO_FORMS, PLAIN_NUMBER, STORED_YES_NO_KEYS, YES_FORMS,
+                         YES_NO_KEYS, FactCatalog, answers_question, noun_phrase, quick_map)
 # the own-question gate's other names, re-exported for the judge's callers
 from apply_facts import asks_own_question as asks_own_question
 from apply_facts import question_fit as question_fit
@@ -569,7 +572,7 @@ AUTOFILL_PARSER = "autofill parser"     # the extractor's help for a resume pars
 _ALIASES: tuple[frozenset[str], ...] = tuple(frozenset(g) for g in (
     ("united states", "us", "usa", "u s", "u s a", "united states of america", "america"),
     ("united kingdom", "uk", "u k", "great britain", "gb", "britain"),
-    ("yes", "y", "true"), ("no", "n", "false"),
+    YES_FORMS, NO_FORMS,
     *(((name.lower(), code.lower())) for code, name in _US_STATES.items()),
 ))
 # the "I decline to answer" family: a stored decline matches any of them. A
@@ -651,25 +654,46 @@ def code_pick(value: str, options: list[str]) -> str | None:
     return match_option(value, options, exact=True)
 
 
-def candidate_answer(catalog: FactCatalog | None, key: str, value: str) -> str:
+# a status an option names (a citizen, a permanent resident, a green card, a
+# visa): the yes / no lines say Yes to every such option that starts with a
+# yes, and the saved authorization statement tells them apart (final review M5)
+_STATUS_WORDS = re.compile(r"\b(?:citizens?(?:hip)?|permanent residen(?:t|ce|cy)|green card"
+                           r"|visas?|h-?1b|opt|cpt|ead|work permit)\b", re.I)
+_YES_LEAD = re.compile(r"^\W*(?:yes|y)\b", re.I)
+STATEMENT_KEY = "answer_authorization_statement"
+STATEMENT_LINE = "Work authorization statement, in the candidate's own words"
+
+
+def status_choices(options: list[str] | tuple[str, ...]) -> bool:
+    """Do two options or more start with a yes and name a status
+    (`_STATUS_WORDS`: "Yes, I am a U.S. citizen", "Yes, I have a work
+    visa")? The yes / no lines cannot pick among them."""
+    return sum(bool(_YES_LEAD.match(str(o)) and _STATUS_WORDS.search(str(o)))
+               for o in options or ()) >= 2
+
+
+def candidate_answer(catalog: FactCatalog | None, key: str, value: str,
+                     options: list[str] | tuple[str, ...] = ()) -> str:
     """The answer a pick question carries for `key`'s `value`. For a yes /
     no fact it is every stored yes / no fact the catalog holds, one line each
     and `key` first ("Legally authorized to work ...: Yes"), so a combined
     option ("Yes, I am authorized and need no sponsorship") is read against
     the whole story; a derived fact (`apply_facts.DERIVED_YES_NO`) leads its
     own pick and adds no line to another's, since the stored lines already
-    say it. Any other fact carries its value alone."""
+    say it. Among `options` naming a status after a yes (`status_choices`),
+    the saved authorization statement is the last line (`STATEMENT_LINE`,
+    final review M5); any other list's answer is the same with or without
+    `options`. Any other fact carries its value alone."""
     if catalog is None or key not in YES_NO_KEYS:
         return value
     lines = [f"{DESCRIPTIONS[key]}: {value}"]
     lines += [f"{DESCRIPTIONS[k]}: {catalog.value(k)}" for k in STORED_YES_NO_KEYS
               if k != key and catalog.has(k)]
+    if catalog.has(STATEMENT_KEY) and status_choices(options):
+        lines.append(f"{STATEMENT_LINE}: {catalog.value(STATEMENT_KEY)}")
     return "\n".join(lines)
 
 
-# a number box's answer: digits with an optional decimal part and nothing
-# else ("3", "1.5"); "5+", "$120,000" and "3-5" are no number (cycle 18, FM-5)
-PLAIN_NUMBER = re.compile(r"^\s*\d+(?:\.\d+)?\s*$")
 _PHONE_NAMED = re.compile(r"phone|mobile|(?<![a-z])tel", re.I)
 
 
@@ -789,7 +813,7 @@ def page_questions(digest: FormDigest, catalog: FactCatalog,
             if (key and catalog.has(key)
                     and code_pick(catalog.value(key), f.options) is None):
                 questions[f"field_{f.n}_option"] = _option_question(
-                    i, f.options, candidate_answer(catalog, key, catalog.value(key)),
+                    i, f.options, candidate_answer(catalog, key, catalog.value(key), f.options),
                     catalog.value(key))
     for i, b in enumerate(digest.buttons):
         questions[f"button_{b.n}_role"] = {
@@ -2009,7 +2033,7 @@ def option_questions(digest: FormDigest, fill_plan: FillPlan,
         i = len(state["fields"])
         state["fields"].append(_compact_field(f))
         questions[f"field_{f.n}_pick"] = _option_question(
-            i, f.options, candidate_answer(catalog, pf.fact_key, pf.value), pf.value)
+            i, f.options, candidate_answer(catalog, pf.fact_key, pf.value, f.options), pf.value)
     return state, questions
 
 
@@ -2093,7 +2117,8 @@ def reask_questions(digest: FormDigest, catalog: FactCatalog, fill_plan: FillPla
         for i, f in enumerate(fields):
             pf = by_pf[f.n]
             questions[_pick_qid(pf)] = _option_question(
-                i, f.options, candidate_answer(catalog, pf.fact_key, pf.value), pf.value)
+                i, f.options, candidate_answer(catalog, pf.fact_key, pf.value, f.options),
+                pf.value)
         return state, questions
     job = job or {}
     catalog_keys = list(catalog.to_criteria())

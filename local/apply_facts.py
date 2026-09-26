@@ -32,6 +32,7 @@ from typing import Iterable
 
 from apply_form import FIELD_TYPES
 from apply_playwright import parse_apply_md, split_name
+from resume_tailor.answer_tables import COUNTRIES, US_STATES
 
 KINDS = ("text", "bool", "choice_text", "file", "date")
 
@@ -174,20 +175,38 @@ class FactCatalog:
         return next((t for t in types if t in GATED_CUSTOM_TYPES), types[0] if types else "")
 
     def yes_no(self, key: str) -> bool:
-        """Is `key` a yes / no fact: a named one (`YES_NO_KEYS`) or a custom
-        yes / no answer?"""
-        return key in YES_NO_KEYS or self.custom_type(key) == "yes_no"
+        """Is `key` a yes / no fact: a named one (`YES_NO_KEYS`), a custom
+        yes / no answer, or a custom answer of any type whose value is a yes
+        or a no (final review C1)?"""
+        return key in YES_NO_KEYS or self.custom_type(key) == "yes_no" or (
+            self._custom(key) and yes_no_form(self.value(key)))
+
+    def _custom(self, key: str) -> bool:
+        """Is `key` a custom answer's fact (`answer_<id>`) of this catalog?"""
+        return key.startswith("answer_") and key in self.facts
+
+    def _gated(self, key: str, value: str | None) -> bool:
+        """Does custom answer `key` settle only its own saved question: a
+        gated type (`GATED_CUSTOM_TYPES`), or a value code settles whatever
+        the type (`code_settled`: a yes / no or a plain number; final review
+        C1: a v1 answer migrates as Text, and Text is the Add dialog's
+        default)?"""
+        if not self._custom(key):
+            return False
+        return self.custom_type(key) in GATED_CUSTOM_TYPES or code_settled(
+            self.value(key)) or (value is not None and code_settled(value))
 
     def answers_field(self, key: str, label: str, help_text: str = "", *,
                       value: str | None = None, partial: bool = False,
                       company: str = "") -> bool:
         """Does `key`'s value (this catalog's, or `value`) answer a field with
-        this label and help? A custom yes / no or number answer answers only
-        its own saved question, word for word (`same_question`); every other
-        fact goes through `answers_question`, the job's `company` name read
-        as the company. A cut label (`partial`) answers neither: the words it
-        lost are unread."""
-        if self.custom_type(key) in GATED_CUSTOM_TYPES:
+        this label and help? A custom answer of a yes / no or number type, or
+        holding a yes / no or a plain number (`_gated`), answers only its own
+        saved question, word for word (`same_question`); every other fact
+        goes through `answers_question`, the job's `company` name read as the
+        company. A cut label (`partial`) answers neither: the words it lost
+        are unread."""
+        if self._gated(key, value):
             return not partial and same_question(label, help_text, self.facts[key].description)
         return answers_question(key, self.value(key) if value is None else value, label,
                                 help_text, partial, company=company)
@@ -761,15 +780,20 @@ OWN_QUESTIONS: dict[str, _OwnQuestion] = {
                    "comfortable", "with", "this", "that", "role", "position", "requires",
                    "requiring", "is", _COMPANY)),
         (frozenset(("ONSITE", "office", "hybrid")),),
-        narrower=frozenset(("hybrid",)), settles_narrower="Yes",
+        # a part-week office schedule ("3 days a week") is the hybrid
+        # question: a Yes to on-site work settles it, a No does not (final
+        # review I2)
+        narrower=frozenset(("hybrid", "DAYSWEEK")), settles_narrower="Yes",
         anchors=_WILLING, apart=(frozenset(("NOW",)), frozenset(("work", "working")))),
     # "only" or "require": a question of accepting remote work is another;
-    # "looking for" and "seeking" ask the candidate's own search
+    # "looking for" and "seeking" ask the candidate's own search, and so
+    # does "you require". "Can you" and "would you" ask whether the candidate
+    # accepts a remote role (final review I1), so they are no anchor here
     "remote_only": _OwnQuestion(
         frozenset(("remote", "remotely", "only", "fully", "looking", "seeking", "role", "roles",
                    "position", "positions", "require", "work", "NOW")),
         (frozenset(("remote", "remotely")), frozenset(("only", "require"))),
-        anchors=_WILLING + (("looking",), ("seeking",))),
+        anchors=(("you", "require"), ("you", "requires"), ("looking",), ("seeking",))),
     # the total: a previous, prior, last or current role is another question,
     # and so is one job ("at this job") or a number
     "years_experience": _OwnQuestion(
@@ -784,6 +808,29 @@ OWN_QUESTIONS: dict[str, _OwnQuestion] = {
 OWN_QUESTION_KEYS = frozenset(OWN_QUESTIONS)
 # the custom answer types code settles: only for their own saved question
 GATED_CUSTOM_TYPES = ("yes_no", "number")
+# the values code settles, whatever the custom answer's stored type (final
+# review C1): a yes or a no as `apply_judge.code_pick` reads one, and a plain
+# number as a number box takes one ("3", "1.5"; "5+", "$120,000" and "3-5"
+# are none, cycle 18 FM-5)
+YES_FORMS = frozenset(("yes", "y", "true"))
+NO_FORMS = frozenset(("no", "n", "false"))
+YES_NO_FORMS = YES_FORMS | NO_FORMS
+PLAIN_NUMBER = re.compile(r"^\s*\d+(?:\.\d+)?\s*$")
+_FORM_NORM = re.compile(r"[^a-z0-9]+")
+
+
+def yes_no_form(value: str) -> bool:
+    """Is `value` a yes or a no (Yes, Y, True; No, N, False), case,
+    punctuation and spacing aside?"""
+    words = _FORM_NORM.sub(" ", str(value or "").lower().replace("'", " ")).split()
+    return " ".join(words) in YES_NO_FORMS
+
+
+def code_settled(value: str) -> bool:
+    """Is `value` one code settles: a yes or a no (`yes_no_form`) or a
+    plain number (`PLAIN_NUMBER`)?"""
+    return yes_no_form(value) or bool(PLAIN_NUMBER.match(str(value or "")))
+
 # a one-word company name that is a word of these questions is not read as
 # the company ("Able", "Remote", "Visa")
 _NOT_A_NAME = (frozenset(w.lower() for q in OWN_QUESTIONS.values() for w in q.vocabulary)
@@ -813,15 +860,27 @@ def _drop_neutral_tail(text: str) -> str:
     return text[:end]
 
 
+def _name_words(text: str) -> tuple[str, ...]:
+    return tuple(re.findall(r"[^\W_]+", (text or "").translate(_CHARACTERS).lower()))
+
+
+# the places a company may be named for (final review M1): a country, a US
+# state, the United States
+_PLACE_NAMES = frozenset(_name_words(p) for p in (
+    *COUNTRIES, *US_STATES.values(), "US", "USA", "America", "United States of America"))
+
+
 @lru_cache(maxsize=64)
 def _company_name(company: str) -> re.Pattern | None:
     """The job's company name as written in a question, with its possessive
-    ("Example Co", "Example Co.'s", "example co"); None for no name or a
-    one-word name that is a word of these questions (`_NOT_A_NAME`)."""
-    words = re.findall(r"[^\W_]+", (company or "").translate(_CHARACTERS).lower())
-    if not words or (len(words) == 1 and words[0] in _NOT_A_NAME):
+    ("Example Co", "Example Co.'s", "example co"), where no "in" leads it
+    (a place follows "in": "to work in Boston"); None for no name, a one-word name
+    that is a word of these questions (`_NOT_A_NAME`) or a name that is a
+    place (`_PLACE_NAMES`: "Canada", "Texas", final review M1)."""
+    words = _name_words(company)
+    if not words or (len(words) == 1 and words[0] in _NOT_A_NAME) or words in _PLACE_NAMES:
         return None
-    return re.compile(r"(?<![^\W_])" + r"[\s.,&'/-]+".join(map(re.escape, words))
+    return re.compile(r"(?<![^\W_])(?<!\bin )" + r"[\s.,&'/-]+".join(map(re.escape, words))
                       + r"(?:'s)?(?![^\W_])", re.IGNORECASE)
 
 

@@ -569,6 +569,9 @@ class _OwnQuestion:
     # word sets that together ask another question: "currently" beside
     # "work" asks about the present job
     apart: tuple[frozenset[str], ...] = ()
+    # the words that keep `apart` from applying: "currently able to work
+    # on-site" asks about now (round 6)
+    apart_unless: frozenset[str] = frozenset()
 
 
 # the words no question turns on ("able", "have" and "legally" are content
@@ -585,8 +588,10 @@ _CHARACTERS = str.maketrans({chr(0x2010): "-", chr(0x2011): "-", chr(0x2013): "-
 # the trailing sentences no question turns on, each compared whole
 # (`_tail_form`): the only words dropped before the vocabulary reads the text
 _NEUTRAL_TAILS = frozenset((
-    "if not, please explain", "if no, please explain", "please explain", "please select one",
-    "select one", "please select", "required", "yes/no", "*"))
+    "if not, please explain", "if no, please explain", "if yes, please explain",
+    "if yes, please describe", "if so, please explain", "please explain", "please select one",
+    "select one", "please select", "please enter a number", "enter a number", "required",
+    "yes/no", "*"))
 # a sentence with its closing marks, a parenthetical, a "*"
 _SEGMENT = re.compile(r"\([^()]*\)[.:?!]*|\*|[^()*?.!\n]+[?.!:]*|[?.!:]+|\n")
 # "U.S", "U.S.", "U.S.A.", "US" and "USA" name the country (read before the
@@ -635,15 +640,14 @@ _TOKEN = re.compile(r"[A-Z]+|[^\W_A-Z]+(?:'[^\W_A-Z]+)?")
 _LATER = frozenset(("FUTURE", "NOWFUTURE"))
 
 # work authorization's subject: one of these words
-_AUTHORIZED = frozenset(("authorized", "authorised", "eligible", "permitted", "RIGHTTOWORK",
-                         "legally", "able"))
+_AUTHORIZED = frozenset(("authorized", "authorised", "authorization", "authorisation",
+                         "allowed", "eligible", "permitted", "RIGHTTOWORK", "legally", "able"))
 _WORK = frozenset(("work", "working", "employment", "employed"))
 # "us" is a word of the vocabulary ("to work for us"); only US, the phrase,
 # names the country
 _USA = frozenset(("US", "us"))
 _WORK_AUTHORIZED = (_AUTHORIZED | _WORK | _USA
-                    | {"authorization", "authorisation", "allowed", "legal", "lawfully", "have",
-                       "take", "up", "STARTDATE", "NOW"})
+                    | {"legal", "lawfully", "have", "take", "up", "STARTDATE", "NOW"})
 _YEARS = frozenset(("years", "year", "yrs", "yr"))
 
 OWN_QUESTIONS: dict[str, _OwnQuestion] = {
@@ -680,7 +684,8 @@ OWN_QUESTIONS: dict[str, _OwnQuestion] = {
                    "requiring", "is")),
         (frozenset(("ONSITE", "office", "hybrid")),),
         narrower=frozenset(("hybrid",)), settles_narrower="Yes",
-        apart=(frozenset(("NOW",)), frozenset(("work", "working")))),
+        apart=(frozenset(("NOW",)), frozenset(("work", "working"))),
+        apart_unless=frozenset(("able", "willing", "comfortable", "open"))),
     # "only" or "require": a question of accepting remote work is another
     "remote_only": _OwnQuestion(
         frozenset(("remote", "remotely", "only", "fully", "looking", "seeking", "role", "roles",
@@ -692,7 +697,8 @@ OWN_QUESTIONS: dict[str, _OwnQuestion] = {
                   "work", "working", "total", "overall", "industry", "related", "full", "time",
                   "fulltime", "paid", "practical", "job", "employment", "career", "combined",
                   "similar", "role", "roles", "position", "positions", "capacity", "this",
-                  "field", "at", "least", "or", "more", "plus", "have", "NOW"},
+                  "field", "at", "least", "or", "more", "plus", "have", "please", "enter",
+                  "NOW"},
         (_YEARS, frozenset(("experience",))), digits=True),
 }
 OWN_QUESTION_KEYS = frozenset(OWN_QUESTIONS)
@@ -762,9 +768,9 @@ def question_fit(fact_key: str | None, label: str, help_text: str = "",
 
     Every content word (`question_words`) must be one of the fact's
     vocabulary, the words must name its subject (`topic`) and must not hold
-    every set of `apart`; a word of now beside a word of later asks now or
-    later. A cut label (`partial`) is "other": the words it lost are
-    unread."""
+    every set of `apart` unless one of `apart_unless` is there; a word of now
+    beside a word of later asks now or later. A cut label (`partial`) is
+    "other": the words it lost are unread."""
     spec = OWN_QUESTIONS.get(fact_key or "")
     if spec is None:
         return "own"
@@ -777,7 +783,7 @@ def question_fit(fact_key: str | None, label: str, help_text: str = "",
         words = {w for w in words if not w.isdigit()}
     if not words <= spec.vocabulary or not all(words & t for t in spec.topic):
         return "other"
-    if spec.apart and all(words & a for a in spec.apart):
+    if spec.apart and all(words & a for a in spec.apart) and not words & spec.apart_unless:
         return "other"
     return "narrower" if words & spec.narrower else "own"
 

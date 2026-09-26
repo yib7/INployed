@@ -2044,9 +2044,9 @@ _WORDS = [
                              "visa?", "", "own"),
     ("requires_sponsorship", "Will you now or at any time in the future require sponsorship?",
      "", "own"),
-    # round 5: "If yes, please explain" is no neutral tail of the fixed list
+    # round 6: "If yes, please explain" is a neutral tail of the fixed list
     ("requires_sponsorship", "Do you require sponsorship to work in the US? (If yes, please "
-                             "explain.)", "", "other"),
+                             "explain.)", "", "own"),
     ("authorized_without_sponsorship", "Can you work in the United States without the need "
                                        "for sponsorship?", "", "own"),
     ("authorized_without_sponsorship", "Are you authorized to work in the US without visa "
@@ -2074,8 +2074,8 @@ _WORDS = [
      "own"),
     ("years_experience", "Years of overall experience", "", "own"),
     ("years_experience", "Do you have 5+ years of related industry experience?", "", "own"),
-    # round 5: "Please enter a number" is no neutral tail of the fixed list
-    ("years_experience", "Years of experience", "Please enter a number.", "other"),
+    # round 6: "Please enter a number" is a neutral tail of the fixed list
+    ("years_experience", "Years of experience", "Please enter a number.", "own"),
     ("years_experience", "How many years of professional software development experience do "
                          "you have?", "", "other"),
     # a common long form, a neutral lead or tail, a synonym; an unnamed country
@@ -2085,8 +2085,8 @@ _WORDS = [
      "own"),
     ("work_authorized", "Are you authorized to work in the US? (Yes/No)", "", "own"),
     ("work_authorized", "Are you authorized to work lawfully in the United States?", "", "own"),
-    # round 5: a lead such as "Please enter" is read
-    ("years_experience", "Please enter your total years of experience", "", "other"),
+    # round 5: a lead such as "Please enter" is read; round 6: the years hold it
+    ("years_experience", "Please enter your total years of experience", "", "own"),
     ("work_authorized", "Are you legally authorized to work in the country in which this job is "
                         "located?", "", "other"),
 ]
@@ -2514,7 +2514,8 @@ _NOTHING_DROPPED = [
     # 11: the present job, on-site
     ("onsite_ok", "Are you currently working in an office?", "", "other"),
     ("onsite_ok", "Do you currently work on-site?", "", "other"),
-    ("onsite_ok", "Are you currently able to work on-site?", "", "other"),
+    # round 6: a word of ability asks about now
+    ("onsite_ok", "Are you currently able to work on-site?", "", "own"),
     # the plain forms
     ("work_authorized", "Are you able to work in the US?", "", "own"),
     ("work_authorized", "Do you have the right to work in the US?", "", "own"),
@@ -2555,9 +2556,9 @@ _NOTHING_DROPPED = [
     # "have" is read: only the facts whose own question uses it hold it
     ("requires_sponsorship", "Will you have visa sponsorship?", "", "other"),
     ("willing_to_relocate", "Have you relocated?", "", "other"),
-    # "authorization" alone is no authorization word of work_authorized's
-    ("work_authorized", "Do you have work authorization in the US?", "", "other"),
-    ("work_authorized", "Are you allowed to work in the US?", "", "other"),
+    # round 6: "authorization" and "allowed" are authorization words
+    ("work_authorized", "Do you have work authorization in the US?", "", "own"),
+    ("work_authorized", "Are you allowed to work in the US?", "", "own"),
     # a word in another script, a lead off the fixed list, a tail with a comma
     ("work_authorized", f"Are you authorized to work in M{chr(0xE9)}xico?", "", "other"),
     ("work_authorized", f"Are you authorized to work in the US? ({chr(0x65E5)}{chr(0x672C)})", "",
@@ -2621,8 +2622,8 @@ def test_every_word_is_read_before_the_vocabulary_check(key, label, help_text, f
     ("Are you authorized to work in the US? * Required", ("authorized", "work", "US")),
     ("Years of Experience *", ("years", "experience")),
     # a tail off the list, or one inside the sentence, is read
-    ("Are you authorized to work in the US? (If yes, please explain.)",
-     ("authorized", "work", "US", "if", "yes", "please", "explain")),
+    ("Are you authorized to work in the US? (If yes, please explain why.)",
+     ("authorized", "work", "US", "if", "yes", "please", "explain", "why")),
     ("Are you authorized to work in the US, please select one",
      ("authorized", "work", "US", "please", "select", "one")),
     ("Required: are you authorized to work in the US?", ("required", "authorized", "work", "US")),
@@ -2756,3 +2757,114 @@ def test_a_custom_yes_no_answer_takes_its_saved_question_word_for_word_in_order(
                                                     options={0: ("Yes", 1.0)}))
     assert p.fields[0].action == action
     assert p.fields[0].option == ("Yes" if action == "select" else None)
+
+
+# --- cycle 18 SP6c round 6: authorization words, more neutral tails, "please enter", now -------
+
+# (fact, label, help, fit): each pass form refused on 12d81cf; each refusal kept
+_ROUND6 = [
+    # 1: "authorization", "authorisation" and "allowed" name work authorization
+    ("work_authorized", "Do you have work authorisation in the United States?", "", "own"),
+    ("work_authorized", "Are you allowed to work in the United States?", "", "own"),
+    ("work_authorized", "Work authorization", "Do you have work authorization in the US?", "own"),
+    # still refused: without sponsorship, unrestricted, another country
+    ("work_authorized", "Do you have work authorization in the US without sponsorship?", "",
+     "other"),
+    ("work_authorized", "Do you currently have unrestricted work authorization?", "", "other"),
+    ("work_authorized", "Do you have work authorization in Canada?", "", "other"),
+    ("work_authorized", "Are you allowed to work in Canada?", "", "other"),
+    # the new topic words open no other fact
+    ("requires_sponsorship", "Do you have work authorization in the US?", "", "other"),
+    ("authorized_without_sponsorship", "Do you have work authorization in the US?", "", "other"),
+    # 2: the new neutral tails, each compared whole
+    ("requires_sponsorship", "Will you require visa sponsorship? If yes, please describe.", "",
+     "own"),
+    ("requires_sponsorship", "Will you require visa sponsorship? If so, please explain:", "",
+     "own"),
+    ("requires_sponsorship", "Will you require visa sponsorship?", "If yes, please explain.",
+     "own"),
+    ("requires_sponsorship", "Will you require visa sponsorship? If yes, please explain which "
+                             "visa.", "", "other"),
+    # 3: "please enter" leads the total
+    ("years_experience", "Enter your total years of professional experience", "", "own"),
+    ("years_experience", "Years of experience (please enter a number)", "", "own"),
+    ("years_experience", "Please enter your years of Python experience", "", "other"),
+    ("years_experience", "Years of experience", "Please enter a number of years in Python.",
+     "other"),
+    # 4: "currently" beside a word of ability or acceptance asks about now
+    ("onsite_ok", "Are you currently willing to work in the office?", "", "own"),
+    ("onsite_ok", "Are you currently open to working on-site?", "", "own"),
+    ("onsite_ok", "Are you currently comfortable working on-site?", "", "own"),
+    # the present job, still refused
+    ("onsite_ok", "Are you currently working in an office?", "", "other"),
+    ("onsite_ok", "Do you currently work on-site?", "", "other"),
+    ("onsite_ok", "Are you currently working on-site?", "", "other"),
+]
+
+
+@pytest.mark.parametrize("key, label, help_text, fit", _ROUND6)
+def test_authorization_words_new_tails_please_enter_and_an_ability_now(key, label, help_text,
+                                                                       fit):
+    assert apply_judge.question_fit(key, label, help_text) == fit
+    assert apply_judge.asks_own_question(key, label, help_text) is (fit == "own")
+
+
+@pytest.mark.parametrize("label, help_text, words", [
+    ("Do you require sponsorship? (If yes, please explain.)", "", ("require", "sponsorship")),
+    ("Do you require sponsorship? If yes, please describe", "", ("require", "sponsorship")),
+    ("Do you require sponsorship? If so, please explain:", "", ("require", "sponsorship")),
+    ("Years of experience", "Please enter a number.", ("years", "experience")),
+    ("Years of experience", "Enter a number", ("years", "experience")),
+    ("Years of experience. Please enter a number. *", "", ("years", "experience")),
+    # compared whole: a longer sentence keeps its words
+    ("Do you require sponsorship? If yes, please describe your visa.", "",
+     ("require", "sponsorship", "if", "yes", "please", "describe", "visa")),
+    ("Years of experience", "Please enter a number of years",
+     ("years", "experience", "please", "enter", "number", "years")),
+])
+def test_the_new_neutral_tails_are_dropped_whole(label, help_text, words):
+    assert apply_facts.question_words(label, help_text) == words
+
+
+@pytest.mark.parametrize("label", ["Do you have work authorization in the US?",
+                                   "Are you allowed to work in the US?"])
+@pytest.mark.parametrize("answers", [{}, _SPONSOR])
+def test_work_authorization_or_allowed_to_work_takes_the_stored_yes(tmp_path, label, answers):
+    cat = _profile_catalog(tmp_path, **answers)
+    digest = _field_with(label)
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("work_authorized", 1.0)}))
+    assert (p.fields[0].action, p.fields[0].option) == ("select", "Yes")
+    assert p.park_reason == ""
+
+
+@pytest.mark.parametrize("answers, option", [({}, "No"), (_SPONSOR, "Yes")])
+def test_sponsorship_with_if_yes_please_explain_takes_the_stored_answer(tmp_path, answers,
+                                                                        option):
+    label = "Do you require sponsorship to work in the US? (If yes, please explain.)"
+    cat = _profile_catalog(tmp_path, **answers)
+    digest = _field_with(label)
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("requires_sponsorship", 1.0)}))
+    assert (p.fields[0].action, p.fields[0].option) == ("select", option)
+    assert p.park_reason == ""
+
+
+@pytest.mark.parametrize("label, help_text, action", [
+    ("Years of experience", "Please enter a number.", "fill"),
+    ("Please enter your total years of experience", "", "fill"),
+    ("Please enter your years of Python experience", "", "skip"),
+])
+def test_a_years_box_with_please_enter_takes_the_total(tmp_path, label, help_text, action):
+    cat = _profile_catalog(tmp_path)
+    digest = _field_with(label, help_text, type_="number", options=())
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("years_experience", 1.0)}))
+    assert (p.fields[0].action, p.fields[0].value) == (action, "2" if action == "fill" else "")
+
+
+@pytest.mark.parametrize("value", ["Yes", "No"])
+def test_currently_able_to_work_on_site_takes_the_on_site_answer(tmp_path, value):
+    cat = _profile_catalog(tmp_path, onsite_ok=value)
+    digest = _field_with("Are you currently able to work on-site?")
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("onsite_ok", 1.0)}))
+    pf = p.fields[0]
+    assert (pf.action, pf.option, pf.fact_key) == ("select", value, "onsite_ok")
+    assert p.park_reason == ""

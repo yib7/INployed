@@ -257,6 +257,58 @@ def test_choice_validate_gemini_auth():
     assert "gemini_auth" in settings.validate({"gemini_auth": "nope"})
 
 
+# --- SP5 (ED-11): field_problem is the per-field rule validate() loops over ----
+
+def test_field_problem_matches_validate_for_every_rule_kind():
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    cases = [
+        ("min_score", 0),                        # int, below min
+        ("remote_types", ["Telepathic"]),        # multichoice, unknown member
+        ("provider", "nope"),                    # choice, unknown member
+        ("local_task_offsets", "abc"),            # pattern
+        ("RESUME_TAILOR_CANDIDATE", "a\nb"),      # env control-char rule
+    ]
+    for key, value in cases:
+        f = by_key[key]
+        problem = settings.field_problem(f, value)
+        assert problem is not None, key
+        assert settings.validate({key: value}) == {key: problem}
+    for key, value in [("min_score", 4), ("provider", "gemini")]:
+        assert settings.field_problem(by_key[key], value) is None
+        assert settings.validate({key: value}) == {}
+
+
+def test_choice_validate_reports_not_allowed_with_the_value():
+    err = settings.validate({"provider": "nope"})["provider"]
+    assert "nope" in err
+    assert "Not allowed" in err
+
+
+def test_choice_field_problem_matches_a_real_consumers_silent_fallback(monkeypatch):
+    """gemini_auth is a `choice` field (choices=("vertex","api_key","pool")). Its
+    consumer, `resume_tailor.config.gemini_auth()`, already documents "An
+    unrecognised value reads as 'vertex'" -- so a hand-edited value outside the
+    three choices is exactly what the pattern comment means by something the
+    consumer would silently DISCARD (it never reaches the caller; 'vertex' does,
+    every time), while every listed choice round-trips unchanged. The new
+    membership rule must reject precisely the values the consumer throws away.
+    """
+    from resume_tailor import config as tailor_config
+
+    f = next(x for x in settings.SETTINGS_SCHEMA if x.key == "gemini_auth")
+    assert f.type == "choice" and set(f.choices) == {"vertex", "api_key", "pool"}
+
+    for value, consumer_keeps_it in [
+        ("vertex", True), ("api_key", True), ("pool", True),
+        ("nope", False), ("gemini", False),
+    ]:
+        monkeypatch.setenv("RESUME_TAILOR_GEMINI_AUTH", value)
+        honoured = tailor_config.gemini_auth() == value
+        assert honoured == consumer_keeps_it, value
+        rejected = "gemini_auth" in settings.validate({"gemini_auth": value})
+        assert rejected == (not honoured), value
+
+
 # --- résumé-tailor model dropdowns + editable_choice + slider hint -------------
 
 def test_gemini_models_constant_lists_3x():

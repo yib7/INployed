@@ -979,7 +979,11 @@ def _coerce_ok(f: Field, value: Any) -> bool:
     if f.type in ("str", "path"):
         return isinstance(value, str)
     if f.type == "choice":
-        return value in f.choices
+        # Membership is `field_problem`'s job, with its own "Not allowed: ..."
+        # message -- this only guards the PYTHON TYPE, exactly like every other
+        # branch here, so a wrong-type value (an int, a list) still reads as
+        # "Expected choice, got ..." instead of the membership message.
+        return isinstance(value, str)
     if f.type == "editable_choice":
         # editable: any string is allowed (pick from choices OR type a custom id).
         return isinstance(value, str)
@@ -988,10 +992,52 @@ def _coerce_ok(f: Field, value: Any) -> bool:
     return True
 
 
+def field_problem(f: Field, value: Any) -> str | None:
+    """The problem with `value` for Field `f`, or None when it is fine.
+
+    Every per-field rule `validate()` enforces, in one place: the Python type,
+    `choice` membership, `multichoice` membership, `int` min/max, the .env
+    line-break rule, and `pattern`. `validate()` is a thin loop over this so a
+    caller with ONE field and ONE candidate value -- the Settings tab, re-checking
+    as the user edits -- gets the exact same message Save would, rather than a
+    second, hand-kept copy of the rules that can drift from it.
+    """
+    if not _coerce_ok(f, value):
+        return f"Expected {f.type}, got {type(value).__name__}."
+    if f.type == "choice" and value not in f.choices:
+        return f"Not allowed: {value}."
+    # An .env value is one physical KEY=VALUE line and envfile.read parses line by
+    # line, so a newline does not round-trip: it writes a second line the reader
+    # takes for a whole new assignment. envfile.update refuses it too, but that
+    # raise happens mid-save with some targets already written, and it is one
+    # message rather than a mark against the offending field. Catch it here so
+    # the form says which box is wrong before anything is written.
+    if f.target in ENV_TARGETS and isinstance(value, str) and _CONTROL_RE.search(value):
+        return ("No line breaks: this is stored as a single line in "
+                ".env. (Several keys go on one line, comma-separated.)")
+    if f.type == "int":
+        if f.min is not None and value < f.min:
+            return f"Must be >= {f.min}."
+        if f.max is not None and value > f.max:
+            return f"Must be <= {f.max}."
+    elif f.type == "multichoice":
+        bad = [v for v in value if v not in f.choices]
+        if bad:
+            return f"Not allowed: {', '.join(bad)}."
+    elif f.type in TEXT_TYPES and f.pattern is not None:
+        # fullmatch, not search: a rule satisfied by a PREFIX would pass
+        # "30,50,70 and some junk" and write it straight to config.json.
+        if re.fullmatch(f.pattern, value) is None:
+            return f.pattern_help or "Not in the expected format."
+    return None
+
+
 def validate(values: dict[str, Any]) -> dict[str, str]:
     """Return {key: error_message} for invalid values; empty dict means valid.
 
-    Only keys present in `values` AND in the schema are checked.
+    Only keys present in `values` AND in the schema are checked. A loop over
+    `field_problem`, so Save and the Settings tab's per-field re-check can never
+    disagree about what counts as a problem.
     """
     errors: dict[str, str] = {}
     by_key = {f.key: f for f in SETTINGS_SCHEMA}
@@ -999,33 +1045,9 @@ def validate(values: dict[str, Any]) -> dict[str, str]:
         f = by_key.get(key)
         if f is None:
             continue
-        if not _coerce_ok(f, value):
-            errors[key] = f"Expected {f.type}, got {type(value).__name__}."
-            continue
-        # An .env value is one physical KEY=VALUE line and envfile.read parses line
-        # by line, so a newline does not round-trip: it writes a second line the
-        # reader takes for a whole new assignment. envfile.update refuses it too,
-        # but that raise happens mid-save with some targets already written, and it
-        # is one message rather than a mark against the offending field. Catch it
-        # here so the form says which box is wrong before anything is written.
-        if f.target in ENV_TARGETS and isinstance(value, str) and _CONTROL_RE.search(value):
-            errors[key] = ("No line breaks: this is stored as a single line in "
-                           ".env. (Several keys go on one line, comma-separated.)")
-            continue
-        if f.type == "int":
-            if f.min is not None and value < f.min:
-                errors[key] = f"Must be >= {f.min}."
-            elif f.max is not None and value > f.max:
-                errors[key] = f"Must be <= {f.max}."
-        elif f.type == "multichoice":
-            bad = [v for v in value if v not in f.choices]
-            if bad:
-                errors[key] = f"Not allowed: {', '.join(bad)}."
-        elif f.type in TEXT_TYPES and f.pattern is not None:
-            # fullmatch, not search: a rule satisfied by a PREFIX would pass
-            # "30,50,70 and some junk" and write it straight to config.json.
-            if re.fullmatch(f.pattern, value) is None:
-                errors[key] = f.pattern_help or "Not in the expected format."
+        problem = field_problem(f, value)
+        if problem is not None:
+            errors[key] = problem
     return errors
 
 

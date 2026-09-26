@@ -1484,16 +1484,24 @@ def test_a_fixed_field_clears_its_error_as_you_type(qtbot, tmp_path, monkeypatch
     assert form.save() is True
 
 
-def test_focus_out_validates_without_waiting_for_save(qtbot, tmp_path):
-    """Finding out at Save time that a box has been wrong for ten minutes is the
-    modal's other failure. Leaving the field is the moment to say so."""
+def test_typing_validates_without_waiting_for_focus_out_or_save(qtbot, tmp_path):
+    """SP5 (ED-11): a problem shows the moment it is TYPED, not only at
+    focus-out or Save time -- finding out ten minutes (or a whole Save) later
+    that a box has been wrong the entire time is the modal's other failure."""
     form = _form(tmp_path, show_advanced=True)
     qtbot.addWidget(form)
     form._setters["vm_enabled"](True)
     edit = form._widgets["local_task_offsets"]
     edit.setText("half past")
-    assert edit.property("error") is not True        # not while you are still typing
+    assert edit.property("error") is True             # shown immediately, no focus-out needed
+    assert "30,50,70" in _note(form, "local_task_offsets")
 
+    edit.setText("30,50,70")
+    assert edit.property("error") is False             # clears immediately too
+
+    # focus-out still re-confirms the same rule (belt and suspenders: it is what
+    # also catches a value a signal-less path changed without emitting one).
+    edit.setText("half past")
     QtWidgets.QApplication.sendEvent(
         edit, QtGui.QFocusEvent(QtCore.QEvent.Type.FocusOut))
     assert edit.property("error") is True
@@ -1503,6 +1511,25 @@ def test_focus_out_validates_without_waiting_for_save(qtbot, tmp_path):
     QtWidgets.QApplication.sendEvent(
         edit, QtGui.QFocusEvent(QtCore.QEvent.Type.FocusOut))
     assert edit.property("error") is False
+
+
+def test_save_disables_while_a_field_has_a_problem(qtbot, tmp_path):
+    """SP5 (ED-11): Save has to stop being pressable the moment a field is
+    wrong, not just get harder to read. A status line someone never looks
+    down at is exactly the silent-corruption path this phase closes; a
+    disabled button is the one signal that reaches a user who is not
+    reading prose."""
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    form._setters["vm_enabled"](True)
+    edit = form._widgets["local_task_offsets"]
+    assert form._save_btn.isEnabled() is True
+
+    edit.setText("half past")
+    assert form._save_btn.isEnabled() is False
+
+    edit.setText("30,50,70")
+    assert form._save_btn.isEnabled() is True
 
 
 def test_the_disk_failure_modal_survives(qtbot, tmp_path, monkeypatch):

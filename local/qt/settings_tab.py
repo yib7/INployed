@@ -1293,8 +1293,18 @@ class SettingsForm(QtWidgets.QWidget):
                        f"Showing {shown}; saving stores that.", kind=NOTE_WARN)
 
     def _on_field_edited(self, key: str) -> None:
-        """The user changed a field: drop whatever note it was carrying, then
-        re-read the unsaved-change markers.
+        """The user changed a field: drop whatever note it was carrying, re-check
+        the field against its CURRENT value, then re-read the unsaved-change
+        markers.
+
+        SP5 (ED-11): the re-check is what shows a new problem the moment it is
+        typed, rather than waiting for focus-out. `_validate_field` runs the
+        exact same rule Save runs (`settings.field_problem`, via `validate`), so
+        the two can never disagree about what counts as a problem. The note is
+        still cleared unconditionally first: a clamp WARNING describes a value
+        that is now history the instant they edit (`_flag_a_rewritten_int`'s
+        contract), and clearing before re-validating is what lets an ERROR note
+        replace it rather than the two fighting over the same label.
 
         The one narrow per-key hook, as P5 promised it would be — the dirty
         markers extend it rather than opening a second pass of connections over
@@ -1304,6 +1314,7 @@ class SettingsForm(QtWidgets.QWidget):
             self._set_field_note(key, "")
         if self._errors.pop(key, None) is not None:
             self._refresh_error_status()
+        self._validate_field(key)
         self._refresh_dirty()
 
     def _validate_field(self, key: str) -> None:
@@ -1335,8 +1346,15 @@ class SettingsForm(QtWidgets.QWidget):
         screen, and a status line built without hints would drop to a bare
         "1 setting needs fixing" naming a field that is nowhere on the form. Every
         path that touches `self._errors` therefore lands on the same sentence.
+
+        SP5 (ED-11): also the one place that disables Save while `self._errors`
+        is non-empty, re-enabling it the moment the set empties out again. Every
+        path that changes `self._errors` already lands here, so Save's enabled
+        state can never drift from the status line naming the same problems.
         """
         self.status.setText(self._error_status(self._unreachable()) if self._errors else "")
+        if self._save_btn is not None:
+            self._save_btn.setEnabled(not self._errors)
 
     def _unreachable(self) -> list[settings.Field]:
         """The flagged fields a CONFIGURATION gate is keeping off screen, in schema
@@ -1454,13 +1472,16 @@ class SettingsForm(QtWidgets.QWidget):
             section.set_collapsed(False)
 
     def _show_errors(self, errors: dict[str, str]) -> None:
-        """Replace the flagged set with `errors`, note by note."""
+        """Replace the flagged set with `errors`, note by note, and refresh
+        everything derived from `self._errors` (the status line and whether Save
+        is enabled) so no caller has to remember a separate call."""
         for key in list(self._errors):
             if key not in errors:
                 self._set_field_note(key, "")
         for key, message in errors.items():
             self._set_field_note(key, message)
         self._errors = dict(errors)
+        self._refresh_error_status()
 
     def _clear_all_notes(self) -> None:
         """Drop every inline note and every flag, errors and clamp warnings alike.
@@ -1618,10 +1639,12 @@ class SettingsForm(QtWidgets.QWidget):
                 self._section_counts[section] = (n, hint)
 
     def _refresh_save_label(self) -> None:
-        """"Save 3 changes" while dirty, "Save settings" when clean — and NEVER
-        disabled. Restore defaults leaves a form that differs from disk only in
-        ways the user has not committed yet, so the button has to stay pressable;
-        and the "No changes to save" path is real feedback, not a dead end."""
+        """"Save 3 changes" while dirty, "Save settings" when clean, and this
+        alone never DISABLES it for being clean. Restore defaults leaves a form
+        that differs from disk only in ways the user has not committed yet, so
+        the button has to stay pressable; the "No changes to save" path is
+        real feedback on its own. `_refresh_error_status` is the one thing
+        that disables it, and only while a field holds a validation problem."""
         n = len(self._dirty)
         self._save_btn.setText(
             f"Save {n} change{'' if n == 1 else 's'}" if n else "Save settings")

@@ -527,19 +527,25 @@ of experience, a written work-authorization statement, the EEO questions, how yo
 the role, and your mailing address) plus any custom question you add. Each row is typed to
 match its question: a Yes/No picker, a number box, a dropdown of options, or a multi-line text
 box, so a saved answer can only be read one way. A yes/no or number row also takes a short,
-optional note. The line under each row reads "Forms will get: ..." (or says why it will not)
-so you always see what a run would actually type.
+optional note, up to 300 characters; a longer one blocks Save until you shorten it. The line
+under each row reads "Forms will get: ..." (or says why it will not) so you always see what a
+run would actually type.
 
 A built-in question cannot be deleted, and **Add answer** refuses a new question that repeats
 a built-in's own topic. The top line counts how many answers are not set and how many are not
 confirmed, and those rows carry the warning highlight; **Confirm all** confirms every row that
-already holds an answer. A damaged answers file shows the tab as damaged and offers **Restore
-backup** when a good `.bak` copy sits next to it.
+already holds an answer, except work authorization, sponsorship and years of experience: those
+three keep their own tick for as long as they still hold the value they started with. A damaged
+answers file shows the tab as damaged and offers **Restore backup** when a good `.bak` copy sits
+next to it; restoring first saves the damaged file beside it as `apply_answers.json.damaged`, so
+nothing is lost. If you fix the file by hand outside the dashboard, reopen the dashboard
+afterward so this tab reads it again.
 
 **Confirmed marks an answer ready.** The auto-apply run and Test my answers only ever fill a
-field from an answer that is both set and confirmed. An answer you typed but left unconfirmed,
-or left blank, reads as not set: an optional field it would have filled stays blank, and a
-required one stops the job for you (see *Where a drain stops* below).
+field from an answer that is both set and confirmed; changing an answer's value ticks its
+Confirmed box for you. An answer you typed but left unconfirmed, or left blank, reads as not
+set: an optional field it would have filled stays blank, and a required one stops the job for
+you (see *Where a drain stops* below).
 
 **A field gets an answer only for its own question.** A saved yes or no matches only its own
 option: on a dropdown offering "Yes" and "Yes, on a work visa", a saved Yes never becomes the
@@ -561,7 +567,10 @@ in your answers covers it. One click with the live judge costs under a cent.
 **After an upgrade.** An older answers file converts to the typed store the first time you open
 this tab. Check the review banner it shows: it lists each answer the conversion touched and
 what it read the old text as, so you can confirm or fix any it got wrong, then click **I've
-checked these**, which also saves.
+checked these**, which also saves. An answer whose old sentence says more than Yes, No or a
+number (for example, "No, but I will need sponsorship after my OPT ends") keeps the rest of
+that sentence in its note and stays unconfirmed; the banner lists these too. Tick Confirmed on
+each once you have checked it: until then, a required question it would answer stops the job.
 
 ### Auto-apply (batch, Jev-judged)
 The **Auto-apply** tab is a live view of a batch apply queue: right-click jobs in any
@@ -645,9 +654,11 @@ saying why (the reason starts with the words in brackets):
 - Submitting is off (**Submit when verified** off, or `--no-submit`): every job stops at
   its submit step as **Ready to submit** ("auto_apply_submit is off").
 - A required question has no answer in your data ("required field without an answer").
-  Answer it in the job's panel and **Re-queue**; the answer is kept for later
-  applications. A way on that stays disabled until a field the run left blank is answered
-  stops the same way. An optional question with no answer is left blank.
+  Click **Answer now** to open the **Apply Answers** tab (the panel itself carries no answer
+  box), save the answer there, then **Re-queue**; a saved yes/no or number answer fills a
+  later application only where that job words the question the same way. A way on that stays
+  disabled until a field the run left blank is answered stops the same way. An optional
+  question with no answer is left blank.
 - A question the run never answers: an SSN, a birthdate, bank or card details, an ID
   number ("asks for ..., which auto-apply never fills"). You finish that application by
   hand.
@@ -867,3 +878,8 @@ drain report; none of them sends an application twice:
   sits outside the form can be closed as if it were an overlay.
 - A thank-you page that a script loads, with a query in its address, ends
   **submitted (unconfirmed)**: check that job's email.
+- A required question naming another country, a city, a visa type, a number of years of a
+  particular skill (including an "at least N years" form of it), or your current job, and a
+  status list under a "Work authorization" heading, stops the run: none of it is covered by a
+  built-in answer. Add a custom answer with the question exactly as the form words it; it fills
+  only that exact wording elsewhere.

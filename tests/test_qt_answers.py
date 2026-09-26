@@ -140,6 +140,16 @@ def test_note_field_only_on_yes_no_and_number_rows(qtbot, tmp_path):
     assert _row(ed, "how_did_you_hear")["note_edit"] is None
 
 
+def test_typing_into_the_note_field_moves_the_counter_toward_note_max(qtbot, tmp_path):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    ed = _editor(qtbot, store)
+    row = _row(ed, "work_authorized")
+    assert row["note_counter"].text() == "0/%d" % apply_answers.NOTE_MAX
+    qtbot.keyClicks(row["note_edit"], "via portal")
+    assert row["note_counter"].text() == "10/%d" % apply_answers.NOTE_MAX
+
+
 def test_address_state_is_a_combo_when_the_country_is_the_us(qtbot, tmp_path):
     store = tmp_path / "apply_answers.json"
     _seed_v2(store, [_entry("address_country", "choice", "United States", confirmed=True),
@@ -291,6 +301,24 @@ def test_unset_and_unconfirmed_rows_are_highlighted(qtbot, tmp_path):
     assert not _row(ed, "onsite_ok")["frame"].property("callout")
 
 
+def test_typing_into_a_number_box_confirms_it_and_updates_the_preview_and_counts(qtbot, tmp_path):
+    # A number row's answer widget is a plain QLineEdit (not a combo or a plain-text
+    # box); this pins that its textChanged is wired to the same live updates as the
+    # other row types, not just seeded on load.
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("years_experience", "number", "", confirmed=False)])
+    ed = _editor(qtbot, store)
+    row = _row(ed, "years_experience")
+    assert row["confirmed_cb"].isChecked() is False
+    assert ed.counts_label.text() == "1 answer not set, 0 not confirmed"
+    assert row["frame"].property("callout") == "warning"
+    qtbot.keyClicks(row["answer_widget"], "5")
+    assert row["confirmed_cb"].isChecked() is True
+    assert row["preview_label"].text() == "Forms will get: 5"
+    assert ed.counts_label.text() == "0 answers not set, 0 not confirmed"
+    assert not row["frame"].property("callout")
+
+
 # --- ED-4: Add ------------------------------------------------------------------------
 
 def test_add_dialog_ok_disabled_until_a_question_is_entered(qtbot, tmp_path):
@@ -327,6 +355,26 @@ def test_add_dialog_ok_enabled_for_a_clean_new_question(qtbot, tmp_path):
     assert entry["type"] == "text"
     assert entry["answer"] == "https://github.com/x"
     assert entry["confirmed"] is True
+
+
+def test_add_dialog_number_out_of_range_blocks_ok_until_fixed(qtbot, tmp_path):
+    # The line edit's shape validator only rejects a bad shape (letters, three
+    # digits, a non-half fraction); it still lets through "99", which is a valid
+    # shape but out of the store's 0-60 range. This pins that `_recompute` also
+    # runs `validate`, not just `find_collision`, so the range is caught too.
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [])
+    ed = _editor(qtbot, store)
+    dlg = AddAnswerDialog(ed.collect())
+    qtbot.addWidget(dlg)
+    dlg.question_edit.setText("How many pets do you have?")
+    dlg.type_combo.setCurrentText("Number")
+    dlg.answer_widget.setText("99")
+    assert dlg.ok_button.isEnabled() is False
+    assert "0 to 60" in dlg.message_label.text()
+    dlg.answer_widget.setText("5")
+    assert dlg.ok_button.isEnabled() is True
+    assert dlg.message_label.text() == ""
 
 
 def test_add_dialog_note_field_only_for_yes_no_and_number(qtbot, tmp_path):
@@ -446,12 +494,16 @@ def test_damaged_store_shows_error_and_never_renders_defaults(qtbot, tmp_path):
     assert "damaged" in ed.status.text()
 
 
-def test_save_and_revert_disabled_on_a_damaged_store(qtbot, tmp_path):
+def test_save_and_revert_disabled_on_a_damaged_store(qtbot, tmp_path, monkeypatch):
     store = tmp_path / "apply_answers.json"
     store.write_text("not json{", encoding="utf-8")
+    original = store.read_bytes()
     ed = _editor(qtbot, store)
     assert ed.save_btn.isEnabled() is False
     assert ed.revert_btn.isEnabled() is False
+    monkeypatch.setattr(QtWidgets.QMessageBox, "critical", lambda *a, **k: None)
+    assert ed.save() is False
+    assert store.read_bytes() == original
 
 
 def test_save_and_revert_enabled_on_a_healthy_store(qtbot, tmp_path):

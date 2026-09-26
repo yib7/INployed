@@ -362,6 +362,22 @@ def test_each_advisory_failure_reaches_the_collector_and_the_report(
     assert expected in _report(out)
 
 
+def test_a_damaged_answer_store_reaches_the_warning_collector(offline_tailor, monkeypatch):
+    """A damaged Apply Answers file no longer skips the sheet (final review): apply_data
+    writes it with no answers and says so through `on_warning`, which the tailor hands
+    its advisory, so the report names the answers left out."""
+    def write(job, out_dir, *, on_warning=None, **_kw):
+        if on_warning is not None:
+            on_warning(run_mod.apply_data.ANSWERS_LEFT_OUT)
+        return out_dir / "apply.md"
+    monkeypatch.setattr(run_mod.apply_data, "write", write)
+    warns: list[str] = []
+    out = run_mod.tailor(_JOB, on_warning=warns.append)
+    expected = f"advisory: {run_mod.apply_data.ANSWERS_LEFT_OUT}"
+    assert expected in warns
+    assert expected in _report(out)
+
+
 def test_grounding_gate_findings_reach_the_warning_collector(offline_tailor, monkeypatch):
     """The gate's {gkey: unseen_tokens} return was discarded at all four call sites, and
     the gate is silent on grounded text — so a run it had to salvage rendered identically

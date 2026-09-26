@@ -1141,7 +1141,8 @@ def tailor(
         report.stage("apply sheet")
         try:
             apply_data.write(job, out_dir, sel=sel, bullets=final_bullets,
-                             skill_lines=skill_lines, cover_body=cover_body)
+                             skill_lines=skill_lines, cover_body=cover_body,
+                             on_warning=report.advisory)
             log("apply.md written (self-contained apply sheet)")
         except Exception as exc:  # noqa: BLE001 - advisory artifact, never fatal
             log(f"apply sheet skipped ({exc})")

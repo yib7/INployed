@@ -164,6 +164,27 @@ class _FakeProc:
         return self._alive
 
 
+def test_isolate_turns_off_every_dotenv_load(tmp_path, monkeypatch):
+    # resume_tailor.config loads the repo's .env when it is imported, and the
+    # runner imports it for the sheet refresh (cycle 18, FL-2): the matrix
+    # process never reads the developer's .env
+    import dotenv
+    import dotenv.main
+
+    def sentinel(*a, **k):
+        return True
+    monkeypatch.setattr(dotenv, "load_dotenv", sentinel)
+    monkeypatch.setattr(dotenv.main, "load_dotenv", sentinel)
+    for key in ("LOCALAPPDATA", "INPLOYED_NO_DOTENV", "PLAYWRIGHT_BROWSERS_PATH"):
+        if key in os.environ:
+            monkeypatch.setenv(key, os.environ[key])     # restored after the test
+        else:
+            monkeypatch.delenv(key, raising=False)
+    apply_matrix._isolate(tmp_path)
+    assert dotenv.load_dotenv is not sentinel and dotenv.load_dotenv() is False
+    assert dotenv.main.load_dotenv is not sentinel and dotenv.main.load_dotenv() is False
+
+
 def test_next_message_waits_out_a_still_running_worker_to_its_deadline():
     started = time.monotonic()
     deadline = started + 0.3
@@ -284,7 +305,7 @@ def test_a_recording_names_the_flows_it_recorded_that_are_still_flagged_unrecord
 
 def test_default_flow_timeout_scales_with_the_judge_count():
     base = apply_matrix._default_flow_timeout(21)
-    assert base == pytest.approx(53.0 * 3.0)
+    assert base == pytest.approx(apply_matrix._BASELINE_FLOW_S * apply_matrix._TIMEOUT_FACTOR)
     half = apply_matrix._default_flow_timeout(3)
     assert half < base
     assert half >= apply_matrix._MIN_FLOW_TIMEOUT_S
@@ -292,6 +313,14 @@ def test_default_flow_timeout_scales_with_the_judge_count():
     # has two) gets at least 120s a flow
     assert apply_matrix._MIN_FLOW_TIMEOUT_S == 120.0
     assert apply_matrix._default_flow_timeout(2) == 120.0
+
+
+def test_default_flow_timeout_covers_the_slowest_flow():
+    # slow_signup's page waits 8 s after the sign-up, so each of its runs
+    # takes about 9.5 s; at 159 s its 21 judges (about 200 s) were cut off
+    # and counted as 21 misses on every default run
+    slowest = 21 * 9.5
+    assert apply_matrix._default_flow_timeout(21) >= 1.5 * slowest
 
 
 if __name__ == "__main__":

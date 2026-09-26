@@ -19,8 +19,8 @@ processes, one flow with every judge per worker (`apply_harness.run_matrix`
 restricted to that one flow), each with its own `FlowServer` and its own
 Chromium. `--jobs 1` keeps the serial path unchanged: one process, one
 browser, one server, run through every flow and judge in turn. A worker
-that crashes or outlives its flow's timeout (`--flow-timeout`, default 3x an
-estimate from the judge count) becomes a "failed" row per judge of its flow,
+that crashes or outlives its flow's timeout (`--flow-timeout`, default 2x the
+slowest flow's time for the judge count) becomes a "failed" row per judge of its flow,
 each naming the cause, instead of stalling the batch: every run the flow
 owed counts as a miss (SP6 review R2-M3). The combined rows are put back in
 the same order the serial run produces: the registry's flow order, each
@@ -64,12 +64,13 @@ for sub in ("local", "tests"):
     if str(REPO / sub) not in sys.path:
         sys.path.insert(0, str(REPO / sub))
 
-# a flow's serial time across its whole judge list (the brief this option
-# was added for: 87 flows x 21 judges, about 53s a flow); the default
-# per-flow timeout scales this to the run's own judge count
-_BASELINE_FLOW_S = 53.0
+# the slowest flow's serial time across its whole judge list: slow_signup's
+# page waits 8s after the sign-up, so each of its runs takes about 9.5s and
+# its 21 judges about 200s (most flows take about 53s); the default per-flow
+# timeout scales this to the run's own judge count
+_BASELINE_FLOW_S = 200.0
 _BASELINE_JUDGES = 21          # 1 fake + 20 noisy seeds, the script's own default
-_TIMEOUT_FACTOR = 3.0
+_TIMEOUT_FACTOR = 2.0
 # a floor for a run of few judges: the slowest flow (slow_signup, about 21s
 # alone) with a slow Chromium start on a busy machine (final review C N5)
 _MIN_FLOW_TIMEOUT_S = 120.0
@@ -77,14 +78,23 @@ _MIN_FLOW_TIMEOUT_S = 120.0
 
 def _isolate(tmp: Path, *, appdata: str = "appdata") -> None:
     """Point every per-user store the run could reach at `tmp`, keeping the
-    installed Playwright browsers where Playwright looks for them. `appdata`
-    lets a parallel worker use its own subdirectory, so two worker processes
-    never share one LOCALAPPDATA."""
+    installed Playwright browsers where Playwright looks for them, and turn
+    off every `.env` load: `resume_tailor.config` loads the repo's `.env`
+    when it is imported (the runner's sheet refresh imports it), and it does
+    not read INPLOYED_NO_DOTENV. `appdata` lets a parallel worker use its own
+    subdirectory, so two worker processes never share one LOCALAPPDATA."""
     real = Path.home() / "AppData" / "Local" / "ms-playwright"
     if not os.environ.get("PLAYWRIGHT_BROWSERS_PATH") and real.is_dir():
         os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(real)
     os.environ["LOCALAPPDATA"] = str(tmp / appdata)
     os.environ["INPLOYED_NO_DOTENV"] = "1"
+    try:
+        import dotenv
+        import dotenv.main
+    except ImportError:         # python-dotenv absent: nothing loads a .env
+        return
+    dotenv.load_dotenv = lambda *a, **k: False
+    dotenv.main.load_dotenv = lambda *a, **k: False
 
 
 def _default_flow_timeout(judge_count: int) -> float:
@@ -363,7 +373,7 @@ def main(argv: list[str] | None = None) -> int:
                          "(default min(8, cpu count)); 1 keeps the serial path")
     ap.add_argument("--flow-timeout", type=float, default=0.0,
                     help="seconds before a flow's worker is treated as hung and reported as "
-                         "a failure row (default: 3x an estimate from the judge count)")
+                         "a failure row (default: 2x the slowest flow's time for the judge count)")
     ap.add_argument("--real", choices=("record", "replay", "dry"), default="",
                     help="the real judge's column: replay adds one run per flow over the "
                          "cache beside the fake and noisy runs; record (through "

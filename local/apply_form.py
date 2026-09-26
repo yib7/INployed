@@ -102,11 +102,19 @@ def is_password_field(type_: str, id_or_name: str = "", label: str = "",
     return any(w in blob for w in PASSWORD_WORDS)
 
 
+def typed_password(ident: str) -> bool:
+    """Does the control's `ident` (`IDENT_FN_JS`: tag|type|...) name an
+    `<input type=password>`?"""
+    return str(ident or "").split("|")[:2] == ["input", "password"]
+
+
 def password_box(f: Any) -> bool:
     """Is the extracted control `f` a password box (`is_password_field` on
-    its `secret`)?"""
-    return is_password_field(f.type, f.id_or_name, f.label, f.autocomplete,
-                             secret=bool(getattr(f, "secret", False)))
+    its `secret`)? A control built without `secret` (an older capture, a
+    hand-built `Field`) is one when its ident names an `<input
+    type=password>` (final review B R2 nit)."""
+    secret = bool(getattr(f, "secret", False)) or typed_password(getattr(f, "ident", ""))
+    return is_password_field(f.type, f.id_or_name, f.label, f.autocomplete, secret=secret)
 
 
 @dataclass
@@ -161,7 +169,8 @@ class FormDigest:
                         section=str(f.get("section", "") or ""),
                         ident=str(f.get("ident", "") or ""),
                         label_partial=bool(f.get("label_partial", False)),
-                        secret=bool(f.get("secret", False)))
+                        secret=bool(f["secret"]) if "secret" in f
+                        else typed_password(str(f.get("ident", "") or "")))
                   for f in (raw.get("fields") or [])]
         buttons = [Button(n=int(b["n"]), locator=_locator(b.get("locator")),
                           text=str(b.get("text", "")),
@@ -1217,6 +1226,18 @@ _EXTRACT_JS = r"""
     }
     return null;
   };
+  // an opacity still moving on `n` itself: a transition or an animation of
+  // its opacity, running or about to start (final review B R2 M3)
+  const fading = (n) => {
+    try {
+      return n.getAnimations().some((a) => (a.pending || a.playState === 'running')
+        && !!a.effect && a.effect.getKeyframes().some((k) => 'opacity' in k));
+    } catch (e) { return false; }
+  };
+  // `box` holds no control but `el` (a trap's own wrapper, with its label)
+  const lone = (box, el) => Array.from(box.querySelectorAll(
+    'input:not([type=hidden]), textarea, select, [contenteditable=""], [contenteditable=true], '
+    + '[role=textbox], [role=combobox]')).every((c) => c === el);
   const junk = (el, t, label) => {
     // a choice or a file box is often hidden behind its label or trigger
     const choice = t === 'checkbox' || t === 'radio' || t === 'file' || t === 'select';
@@ -1236,11 +1257,16 @@ _EXTRACT_JS = r"""
     // react-select's dummy input: a field through its face (review R2 Minor 2)
     if (comboFace(el) && !closestC(el, '[aria-hidden=true]')) return '';
     if (closestC(el, '[aria-hidden=true]')) return 'aria-hidden';
-    // a box a person cannot see: it or a box around it nearly transparent,
-    // whatever its tabindex (final review B-M3: a trap at opacity 0, or in
-    // a transparent wrapper, labelled "Website")
+    // a box a person cannot see: it nearly transparent, or a box around it
+    // that holds no other control, whatever its tabindex (final review B-M3:
+    // a trap at opacity 0, or in a transparent wrapper, labelled "Website").
+    // A box whose opacity is still moving (a fade-in's transition or
+    // animation) is read as it will be once it settles, and a transparent
+    // box around other controls too is a page or a form held back until it
+    // loads: neither hides a field (final review B R2 M3)
     for (let n = el; n && n !== document.body; n = up(n)) {
-      if (n.nodeType === 1 && parseFloat(getComputedStyle(n).opacity) < 0.1) return 'hidden';
+      if (n.nodeType === 1 && parseFloat(getComputedStyle(n).opacity) < 0.1 && !fading(n)
+          && (n === el || lone(n, el))) return 'hidden';
     }
     const r = el.getBoundingClientRect();
     const x = window.scrollX || 0, y = window.scrollY || 0;

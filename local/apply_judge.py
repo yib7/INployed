@@ -585,6 +585,11 @@ def _norm_option(text: str) -> str:
     return " ".join(_OPTION_NORM.sub(" ", str(text or "").lower().replace("'", " ")).split())
 
 
+def declines(text: str) -> bool:
+    """`text` is a decline ("I decline to answer", "Prefer not to say")."""
+    return bool(_DECLINE.search(_norm_option(text)))
+
+
 def _alias_set(text: str) -> frozenset[str]:
     n = _norm_option(text)
     for group in _ALIASES:

@@ -73,7 +73,7 @@ def test_a_cover_with_nothing_to_close_is_never_clicked_through(browser_page):
 
 # --- SP6 review M4: the overlay picker's gaps ------------------------------------------------------------
 
-_TARGET = ('<form><button type="button" id="go" style="position: fixed; bottom: 40px; right: 40px; '
+_TARGET = ('<form id="app"><button type="button" id="go" style="position: fixed; bottom: 40px; right: 40px; '
            'width: 80px; height: 30px">Next</button></form>')
 _COVERS = {
     "bare_x": ('<div id="promo" style="position: fixed; inset: 0; background: #eee">Our new app!'
@@ -104,11 +104,29 @@ _COVERS = {
                    '<button type="button" aria-label="Close">×</button></div>',
                    ("none", "", True)),
     # final review B-M6: the application's own fixed footer, no dialog; its
-    # "Skip this step" is never clicked to put it away
+    # "Skip this step" is never clicked to put it away. It is the form's by
+    # the controls the form owns (final review B R2 M6)
     "own_sticky_bar": ('<div class="step-footer" style="position: fixed; inset: 0; '
-                       'background: #fff"><button type="button">Skip this step</button>'
-                       '<button type="button">Submit application</button></div>',
-                       ("none", "", True)),
+                       'background: #fff"><button type="button" form="app">Skip this step'
+                       '</button><button type="submit" form="app">Submit application</button>'
+                       '</div>', ("none", "", True)),
+    # final review B R2 M6: a talent-network slide-in and a pre-chat form
+    # beside the application hold fields and a submit of their own; each is
+    # put away by its own close
+    "talent_network": ('<div class="talent-network" style="position: fixed; inset: 0; '
+                       'background: #fff"><h3>Join our talent network</h3>'
+                       '<label>Name <input type="text"></label>'
+                       '<label>Email <input type="email"></label>'
+                       '<button type="button">Submit</button>'
+                       '<button type="button">No thanks</button></div>',
+                       ("close", "No thanks", False)),
+    "pre_chat": ('<div id="chat" style="position: fixed; inset: 0; background: #fff">'
+                 '<label>Your name <input type="text"></label>'
+                 '<label>Your email <input type="email"></label>'
+                 '<label>Upload a file <input type="file"></label>'
+                 '<button type="button">Start chat</button>'
+                 '<button type="button" aria-label="Minimize">_</button></div>',
+                 ("close", "_", False)),
     # final review B-M4: a close that holds a last-step word is never picked
     "final_word": ('<div id="promo" style="position: fixed; inset: 0; background: #eee">Almost '
                    'there<button type="button">Skip and finish</button></div>',
@@ -123,6 +141,33 @@ def test_the_overlay_picker_puts_away_each_cover_its_own_way(browser_page, cover
     found = browser_page.locator("#go").evaluate(apply_fill._OVERLAY_JS)
     assert (found["kind"], found["text"], found.get("own")) == want, found
     assert not found["text"].lower().startswith(("accept", "allow all", "agree"))
+
+
+_FOOTER = ('<div class="step-footer" style="position: fixed; inset: 0; background: #fff">'
+           '<button type="button">Skip this step</button>'
+           '<button type="button">Submit application</button></div>')
+_ALERTS = ('<div class="job-alerts" style="position: fixed; inset: 0; background: #fff">'
+           '<label>Keywords <input type="text"></label><label>Email <input type="email"></label>'
+           '<button type="button">Upload resume</button>'
+           '<button type="button">Maybe later</button></div>')
+
+
+@pytest.mark.parametrize("box, want", [(_FOOTER, ("none", "", True)),
+                                       (_ALERTS, ("close", "Maybe later", False))])
+def test_a_fixed_box_is_the_applications_own_by_the_box_it_shares_with_the_fields(
+        browser_page, box, want):
+    # final review B R2 M6: a page with no form element. A fixed footer in
+    # the box that holds the covered control and the application's fields is
+    # the application's own; a job-alert slide-in beside that box is put
+    # away, though it holds two fields and an upload of its own
+    browser_page.set_content(
+        '<body><div id="app"><label>Full name <input type="text"></label>'
+        '<label>Email <input type="email"></label>'
+        '<button type="button" id="go" style="position: fixed; bottom: 40px; right: 40px; '
+        'width: 80px; height: 30px">Next</button>' + (box if box is _FOOTER else "") + '</div>'
+        + ("" if box is _FOOTER else box) + '</body>')
+    found = browser_page.locator("#go").evaluate(apply_fill._OVERLAY_JS)
+    assert (found["kind"], found["text"], found.get("own")) == want, found
 
 
 # === the way on: a Next beside another Submit, two forms, sign-ins elsewhere (ADV-05, 08, 09) ==========

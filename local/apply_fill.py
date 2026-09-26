@@ -290,29 +290,101 @@ def number_value(value: str) -> str:
     return m.group(0).replace(",", "") if m else str(value or "").strip()
 
 
+# `_ci_match`'s answer when the options that hold a value tie and differ in
+# meaning (final review B R2 M2): no option is chosen
+OPTION_TIE = -2
+
+
+class OptionTie(LookupError):
+    """The options that hold the value tie and differ in meaning
+    (`OPTION_TIE`): none is chosen, a typeahead's box is cleared, and the
+    runner parks a required box and leaves an optional one blank."""
+
+
+# the words that turn an option against a value that lacks them: a negation
+# ("Not Hispanic or Latino" for "Latino") or a qualifier ("Yes, but I will
+# require sponsorship" for "Yes"; final review B R2 M2)
+_QUALIFIER = re.compile(r"(?<!\w)(?:not|no|non|never|without|none|neither|nor|declin(?:e|ed|es|ing)"
+                        r"|but|except|unless|requir(?:e|ed|es|ing)|need(?:s|ed)?)(?!\w)"
+                        r"|n['’]t(?!\w)", re.I)
+
+
+def _qualifiers(text: str) -> set[str]:
+    """The negations and qualifiers `text` holds, each by its stem."""
+    out: set[str] = set()
+    for m in _QUALIFIER.finditer(text):
+        word = m.group(0).lower()
+        out.add("not" if word.endswith("t") and word[-2:-1] in ("'", "’")
+                else "decline" if word.startswith("declin")
+                else "require" if word.startswith("requir")
+                else "need" if word.startswith("need") else word)
+    return out
+
+
 def _ci_match(want: str, candidates: list[str]) -> int:
     """Index of the candidate equal to `want` case-insensitively (whitespace
     folded), else the one a name of `want` matches (`apply_judge.match_option`:
     USA for United States, CA for California, a decline for a decline;
     FILL-07), else the closest one that holds it (`_holds`: "no" is never
-    inside "None"), else -1. The closest names each of the value's comma
-    parts as one of its own ("Chicago, IL" for "chicago", never "Chicago
-    Heights, IL"; `_names_each`); among equal fits ("Anytown, California"
-    and "Anytown, New York" for "anytown") the site's own order stands
-    (final review B-M2)."""
+    inside "None"), else -1.
+
+    An option that holds the value with a negation or a qualifier the value
+    lacks (`_qualifiers`: "Not Hispanic or Latino" for "Latino", "Yes, but I
+    will require sponsorship" for "Yes") never stands for it (final review B
+    R2 M2); a stored decline still takes the one option that declines in its
+    own words ("Prefer not to say"). The closest names each of the value's
+    comma parts as one of its own ("Chicago, IL" for "chicago", never
+    "Chicago Heights, IL";
+    `_names_each`); among such equal fits ("Anytown, California" and
+    "Anytown, New York" for "anytown") the site's own order stands (final
+    review B-M2): the value names nothing that sets them apart, and the
+    site's first match is what typing it gives a person. Two or more that
+    only hold the value ("Software Engineering" and "Hardware Engineering"
+    for "Engineering") differ in what the value leaves out: `OPTION_TIE`."""
     w = " ".join((want or "").split()).lower()
     folded = [" ".join(str(c).split()).lower() for c in candidates]
     if w in folded:
         return folded.index(w)
+    mine = _qualifiers(w)
     found = apply_judge.match_option(want, [str(c) for c in candidates])
-    if found is not None:
+    # the one option that starts with the value turns it too ("Yes, but I
+    # will require sponsorship" for "Yes"); a stored decline takes the one
+    # option that declines, in its own words
+    if found is not None and (not _qualifiers(found) - mine or apply_judge.declines(want)):
         return [str(c) for c in candidates].index(found)
     parts = [p.strip() for p in w.split(",") if p.strip()]
     if not parts:
         return -1
-    held = [i for i, c in enumerate(folded) if _holds(parts, c)]
+    held = [i for i, c in enumerate(folded) if _holds(parts, c) and not _qualifiers(c) - mine]
+    if not held:
+        return -1
     closest = [i for i in held if _names_each(parts, folded[i])]
-    return (closest or held or [-1])[0]
+    if closest:
+        return closest[0]
+    if len({folded[i] for i in held}) > 1:
+        return OPTION_TIE
+    return held[0]
+
+
+def _ci_first(tries: list[tuple[str, list[str]]]) -> int:
+    """`_ci_match` over (value, candidates) in turn (an option's labels,
+    then its values; a value, then its first comma part): the first index
+    found; else `OPTION_TIE` when a try tied; else -1."""
+    tied = False
+    for want, candidates in tries:
+        i = _ci_match(want, candidates)
+        if i >= 0:
+            return i
+        tied = tied or i == OPTION_TIE
+    return OPTION_TIE if tied else -1
+
+
+def _no_option(want: str, i: int, labels: list) -> LookupError:
+    """The error for a pick `_ci_first` did not make (`i`): a tie
+    (`OptionTie`) or no option at all."""
+    if i == OPTION_TIE:
+        return OptionTie(f"the options that hold {want!r} tie: {labels}")
+    return LookupError(f"no option {want!r} among {labels}")
 
 
 def _pieces(option: str) -> set[str]:
@@ -420,12 +492,9 @@ def _fill(loc, kind: dict[str, str], value: str) -> str:
 def _select_native(loc, want: str) -> None:
     options = loc.first.evaluate(_SELECT_OPTIONS_JS, timeout=ACTION_TIMEOUT_MS)
     labels = [o[0] for o in options]
-    i = _ci_match(want, labels)
+    i = _ci_first([(want, labels), (want, [o[1] for o in options])])
     if i < 0:
-        values = [o[1] for o in options]
-        i = _ci_match(want, values)
-    if i < 0:
-        raise LookupError(f"no option {want!r} among {labels}")
+        raise _no_option(want, i, labels)
     loc.first.select_option(value=options[i][1], timeout=ACTION_TIMEOUT_MS)
 
 
@@ -456,9 +525,10 @@ def _check_radio(page, loc, want: str, pf: PlannedField | None = None) -> None:
     i = _ci_match(want, labels)
     if i < 0:
         values = loc.evaluate_all("els => els.map(e => e.value)")
-        i = _ci_match(want, values)
+        j = _ci_match(want, values)
+        i = j if j >= 0 or i == -1 else i       # a tie among the labels stands
     if i < 0:
-        raise LookupError(f"no radio {want!r} among {labels}")
+        raise _no_option(want, i, labels)
     if pf is not None and i < len(pf.option_locators) and pf.option_locators[i]:
         # a hidden native radio behind its label (study G6): the label takes the click
         target = _clicked(page, pf.locator[0], pf.option_locators[i])
@@ -506,6 +576,8 @@ def _chosen(pf: PlannedField, want: str) -> list[int]:
     Research and Development apart, review R2 Minor 3)."""
     options = list(pf.options)
     i = _ci_match(want, options)
+    if i == OPTION_TIE:
+        raise _no_option(want, i, options)
     if i < 0 and pf.widget == "checkbox_group" and len(options) == 1 \
             and str(want or "").strip().lower() in CHECKED_WORDS:
         i = 0
@@ -824,7 +896,7 @@ def _pick_listbox(page, frame, loc, want: str, *, popup: bool = False, face=None
     i = _ci_match(want, texts)
     if i < 0:
         _close_menu(page, loc, options)
-        raise LookupError(f"no option {want!r} among {texts}")
+        raise _no_option(want, i, texts)
     try:
         options.nth(i).click(timeout=ACTION_TIMEOUT_MS)
     except Exception:       # noqa: BLE001  (the menu closed under the click: open it once more)
@@ -840,11 +912,16 @@ def _pick_listbox(page, frame, loc, want: str, *, popup: bool = False, face=None
 
 # The matches a typeahead offers under its box (study G7: Lever's location has
 # no ARIA): the visible entries of the nearest results list around it, each
-# marked for the click. An earlier typeahead's marks are cleared first: the
-# click takes the first mark in the document (final review B-M1).
+# marked for the click. An earlier typeahead's marks are cleared first, in
+# the document and every open shadow root: the click's locator reaches into
+# shadow roots and takes the first mark it meets (final review B-M1, B R2 nit).
 _TYPEAHEAD_OPTIONS_JS = """el => {
-  (el.ownerDocument || document).querySelectorAll('[data-apply-option]')
-    .forEach((n) => n.removeAttribute('data-apply-option'));
+  const clear = (root) => {
+    root.querySelectorAll('[data-apply-option]')
+      .forEach((n) => n.removeAttribute('data-apply-option'));
+    root.querySelectorAll('*').forEach((n) => { if (n.shadowRoot) clear(n.shadowRoot); });
+  };
+  clear(el.ownerDocument || document);
   const visible = (n) => { const st = getComputedStyle(n); const r = n.getBoundingClientRect();
     return st.display !== 'none' && st.visibility !== 'hidden' && (r.width > 0 || r.height > 0); };
   let box = el.parentElement;
@@ -867,7 +944,9 @@ _TYPEAHEAD_OPTIONS_JS = """el => {
 
 def _type_ahead(page, frame, loc, value: str) -> None:
     """Type the value into a typeahead (study G7), wait for its matches and
-    click the one that fits; with no match the typed value stays."""
+    click the one that fits; with no match the typed value stays. Matches
+    that tie and differ in meaning (`OPTION_TIE`) leave the box empty and
+    raise `OptionTie` (final review B R2 M2)."""
     keys = _keys_for(loc, value)
     loc.first.fill("", timeout=ACTION_TIMEOUT_MS)
     loc.first.press_sequentially(keys, delay=10, timeout=ACTION_TIMEOUT_MS)
@@ -880,10 +959,11 @@ def _type_ahead(page, frame, loc, value: str) -> None:
         page.wait_for_timeout(100)
     if not texts:
         return
-    i = _ci_match(value, texts)
-    if i < 0:
-        first = (value or "").split(",")[0].strip()
-        i = _ci_match(first, texts)
+    first = (value or "").split(",")[0].strip()
+    i = _ci_first([(value, texts), (first, texts)])
+    if i == OPTION_TIE:
+        loc.first.fill("", timeout=ACTION_TIMEOUT_MS)
+        raise _no_option(value, i, texts)
     if i < 0:
         return
     frame.locator(f'[data-apply-option="{i}"]').first.click(timeout=ACTION_TIMEOUT_MS)
@@ -902,11 +982,9 @@ def _select_hidden(loc, want: str) -> None:
     forced past the actionability check, else set and announced by script."""
     options = loc.first.evaluate(_SELECT_OPTIONS_JS, timeout=ACTION_TIMEOUT_MS)
     labels = [o[0] for o in options]
-    i = _ci_match(want, labels)
+    i = _ci_first([(want, labels), (want, [o[1] for o in options])])
     if i < 0:
-        i = _ci_match(want, [o[1] for o in options])
-    if i < 0:
-        raise LookupError(f"no option {want!r} among {labels}")
+        raise _no_option(want, i, labels)
     try:
         loc.first.select_option(value=options[i][1], force=True, timeout=ACTION_TIMEOUT_MS)
     except Exception:       # noqa: BLE001  (a select the page keeps out of reach)
@@ -1492,11 +1570,13 @@ def _norm(text: str) -> str:
 # holds none of its controls; anywhere else a close, dismiss, minimise, "no
 # thanks" or bare "x" control of the overlay (never one that accepts,
 # allows, agrees, or holds a send or last-step word of `_SEND_JS`); marked
-# `data-apply-close`. A box of the application itself, a dialog or a fixed
-# bar (two or more fields, or a control that applies, uploads or submits)
-# is no cover: nothing is picked and `own` says so (SP6 review M4; final
-# review B-M6). Returns {what, kind: consent|close|none, text, own} or null
-# when nothing covers it.
+# `data-apply-close`. A box of the application itself is no cover: nothing
+# is picked and `own` says so (SP6 review M4; final review B-M6). A fixed
+# bar is the application's by where it sits (the covered control's form or
+# the box around the control and its fields, final review B R2 M6), a
+# dialog by that or by what it holds (two or more fields, or a control
+# that applies, uploads or submits). Returns {what, kind:
+# consent|close|none, text, own} or null when nothing covers it.
 # The loop's send and last-step words (`apply_run.SUBMIT_WORDS` and
 # `FINAL_WORDS`) as a JS regex source for a string literal: the overlay
 # picker and the click's arm (`_ARM_JS`) splice it (final review B-M4).
@@ -1534,14 +1614,28 @@ _OVERLAY_JS = r"""el => {
     + ' ' + (root.innerText || '').slice(0, 60)).slice(0, 80);
   const ctrls = Array.from(root.querySelectorAll(CTRLS)).filter((c) => shown(c) && !c.disabled);
   if (!consent) {
-    // the application's own box (Workday's "Start Your Application" dialog,
-    // a fixed footer with "Skip this step" beside the submit): its fields or
-    // its apply, upload or submit controls; never put away, a dialog or not
-    // (final review B-M6)
-    const fields = Array.from(root.querySelectorAll(
-      'input:not([type=hidden]):not([type=button]):not([type=submit]):not([type=checkbox])'
-      + ':not([type=radio]), select, textarea')).filter(shown);
-    if (fields.length >= 2 || ctrls.some((c) => APP.test(words(c).join(' '))))
+    // the application's own box, never put away (final review B-M6). Any
+    // fixed or sticky box is when it is part of the application: in the
+    // form of the control it covers, holding a control that form owns (a
+    // footer's `form=` submit), or inside the box that holds the control
+    // and the application's fields. A dialog is also when it holds fields
+    // or an apply, upload or submit control (Workday's "Start Your
+    // Application"). A chat's pre-chat form, a talent-network or a
+    // job-alert slide-in beside the application is put away, whatever
+    // fields it holds (final review B R2 M6)
+    const FIELDS = 'input:not([type=hidden]):not([type=button]):not([type=submit])'
+      + ':not([type=checkbox]):not([type=radio]), select, textarea';
+    const form = el.form || el.closest('form');
+    let box = null;
+    for (let n = el.parentElement; !box && n && n !== document.body
+         && n !== document.documentElement; n = n.parentElement) {
+      if (Array.from(n.querySelectorAll(FIELDS)).some((f) => shown(f) && !root.contains(f))) box = n;
+    }
+    const part = (!!form && (form.contains(root) || Array.from(root.querySelectorAll(
+      FIELDS + ', ' + CTRLS)).some((c) => c.form === form))) || (!!box && box.contains(root));
+    const dialog = root.matches('dialog, [role=dialog], [role=alertdialog], [aria-modal=true]');
+    const fields = Array.from(root.querySelectorAll(FIELDS)).filter(shown);
+    if (part || (dialog && (fields.length >= 2 || ctrls.some((c) => APP.test(words(c).join(' '))))))
       return {what: name, kind: 'none', text: '', own: true};
   }
   let pick = null, kind = 'none';

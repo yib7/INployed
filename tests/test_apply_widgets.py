@@ -237,6 +237,43 @@ def test_a_transparent_box_or_a_box_in_a_transparent_wrapper_is_no_field(browser
     assert [f.label for f in d.fields] == ["Full name", "Remote?"]
 
 
+_FADES = {
+    # a keyframe fade-in, with a trap at opacity 0 of its own inside
+    "animation": ("""<head><style>@keyframes rise { from { opacity: 0 } to { opacity: 1 } }
+      form { animation: rise 60s linear }</style></head><body><form>
+      <label for="a">First name</label><input id="a" type="text">
+      <label for="site">Website</label><input id="site" type="text" style="opacity:0">
+      <label for="b">Last name</label><input id="b" type="text"></form></body>""", ""),
+    # a transition from opacity 0, begun as the page is read
+    "transition": ("""<head><style>form { opacity: 0; transition: opacity 60s linear }
+      form.in { opacity: 1 }</style></head><body><form>
+      <label for="a">First name</label><input id="a" type="text">
+      <label for="b">Last name</label><input id="b" type="text"></form></body>""",
+                   "() => { const f = document.querySelector('form');"
+                   " getComputedStyle(f).opacity; f.classList.add('in'); }"),
+    # a wrapper held transparent around the whole form until the page loads
+    "wrapper": ("""<body><div style="opacity:0"><form>
+      <label for="a">First name</label><input id="a" type="text">
+      <label for="b">Last name</label><input id="b" type="text"></form></div></body>""", "")}
+
+
+@pytest.mark.parametrize("case", list(_FADES))
+def test_a_form_that_fades_in_or_waits_transparent_keeps_its_fields(browser_page, case):
+    # final review B R2 M3: a form read while its opacity is still moving
+    # up from 0 keeps its fields, and so does a transparent wrapper around
+    # the whole form; a trap at opacity 0 inside the fading form is still no
+    # field
+    html, start = _FADES[case]
+    browser_page.set_content(html)
+    if start:
+        browser_page.evaluate(start)
+    assert browser_page.evaluate("() => parseFloat(getComputedStyle("
+                                 "document.querySelector('form')).opacity)") < 0.1 \
+        or case == "wrapper"
+    d = apply_form.extract(browser_page)
+    assert [f.label for f in d.fields] == ["First name", "Last name"]
+
+
 def test_the_harness_breaks_on_a_fill_into_a_honeypot_or_a_read_only_box(browser_page):
     browser_page.set_content("""<body><form>
       <label for="site">Website</label><input id="site" type="text" data-harness-junk="honeypot">
@@ -425,6 +462,67 @@ def test_a_second_typeahead_clicks_its_own_match_never_an_earlier_lists(browser_
     assert browser_page.locator("#a-list li").count() == 1       # the first list stayed open
 
 
+_CITY = ('<form><div><label for="b">Work city</label><input id="b" autocomplete="off">'
+         '<ul id="b-list" class="results"></ul></div></form>')
+
+
+@pytest.mark.parametrize("shadow", [True, False], ids=["in_a_shadow_root", "in_the_page"])
+def test_a_stale_mark_in_a_shadow_root_is_cleared_before_the_click(browser_page, shadow):
+    # final review B R2 nit: the clear read the document alone, and the
+    # click's locator reaches into shadow roots: a mark an earlier list left
+    # in one came first and took the click when the typeahead sits in a
+    # shadow root of its own (a web-component form)
+    browser_page.set_content(f"""<body><div id="old"></div><div id="app">{'' if shadow else _CITY}
+      </div><script>
+        const old = document.getElementById('old').attachShadow({{mode: 'open'}});
+        old.innerHTML = '<ul class="results"><li data-apply-option="0">Springfield, IL</li></ul>';
+        old.querySelector('li').onclick = () => {{ document.body.dataset.stale = 'clicked'; }};
+        let root = document;
+        if ({'true' if shadow else 'false'}) {{
+          root = document.getElementById('app').attachShadow({{mode: 'open'}});
+          root.innerHTML = '{_CITY}';
+        }}
+        const box = root.getElementById('b'), list = root.getElementById('b-list');
+        box.addEventListener('input', () => {{ list.innerHTML = '';
+          const li = document.createElement('li'); li.textContent = 'Shelbyville, IL';
+          li.onclick = () => {{ box.value = 'Shelbyville, IL'; }}; list.appendChild(li); }});
+      </script></body>""")
+    frame = browser_page.main_frame
+    apply_fill._type_ahead(browser_page, frame, browser_page.locator("#b"), "Shelbyville")
+    assert browser_page.evaluate("document.body.dataset.stale || ''") == ""
+    assert browser_page.locator("#b").input_value() == "Shelbyville, IL"
+
+
+_TIED_TYPEAHEAD = """<body><form>
+  <label for="dept">Department</label><input id="dept" autocomplete="off">
+  <ul id="dept-list" class="results"></ul>
+  <label for="eth">Ethnicity</label><input id="eth" autocomplete="off">
+  <ul id="eth-list" class="results"></ul></form>
+  <script>
+    const lists = {dept: ['Software Engineering', 'Hardware Engineering'],
+                   eth: ['Not Hispanic or Latino', 'Hispanic or Latino']};
+    for (const id of ['dept', 'eth']) {
+      const box = document.getElementById(id), list = document.getElementById(id + '-list');
+      box.addEventListener('input', () => { list.innerHTML = '';
+        if (!box.value) return;
+        lists[id].forEach((c) => { const li = document.createElement('li'); li.textContent = c;
+          li.onclick = () => { box.value = c; }; list.appendChild(li); }); });
+    }
+  </script></body>"""
+
+
+def test_a_typeahead_whose_matches_tie_and_differ_is_left_empty(browser_page):
+    # final review B R2 M2: the site's order picked "Software Engineering"
+    # for "Engineering" and "Not Hispanic or Latino" for "Latino"
+    browser_page.set_content(_TIED_TYPEAHEAD)
+    frame = browser_page.main_frame
+    with pytest.raises(apply_fill.OptionTie):
+        apply_fill._type_ahead(browser_page, frame, browser_page.locator("#dept"), "Engineering")
+    assert browser_page.locator("#dept").input_value() == ""
+    apply_fill._type_ahead(browser_page, frame, browser_page.locator("#eth"), "Latino")
+    assert browser_page.locator("#eth").input_value() == "Hispanic or Latino"
+
+
 def test_a_line_break_typed_key_by_key_never_submits_the_form(browser_page):
     # final review B-I1: typed key by key, a value's line break is an Enter,
     # and an Enter in a one-line box submits its form
@@ -569,9 +667,39 @@ def test_a_long_lists_pick_question_carries_a_shortlist_for_the_value():
     # equal fits keep the site's order: the length of a state's name picks
     # no place (the real judge's typeahead_editor recording holds the first)
     ("anytown", ["Anytown, California, United States", "Anytown, New York, United States"], 0),
-    ("", ["Anything"], -1)])
+    ("", ["Anything"], -1),
+    # final review B R2 M2: an option that turns the value with a negation or
+    # a qualifier the value lacks never stands for it, whatever the site's order
+    ("Latino", ["Not Hispanic or Latino", "Hispanic or Latino"], 1),
+    ("Yes", ["Yes, but I will require sponsorship", "Yes, I am authorized"], 1),
+    ("Latino", ["Not Hispanic or Latino", "White"], -1),
+    ("Yes", ["Yes, but I will require sponsorship", "No"], -1),
+    ("Not Hispanic or Latino", ["Hispanic or Latino", "Not Hispanic or Latino"], 1),
+    ("I do not want to answer", ["Decline to answer", "I don't wish to answer",
+                                 "I do not want to answer"], 2),
+    # a stored decline takes the one option that declines in its own words,
+    # and the one option that starts with a value keeps it
+    ("Prefer not to say", ["Yes", "No", "I decline to self-identify"], 2),
+    ("California", ["Nevada", "California (CA)"], 1),
+    # the options that hold the value tie and differ in what it leaves out
+    ("Engineering", ["Software Engineering", "Hardware Engineering"], "tie"),
+    ("Engineering", ["Software Engineering", "software  engineering"], 0)])
 def test_the_last_match_is_a_whole_word_one_and_the_closest(want, options, index):
+    if index == "tie":
+        index = apply_fill.OPTION_TIE
     assert apply_fill._ci_match(want, options) == index
+
+
+@pytest.mark.parametrize("tries, index", [
+    ([("Engineering", ["Software Engineering", "Hardware Engineering"]),
+      ("Engineering", ["Software Engineering", "Hardware Engineering"])], "tie"),
+    ([("Engineering", ["Software Engineering", "Hardware Engineering"]),
+      ("Engineering", ["Engineering"])], 0),
+    ([("Nowhere", ["Somewhere"]), ("Nowhere", ["Anywhere"])], -1)])
+def test_the_first_pick_found_wins_and_a_tie_is_told_from_no_match(tries, index):
+    if index == "tie":
+        index = apply_fill.OPTION_TIE
+    assert apply_fill._ci_first(tries) == index
 
 
 # --- EXT-10: react-select's pick is read from its sibling ----------------------------------------

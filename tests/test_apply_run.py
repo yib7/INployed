@@ -1865,6 +1865,25 @@ def test_only_a_masked_input_is_a_password_box(
         assert (pf.action, pf.fact_key) == (apply_judge.PASSWORD_ACTION, None), pf
 
 
+def test_a_control_read_without_its_secret_keeps_a_masked_box_a_password_box():
+    # final review B R2 nit: an older capture's field (no `secret` key) and a
+    # hand-built `Field` are password boxes when their ident names a masked
+    # input; a text box with a password's autocomplete is still none
+    masked = "input|password|pw|pw||||||password"
+    digest = apply_form.FormDigest.from_dict({
+        "url_host": "x.example", "title": "Sign in", "text": "", "fields": [
+            {"n": 0, "locator": [0, "#pw"], "label": "Password", "type": "other",
+             "ident": masked},
+            {"n": 1, "locator": [0, "#city"], "label": "City", "type": "text",
+             "autocomplete": "new-password", "ident": "input|text|city|city||||||city"}]})
+    assert [f.secret for f in digest.fields] == [True, False]
+    assert [apply_form.password_box(f) for f in digest.fields] == [True, False]
+    built = apply_form.Field(0, (0, "#pw"), "Password", "other", True, ident=masked)
+    assert apply_form.password_box(built)
+    assert not apply_form.password_box(apply_form.Field(0, (0, "#q"), "Password hint", "other",
+                                                        False, ident="input|text|q|q||||||hint"))
+
+
 @pytest.mark.parametrize("html", [
     '<label>Password <input type="PASSWORD" name="pw" required></label>',
     '<form action="javascript:void(0)"><label>Password <input type="password" name="pw" '

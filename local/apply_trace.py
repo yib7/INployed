@@ -22,7 +22,9 @@ still leaves every page before it.
 
 What the trace never holds: a field's value, the master password or an
 emailed code. The digest carries labels, types and options; a fill event
-says which boxes hold something. The screenshots show the page as a person
+says which boxes hold something. A page's URL is kept as its scheme, host
+and path (`bare_url`): a form sent with method=get puts its answers in the
+query. The screenshots show the page as a person
 would see it, with every password and code box masked, and every box the
 run typed the password or a code into (`extra_mask`).
 
@@ -41,10 +43,72 @@ import re
 import time
 from pathlib import Path
 from typing import Any, Iterable, Mapping
+from urllib.parse import urlsplit
 
 from jsonutil import replace_with_retry
 
 log = logging.getLogger("apply_trace")
+
+
+def bare_url(url: object) -> str:
+    """`scheme://host/path`: the query and the fragment left off (a form
+    sent with method=get carries its answers there, a code or a password
+    among them)."""
+    raw = str(url or "")
+    try:
+        parts = urlsplit(raw)
+    except ValueError:
+        return ""
+    if not parts.scheme:
+        return raw.split("?", 1)[0].split("#", 1)[0]
+    return f"{parts.scheme}://{parts.netloc}{parts.path}"
+
+
+_URL_IN_TEXT = re.compile(r"https?://[^\s\"'<>|]*[?#][^\s\"'<>|]*", re.I)
+_TRAILING = re.compile(r"[.,;:!?)\]]+$")
+
+
+def _bare_in_text(m: re.Match) -> str:
+    url = m.group(0)
+    tail = _TRAILING.search(url)
+    end = tail.group(0) if tail else ""
+    return bare_url(url[:len(url) - len(end)]) + end
+
+
+def scrub_urls(text: object) -> str:
+    """`text` with every web address in it cut to `bare_url` (a stop, a
+    comma or a bracket after it stays)."""
+    text = str(text or "")
+    if "://" not in text:
+        return text
+    return _URL_IN_TEXT.sub(_bare_in_text, text)
+
+
+def _scrubbed(value: Any) -> Any:
+    if isinstance(value, str):
+        return scrub_urls(value)
+    if isinstance(value, Mapping):
+        return {k: _scrubbed(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_scrubbed(v) for v in value]
+    return value
+
+
+class _UrlScrub(logging.Filter):
+    """Every line the job's loggers write, with its web addresses cut to
+    `bare_url`: a page reached by a method=get form carries the answers in
+    its address, and a log line names the page."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except Exception:       # noqa: BLE001  (a malformed call is logging's to report)
+            return True
+        if "://" in message:
+            scrubbed = scrub_urls(message)
+            if scrubbed != message:
+                record.msg, record.args = scrubbed, None
+        return True
 
 TRACE_DIR = "apply_trace"
 LOG_NAME = "job.log"
@@ -64,6 +128,11 @@ MASK_CSS = ("input[type=password], input[autocomplete=one-time-code], "
 LOGGERS = ("apply_run", "apply_fill", "apply_form", "apply_judge", "apply_inbox",
            "apply_answergen", "apply_verify", "ats_accounts", "jev", "apply_trace")
 _ATTEMPT_RE = re.compile(r"^attempt-(\d+)$")
+# on every one of them, whether a trace is open or not (a logger's own filter
+# runs before any of its handlers: the job log, the dashboard's, a test's)
+URL_SCRUB = _UrlScrub()
+for _name in LOGGERS:
+    logging.getLogger(_name).addFilter(URL_SCRUB)
 
 
 def _as_text(value: Any) -> Any:
@@ -252,6 +321,7 @@ class Trace:
         names = {lg.name for lg in self._loggers}
         loggers = list(self._loggers) + [logging.getLogger(n) for n in LOGGERS if n not in names]
         for lg in loggers:
+            lg.addFilter(URL_SCRUB)         # the runner's own logger too (a no-op when on)
             if handler not in lg.handlers:
                 lg.addHandler(handler)
                 self._attached.append(lg)
@@ -280,7 +350,7 @@ class Trace:
         if not self.enabled:
             return
         entry: dict[str, Any] = {
-            "n": n, "url": str(url), "t": self._t(),
+            "n": n, "url": bare_url(url), "t": self._t(),
             "state": state, "confidence": confidence,
             "page_state": _answer_json("page_state", answers["page_state"])
             if answers and "page_state" in answers else None,
@@ -305,7 +375,8 @@ class Trace:
         a plan, a fill, a click and its result, a decision and why, a park."""
         if self.dir is None or self._failed:
             return
-        row = {"t": self._t(), "kind": kind, **data}
+        # an event names pages by their address: cut to `bare_url`
+        row = {"t": self._t(), "kind": kind, **_scrubbed(data)}
         if self.pages:
             self.pages[-1]["events"].append(row)
             self._write_page(self.pages[-1])
@@ -315,8 +386,8 @@ class Trace:
 
     def nav(self, url: str) -> None:
         """A main-frame navigation of a page the job drives (redirects and
-        popups included), in order."""
-        url = str(url or "")
+        popups included), in order, as `bare_url` keeps it."""
+        url = bare_url(url)
         if url and (not self.url_chain or self.url_chain[-1] != url):
             self.url_chain.append(url)
 
@@ -340,7 +411,7 @@ class Trace:
         if not self.enabled:
             return
         shot = self.screenshot(page, "end", extra_mask=extra_mask) if page is not None else ""
-        self._write_run({"status": status, "reason": reason, "end_screenshot": shot,
+        self._write_run({"status": status, "reason": scrub_urls(reason), "end_screenshot": shot,
                          "seconds": self._t()})
 
     # -- files -----------------------------------------------------------------------

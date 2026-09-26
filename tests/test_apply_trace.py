@@ -838,6 +838,63 @@ def test_an_odd_value_in_an_event_is_written_as_text(tmp_path):
         trace.close()
 
 
+# --- final review C-M1: a page's address is kept without its query ---------------------------------
+
+def test_the_trace_the_log_and_the_record_keep_an_address_without_its_query(tmp_path, caplog):
+    # a page a method=get form reached carries the answers in its query
+    secret = "synthetic-Pw-9Kx2"
+    bare = "https://careers.example.com/apply/step2"
+    url = f"{bare}?email=jane%40example.com&password={secret}#top"
+    assert apply_trace.bare_url(url) == bare
+    assert apply_trace.scrub_urls(f"led to {url} | Step 2") == f"led to {bare} | Step 2"
+    assert apply_trace.scrub_urls("(https://x.example/a?code=482915).") == "(https://x.example/a)."
+    trace = apply_trace.Trace(tmp_path, attempt=1, job_id="42")
+    trace.start()
+    try:
+        trace.nav(url)
+        trace.page(1, url, None, {}, "application_form", 0.9)
+        trace.event("click", url=url, said=[f"the click led to {url}"], where={"page": url})
+        with caplog.at_level(logging.INFO, logger="apply_run"):
+            logging.getLogger("apply_run").info("job %s: page 1 at %s", "42", url)
+        trace.finish("needs_human", f"the link led to {url}: nothing to fill")
+    finally:
+        trace.close()
+    folder = tmp_path / "apply_trace" / "attempt-1"
+    texts = {p.name: p.read_text(encoding="utf-8") for p in folder.iterdir()
+             if p.suffix in (".json", ".log")}
+    assert {"run.json", "page-1.json", apply_trace.LOG_NAME} <= set(texts), sorted(texts)
+    assert not [n for n, t in texts.items() if secret in t or "email=" in t], texts
+    run = json.loads(texts["run.json"])
+    assert run["url_chain"] == [bare]
+    assert run["reason"] == f"the link led to {bare}: nothing to fill"
+    assert json.loads(texts["page-1.json"])["url"] == bare
+    assert f"page 1 at {bare}" in texts[apply_trace.LOG_NAME]
+    assert secret not in caplog.text and f"page 1 at {bare}" in caplog.text
+    record = apply_run.write_record(tmp_path / "rec", {"title": "Analyst"}, "needs_human", "r",
+                                    [{"url": url, "state": "application_form",
+                                      "confidence": 0.9}], {}, "")
+    text = record.read_text(encoding="utf-8")
+    assert f"## Page 1: {bare}\n" in text and secret not in text
+
+
+def test_a_park_on_a_page_a_get_form_reached_keeps_its_query_out_of_the_queue(
+        context, flow_server, tmp_path, monkeypatch):
+    # the queue's tab note and reason name the page the job ended on
+    secret = "synthetic-Pw-9Kx2"
+    run = apply_run._JobRun(_runner(context, tmp_path), context, {"job_posting_id": "42"})
+    page = context.new_page()
+    page.goto(flow_server.url("lever_single.html") + f"?email=jane%40example.com&password={secret}")
+    run.page = page
+    written: list[tuple] = []
+    monkeypatch.setattr(run, "_finish_entry", lambda *a: written.append(a))
+    out = run._finish("needs_human", f"no way forward at {page.url}; buttons: none")
+    (status, tab_note, _record, reason), = written
+    assert tab_note.startswith(flow_server.url("lever_single.html") + " | "), tab_note
+    assert reason == out.reason == (f"no way forward at {flow_server.url('lever_single.html')}; "
+                                    f"buttons: none")
+    assert secret not in tab_note
+
+
 # --- M9: the sign-up page the login hook reads is a traced page ------------------------------------
 
 def test_the_sign_up_page_the_login_hook_follows_is_traced(context, flow_server, tmp_path,

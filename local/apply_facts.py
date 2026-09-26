@@ -66,7 +66,8 @@ DESCRIPTIONS: dict[str, str] = {
                  "in person",
     # derived from the store's yes / no answers (`DERIVED_YES_NO`)
     "authorized_without_sponsorship": "Whether the candidate can take a job without employer "
-                                      "sponsorship, now and in the future",
+                                      "sponsorship, now and in the future, which is "
+                                      "unrestricted work authorization",
     "remote_only": "Whether the candidate is looking for fully remote work only",
     "gender": "The candidate's gender, for EEO self-identification",
     "race_ethnicity": "The candidate's race or ethnicity, for EEO self-identification",
@@ -527,6 +528,11 @@ class _OwnQuestion:
     own: frozenset[str] = frozenset()        # `_SCOPE` words its own question uses
     scope: tuple[re.Pattern, ...] = ()       # its scope words beside `_SCOPE`
     skills: bool = False                     # a named skill or field narrows it (years)
+    # a narrower form of its question, and the value that answers every
+    # narrower form too (round 2: no sponsorship now or in the future is No
+    # to H-1B sponsorship and to sponsorship now)
+    narrower: tuple[re.Pattern, ...] = ()
+    settles_narrower: str = ""
 
 
 # every fact's scope and polarity words, by name
@@ -541,23 +547,33 @@ _SCOPE: dict[str, re.Pattern] = {name: re.compile(p) for name, p in (
     ("no longer", r"\bno longer\b"),
     ("ever", r"\bever\b"),
 )}
-# a visa type named outside an example, or a visa the candidate holds now
-_VISA = re.compile(r"\b(?:h-?1b?|h-?4|l-?1[ab]?|o-?1[ab]?|e-?3|f-?1|j-?1|tn|opt|cpt|ead)\b"
-                   r"|\bcurrently sponsored\b|\bcurrent visa\b"
-                   r"|\bcurrently (?:on|hold|holding|have|in)\b[^.?!]*\bvisa\b")
+# a visa type named outside an example
+_VISA_TYPE = re.compile(r"\b(?:h-?1b?|h-?4|l-?1[ab]?|o-?1[ab]?|e-?3|f-?1|j-?1|tn|opt|cpt|ead)\b")
+# a visa or a sponsorship the candidate holds now: another status
+_VISA_HELD = re.compile(r"\bcurrently sponsored\b|\bcurrent visa\b"
+                        r"|\bcurrently (?:on|hold|holding|have|in)\b[^.?!]*\bvisa\b")
 _SPONSOR = re.compile(r"sponsor")
-# sponsorship now only: "currently" with no word of the future
-_NOW_ONLY = re.compile(r"(?s)^(?!.*\bfuture\b).*\bcurrent(?:ly)?\b")
+# sponsorship now only: a word of now with no word of later
+_NOW_ONLY = re.compile(r"(?s)^(?!.*\b(?:future|later|any time|anytime|any point)\b)"
+                       r".*\b(?:current(?:ly)?|now|at this time|at present|presently)\b")
+# any word of restriction: unrestricted work is the derived fact's question
+_RESTRICT = re.compile(r"restrict")
+# a restriction the derived fact's own words do not name: "any restrictions"
+# and "restricted" ask the inverse
+_RESTRICT_OTHER = re.compile(r"(?<!without )(?<!without any )\brestrict")
 
 OWN_QUESTIONS: dict[str, _OwnQuestion] = {
     "work_authorized": _OwnQuestion(
         re.compile(r"authori[sz]|eligib|\blegal(?:ly)?\b|\bright to work\b"
                    r"|\b(?:permitted|allowed) to\b|\bwork permit\b"),
-        scope=(_VISA, _SPONSOR)),
-    "requires_sponsorship": _OwnQuestion(_SPONSOR, scope=(_VISA, _NOW_ONLY)),
+        scope=(_VISA_TYPE, _VISA_HELD, _SPONSOR, _RESTRICT)),
+    "requires_sponsorship": _OwnQuestion(
+        _SPONSOR, scope=(_VISA_HELD,), narrower=(_VISA_TYPE, _NOW_ONLY),
+        settles_narrower="No"),
     "authorized_without_sponsorship": _OwnQuestion(
-        re.compile(r"\bwithout\b[^.?!]*\bsponsor"), own=frozenset({"without"}),
-        scope=(_VISA,)),
+        re.compile(r"\bwithout\b[^.?!]*\bsponsor|\bwithout (?:any )?restrictions?\b"
+                   r"|\bunrestricted\b"),
+        own=frozenset({"without"}), scope=(_VISA_TYPE, _VISA_HELD, _RESTRICT_OTHER)),
     "willing_to_relocate": _OwnQuestion(re.compile(r"relocat|\bmov(?:e|ing) (?:to|for)\b")),
     "onsite_ok": _OwnQuestion(
         re.compile(r"\bon[- ]?site\b|\bin[- ]person\b|\boffice\b|\bhybrid\b")),
@@ -580,7 +596,8 @@ _YEARS = frozenset(("year", "years", "yr", "yrs"))
 _GENERIC_EXPERIENCE = frozenset((
     "relevant", "professional", "work", "working", "total", "overall", "industry", "related",
     "full", "time", "fulltime", "paid", "practical", "hands", "prior", "previous", "field",
-    "job", "employment", "career", "combined", "role", "position", "experience", *_YEARS))
+    "job", "employment", "career", "combined", "role", "position", "experience", "similar",
+    "capacity", *_YEARS))
 _FILLER = frozenset((
     "a", "an", "the", "this", "that", "your", "our", "of", "you", "do", "does", "have", "has",
     "had", "how", "many", "much", "what", "is", "are", "at", "least", "more", "or", "than",
@@ -604,9 +621,9 @@ def _narrowed(words: list[str]) -> bool:
 
 def _names_a_skill(text: str) -> bool:
     """Does a years question name a skill, tool, language or field ("years
-    of Python experience", "experience with React", "in a similar role")?
-    Generic qualifiers (relevant, professional, total, industry, ...) do
-    not."""
+    of Python experience", "experience with React", "in sales")? Generic
+    qualifiers (relevant, professional, total, industry, ...) and a role
+    ("in a similar role", "in this role", "relevant to this role") do not."""
     for sentence in _SENTENCE.split(text):
         words = _WORD.findall(sentence)
         if "experience" not in words or not _YEARS & set(words):
@@ -631,22 +648,24 @@ def _names_a_skill(text: str) -> bool:
     return False
 
 
-def asks_own_question(fact_key: str | None, label: str, help_text: str = "") -> bool:
-    """Does a field with this label and help ask `fact_key`'s own question
-    (`OWN_QUESTIONS`)? A fact with no table always does.
+def question_fit(fact_key: str | None, label: str, help_text: str = "") -> str:
+    """How a field with this label and help relates to `fact_key`'s own
+    question (`OWN_QUESTIONS`): "own", "narrower" (a narrower form of it:
+    H-1B sponsorship, sponsorship now) or "other". A fact with no table is
+    always "own".
 
     The question sentences (those holding "?") that name the fact's subject
-    are read; with none, a question sentence on another fact's subject says
-    no ("This role is on-site. Are you willing to relocate?" is no on-site
-    question), and else the whole text is read. The text read must name the
-    subject and carry no scope or polarity word the fact's own question does
-    not use (`_SCOPE`, and its own list: a visa type or a visa held now for
-    the work facts, "currently" with no future for sponsorship), and a years
-    question must name no skill (`_names_a_skill`). An example ("e.g.
-    H-1B") is no scope."""
+    are read; with none, a question sentence on another fact's subject makes
+    it "other" ("This role is on-site. Are you willing to relocate?" is no
+    on-site question), and else the whole text is read. The text read must
+    name the subject and carry no scope or polarity word the fact's own
+    question does not use (`_SCOPE`, and its own list: a visa type, a visa
+    held now or a restriction for the work facts, a visa held now for
+    sponsorship), and a years question must name no skill
+    (`_names_a_skill`). An example ("e.g. H-1B") is no scope."""
     spec = OWN_QUESTIONS.get(fact_key or "")
     if spec is None:
-        return True
+        return "own"
     text = _question_text(label, help_text)
     questions = [s for s in _SENTENCE.split(text) if "?" in s]
     own = [s for s in questions if spec.topic.search(s)]
@@ -654,11 +673,33 @@ def asks_own_question(fact_key: str | None, label: str, help_text: str = "") -> 
         text = " ".join(own)
     elif any(other.topic.search(s) for key, other in OWN_QUESTIONS.items()
              if key != fact_key for s in questions):
-        return False
+        return "other"
     elif not spec.topic.search(text):
-        return False
+        return "other"
     if any(p.search(text) for name, p in _SCOPE.items() if name not in spec.own):
-        return False
+        return "other"
     if any(p.search(text) for p in spec.scope):
-        return False
-    return not (spec.skills and _names_a_skill(text))
+        return "other"
+    if spec.skills and _names_a_skill(text):
+        return "other"
+    return "narrower" if any(p.search(text) for p in spec.narrower) else "own"
+
+
+def asks_own_question(fact_key: str | None, label: str, help_text: str = "") -> bool:
+    """Does a field with this label and help ask `fact_key`'s own question
+    (`question_fit` is "own")? A fact with no table always does."""
+    return question_fit(fact_key, label, help_text) == "own"
+
+
+def answers_question(fact_key: str | None, value: str, label: str,
+                     help_text: str = "") -> bool:
+    """Does `value` of `fact_key` answer the field's question? Its own
+    question, for any value; a narrower form only for the value that answers
+    every narrower form (`settles_narrower`: a stored No to sponsorship now
+    or in the future is No to "Will you require H-1B sponsorship?", and a
+    Yes there is no answer); another question, never."""
+    fit = question_fit(fact_key, label, help_text)
+    if fit == "narrower":
+        settles = OWN_QUESTIONS[fact_key].settles_narrower
+        return bool(settles) and (value or "").strip().lower() == settles.lower()
+    return fit == "own"

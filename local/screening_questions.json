@@ -199,6 +199,38 @@
       }
     },
     {
+      "id": "auth_unrestricted",
+      "label": "Do you have unrestricted work authorization in the U.S.?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "authorized_without_sponsorship",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": "No"
+      }
+    },
+    {
+      "id": "auth_any_restrictions",
+      "label": "Are there any restrictions on your authorization to work in the U.S.?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": "No",
+        "sponsor": null
+      }
+    },
+    {
       "id": "spon_radio",
       "label": "Will you now or in the future require sponsorship for employment visa status (e.g., H-1B visa status)?",
       "help": "",
@@ -316,6 +348,22 @@
       "label": "Do you currently require visa sponsorship to work in the U.S.?",
       "help": "",
       "widget": "select",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "requires_sponsorship",
+      "expect": {
+        "citizen": "No",
+        "sponsor": null
+      }
+    },
+    {
+      "id": "spon_h1b_require",
+      "label": "Will you require H-1B visa sponsorship to work for us?",
+      "help": "",
+      "widget": "radio",
       "options": [
         "Yes",
         "No"

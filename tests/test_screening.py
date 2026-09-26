@@ -55,15 +55,18 @@ QUESTIONS = apply_screening.load_questions()
 SEEDS = (1, 2, 3, 4, 5)
 
 # Share of non-null expectations picked correctly, at the rate the final run
-# measured (66 questions, 103 non-null expectations over both profiles),
+# measured (69 questions, 107 non-null expectations over both profiles),
 # rounded down to two places. Cycle 18 SP6c lowered them from 0.61 and
-# {0.60, 0.60, 0.60, 0.61, 0.59} (63; 62 62 62 63 61): a yes / no or years fact
-# now gives no value to a question it does not answer
-# (`apply_facts.asks_own_question`), which takes away nine picks the fake made
+# {0.60, 0.60, 0.60, 0.61, 0.59} (63; 62 62 62 63 61 of 103): a yes / no or
+# years fact now gives no value to a question it does not answer
+# (`apply_facts.answers_question`), which takes away nine picks the fake made
 # right by chance through another question's fact and adds four through the
-# derived facts.
-FAKE_PICK_FLOOR = 0.56                                        # 58 of 103
-NOISY_PICK_FLOOR = {1: 0.55, 2: 0.55, 3: 0.55, 4: 0.56, 5: 0.54}  # 57 57 57 58 56
+# derived facts. Its round 2 settles a narrower sponsorship question for a No
+# and takes unrestricted work authorization through the derived fact, and
+# added three questions for them (auth_unrestricted, auth_any_restrictions,
+# spon_h1b_require).
+FAKE_PICK_FLOOR = 0.57                                        # 62 of 107
+NOISY_PICK_FLOOR = {1: 0.57, 2: 0.57, 3: 0.57, 4: 0.57, 5: 0.56}  # 61 61 61 62 60
 # The real judge's floor: None reports the rate and checks nothing. The
 # orchestrator sets it from the recording (TS-3).
 REAL_PICK_FLOOR: float | None = None

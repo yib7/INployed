@@ -1632,7 +1632,8 @@ _OWN_QUESTIONS = [
     ("years_experience", "How many years of experience do you have working with React?", False),
     ("years_experience", "How many years of experience do you have in software engineering?",
      False),
-    ("years_experience", "Do you have 3 or more years of experience in a similar role?", False),
+    # a role qualifier asks the total (round 2, decision 3)
+    ("years_experience", "Do you have 3 or more years of experience in a similar role?", True),
     ("years_experience", "Years of experience, not counting internships", False),
     ("years_experience", "Years with SQL", False),
     ("years_experience", "Years in the role", False),
@@ -1762,3 +1763,186 @@ def test_a_worded_list_whose_question_is_another_facts_asks_the_judge_nothing(tm
     kept.fields[0].label = own.fields[0].label
     assert list(apply_judge.option_questions(own, kept, catalog=cat)[1]) == ["field_0_pick"]
     assert apply_judge.reask_targets(own, cat, {}, kept, what="pick") == [0]
+
+
+# --- cycle 18 SP6c round 2: narrower forms, unrestricted work, role qualifiers ----------------
+
+_H1B = "Will you require H-1B sponsorship?"
+_NOW = "Do you currently require visa sponsorship to work in the U.S.?"
+_UNRESTRICTED = "Do you have unrestricted work authorization in the US?"
+
+_FITS = [
+    # requires_sponsorship: a named visa type or "now only" is a narrower form
+    # of needing sponsorship; a status held now or a transfer is another question
+    ("requires_sponsorship", "Will you now or in the future require visa sponsorship?", "own"),
+    ("requires_sponsorship", "Do you require sponsorship (e.g., H-1B, TN, O-1) to work for us?",
+     "own"),
+    ("requires_sponsorship", "Will you require sponsorship now or later?", "own"),
+    ("requires_sponsorship", _H1B, "narrower"),
+    ("requires_sponsorship", "I will require H-1B visa sponsorship now or in the future.",
+     "narrower"),
+    ("requires_sponsorship", "Will you require OPT or CPT sponsorship?", "narrower"),
+    ("requires_sponsorship", "Will you require TN visa sponsorship?", "narrower"),
+    ("requires_sponsorship", _NOW, "narrower"),
+    ("requires_sponsorship", "Do you require sponsorship now?", "narrower"),
+    ("requires_sponsorship", "Do you require visa sponsorship at this time?", "narrower"),
+    ("requires_sponsorship", "Are you currently sponsored by an employer?", "other"),
+    ("requires_sponsorship", "Are you currently on a visa that requires sponsorship?", "other"),
+    ("requires_sponsorship", "Is your current visa sponsored by your employer?", "other"),
+    ("requires_sponsorship", "Will you require a sponsorship transfer?", "other"),
+    ("requires_sponsorship", "Will you require sponsorship for an H-1B transfer?", "other"),
+    ("requires_sponsorship", "Do you currently hold an H-1B visa that would need to be "
+                             "transferred?", "other"),
+    ("requires_sponsorship", "Are you able to work in the U.S. without employer sponsorship, "
+                             "now and in the future?", "other"),
+    # work_authorized: unrestricted work is the derived fact's question
+    ("work_authorized", "Are you legally authorized to work in the United States?", "own"),
+    ("work_authorized", _UNRESTRICTED, "other"),
+    ("work_authorized", "Are you authorized to work in the US without any restrictions?",
+     "other"),
+    ("work_authorized", "Are you legally authorized to work in the United States without "
+                        "restriction?", "other"),
+    ("work_authorized", "Are there any restrictions on your authorization to work in the US?",
+     "other"),
+    ("authorized_without_sponsorship", _UNRESTRICTED, "own"),
+    ("authorized_without_sponsorship", "Are you authorized to work in the US without any "
+                                       "restrictions?", "own"),
+    ("authorized_without_sponsorship", "Are you legally authorized to work in the United "
+                                       "States without restriction?", "own"),
+    ("authorized_without_sponsorship", "Are you authorized to work in the U.S. without "
+                                       "restrictions?", "own"),
+    # "any restrictions" asks the inverse (a Yes there says restricted), and
+    # a visa type narrows it
+    ("authorized_without_sponsorship", "Are there any restrictions on your authorization to "
+                                       "work in the US?", "other"),
+    ("authorized_without_sponsorship", "Is your work authorization restricted to one "
+                                       "employer?", "other"),
+    ("authorized_without_sponsorship", "Do you have unrestricted work authorization on an "
+                                       "H-1B?", "other"),
+    # years_experience: a role qualifier asks the total, a named field or skill does not
+    ("years_experience", "Do you have 3 or more years of experience in a similar role?", "own"),
+    ("years_experience", "How many years of experience do you have in a similar position?",
+     "own"),
+    ("years_experience", "Years of experience in a similar capacity", "own"),
+    ("years_experience", "How many years of experience do you have in this role?", "own"),
+    ("years_experience", "Years of experience in a related role", "own"),
+    ("years_experience", "How many years of experience relevant to this role do you have?",
+     "own"),
+    ("years_experience", "Years of experience relevant to this role", "own"),
+    ("years_experience", "How many years of experience do you have in software engineering?",
+     "other"),
+    ("years_experience", "How many years of experience do you have with Python?", "other"),
+    ("years_experience", "How many years of sales experience do you have?", "other"),
+    ("years_experience", "How many years of experience do you have in sales?", "other"),
+    ("years_experience", "Years of experience in a sales role", "other"),
+]
+
+
+@pytest.mark.parametrize("key, label, fit", _FITS)
+def test_question_fit_reads_the_own_question_a_narrower_form_and_another(key, label, fit):
+    assert apply_judge.question_fit(key, label) == fit
+    assert apply_judge.asks_own_question(key, label) is (fit == "own")
+
+
+@pytest.mark.parametrize("label", [_H1B, _NOW, "Do you require sponsorship now?",
+                                   "Do you require visa sponsorship at this time?"])
+def test_a_narrower_sponsorship_question_is_answered_by_no_alone(label):
+    # no sponsorship now or in the future is No to every narrower form; a
+    # Yes now or later says nothing of an H-1B or of now
+    assert apply_judge.answers_question("requires_sponsorship", "No", label) is True
+    assert apply_judge.answers_question("requires_sponsorship", "no", label) is True
+    assert apply_judge.answers_question("requires_sponsorship", "Yes", label) is False
+    assert apply_judge.answers_question("requires_sponsorship", "", label) is False
+
+
+def test_answers_question_takes_any_value_for_the_own_question_and_none_for_another():
+    for value in ("Yes", "No"):
+        assert apply_judge.answers_question("requires_sponsorship", value,
+                                            "Do you require visa sponsorship?") is True
+        for other in ("Are you currently sponsored by an employer?",
+                      "Are you currently on a visa that requires sponsorship?",
+                      "Will you require a sponsorship transfer?",
+                      "Do you currently hold an H-1B visa that would need to be transferred?"):
+            assert apply_judge.answers_question("requires_sponsorship", value, other) is False
+        # only sponsorship has a narrower form: a visa type stays another
+        # question for the work facts
+        assert apply_judge.answers_question(
+            "work_authorized", value,
+            "Are you authorized to work in the United States on an H-1B visa?") is False
+        assert apply_judge.answers_question("work_authorized", value, _UNRESTRICTED) is False
+    # the help is read, and a fact with no table is never refused
+    assert apply_judge.answers_question("requires_sponsorship", "No", "Sponsorship",
+                                        _H1B) is True
+    assert apply_judge.answers_question("requires_sponsorship", "Yes", "Sponsorship",
+                                        _H1B) is False
+    assert apply_judge.answers_question("email", "a@example.com", "Email") is True
+
+
+@pytest.mark.parametrize("required", [True, False])
+@pytest.mark.parametrize("label", [_H1B, _NOW])
+def test_a_narrower_sponsorship_list_takes_no_and_leaves_yes_unanswered(tmp_path, required,
+                                                                         label):
+    digest = _one_field(label, required=required)
+    # the citizen: no sponsorship now or in the future answers it
+    cat = _profile_catalog(tmp_path)
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("requires_sponsorship", 1.0)}))
+    pf = p.fields[0]
+    assert (pf.action, pf.option, pf.fact_key) == ("select", "No", "requires_sponsorship")
+    assert p.park_reason == ""
+    # the sponsor: a Yes now or later is no answer, and the judge's Yes never lands
+    cat = _profile_catalog(tmp_path, requires_sponsorship="Yes")
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("requires_sponsorship", 1.0)},
+                                                    options={0: ("Yes", 1.0)}))
+    pf = p.fields[0]
+    assert (pf.action, pf.option, pf.value, pf.fact_key) == ("skip", None, "", None)
+    assert [m[0] for m in p.missing] == [label]
+    assert p.park_reason == (f"required field without an answer: {label}" if required else "")
+    assert apply_judge.option_questions(digest, p, catalog=cat)[1] == {}
+    assert apply_judge.reask_targets(digest, cat, {}, p, what="pick") == []
+
+
+def test_a_worded_narrower_list_asks_the_judge_for_no_and_nothing_for_yes(tmp_path):
+    options = ("Yes, I will require H-1B sponsorship", "No, I will not require H-1B sponsorship")
+    digest = _one_field(_H1B, options=options)
+    for value, asked in (("No", ["field_0_pick"]), ("Yes", [])):
+        cat = _profile_catalog(tmp_path, requires_sponsorship=value)
+        kept = apply_judge.FillPlan(fields=[apply_judge.PlannedField(
+            n=0, locator=(0, "#f0"), label=_H1B, required=True,
+            fact_key="requires_sponsorship", value=value, option=None, confidence=1.0,
+            action="skip", options=list(options))])
+        assert list(apply_judge.option_questions(digest, kept, catalog=cat)[1]) == asked, value
+        assert apply_judge.reask_targets(digest, cat, {}, kept, what="pick") == (
+            [0] if asked else []), value
+
+
+@pytest.mark.parametrize("answers, option", [
+    ({}, "Yes"),                                       # the citizen
+    ({"requires_sponsorship": "Yes"}, "No"),           # the sponsor
+    ({"work_authorized": "No"}, "No"),
+])
+def test_unrestricted_work_authorization_is_the_derived_facts_question(tmp_path, answers,
+                                                                        option):
+    cat = _profile_catalog(tmp_path, **answers)
+    digest = _one_field(_UNRESTRICTED)
+    p = apply_judge.plan(digest, cat, _page_answers(
+        digest, {0: ("authorized_without_sponsorship", 1.0)}))
+    assert (p.fields[0].action, p.fields[0].option) == ("select", option)
+    # mapped to work_authorized it gets no value: authorized is no answer to unrestricted
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("work_authorized", 1.0)},
+                                                    options={0: ("Yes", 1.0)}))
+    assert (p.fields[0].action, p.fields[0].option, p.fields[0].fact_key) == (
+        "skip", None, None)
+
+
+@pytest.mark.parametrize("label, action", [
+    ("How many years of experience do you have in a similar role?", "fill"),
+    ("Years of experience in a similar capacity", "fill"),
+    ("How many years of experience relevant to this role do you have?", "fill"),
+    ("How many years of experience do you have in sales?", "skip"),
+])
+def test_a_number_box_takes_the_total_years_for_a_role_qualifier_and_never_a_field(
+        tmp_path, label, action):
+    cat = _profile_catalog(tmp_path)
+    digest = _one_field(label, "number", options=())
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("years_experience", 1.0)}))
+    assert (p.fields[0].action, p.fields[0].value) == (action, "2" if action == "fill" else "")

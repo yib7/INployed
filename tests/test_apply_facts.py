@@ -651,3 +651,11 @@ def test_quick_map_leaves_a_label_that_fails_the_own_question_gate_to_the_judge(
     monkeypatch.setattr(apply_facts, "_QUICK", apply_facts._QUICK + (
         (("years",), "years_experience", apply_facts._NOT_FILE),))
     assert apply_facts.quick_map(label, "", "number") == expected
+
+
+def test_the_derived_description_says_it_answers_unrestricted_work_authorization():
+    # cycle 18 SP6c round 2: "Do you have unrestricted work authorization?" is
+    # its question, and the judge reads that in its description
+    d = apply_facts.DESCRIPTIONS["authorized_without_sponsorship"]
+    assert "unrestricted work authorization" in d.lower()
+    assert "without" in d

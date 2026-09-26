@@ -373,6 +373,73 @@ def test_add_entry_dialog_keeps_input_on_a_failed_write(qtbot, master_tmp, monke
     assert calls["n"] == 2   # the SAME dialog re-opened after the failed write
 
 
+# --- I5 (final review): the add-entry dialog's Impact field must split one
+# achievement per LINE, like the add-achievement dialog and the in-place edits,
+# not on commas -- "$1,200" has a comma inside a single number. ---------------
+
+def test_add_entry_dialog_impact_splits_on_newlines_not_commas(qtbot, master_tmp, monkeypatch):
+    ed = _editor(qtbot, master_tmp)
+
+    def fake_exec(self):
+        self.findChild(rdt.QtWidgets.QLineEdit, "add_entry_name").setText("New Proj")
+        self.findChild(rdt.QtWidgets.QLineEdit, "add_entry_dates").setText("2025")
+        self.findChild(rdt.QtWidgets.QLineEdit, "add_entry_what").setText("built it")
+        self.findChild(rdt.QtWidgets.QLineEdit, "add_entry_angles").setText("backend")
+        imp = self.findChild(rdt.QtWidgets.QPlainTextEdit, "add_entry_impact")
+        assert imp is not None, "Impact must be a QPlainTextEdit, one line per impact"
+        imp.setPlainText("Cut costs by $1,200 per month\nsaving 40%")
+        return rdt.QtWidgets.QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(rdt.QtWidgets.QDialog, "exec", fake_exec)
+    ed._add_entry_dialog("projects")
+    data = yaml.safe_load(master_tmp.read_text(encoding="utf-8"))
+    impact = data["projects"][-1]["achievements"][0]["impact"]
+    assert impact == ["Cut costs by $1,200 per month", "saving 40%"]
+
+
+# --- I6 (final review): a YAML parse error in the master must not escape the
+# write handler -- master_edit wraps ruamel's YAMLError in a ValueError, so it
+# is caught by the SAME `except (ValueError, OSError)` as any other failed
+# write, shown to the user, and the dialog reopens with every field intact. --
+
+def test_add_entry_dialog_keeps_input_when_the_master_is_broken_yaml(
+        qtbot, master_tmp, monkeypatch):
+    ed = _editor(qtbot, master_tmp)
+    shown = []
+    monkeypatch.setattr(rdt.QtWidgets.QMessageBox, "critical",
+                        staticmethod(lambda *a, **k: shown.append(a[2])))
+    calls = {"n": 0}
+
+    def fake_exec(self):
+        calls["n"] += 1
+        name_edit = self.findChild(rdt.QtWidgets.QLineEdit, "add_entry_name")
+        dates_edit = self.findChild(rdt.QtWidgets.QLineEdit, "add_entry_dates")
+        what_edit = self.findChild(rdt.QtWidgets.QLineEdit, "add_entry_what")
+        angles_edit = self.findChild(rdt.QtWidgets.QLineEdit, "add_entry_angles")
+        if calls["n"] == 1:
+            name_edit.setText("New Proj")
+            dates_edit.setText("2025")
+            what_edit.setText("built it")
+            angles_edit.setText("backend")
+            # The file becomes invalid YAML between opening the dialog and
+            # clicking OK (a hand edit elsewhere) -- append_entry's own
+            # `_load_doc` call is what discovers this.
+            master_tmp.write_text("basics:\n  name: b: c\n", encoding="utf-8")
+            return rdt.QtWidgets.QDialog.DialogCode.Accepted
+        # second round, after the failed write: every field must still hold
+        # what the user typed -- nothing here re-created the dialog or cleared it.
+        assert name_edit.text() == "New Proj"
+        assert dates_edit.text() == "2025"
+        assert what_edit.text() == "built it"
+        assert angles_edit.text() == "backend"
+        return rdt.QtWidgets.QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(rdt.QtWidgets.QDialog, "exec", fake_exec)
+    ed._add_entry_dialog("projects")
+    assert calls["n"] == 2   # the SAME dialog re-opened after the failed write
+    assert shown and "line" in shown[0] and "column" in shown[0]
+
+
 # --- cycle 18 gap: the add-atom ("Add achievement") dialog gets the same
 # treatment as the add-entry dialog above -- live validation with OK disabled
 # until every rule passes, and the input kept intact when the write fails. -----

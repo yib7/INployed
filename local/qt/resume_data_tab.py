@@ -694,8 +694,9 @@ class ResumeDataEditor(QtWidgets.QWidget):
         Basics reuses `master_validate.validate_master` (the same check the
         Validate button already runs) on a document holding only the projected
         `basics`, so absent `experience`/`projects`/`leadership`/`tailor`/`skills`
-        keys read as empty rather than pulling in unrelated pre-existing
-        problems elsewhere in the file. Each touched entry reuses
+        keys read as empty, keeping this check limited to what is actually
+        being written and off unrelated pre-existing problems elsewhere in the
+        file. Each touched entry reuses
         `master_edit.entry_problems` -- the SAME rules `append_entry` and the
         add-entry dialog enforce -- over the entry as it will read once its
         pending field AND atom edits both land.
@@ -843,10 +844,10 @@ class ResumeDataEditor(QtWidgets.QWidget):
 
         # Same treatment as the add-entry dialog: re-check on every keystroke
         # with the same rules `add_atom` enforces (`master_edit.atom_problems`),
-        # so a problem is visible (and OK is disabled) before the user ever
-        # tries to submit, not only after a rejected write. The on-disk document
-        # is read once, when the dialog opens, so the "target entry still
-        # exists" check reflects what a write would actually see.
+        # so a problem is visible (and OK is disabled) from the first
+        # keystroke, ahead of any submit attempt. The on-disk document is read
+        # once, when the dialog opens, so the "target entry still exists"
+        # check reflects what a write would actually see.
         doc = self._read()
 
         def _recheck() -> None:
@@ -861,9 +862,10 @@ class ResumeDataEditor(QtWidgets.QWidget):
 
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)
-        # Looped rather than a single exec(): a failed WRITE (e.g. the file
-        # became unwritable) must keep the dialog open with every field the
-        # user typed still intact, not discard it and force them to retype it.
+        # This loops until the write succeeds or the user cancels: a failed
+        # WRITE (e.g. the file became unwritable) keeps the dialog open with
+        # every field the user typed still intact, ready to retry without
+        # retyping it.
         while True:
             if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
                 return
@@ -890,11 +892,12 @@ class ResumeDataEditor(QtWidgets.QWidget):
         what.setObjectName("add_entry_what")
         angles = QtWidgets.QLineEdit()
         angles.setObjectName("add_entry_angles")
-        impact = QtWidgets.QLineEdit()
+        impact = QtWidgets.QPlainTextEdit()
         impact.setObjectName("add_entry_impact")
+        impact.setFixedHeight(64)
         form.addRow("First achievement (what)", what)
         form.addRow("Angles (comma-separated)", angles)
-        form.addRow("Impact (comma-separated, optional)", impact)
+        form.addRow("Impact (one per line, optional)", impact)
         problems_label = QtWidgets.QLabel("")
         problems_label.setObjectName("add_entry_problems")
         problems_label.setWordWrap(True)
@@ -909,7 +912,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
             data = {k: e.text().strip() for k, e in edits.items() if e.text().strip()}
             achievement = {"what": what.text().strip(),
                            "angles": [a.strip() for a in angles.text().split(",") if a.strip()]}
-            imp = [s.strip() for s in impact.text().split(",") if s.strip()]
+            imp = [ln.strip() for ln in impact.toPlainText().splitlines() if ln.strip()]
             if imp:
                 achievement["impact"] = imp
             data["achievements"] = [achievement]
@@ -917,7 +920,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
 
         # SP5 (ED-10): re-check on every keystroke with the same rules
         # `append_entry` enforces, so a problem is visible (and OK is disabled)
-        # before the user ever tries to submit, not only after a rejected write.
+        # from the first keystroke, ahead of any submit attempt.
         def _recheck() -> None:
             problems = master_edit.entry_problems(section, _collect())
             problems_label.setText("\n".join(problems))
@@ -929,9 +932,10 @@ class ResumeDataEditor(QtWidgets.QWidget):
 
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)
-        # Looped rather than a single exec(): a failed WRITE (e.g. the file
-        # became unwritable) must keep the dialog open with every field the user
-        # typed still intact, not discard it and force them to retype everything.
+        # This loops until the write succeeds or the user cancels: a failed
+        # WRITE (e.g. the file became unwritable) keeps the dialog open with
+        # every field the user typed still intact, ready to retry without
+        # retyping everything.
         while True:
             if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
                 return

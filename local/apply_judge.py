@@ -19,9 +19,10 @@ browser or the network.
     page_requests(digest, catalog, job)    the same mapping in requests sized to
                                            Jev's limits (RES-03), read back as
                                            one by `merge_answers`
-    option_questions(digest, plan)         the second request: option picks for
-                                           fields whose fact the first answer
-                                           chose (quick_map covers the rest)
+    option_questions(digest, plan, catalog)  the second request: option picks
+                                           for fields whose fact the first
+                                           answer chose (quick_map covers the
+                                           rest; code settles a plain Yes / No)
     verify_questions(filled, sheet)        every typed value against the sheet
     inbox_questions / code_pick_questions  the emailed-code path (from-site-or-ATS
                                            and has-code Nouls per message, then
@@ -61,7 +62,7 @@ from typing import Any, Mapping
 
 from urllib.parse import urlsplit
 
-from apply_facts import FactCatalog, quick_map
+from apply_facts import DESCRIPTIONS, YES_NO_KEYS, FactCatalog, quick_map
 from apply_form import FormDigest, password_box
 from jev import APOSTROPHES, PAGE_KIND_NOULS, Answer, request_fits
 # pure data (no package imports, no .env): the one US state list the store shares
@@ -567,11 +568,18 @@ _ALIASES: tuple[frozenset[str], ...] = tuple(frozenset(g) for g in (
     ("yes", "y", "true"), ("no", "n", "false"),
     *(((name.lower(), code.lower())) for code, name in _US_STATES.items()),
 ))
-# the "I decline to answer" family: a stored decline matches any of them
-_DECLINE = re.compile(r"\bdecline\b|\bprefer(?:s)? not\b|\b(?:do not|don t|choose not to|wish not "
-                      r"to|not wish to)\b.*\b(?:answer|disclose|identify|say|specify|provide)\b"
-                      r"|\bnot (?:to )?(?:answer|disclose|say)\b", re.I)
+# the "I decline to answer" family: a stored decline matches any of them. A
+# negation counts only when it refuses to answer ("I do not wish to
+# self-identify"); "I do not identify as a protected veteran" is a statement
+# and no decline (cycle 18, FM-7)
+_REFUSED = r"(?:self )?(?:answer|disclose|identify|say|specify|provide|respond|share)\b"
+_DECLINE = re.compile(r"\bdecline\b|\bprefer(?:s)? not\b"
+                      r"|\b(?:do|does) not (?:wish|want|care|choose|like) to " + _REFUSED
+                      + r"|\b(?:don|doesn) t (?:wish|want|care|choose|like) to " + _REFUSED
+                      + r"|\b(?:choose|chooses|wish|wishes|elect|elects) not to " + _REFUSED
+                      + r"|\bnot (?:to )?(?:answer|disclose|say)\b", re.I)
 _OPTION_NORM = re.compile(r"[^a-z0-9]+")
+_YES, _NO = _ALIASES[2], _ALIASES[3]
 
 
 def _norm_option(text: str) -> str:
@@ -591,31 +599,78 @@ def _alias_set(text: str) -> frozenset[str]:
     return frozenset((n,))
 
 
-def match_option(value: str, options: list[str]) -> str | None:
+def yes_no(value: str) -> bool:
+    """Is `value` a yes or a no (Yes, Y, True; No, N, False)?"""
+    return _alias_set(value) in (_YES, _NO)
+
+
+def match_option(value: str, options: list[str], *, exact: bool = False) -> str | None:
     """The option that means `value`, found in code over every option (a
     Country list of 250, the United States near its end): the same words
     (case, punctuation and spacing aside), then a name the value goes by
     (US / USA / United States of America; a state's name and its postal
     code; Yes / Y), then, for a stored decline, the one option that declines
     ("Prefer not to say"), then the one option that starts with the value
-    ("California (CA)"). None when nothing matches or two options do."""
+    ("California (CA)"). None when nothing matches or two options do.
+
+    A yes or a no (`yes_no`), and any value with `exact`, stops after the
+    names it goes by (cycle 18, FM-1 and FM-2): "Yes - on a work visa" is no
+    "Yes", and a qualified option is the judge's pick."""
     want = _norm_option(value)
     if not want or not options:
         return None
     normed = [_norm_option(o) for o in options]
-    exact = [o for o, n in zip(options, normed) if n == want]
-    if len(exact) == 1:
-        return exact[0]
+    same = [o for o, n in zip(options, normed) if n == want]
+    if len(same) == 1:
+        return same[0]
     aliases = _alias_set(value)
     named = [o for o, n in zip(options, normed) if n in aliases]
     if len(named) == 1:
         return named[0]
+    if exact or aliases in (_YES, _NO):
+        return None
     if _DECLINE.search(want):
         declines = [o for o, n in zip(options, normed) if _DECLINE.search(n)]
         if len(declines) == 1:
             return declines[0]
     starts = [o for o, n in zip(options, normed) if n.startswith(want + " ")]
     return starts[0] if len(starts) == 1 else None
+
+
+def code_pick(value: str, options: list[str]) -> str | None:
+    """The option code settles for `value` with no judge (cycle 18, FM-1): a
+    yes or a no on a list holding its own Yes / No, and on a list past
+    `OPTIONS_CAP` the option with the same words or a name the value goes
+    by. None leaves the pick to the judge (or, past the cap, blank)."""
+    if not options or not (yes_no(value) or len(options) > OPTIONS_CAP):
+        return None
+    return match_option(value, options, exact=True)
+
+
+def candidate_answer(catalog: FactCatalog | None, key: str, value: str) -> str:
+    """The answer a pick question carries for `key`'s `value`. For a yes /
+    no fact it is every yes / no fact the catalog holds, one line each and
+    `key` first ("Legally authorized to work ...: Yes"), so a combined option
+    ("Yes, I am authorized and need no sponsorship") is read against the
+    whole story; any other fact carries its value alone."""
+    if catalog is None or key not in YES_NO_KEYS:
+        return value
+    lines = [f"{DESCRIPTIONS[key]}: {value}"]
+    lines += [f"{DESCRIPTIONS[k]}: {catalog.value(k)}" for k in YES_NO_KEYS
+              if k != key and catalog.has(k)]
+    return "\n".join(lines)
+
+
+# a number box's answer: digits with an optional decimal part and nothing
+# else ("3", "1.5"); "5+", "$120,000" and "3-5" are no number (cycle 18, FM-5)
+PLAIN_NUMBER = re.compile(r"^\s*\d+(?:\.\d+)?\s*$")
+_PHONE_NAMED = re.compile(r"phone|mobile|(?<![a-z])tel", re.I)
+
+
+def phone_named(*names: str) -> bool:
+    """Do a box's label or name say phone ("Phone", "mobile_no", "tel",
+    "telNumber"; "Hotel nights" does not)?"""
+    return bool(_PHONE_NAMED.search(" ".join(str(n or "") for n in names)))
 
 
 def shortlist(options: list[str], value: str, cap: int = OPTIONS_CAP) -> list[str]:
@@ -652,11 +707,15 @@ def _sections(fields) -> list[dict[str, Any]]:
     return out
 
 
-def _option_question(i: int, options: list[str], candidate_answer: str) -> dict[str, Any]:
-    """The pick among a field's options for a known fact value; the value
-    rides in the instruction so the question is self-contained. A list past
-    `OPTIONS_CAP` is cut to the shortlist for the value (`shortlist`)."""
-    criteria: dict[str, Any] = {o: None for o in shortlist(options, candidate_answer)}
+def _option_question(i: int, options: list[str], candidate_answer: str,
+                     value: str | None = None) -> dict[str, Any]:
+    """The pick among a field's options for a known fact value; the answer
+    (`candidate_answer`, every yes / no fact for one of them) rides in the
+    instruction so the question is self-contained. A list past
+    `OPTIONS_CAP` is cut to the shortlist for `value` (the fact's own
+    value; the answer when None)."""
+    criteria: dict[str, Any] = {
+        o: None for o in shortlist(options, candidate_answer if value is None else value)}
     criteria["no_match"] = NO_MATCH_DESCRIPTION
     instructions = {
         "candidate_answer": candidate_answer,
@@ -719,10 +778,13 @@ def page_questions(digest: FormDigest, catalog: FactCatalog,
             # `field_{n}_pick`. Asking for a "default" pick with no value in
             # hand was a coin toss the live judge answered at 0.00 confidence
             # (SP8) and `plan` never read.
+            # A pick code settles (`code_pick`) asks nothing (cycle 18, FM-1)
             key = quick_map(f.label, f.id_or_name, f.type)
-            if key and catalog.has(key):
+            if (key and catalog.has(key)
+                    and code_pick(catalog.value(key), f.options) is None):
                 questions[f"field_{f.n}_option"] = _option_question(
-                    i, f.options, catalog.value(key))
+                    i, f.options, candidate_answer(catalog, key, catalog.value(key)),
+                    catalog.value(key))
     for i, b in enumerate(digest.buttons):
         questions[f"button_{b.n}_role"] = {
             "type": "choice",
@@ -1698,6 +1760,16 @@ def pooled_confidence(f, catalog: FactCatalog, answer: Answer | None, key: str) 
                if _typed_words(f, catalog, k) == want)
 
 
+def _number_box_takes(f, fact_key: str, value: str) -> bool:
+    """Does a number box take `value` (cycle 18, FM-5)? The phone only when
+    the box's label or name say phone and the phone has seven digits or
+    more (its digits are typed); any other fact only as a plain number
+    (`PLAIN_NUMBER`: "3", "1.5"; "5+", "120k" and "3-5" leave it blank)."""
+    if fact_key == "phone":
+        return phone_named(f.label, f.id_or_name) and len(re.sub(r"\D", "", value)) >= 7
+    return bool(PLAIN_NUMBER.match(str(value or "")))
+
+
 def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer], *,
          generation_enabled: bool = True, company: str = "") -> FillPlan:
     """Turn the page answers into a `FillPlan`.
@@ -1809,14 +1881,19 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
                 # the United States and most states sit past the 40th option)
                 qid = f"field_{f.n}_option" if quick else f"field_{f.n}_pick"
                 opt, oconf = _choice_of(answers, qid)
-                found = match_option(pf.value, f.options) \
-                    if len(f.options) > OPTIONS_CAP else None
+                # a plain Yes / No list, and a list past the cap on the same
+                # words or a name the value goes by, is settled in code
+                # (cycle 18, FM-1 and FM-2)
+                found = code_pick(pf.value, f.options)
                 if found is not None:
                     pf.option = found
                 elif opt is None or opt == "no_match" or oconf < OPTION_MIN_CONF:
                     pf.action = "skip"
                 else:
                     pf.option = opt
+            elif pf.action == "fill" and f.type == "number" \
+                    and not _number_box_takes(f, fact_key, pf.value):
+                pf.action = "skip"
         out.fields.append(pf)
         if pf.action == "skip" and is_sensitive_field(f.label, f.id_or_name):
             # no answer is asked for: one would never be used (the loop the
@@ -1852,11 +1929,14 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
 
 # --- the second request: option picks for model-mapped fields ------------------------
 
-def option_questions(digest: FormDigest, fill_plan: FillPlan) -> tuple[dict, dict]:
+def option_questions(digest: FormDigest, fill_plan: FillPlan,
+                     catalog: FactCatalog | None = None) -> tuple[dict, dict]:
     """Option picks (`field_{n}_pick`) for every field with options whose fact
-    the model chose (quick_map did not know it), with the fact's value in the
-    instruction. Empty when there is nothing to ask; merge the answers over the
-    first request's and call `plan` again."""
+    the model chose (quick_map did not know it), with the fact's answer in the
+    instruction (`candidate_answer`: every yes / no fact of `catalog` for
+    one of them). A pick code settles (`code_pick`) is never asked. Empty
+    when there is nothing to ask; merge the answers over the first
+    request's and call `plan` again."""
     by_n = {f.n: f for f in digest.fields}
     state: dict[str, Any] = {"fields": []}
     questions: dict[str, Any] = {}
@@ -1866,9 +1946,12 @@ def option_questions(digest: FormDigest, fill_plan: FillPlan) -> tuple[dict, dic
             continue
         if pf.fact_key in SPECIAL_SOURCES or pf.quick:
             continue
+        if code_pick(pf.value, f.options) is not None:
+            continue
         i = len(state["fields"])
         state["fields"].append(_compact_field(f))
-        questions[f"field_{f.n}_pick"] = _option_question(i, f.options, pf.value)
+        questions[f"field_{f.n}_pick"] = _option_question(
+            i, f.options, candidate_answer(catalog, pf.fact_key, pf.value), pf.value)
     return state, questions
 
 
@@ -1934,8 +2017,8 @@ def reask_questions(digest: FormDigest, catalog: FactCatalog, fill_plan: FillPla
     "source", the job, the page's host and title and the descriptions of the
     sources their types can take (`facts`, never a value); each question is
     the first look's `field_{n}_source`. For "pick", each field's pick
-    question with the fact's value in its instruction (the first look's
-    `field_{n}_option` or `field_{n}_pick`)."""
+    question with the fact's answer in its instruction (`candidate_answer`;
+    the first look's `field_{n}_option` or `field_{n}_pick`)."""
     by_n = {x.n: x for x in digest.fields}
     by_pf = {p.n: p for p in fill_plan.fields}
     fields = [by_n[n] for n in ns if n in by_n and n in by_pf]
@@ -1946,7 +2029,9 @@ def reask_questions(digest: FormDigest, catalog: FactCatalog, fill_plan: FillPla
     questions: dict[str, Any] = {}
     if what == "pick":
         for i, f in enumerate(fields):
-            questions[_pick_qid(by_pf[f.n])] = _option_question(i, f.options, by_pf[f.n].value)
+            pf = by_pf[f.n]
+            questions[_pick_qid(pf)] = _option_question(
+                i, f.options, candidate_answer(catalog, pf.fact_key, pf.value), pf.value)
         return state, questions
     job = job or {}
     catalog_keys = list(catalog.to_criteria())

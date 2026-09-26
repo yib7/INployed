@@ -32,6 +32,11 @@ read from the widget's chip when the input was reset, and never sent twice;
 `repair(page, pf, hint)` types a value the form refused again in the shape
 its message asks; `apply` reports how it acted on each field (`outcomes`).
 
+Cycle 18: a yes or a no picks only an option in its own alias set (FM-1);
+a list the plan read no options for takes no option code cannot match
+(`OptionsUnread`, FM-2); a number box takes a plain number only (FM-5);
+`clear(page, pf)` takes an answer out again (FM-4).
+
 `click_button(page, digest, n)` clicks a digest button and waits for a
 navigation or a DOM change (body length and the set of visible controls,
 polled every 250 ms), capped; a click a banner, a chat window or a sticky
@@ -283,11 +288,12 @@ def _masked(hints: dict) -> bool:
     return bool(hints.get("mask")) or bool(_MASK_SHAPE.search(str(hints.get("placeholder") or "")))
 
 
-def number_value(value: str) -> str:
-    """A number box's value (FILL-06): the first number in `value`, its
-    thousands separators and currency off ("$120,000" 120000, "5+" 5)."""
-    m = re.search(r"-?\d[\d,]*(?:\.\d+)?", str(value or ""))
-    return m.group(0).replace(",", "") if m else str(value or "").strip()
+def number_value(value: str) -> str | None:
+    """A number box's value (FILL-06): `value` when it is a plain number
+    ("3", "1.5"), else None (cycle 18, FM-5: "$120,000", "5+", "3-5" and
+    "120k" are no number, and the box is left blank)."""
+    text = str(value or "")
+    return text.strip() if apply_judge.PLAIN_NUMBER.match(text) else None
 
 
 # `_ci_match`'s answer when the options that hold a value tie and differ in
@@ -299,6 +305,14 @@ class OptionTie(LookupError):
     """The options that hold the value tie and differ in meaning
     (`OPTION_TIE`): none is chosen, a typeahead's box is cleared, and the
     runner parks a required box and leaves an optional one blank."""
+
+
+class OptionsUnread(LookupError):
+    """A list whose options were never read ahead (the plan holds none, so
+    no judge picked among them) shows none that code matches to the value
+    (cycle 18, FM-2): none is chosen, the words typed to bring the options
+    are taken out, and the runner parks a required box and leaves an
+    optional one blank."""
 
 
 # the words that turn an option against a value that lacks them: a negation
@@ -330,13 +344,11 @@ def _ci_match(want: str, candidates: list[str]) -> int:
 
     A negation or a qualifier the value lacks (`_qualifiers`) only breaks a
     tie between options that each hold the value (final review B R2 M2, fix
-    round 3); it never puts out a lone one, and the read-back check reads
-    that pick as before ("No, I do not require sponsorship" for "No"). Among
-    two or more, the ones that turn the value are out while one that leaves
-    it unturned is left ("Hispanic or Latino" over "Not Hispanic or Latino"
-    for "Latino", "Yes, I am authorized" over "Yes, but I will require
-    sponsorship" for "Yes"). When every one of them turns it, and they are
-    not all the same words, they tie (`OPTION_TIE`): the value names nothing
+    round 3); it never puts out a lone one ("Not Hispanic or Latino" for
+    "Latino" beside "White"). Among two or more, the ones that turn the
+    value are out while one that leaves it unturned is left ("Hispanic or
+    Latino" over "Not Hispanic or Latino" for "Latino"). When every one of
+    them turns it, and they are not all the same words, they tie (`OPTION_TIE`): the value names nothing
     that tells their turns apart. A stored decline takes the one option
     that declines in its own words ("Prefer not to say"). The closest names
     each of the value's comma parts as one of its own ("Chicago, IL" for
@@ -346,11 +358,19 @@ def _ci_match(want: str, candidates: list[str]) -> int:
     that sets them apart, and the site's first match is what typing it gives
     a person. Two or more that only hold the value ("Software Engineering"
     and "Hardware Engineering" for "Engineering") differ in what the value
-    leaves out: `OPTION_TIE`."""
+    leaves out: `OPTION_TIE`.
+
+    A yes or a no (`apply_judge.yes_no`) matches only an option in its own
+    alias set (cycle 18, FM-1): "Yes" is none of "Yes - on a work visa" and
+    "Yes, without sponsorship", and a qualified option is the judge's pick."""
     w = " ".join((want or "").split()).lower()
     folded = [" ".join(str(c).split()).lower() for c in candidates]
     if w in folded:
         return folded.index(w)
+    if apply_judge.yes_no(want):
+        texts = [str(c) for c in candidates]
+        found = apply_judge.match_option(want, texts)
+        return texts.index(found) if found is not None else -1
     mine = _qualifiers(w)
     parts = [p.strip() for p in w.split(",") if p.strip()]
     held = [i for i, c in enumerate(folded) if parts and _holds(parts, c)]
@@ -457,7 +477,9 @@ def _typed(loc, text: str) -> None:
 
 def _fill(loc, kind: dict[str, str], value: str) -> str:
     """Type `value` into a text-like box in the shape the box asks for: a
-    native date control ISO; a number box the value's number (FILL-06); a
+    native date control ISO; a number box a plain number (FILL-06; the
+    phone's digits in a box named for a phone, cycle 18 FM-5), and nothing
+    else (LookupError); a
     text box whose hints name a date format that format (FILL-05, "Date
     (MM/DD/YYYY)"); a phone box its national digits when a country-code
     control sits on its row or its pattern or length asks for bare digits,
@@ -468,7 +490,18 @@ def _fill(loc, kind: dict[str, str], value: str) -> str:
         loc.first.fill(_date_value(value), timeout=ACTION_TIMEOUT_MS)
         return "date"
     if kind["tag"] == "INPUT" and kind["type"] == "number":
-        loc.first.fill(number_value(value), timeout=ACTION_TIMEOUT_MS)
+        number = number_value(value)
+        if number is None and len(phone_digits(value)) >= 7:
+            # the phone's digits, only in a box whose label or name say phone
+            try:
+                hints = dict(loc.first.evaluate(_HINTS_JS, timeout=ACTION_TIMEOUT_MS) or {})
+            except Exception:       # noqa: BLE001  (no hints: no phone box)
+                hints = {}
+            if apply_judge.phone_named(*(hints.get(k) for k in ("label", "aria", "name"))):
+                number = phone_digits(value)
+        if number is None:
+            raise LookupError("the number box takes a plain number")
+        loc.first.fill(number, timeout=ACTION_TIMEOUT_MS)
         return "number"
     if kind["tag"] != "INPUT" or kind["type"] in ("checkbox", "radio", "file", "password"):
         loc.first.fill(value, timeout=ACTION_TIMEOUT_MS)
@@ -902,12 +935,15 @@ def _type_to_filter(page, frame, loc, want: str):
     return options
 
 
+NOTHING_SHOWN = "the listbox showed no options"
+
+
 def _pick_listbox(page, frame, loc, want: str, *, popup: bool = False, face=None) -> None:
     options = _open_menu(frame, loc, popup=popup, face=face)
     if options is None and not popup:
         options = _type_to_filter(page, frame, loc, want)
     if options is None:
-        raise LookupError("the listbox showed no options")
+        raise LookupError(NOTHING_SHOWN)
     texts = [t.strip() for t in options.all_inner_texts()]
     i = _ci_match(want, texts)
     if i < 0:
@@ -1053,6 +1089,29 @@ def _upload(page, locator: tuple[int, str], path: str) -> None:
     frame.set_input_files(str(locator[1]), path, timeout=ACTION_TIMEOUT_MS)
 
 
+def _pick_unread(pf: PlannedField, loc, pick: Callable[[], None]) -> None:
+    """`pick` a list's option; on a list whose options the plan never read
+    (`pf.options` empty) and that shows options none of which code matches
+    to the value, the miss is `OptionsUnread` (cycle 18, FM-2), and the
+    words typed to bring its options are taken out of its box. A tie, a
+    refused popup and a list that shows nothing keep their own errors (the
+    last one is filled once more and checked, as before)."""
+    try:
+        pick()
+    except LookupError as e:
+        if pf.options or isinstance(e, (OptionTie, PopupRefused)) or str(e) == NOTHING_SHOWN:
+            raise
+        try:
+            tag = loc.first.evaluate("el => el.tagName", timeout=ACTION_TIMEOUT_MS) or ""
+            box = loc.first if tag == "INPUT" else loc.first.locator("input").first
+            if box.count() and str(box.input_value(timeout=ACTION_TIMEOUT_MS) or ""):
+                box.fill("", timeout=ACTION_TIMEOUT_MS)
+        except Exception:       # noqa: BLE001  (the read-back reports what stays)
+            pass
+        raise OptionsUnread(f"the options of {pf.label!r} were never read and none "
+                            f"is the answer") from e
+
+
 def _act(page, pf: PlannedField, loc, kind: dict[str, str]) -> str:
     want = pf.option if pf.option is not None else pf.value
     tag, typ, role = kind["tag"], kind["type"], kind["role"]
@@ -1077,10 +1136,11 @@ def _act(page, pf: PlannedField, loc, kind: dict[str, str]) -> str:
         _choose(page, pf, want)
         return "option click"
     if widget == "popup":
-        _pick_listbox(page, frame, loc, want, popup=True)
+        _pick_unread(pf, loc, lambda: _pick_listbox(page, frame, loc, want, popup=True))
         return "menu pick"
     if widget == "combo":
-        _pick_listbox(page, frame, loc, pf.value if pf.action == "fill" else want)
+        _pick_unread(pf, loc, lambda: _pick_listbox(
+            page, frame, loc, pf.value if pf.action == "fill" else want))
         return "list pick"
     if widget == "typeahead":
         _type_ahead(page, frame, loc, pf.value if pf.action == "fill" else want)
@@ -1109,7 +1169,7 @@ def _act(page, pf: PlannedField, loc, kind: dict[str, str]) -> str:
     if role in ("combobox", "listbox"):
         face = _clicked(page, pf.click_locator[0], pf.click_locator[1]) \
             if pf.click_locator else None
-        _pick_listbox(page, frame, loc, want, face=face)
+        _pick_unread(pf, loc, lambda: _pick_listbox(page, frame, loc, want, face=face))
         return "list pick"
     if tag == "INPUT" and typ == "file":
         raise LookupError("a file input takes an upload action")
@@ -1394,17 +1454,17 @@ _DIGITS_HINT = re.compile(r"\b(digits?|numbers?\s+only|numeric|numerals?|0\s*-\s
 def repair_value(pf: PlannedField, hint: str, hints: dict | None = None) -> str:
     """The value a refused box takes on its repair (ADV-02): the planned
     value in the shape the form's message asks: a date in the format the
-    message (or the box) names, bare digits when the message asks for
-    digits (a phone's national digits), else the value as planned."""
+    message (or the box) names, a phone's national digits when the message
+    asks for digits, else the value as planned. Only a phone (its fact, or
+    a box the hints call a phone) has its digits joined (cycle 18, FM-5):
+    "3-5" never becomes 35."""
     value = str(pf.value or "")
     d = parse_date(value)
     fmt = (date_format({"label": hint}) or date_format(hints or {})) if d is not None else ""
     if d is not None and fmt:
         return format_date(d, fmt)
-    if _DIGITS_HINT.search(hint or ""):
-        digits = phone_digits(value) if _phoneish(hints or {}) or len(phone_digits(value)) == 10 \
-            else re.sub(r"\D", "", value)
-        return digits or value
+    if _DIGITS_HINT.search(hint or "") and (_phoneish(hints or {}) or pf.fact_key == "phone"):
+        return phone_digits(value) or value
     return value
 
 
@@ -1432,6 +1492,8 @@ def repair(page, pf: PlannedField, hint: str = "") -> Filled:
             value = repair_value(pf, hint, hints)
             if kind["type"] == "number":
                 value = number_value(value)
+                if value is None:
+                    raise LookupError("the number box takes a plain number")
             _typed(loc, value)
         else:
             _act(page, pf, loc, kind)
@@ -1451,6 +1513,88 @@ def read_back(page, pf: PlannedField) -> str:
         return _read_back(loc, _kind(loc), page, pf)
     except Exception:       # noqa: BLE001  (a frame or a control gone)
         return ""
+
+
+# a select's empty choice: the first option with no value or a placeholder's
+# words ("Select...", "-- choose --"); -1 when it has none
+_EMPTY_OPTION_JS = """el => Array.from(el.options).findIndex(
+  (o) => o.value === '' || __PLACEHOLDER__.test((o.text || '').trim()))""".replace(
+    "__PLACEHOLDER__", apply_form.PLACEHOLDER_TEXT_JS)
+_EMPTY_CHOSEN_JS = "(el, i) => el.selectedIndex === i"
+_UNSET_JS = "el => el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' ? el.value === '' : true"
+
+
+def _clear_select(loc, *, hidden: bool) -> bool:
+    i = int(loc.first.evaluate(_EMPTY_OPTION_JS, timeout=ACTION_TIMEOUT_MS))
+    if i < 0:
+        return False
+    try:
+        loc.first.select_option(index=i, force=hidden, timeout=ACTION_TIMEOUT_MS)
+    except Exception:       # noqa: BLE001  (a select the page keeps out of reach)
+        value = loc.first.evaluate("(el, i) => el.options[i].value", i,
+                                   timeout=ACTION_TIMEOUT_MS)
+        loc.first.evaluate(_SET_SELECT_JS, value, timeout=ACTION_TIMEOUT_MS)
+    return bool(loc.first.evaluate(_EMPTY_CHOSEN_JS, i, timeout=ACTION_TIMEOUT_MS))
+
+
+def clear(page, pf: PlannedField) -> bool:
+    """Take the answer out of `pf`'s control (cycle 18, FM-4: an optional
+    answer that failed its check). A text box, a rich-text box, a
+    typeahead and a dropdown's text box are emptied; a select returns to
+    its empty or placeholder option; a tick box, a custom tick and a
+    question's tick boxes are unticked; date parts are emptied; an upload
+    lets its file go. A radio group, a popup menu and a list keep their
+    choice. True when the control ends empty (or is gone), False when it
+    still holds an answer."""
+    try:
+        loc = apply_form.resolve(page, pf.locator)
+        if loc.count() == 0:
+            return True
+        kind = _kind(loc)
+        widget = pf.widget or ""
+        tag, typ, role = kind["tag"], kind["type"], kind["role"]
+        if widget in ("choice", "popup") or (not widget and (
+                (tag == "INPUT" and typ == "radio") or role in ("combobox", "listbox"))):
+            return not _read_back(loc, kind, page, pf)
+        if widget == "checkbox_group":
+            for css in pf.option_locators:
+                target = _clicked(page, pf.locator[0], css) if css else None
+                if target is not None and _ticked(target):
+                    target.click(timeout=ACTION_TIMEOUT_MS)
+        elif widget == "aria_check":
+            if _ticked(loc.first):
+                loc.first.click(timeout=ACTION_TIMEOUT_MS)
+        elif widget == "editable":
+            loc.first.click(timeout=ACTION_TIMEOUT_MS)
+            loc.first.evaluate(_SELECT_ALL_JS, timeout=ACTION_TIMEOUT_MS)
+            page.keyboard.press("Delete")
+        elif widget == "combo":
+            box = loc.first if tag == "INPUT" else loc.first.locator("input").first
+            box.fill("", timeout=ACTION_TIMEOUT_MS)
+        elif widget.startswith("date:"):
+            for css in pf.option_locators:
+                target = _clicked(page, pf.locator[0], css)
+                if target.evaluate(_UNSET_JS, timeout=ACTION_TIMEOUT_MS):
+                    continue
+                target.fill("", timeout=ACTION_TIMEOUT_MS)
+        elif widget == "hidden_select" or tag == "SELECT":
+            return _clear_select(loc, hidden=widget == "hidden_select")
+        elif tag == "INPUT" and typ == "checkbox":
+            if pf.click_locator:
+                if _ticked(loc.first):
+                    _clicked(page, pf.click_locator[0],
+                             pf.click_locator[1]).click(timeout=ACTION_TIMEOUT_MS)
+            else:
+                loc.first.uncheck(timeout=ACTION_TIMEOUT_MS)
+        elif tag == "INPUT" and typ == "file":
+            loc.first.set_input_files([], timeout=ACTION_TIMEOUT_MS)
+            return not loc.first.evaluate("el => el.files ? el.files.length : 0",
+                                          timeout=ACTION_TIMEOUT_MS)
+        else:
+            loc.first.fill("", timeout=ACTION_TIMEOUT_MS)
+        return not _read_back(loc, kind, page, pf)
+    except Exception:       # noqa: BLE001  (a control that takes no clearing keeps its answer)
+        return False
 
 
 def open_listbox_options(page, field) -> list[str]:

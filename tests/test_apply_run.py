@@ -2780,3 +2780,212 @@ def test_code_field_pick_prefers_the_verification_box(labels, expected):
               for i, label in enumerate(labels)]
     picked = apply_run._code_field(fields)
     assert picked is not None and picked.label == expected
+
+
+# --- cycle 18 FM-1: the read-back check takes the judge's qualified pick as before -------------
+
+def test_the_read_back_check_takes_a_qualified_pick_and_no_yes_inside_one():
+    assert apply_run.pick_holds("No, I do not require sponsorship",
+                                "No, I do not require sponsorship")
+    assert apply_run.pick_holds("U.S. citizen or permanent resident",
+                                "U.S. citizen or permanent resident")
+    assert not apply_run.pick_holds("Yes - on a work visa (OPT/H-1B)", "Yes")
+    assert not apply_run.pick_holds("Yes", "Yes, I am willing to relocate")
+    assert apply_run.pick_holds("Y", "Yes")
+
+
+# --- cycle 18: the Ashby-style replica, answered from the typed store -----------------------
+
+def test_the_ashby_relocation_replica_fills_and_verifies_from_the_typed_answers(
+        _browser, flow_server, tmp_path):
+    # the Contoso incident's two questions: legal authorization on Yes / No
+    # buttons (settled in code by the alias set) and relocation among
+    # combined options (the judge's pick over every yes / no fact); the
+    # flow's confirmation marker shows only for the answers the store holds
+    f = h.flow("ashby_relocation")
+    assert f.confirm.startswith("body[data-auth=yes][data-sponsor=no]"
+                                "[data-relocate=willing]")
+    r = h.run_flow(f, jev.FakeJev(), "fake", browser=_browser, server=flow_server,
+                   workdir=tmp_path)
+    assert r.ok and not r.breaks, r
+    pages = [json.loads(p.read_text(encoding="utf-8"))
+             for p in sorted(Path(r.trace).glob("page-*.json"),
+                             key=lambda p: int(p.stem.split("-")[1]))]
+    events = [e for p in pages for e in p["events"]]
+    verified = {v["label"]: v["ok"] for e in events if e["kind"] == "verify"
+                for v in e["results"]}
+    for label in ("Are you legally authorized to work in the United States?",
+                  "Will you now or in the future require visa sponsorship?",
+                  "Are you willing to relocate to the job location (New York)?"):
+        assert verified.get(label) is True, (label, verified)
+
+
+# --- cycle 18 FM-6: a draft is reused only for the same question in the same place -----------
+
+def test_a_draft_key_names_the_label_the_help_and_the_section():
+    import dataclasses
+
+    import apply_form
+    f = apply_form.Field(0, (0, "#q"), "Why this role?", "textarea", True,
+                         help="Max 500 characters.", section="About you")
+    key = apply_run._draft_key(f)
+    assert key is not None
+    assert apply_run._draft_key(dataclasses.replace(f, label="why this  ROLE?")) == key
+    assert apply_run._draft_key(dataclasses.replace(f, section="Previous employer")) != key
+    assert apply_run._draft_key(dataclasses.replace(f, help="Max 100 characters.")) != key
+
+
+@pytest.mark.parametrize("label", [
+    "please explain", "If yes, please explain", "If so, please explain:", "Explain",
+    "Details", "Please specify", "Other", "Comments", "Additional information",
+    "If other, please specify", "Please explain *", "DETAILS"])
+def test_a_generic_label_never_keys_a_draft(label):
+    import apply_form
+    f = apply_form.Field(0, (0, "#q"), label, "textarea", True)
+    assert apply_run._draft_key(f) is None
+
+
+def test_a_generic_follow_up_gets_a_draft_of_its_own_each_time(tmp_path):
+    from unittest.mock import Mock
+
+    import apply_form
+
+    class Gen:
+        calls = 0
+        last = None
+
+        def answer(self, field, catalog, judge, *, budget):
+            Gen.calls += 1
+            return f"Draft {Gen.calls}."
+    runner = apply_run.Runner(jev=jev.FakeJev(), context=Mock(), run_context={},
+                              sleep=lambda s: None, answergen=Gen())
+    run = apply_run._JobRun(runner, Mock(), {"job_posting_id": "s",
+                                             "apply_url": "https://x.example/1"})
+    run.catalog = apply_facts.build(h.write_job_folder(tmp_path / "job"), answers=h.bank())
+    run.gen_budget = 4          # one draft for each of the four questions
+    fields = [apply_form.Field(0, (0, "#a"), "If yes, please explain", "textarea", True,
+                               section="Relocation"),
+              apply_form.Field(1, (0, "#b"), "If yes, please explain", "textarea", True,
+                               section="Criminal history"),
+              apply_form.Field(2, (0, "#c"), "Why this role?", "textarea", True,
+                               section="About you"),
+              apply_form.Field(3, (0, "#d"), "Why this role?", "textarea", True,
+                               section="Previous employer")]
+    digest = apply_form.FormDigest("x.example", "Apply", "", fields=fields)
+    plan = FillPlan(fields=[PlannedField(n=f.n, locator=f.locator, label=f.label,
+                                         required=True, fact_key="needs_generation",
+                                         value="", option=None, confidence=0.9,
+                                         action="generate") for f in fields])
+    run._resolve_generation(digest, plan, {"generated": []})
+    assert Gen.calls == 4
+    assert [pf.value for pf in plan.fields] == ["Draft 1.", "Draft 2.", "Draft 3.",
+                                                "Draft 4."]
+
+
+# --- cycle 18 FM-2: a list whose options could not be read ------------------------------
+
+_UNREAD_AUTH = """<body><form>
+  <span id="auth-label">Work authorization</span>
+  <div id="auth" role="combobox" aria-labelledby="auth-label" aria-expanded="false"
+       aria-haspopup="listbox" aria-controls="auth-menu" tabindex="0">
+    <input id="auth-input" type="text" autocomplete="off" aria-labelledby="auth-label"></div>
+  <ul id="auth-menu" role="listbox" hidden>
+    <li role="option">Yes - on a work visa (OPT/H-1B)</li>
+    <li role="option">U.S. citizen or permanent resident</li></ul>
+  <script>
+    const box = document.getElementById('auth'), menu = document.getElementById('auth-menu');
+    const input = document.getElementById('auth-input');
+    box.addEventListener('click', () => { menu.hidden = false;
+                                          box.setAttribute('aria-expanded', 'true'); });
+    menu.querySelectorAll('li').forEach((li) => li.onclick = () => {
+      input.value = li.textContent; menu.hidden = true;
+      box.setAttribute('aria-expanded', 'false'); });
+  </script></form></body>"""
+
+
+def _decisions(monkeypatch, run) -> list[tuple[str, dict]]:
+    seen: list[tuple[str, dict]] = []
+    real = run._decide
+
+    def _decide(what, why, **evidence):
+        seen.append((what, evidence))
+        real(what, why, **evidence)
+    monkeypatch.setattr(run, "_decide", _decide)
+    return seen
+
+
+@pytest.mark.parametrize("required", [True, False])
+def test_a_list_whose_options_could_not_be_read_parks_or_stays_blank(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch, required):
+    run = _unit_run(context, tmp_path, job_folder, _UNREAD_AUTH)
+    seen = _decisions(monkeypatch, run)
+    digest = apply_form.extract(run.page)
+    auth = next(f for f in digest.fields if f.label.startswith("Work authorization"))
+    plan = FillPlan(fields=[PlannedField(n=auth.n, locator=auth.locator,
+                                         label="Work authorization", required=required,
+                                         fact_key="work_authorized", value="Yes", option=None,
+                                         confidence=0.95, action="fill")])
+    if required:
+        with pytest.raises(apply_run._Parked) as parked:
+            run._fill_and_verify(digest, plan, run.pages[-1])
+        assert (parked.value.status, parked.value.reason) == (
+            "needs_human", "required field without an answer: Work authorization (its "
+                           "options could not be read)")
+    else:
+        assert run._fill_and_verify(digest, plan, run.pages[-1]) == []
+    assert run.page.locator("#auth-input").input_value() == ""
+    assert [m["question"] for m in run.missing] == ["Work authorization"]
+    assert [ev["fields"] for what, ev in seen if what == "options_unread"] == [
+        ["Work authorization"]]
+
+
+# --- cycle 18 FM-4: an optional answer that failed its check is taken out -------------------
+
+class _FailsEveryCheck:
+    """A judge that reads every typed value as wrong."""
+
+    def judge(self, state, questions):
+        return {qid: jev.Answer(kind="noul", noul=0.1) for qid in questions}
+
+
+_OPTIONAL_BOXES = """<body><form>
+  <label>Nickname <input id="nick"></label>
+  <fieldset><legend>Preferred shift</legend>
+    <label><input type="radio" name="shift" value="day"> Day</label>
+    <label><input type="radio" name="shift" value="night"
+      onchange="document.querySelector('[value=day]').checked = true"> Night</label>
+  </fieldset></form></body>"""
+
+
+def test_an_optional_answer_that_failed_its_check_is_cleared(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch):
+    run = _unit_run(context, tmp_path, job_folder, _OPTIONAL_BOXES)
+    run.r.jev = _FailsEveryCheck()
+    seen = _decisions(monkeypatch, run)
+    digest = apply_form.extract(run.page)
+    nick = next(f for f in digest.fields if f.label.startswith("Nickname"))
+    plan = FillPlan(fields=[PlannedField(n=nick.n, locator=nick.locator, label="Nickname",
+                                         required=False, fact_key="first_name", value="JD",
+                                         option=None, confidence=0.95, action="fill")])
+    results = run._fill_and_verify(digest, plan, run.pages[-1])
+    assert [(v.label, v.ok) for v in results] == [("Nickname", False)]
+    assert run.page.locator("#nick").input_value() == ""
+    assert run.pages[-1]["cleared"] == ["Nickname"]
+    assert nick.n not in run._last_filled
+    assert [ev["fields"] for what, ev in seen if what == "cleared_optional"] == [["Nickname"]]
+
+
+def test_an_optional_answer_that_failed_its_check_and_cannot_be_cleared_parks(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch):
+    run = _unit_run(context, tmp_path, job_folder, _OPTIONAL_BOXES)
+    digest = apply_form.extract(run.page)
+    shift = next(f for f in digest.fields if f.type == "radio")
+    plan = FillPlan(fields=[PlannedField(n=shift.n, locator=shift.locator,
+                                         label="Preferred shift", required=False,
+                                         fact_key="answer_shift", value="Night",
+                                         option="Night", confidence=0.95, action="select")])
+    with pytest.raises(apply_run._Parked) as parked:
+        run._fill_and_verify(digest, plan, run.pages[-1])
+    assert (parked.value.status, parked.value.reason) == (
+        "needs_human", "a wrong answer could not be removed: Preferred shift")
+    assert h.policy_park(parked.value.status, parked.value.reason) is True

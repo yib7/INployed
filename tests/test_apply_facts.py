@@ -516,3 +516,56 @@ def test_descriptions_carry_no_em_dash_or_contrast_framing():
 ])
 def test_quick_map_table(label, ident, type_, expected):
     assert apply_facts.quick_map(label, ident, type_) == expected
+
+
+# --- cycle 18 FM-3: another person's field, and the how-did-you-hear question -------------
+
+@pytest.mark.parametrize("label, ident, type_, expected", [
+    ("Referrer email", "", "email", None),
+    ("Employee referral: first name", "", "text", None),
+    ("Emergency contact phone", "", "tel", None),
+    ("Email", "", "email", "email"),
+    ("LinkedIn profile", "", "text", "linkedin_url"),
+    # the id names the other person too
+    ("Email", "referrer_email", "email", None),
+    ("Phone", "emergencyContactPhone", "tel", None),
+    ("Manager's phone", "", "tel", None),
+    ("Recruiter email", "", "email", None),
+])
+def test_quick_map_leaves_another_persons_field_to_the_judge(label, ident, type_, expected):
+    assert apply_facts.quick_map(label, ident, type_) == expected
+
+
+@pytest.mark.parametrize("label, ident", [
+    ("How did you hear about us? (LinkedIn, Indeed, other)", ""),
+    ("How did you find this job? LinkedIn, GitHub or our website", ""),
+    ("Source (LinkedIn, website, other)", ""),
+    ("Where did you hear about this role?", "linkedin"),
+])
+def test_quick_map_never_reads_the_how_did_you_hear_question_as_a_profile_url(label, ident):
+    assert apply_facts.quick_map(label, ident, "text") not in (
+        "linkedin_url", "github_url", "website_url")
+
+
+# --- cycle 18 FM-8: the graduation year of a degree under way ------------------------------
+
+@pytest.mark.parametrize("dates, year", [
+    ("2022 - Present", ""),
+    ("Aug 2022 - current", ""),
+    ("2022 - now", ""),
+    ("2022 - Present, expected 2026", "2026"),
+    ("2022 - Present (Expected May 2026)", "2026"),
+    ("2020 - 2024", "2024"),
+    ("Expected 2026", "2026"),
+])
+def test_a_degree_under_way_gives_no_graduation_year_but_its_expected_one(tmp_path, dates,
+                                                                           year):
+    edu = [{"school": "State University", "degree": "B.S.",
+            "concentration": "Computer Science", "dates": dates, "gpa": "3.8"}]
+    master = dict(_MASTER, education=edu)
+    (tmp_path / "apply.md").write_text(
+        apply_data.build_markdown(master, _JOB, _bank(), sel=_SEL, bullets=_BULLETS),
+        encoding="utf-8")
+    cat = apply_facts.build(tmp_path, answers=_bank())
+    assert cat.value("education_grad_year") == year
+    assert cat.value("education_school") == "State University"

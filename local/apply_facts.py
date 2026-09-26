@@ -86,6 +86,8 @@ DESCRIPTIONS: dict[str, str] = {
 # lists equal). Their facts are `bool`.
 _BOOL_BANK_IDS = frozenset(("work_authorized", "requires_sponsorship", "willing_to_relocate",
                             "onsite_ok"))
+# the same facts in the order the judge reads them (`DESCRIPTIONS`)
+YES_NO_KEYS: tuple[str, ...] = tuple(k for k in DESCRIPTIONS if k in _BOOL_BANK_IDS)
 
 _KIND_BY_KEY: dict[str, str] = {
     **dict.fromkeys(_BOOL_BANK_IDS, "bool"),
@@ -309,10 +311,27 @@ def _education(section: str) -> dict[str, str]:
             degree, _, field_ = chunks[0].partition(",")
             out["education_degree"] = degree.strip()
             out["education_field"] = field_.strip()
-        years = _YEAR_RE.findall(" ".join(chunks[1:]))
-        out["education_grad_year"] = years[-1] if years else ""
+        out["education_grad_year"] = _grad_year(chunks[1:])
         break
     return out
+
+
+_EXPECTED_RE = re.compile(r"expected\s+(?:[A-Za-z]+\.?\s+)?((?:19|20)\d{2})\b", re.I)
+_UNDER_WAY_RE = re.compile(r"\b(present|current|now)\b[\s).]*$", re.I)
+
+
+def _grad_year(chunks: list[str]) -> str:
+    """An education line's graduation year (cycle 18, FM-8): the expected
+    year when the line names one ("Expected May 2026"); none for a degree
+    under way ("2022 - Present"); else the last year on the line."""
+    text = " ".join(chunks)
+    m = _EXPECTED_RE.search(text)
+    if m:
+        return m.group(1)
+    if any(_UNDER_WAY_RE.search(c) for c in chunks):
+        return ""
+    years = _YEAR_RE.findall(text)
+    return years[-1] if years else ""
 
 
 def _current_job(section: str) -> dict[str, str]:
@@ -386,6 +405,23 @@ _ADDRESS_STOP = frozenset((
 _NAME_ALONE = (("name",), ("full", "name"), ("your", "name"))
 
 
+# another person's field (cycle 18, FM-3): a referrer's, an emergency
+# contact's, a manager's; and the how-did-you-hear question, whose listed
+# sources ("LinkedIn, website") are no profile of the candidate's
+_OTHER_PERSON = re.compile(r"\b(referr\w*|referral|reference|emergency|manager|supervisor|spouse"
+                           r"|recruiter|parent|guardian|next of kin)\b")
+_HEAR_ABOUT = re.compile(r"\b(how did you (hear|find)|hear about|referral source|source)\b")
+_PROFILE_URLS = frozenset(("linkedin_url", "github_url", "website_url"))
+_CAMEL = re.compile(r"(?<=[a-z])(?=[A-Z])")
+
+
+def _person_text(text: str) -> str:
+    """`text` for the FM-3 guards: camelCase split, lowercased, and every
+    run of other characters a single space ("emergencyContactPhone" reads
+    "emergency contact phone")."""
+    return " ".join(_NORM_RE.sub(" ", _CAMEL.sub(" ", text or "").lower()).split())
+
+
 def _tokens(text: str) -> tuple[str, ...]:
     return tuple(t for t in _NORM_RE.sub(" ", (text or "").lower()).split() if t)
 
@@ -403,13 +439,24 @@ def quick_map(label: str, id_or_name: str, type_: str) -> str | None:
     and `company name` are their own cases. The identity phrases apply to
     text-like controls only, `resume` / `cv` / `cover letter` to file inputs
     only. An address token (`city`, `state`, `zip`, ...) hits only a text of at
-    most `_ADDRESS_MAX_TOKENS` tokens with none of `_ADDRESS_STOP` in it."""
+    most `_ADDRESS_MAX_TOKENS` tokens with none of `_ADDRESS_STOP` in it.
+
+    A field whose label or id names another person ("Referrer email",
+    "emergencyContactPhone", `_OTHER_PERSON`) is None: the judge reads it.
+    A how-did-you-hear question (`_HEAR_ABOUT`) never maps to a profile URL,
+    whatever sources it lists (cycle 18, FM-3)."""
     type_ = (type_ or "").lower()
+    texts = [_person_text(label), _person_text(id_or_name)]
+    if any(_OTHER_PERSON.search(t) for t in texts):
+        return None
+    hear = any(_HEAR_ABOUT.search(t) for t in texts)
     for text in (label, id_or_name):
         tokens = _tokens(text)
         if not tokens:
             continue
         for phrase, key, types in _QUICK:
+            if hear and key in _PROFILE_URLS:
+                continue
             if type_ in types and _contains(tokens, phrase):
                 return key
         if type_ in _TEXTISH and tokens in _NAME_ALONE:

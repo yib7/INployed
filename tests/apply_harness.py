@@ -1027,6 +1027,14 @@ FLOWS: tuple[Flow, ...] = (
          confirm="#thanks:visible",
          covers="Yes / No button pairs with aria-pressed, radios sharing one id, a resume "
                 "parser's own upload left alone"),
+    # the Contoso incident's form; the marker shows only for the
+    # answers the typed store holds (authorized, no sponsorship, relocates)
+    Flow("ashby_relocation", "ashby_relocation.html", True, "submitted", _SUBMITTED,
+         confirm="body[data-auth=yes][data-sponsor=no][data-relocate=willing] #thanks:visible",
+         recorded=False,
+         covers="legal authorization on Yes / No buttons settled by the alias set, and a "
+                "relocation question among combined options picked over every yes / no "
+                "fact, both verified"),
     Flow("greenhouse_react_select", "greenhouse_react_select.html", True, "submitted",
          _SUBMITTED, confirm="#thanks:visible",
          covers="react-select dropdowns (the pick shown in a sibling, a hidden required twin), "
@@ -1998,6 +2006,9 @@ def assert_invariants(outcome: Any, recorder: Recorder, sends: Sends, *,
 # the run cannot pass).
 _POLICY_PARKS = tuple(re.compile(p) for p in (
     r"^auto_apply_submit is off(; |$)", r"^required field without an answer",
+    # cycle 18 (FM-4): an optional answer that failed its check and that the
+    # run could not take out again (a radio group): the person removes it
+    r"^a wrong answer could not be removed: ",
     r"^asks for .*which auto-apply never fills", r"^payment requested",
     # a bot check nobody solved: the loop's park and the run's own CAPTCHA
     # reasons, anchored (an unanchored word matched a reads list's

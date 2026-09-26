@@ -1008,11 +1008,15 @@ def test_option_questions_cover_only_model_mapped_fields_with_options(catalog):
                9: ("requires_sponsorship", 0.9), 10: ("gender", 0.9)}
     answers = _page_answers(digest, mapping)
     p = apply_judge.plan(digest, catalog, answers)
-    state, q = apply_judge.option_questions(digest, p)
-    assert set(q) == {"field_8_pick", "field_9_pick", "field_10_pick"}
-    assert [f["n"] for f in state["fields"]] == [8, 9, 10]
-    blob = json.dumps(q["field_9_pick"]["instructions"])
-    assert '"No"' in blob and "fields[1]" in blob
+    state, q = apply_judge.option_questions(digest, p, catalog=catalog)
+    # moved on purpose (cycle 18, FM-1): the two Yes / No selects (8, 9) are
+    # settled in code by the alias set and ride in no second request
+    assert [(p.fields[n].action, p.fields[n].option) for n in (8, 9)] == [
+        ("select", "Yes"), ("select", "No")]
+    assert set(q) == {"field_10_pick"}
+    assert [f["n"] for f in state["fields"]] == [10]
+    blob = json.dumps(q["field_10_pick"]["instructions"])
+    assert '"Decline to self-identify"' in blob and "fields[0]" in blob
     assert list(q["field_10_pick"]["criteria"]) == \
         ["Male", "Female", "Decline to self-identify", "no_match"]
     # a quick_map field with options never rides in the second request
@@ -1185,10 +1189,12 @@ def test_fake_jev_end_to_end_over_the_greenhouse_digest(catalog):
 
     first = apply_judge.plan(digest, catalog, answers)
     # the option picks for the model-mapped selects are only known after the
-    # mapping: the first plan parks on them, the second request resolves them
-    assert first.park_reason.startswith("required field without an answer")
-    state2, q2 = apply_judge.option_questions(digest, first)
-    assert set(q2) == {"field_8_pick", "field_9_pick", "field_10_pick"}
+    # mapping, and the second request resolves them; the Yes / No selects
+    # (8, 9) are settled in code by the alias set (moved on purpose, cycle
+    # 18, FM-1), so the first plan waits on the optional Gender alone
+    assert first.park_reason == "" and first.missing == [("Gender", "select")]
+    state2, q2 = apply_judge.option_questions(digest, first, catalog=catalog)
+    assert set(q2) == {"field_10_pick"}
     answers.update(fake.judge(state2, q2))
 
     p = apply_judge.plan(digest, catalog, answers)
@@ -1304,3 +1310,165 @@ def test_plan_reads_a_masked_sensitive_box_as_sensitive_before_a_password(catalo
     plan = apply_judge.plan(digest, catalog, _page_answers(digest, {0: ("phone", 0.99)}))
     assert plan.fields[0].action == "skip"
     assert plan.park_reason == apply_judge.sensitive_reason("Passport number")
+
+
+# --- cycle 18 FM-1: a yes or no matches only an option in its own alias set ----------
+
+@pytest.mark.parametrize("options, value, want", [
+    (["Yes - on a work visa (OPT/H-1B)", "U.S. citizen or permanent resident"], "Yes", None),
+    (["Yes, with sponsorship", "Yes, without sponsorship"], "Yes", None),
+    (["No, but I will need sponsorship in the future", "Yes"], "No", None),
+    (["Yes", "No"], "yes", "Yes"),
+    (["Y", "N"], "Yes", "Y"),
+])
+def test_a_yes_or_no_matches_only_an_option_in_its_own_alias_set(options, value, want):
+    assert apply_judge.match_option(value, options) == want
+
+
+def _yes_no_digest(options):
+    return FormDigest(url_host="x", title="t", text="", fields=[
+        _f(0, "Will you now or in the future require sponsorship?", "select", required=True,
+           options=options)])
+
+
+def test_a_plain_yes_no_list_is_settled_in_code_and_asks_the_judge_nothing(catalog):
+    # FM-1: a yes / no fact's value names one option of a plain Yes / No list
+    # by its alias set; the plan takes it with no pick answer at all, and the
+    # second request asks nothing for it
+    digest = _yes_no_digest(("Yes", "No"))
+    answers = _page_answers(digest, {0: ("requires_sponsorship", 0.9)})
+    del answers["field_0_pick"], answers["field_0_option"]
+    p = apply_judge.plan(digest, catalog, answers)
+    assert (p.fields[0].action, p.fields[0].option) == ("select", "No")
+    assert p.park_reason == ""
+    assert apply_judge.option_questions(digest, p, catalog=catalog) == ({"fields": []}, {})
+
+
+def test_a_qualified_yes_no_list_waits_for_the_judges_pick(catalog):
+    # FM-1: a qualified option is the judge's pick; no pick yet is no answer
+    options = ("Yes, I will require sponsorship", "No, I do not require sponsorship")
+    digest = _yes_no_digest(options)
+    answers = _page_answers(digest, {0: ("requires_sponsorship", 0.9)})
+    del answers["field_0_pick"], answers["field_0_option"]
+    p = apply_judge.plan(digest, catalog, answers)
+    assert p.fields[0].action == "skip"
+    assert p.park_reason == ("required field without an answer: Will you now or in the "
+                             "future require sponsorship?")
+    _, q = apply_judge.option_questions(digest, p, catalog=catalog)
+    assert set(q) == {"field_0_pick"}
+    answers["field_0_pick"] = _choice(options[1], 0.95)
+    p = apply_judge.plan(digest, catalog, answers)
+    assert (p.fields[0].action, p.fields[0].option) == ("select", options[1])
+
+
+def _bool_catalog(**values):
+    return apply_facts.FactCatalog([apply_facts.Fact(k, v, apply_facts.DESCRIPTIONS[k], "bool")
+                                    for k, v in values.items()])
+
+
+def test_the_pick_for_a_yes_no_fact_carries_every_yes_no_fact_the_catalog_holds(catalog):
+    # orchestrator decision 1: the mapped fact first, then the other yes / no
+    # facts with a value, each as "<description>: <Yes|No>"
+    d = apply_facts.DESCRIPTIONS
+    assert apply_judge.candidate_answer(catalog, "requires_sponsorship", "No") == "\n".join([
+        f"{d['requires_sponsorship']}: No", f"{d['work_authorized']}: Yes",
+        f"{d['willing_to_relocate']}: Yes", f"{d['onsite_ok']}: Yes"])
+    # any other fact's pick carries its value alone
+    assert apply_judge.candidate_answer(catalog, "gender", "Decline to self-identify") == \
+        "Decline to self-identify"
+    # a yes / no fact the catalog leaves unset is left out
+    cat = _bool_catalog(work_authorized="Yes", requires_sponsorship="No",
+                        willing_to_relocate="Yes", onsite_ok="")
+    assert apply_judge.candidate_answer(cat, "willing_to_relocate", "Yes").split("\n") == [
+        f"{d['willing_to_relocate']}: Yes", f"{d['work_authorized']}: Yes",
+        f"{d['requires_sponsorship']}: No"]
+    # with no catalog the value stands alone
+    assert apply_judge.candidate_answer(None, "willing_to_relocate", "Yes") == "Yes"
+
+
+def test_the_second_request_carries_the_combined_answer_for_a_qualified_list(catalog):
+    options = ("I do not want to work in office", "Yes, I am willing to relocate",
+               "No, I would prefer to stay where I am")
+    digest = FormDigest(url_host="x", title="t", text="", fields=[
+        _f(0, "Are you willing to relocate to the job location?", "radio", required=True,
+           options=options)])
+    answers = _page_answers(digest, {0: ("willing_to_relocate", 0.9)})
+    del answers["field_0_pick"], answers["field_0_option"]
+    p = apply_judge.plan(digest, catalog, answers)
+    combined = apply_judge.candidate_answer(catalog, "willing_to_relocate", "Yes")
+    s, q = apply_judge.option_questions(digest, p, catalog=catalog)
+    assert q["field_0_pick"]["instructions"]["candidate_answer"] == combined
+    assert list(q["field_0_pick"]["criteria"]) == [*options, "no_match"]
+    # the fake judge reads the combined answer to the relocation option
+    assert jev.FakeJev().judge(s, q)["field_0_pick"].choice == options[1]
+    # the second look asks the same question
+    _, q = apply_judge.reask_questions(digest, catalog, p, [0], what="pick")
+    assert q["field_0_pick"]["instructions"]["candidate_answer"] == combined
+
+
+# --- cycle 18 FM-2: past OPTIONS_CAP code decides only on the same words or an alias -------
+
+def test_a_long_list_is_settled_in_code_only_by_an_exact_or_alias_match(catalog):
+    filler = [f"Option {i}" for i in range(apply_judge.OPTIONS_CAP + 5)]
+    starts = [*filler, "California (CA)", "Colorado (CO)"]
+    assert apply_judge.match_option("California", starts, exact=True) is None
+    assert apply_judge.code_pick("California", starts) is None
+    assert apply_judge.code_pick("CA", [*filler, "California"]) == "California"
+    assert apply_judge.code_pick("California", [*filler, "california"]) == "california"
+    # a long list's starts-with option is no code pick: the judge's pick decides
+    digest = FormDigest(url_host="x", title="t", text="", fields=[
+        _f(0, "State", "select", required=True, options=starts)])
+    p = apply_judge.plan(digest, catalog, _page_answers(digest, {}, {0: ("no_match", 1.0)}))
+    assert p.fields[0].fact_key == "address_state" and p.fields[0].action == "skip"
+    p = apply_judge.plan(digest, catalog,
+                         _page_answers(digest, {}, {0: ("California (CA)", 0.95)}))
+    assert (p.fields[0].action, p.fields[0].option) == ("select", "California (CA)")
+
+
+# --- cycle 18 FM-5: a number box takes a plain number; the phone only a phone's box -------
+
+@pytest.mark.parametrize("label, ident, action", [
+    ("Years of experience", "years", "skip"),
+    ("Phone number", "contact", "fill"),
+    ("Contact", "mobile_no", "fill"),
+    ("Contact", "tel", "fill"),
+    ("Contact", "telNumber", "fill"),
+    ("Hotel nights", "stay", "skip"),
+])
+def test_the_phone_goes_into_a_number_box_only_when_it_names_a_phone(catalog, label, ident,
+                                                                     action):
+    digest = FormDigest(url_host="x", title="t", text="", fields=[
+        _f(0, label, "number", required=True, ident=ident)])
+    p = apply_judge.plan(digest, catalog, _page_answers(digest, {0: ("phone", 0.95)}))
+    assert p.fields[0].action == action
+    assert p.park_reason == ("" if action == "fill"
+                             else f"required field without an answer: {label}")
+
+
+@pytest.mark.parametrize("value, action", [
+    ("120k", "skip"), ("3-5", "skip"), ("(555) 123-4567", "skip"),
+    ("Less than 1 year", "skip"), ("1.5", "fill"), ("3", "fill")])
+@pytest.mark.parametrize("required", [True, False])
+def test_a_number_box_whose_answer_is_no_plain_number_is_left_blank(value, action, required):
+    cat = apply_facts.FactCatalog([apply_facts.Fact("answer_years", value, "Years with SQL")])
+    digest = FormDigest(url_host="x", title="t", text="", fields=[
+        _f(0, "Years with SQL", "number", required=required)])
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("answer_years", 0.95)}))
+    assert p.fields[0].action == action
+    if action == "skip":
+        assert [m[0] for m in p.missing] == ["Years with SQL"]
+        assert p.park_reason == ("required field without an answer: Years with SQL"
+                                 if required else "")
+
+
+# --- cycle 18 FM-7: a decline is a refusal to answer ------------------------------------
+
+@pytest.mark.parametrize("text, declined", [
+    ("I do not identify as a protected veteran", False),
+    ("I do not wish to self-identify", True),
+    ("Prefer not to say", True),
+    ("I don't wish to answer", True),
+    ("Decline to self-identify", True),
+])
+def test_declines_reads_a_refusal_and_never_a_statement(text, declined):
+    assert apply_judge.declines(text) is declined

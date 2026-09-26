@@ -541,15 +541,23 @@ _SPONSORSHIP = """<body><form>
   </script></body>"""
 
 
-def test_a_lone_option_that_holds_the_answer_is_picked_whatever_its_own_words(browser_page):
-    # fix round 3: round 2's qualifier rule put out "No, I do not require
-    # sponsorship" for a stored "No" when it was the one option holding it,
-    # and the most common screening question parked
+def test_a_yes_or_no_picks_no_qualified_option_and_the_judges_pick_does(browser_page):
+    # moved on purpose (cycle 18, FM-1): fix round 3 picked "No, I do not
+    # require sponsorship" for a stored "No" as the one option holding it.
+    # A yes or a no now matches only an option in its own alias set: a
+    # typeahead keeps the typed words, and a radio group chooses nothing
     browser_page.set_content(_SPONSORSHIP)
     frame = browser_page.main_frame
     apply_fill._type_ahead(browser_page, frame, browser_page.locator("#spon"), "No")
-    assert browser_page.locator("#spon").input_value() == "No, I do not require sponsorship"
-    apply_fill._check_radio(browser_page, browser_page.locator("input[name=need]"), "No")
+    assert browser_page.locator("#spon").input_value() == "No"
+    with pytest.raises(LookupError):
+        apply_fill._check_radio(browser_page, browser_page.locator("input[name=need]"), "No")
+    assert browser_page.locator("input[name=need]:checked").count() == 0
+    # the judge's pick, in the option's own words, takes its option
+    pick = "No, I do not require sponsorship"
+    apply_fill._type_ahead(browser_page, frame, browser_page.locator("#spon"), pick)
+    assert browser_page.locator("#spon").input_value() == pick
+    apply_fill._check_radio(browser_page, browser_page.locator("input[name=need]"), pick)
     assert browser_page.locator("input[value=sponsor_no]").is_checked()
     assert not browser_page.locator("input[value=sponsor_yes]").is_checked()
 
@@ -703,18 +711,20 @@ def test_a_long_lists_pick_question_carries_a_shortlist_for_the_value():
     # it with a negation or a qualifier the value lacks gives way to one that
     # does not, whatever the site's order
     ("Latino", ["Not Hispanic or Latino", "Hispanic or Latino"], 1),
-    ("Yes", ["Yes, but I will require sponsorship", "Yes, I am authorized"], 1),
     ("Not Hispanic or Latino", ["Hispanic or Latino", "Not Hispanic or Latino"], 1),
     # fix round 3: the rule only breaks a tie; a lone option that holds the
-    # value stands, and the read-back check reads it as before
-    ("No", ["No, I do not require sponsorship"], 0),
-    ("No", ["Yes, I will require sponsorship", "No, I do not require sponsorship"], 1),
-    ("no", ["Yes, I will need sponsorship", "No, I don't need sponsorship"], 1),
+    # value stands
     ("Latino", ["Not Hispanic or Latino", "White"], 0),
-    ("Yes", ["Yes, but I will require sponsorship", "No"], 0),
-    # every option that holds the value turns it, each its own way: a tie
+    # moved on purpose (cycle 18, FM-1): a yes or a no matches only an
+    # option in its own alias set; a qualified option is the judge's pick
+    ("Yes", ["Yes, but I will require sponsorship", "Yes, I am authorized"], -1),
+    ("No", ["No, I do not require sponsorship"], -1),
+    ("No", ["Yes, I will require sponsorship", "No, I do not require sponsorship"], -1),
+    ("no", ["Yes, I will need sponsorship", "No, I don't need sponsorship"], -1),
+    ("Yes", ["Yes, but I will require sponsorship", "No"], -1),
     ("Yes", ["Yes, but I will require sponsorship",
-             "Yes, I am authorized and do not require sponsorship", "No"], "tie"),
+             "Yes, I am authorized and do not require sponsorship", "No"], -1),
+    ("No", ["Yes, I will require sponsorship", "N"], 1),
     ("I do not want to answer", ["Decline to answer", "I don't wish to answer",
                                  "I do not want to answer"], 2),
     # a stored decline takes the one option that declines in its own words,

@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Data Engineer @ Fabrikam</title>
+<!-- A synthetic replica of the Contoso (Ashby) form of the 2026-09-26
+     incident: legal authorization and sponsorship as Yes / No button pairs
+     with aria-pressed and a hidden checkbox, and a relocation question whose
+     options combine relocation with office work, the negative one first.
+     The submit writes the answers it got on the body (data-auth,
+     data-sponsor, data-relocate); the flow's confirmation marker names the
+     answers the typed store holds. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field-entry { margin: 16px 0; }
+  .title { display: block; font-weight: bold; }
+  ._required_k2q::after { content: "*"; color: #b00; margin-left: 2px; }
+  .yesno button { min-width: 70px; margin-right: 6px; }
+  .yesno button[aria-pressed="true"] { background: #234; color: #fff; }
+  .visually-hidden-box { display: none; }
+  #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Data Engineer</h1>
+<p>Fabrikam, New York</p>
+<form id="application" novalidate>
+  <div class="field-entry">
+    <label class="title _required_k2q" for="_systemfield_name">Name</label>
+    <input id="_systemfield_name" name="_systemfield_name" type="text">
+  </div>
+  <div class="field-entry">
+    <label class="title _required_k2q" for="_systemfield_email">Email</label>
+    <input id="_systemfield_email" name="_systemfield_email" type="email">
+  </div>
+  <div class="field-entry">
+    <label class="title _required_k2q" for="_systemfield_resume">Resume</label>
+    <input id="_systemfield_resume" name="_systemfield_resume" type="file">
+  </div>
+  <div class="field-entry" id="q-auth">
+    <label class="title _required_k2q" for="q-auth-none">Are you legally authorized to work in the United States?</label>
+    <div class="yesno">
+      <button type="button" aria-pressed="false">Yes</button>
+      <button type="button" aria-pressed="false">No</button>
+    </div>
+    <input class="visually-hidden-box" type="checkbox" name="q_auth" tabindex="-1">
+  </div>
+  <div class="field-entry" id="q-sponsor">
+    <label class="title _required_k2q" for="q-sponsor-none">Will you now or in the future require visa sponsorship?</label>
+    <div class="yesno">
+      <button type="button" aria-pressed="false">Yes</button>
+      <button type="button" aria-pressed="false">No</button>
+    </div>
+    <input class="visually-hidden-box" type="checkbox" name="q_sponsor" tabindex="-1">
+  </div>
+  <fieldset class="field-entry" style="border: 0; padding: 0">
+    <legend class="title _required_k2q">Are you willing to relocate to the job location (New York)?</legend>
+    <div><input type="radio" id="q_relocate_office" name="q_relocate" value="office-no"><label for="q_relocate_office">I do not want to work in office</label></div>
+    <div><input type="radio" id="q_relocate_willing" name="q_relocate" value="willing"><label for="q_relocate_willing">Yes, I am willing to relocate</label></div>
+    <div><input type="radio" id="q_relocate_stay" name="q_relocate" value="stay"><label for="q_relocate_stay">No, I would prefer to stay where I am</label></div>
+  </fieldset>
+  <button type="submit" id="btn-submit">Submit Application</button>
+  <p id="problems" role="alert" style="display: none"></p>
+</form>
+<section id="thanks"><h2>Thank you for applying</h2><p>Your application was received.</p></section>
+<script>
+  document.querySelectorAll('.yesno').forEach(function (pair) {
+    var box = pair.parentElement.querySelector('input[type=checkbox]');
+    pair.querySelectorAll('button').forEach(function (b) {
+      b.addEventListener('click', function () {
+        pair.querySelectorAll('button').forEach(function (o) { o.setAttribute('aria-pressed', 'false'); });
+        b.setAttribute('aria-pressed', 'true');
+        box.checked = b.textContent.trim() === 'Yes';
+        box.dataset.answered = '1';
+      });
+    });
+  });
+  document.getElementById('application').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var missing = [];
+    if (!document.getElementById('_systemfield_name').value) missing.push('Name');
+    if (!document.getElementById('_systemfield_email').value) missing.push('Email');
+    if (!document.getElementById('_systemfield_resume').files.length) missing.push('Resume');
+    document.querySelectorAll('input[type=checkbox][name^=q_]').forEach(function (box) {
+      if (!box.dataset.answered) missing.push(box.name);
+    });
+    var relocate = document.querySelector('input[name=q_relocate]:checked');
+    if (!relocate) missing.push('relocate');
+    if (missing.length) {
+      var p = document.getElementById('problems');
+      p.textContent = 'Please answer: ' + missing.join(', ');
+      p.style.display = 'block';
+      return;
+    }
+    var yes = function (name) {
+      return document.querySelector('input[name=' + name + ']').checked ? 'yes' : 'no';
+    };
+    document.body.setAttribute('data-auth', yes('q_auth'));
+    document.body.setAttribute('data-sponsor', yes('q_sponsor'));
+    document.body.setAttribute('data-relocate', relocate.value);
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('application').style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

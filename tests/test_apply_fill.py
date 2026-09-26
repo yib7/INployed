@@ -331,3 +331,154 @@ def test_click_tells_a_quiet_click_from_one_that_never_landed(browser_page, fixt
     r = apply_fill.click(browser_page, d, _button(d, "Nothing").n, timeout_s=1)
     assert (r.clicked, r.changed) == (False, False)
     assert apply_fill.click_button(browser_page, d, _button(d, "Nothing").n, timeout_s=1) is False
+
+
+# --- cycle 18 FM-1: a yes or no matches only an option in its own alias set ---------------
+
+@pytest.mark.parametrize("options, value, index", [
+    (["Yes - on a work visa (OPT/H-1B)", "U.S. citizen or permanent resident"], "Yes", -1),
+    (["Yes, with sponsorship", "Yes, without sponsorship"], "Yes", -1),
+    (["No, but I will need sponsorship in the future", "Yes"], "No", -1),
+    (["Yes", "No"], "yes", 0),
+    (["Y", "N"], "Yes", 0),
+])
+def test_a_yes_or_no_is_matched_on_the_page_only_by_its_alias_set(options, value, index):
+    assert apply_fill._ci_match(value, options) == index
+
+
+# --- cycle 18 FM-5: a number box takes a plain number, and repairs join no digits ---------
+
+@pytest.mark.parametrize("value, want", [
+    ("120k", None), ("3-5", None), ("(555) 123-4567", None), ("Less than 1 year", None),
+    ("1.5", "1.5"), ("3", "3"), (" 7 ", "7"), ("", None), ("$120,000", None), ("5+", None)])
+def test_number_value_takes_a_plain_number_only(value, want):
+    assert apply_fill.number_value(value) == want
+
+
+def test_a_repair_that_asks_for_digits_joins_no_digits_but_a_phones():
+    pf = PlannedField(n=0, locator=(0, "#x"), label="Years", required=True,
+                      fact_key="answer_years", value="3-5", option=None, confidence=1.0,
+                      action="fill")
+    assert apply_fill.repair_value(pf, "Please enter digits only", {}) == "3-5"
+    pf.value = "Anytown 12345"
+    assert apply_fill.repair_value(pf, "Numbers only", {}) == "Anytown 12345"
+    phone = PlannedField(n=1, locator=(0, "#p"), label="Contact", required=True,
+                         fact_key="phone", value="(555) 555-0100", option=None,
+                         confidence=1.0, action="fill")
+    assert apply_fill.repair_value(phone, "Please enter digits only", {}) == "5555550100"
+    phone.fact_key = "answer_contact"
+    assert apply_fill.repair_value(phone, "Digits only", {"label": "Mobile"}) == "5555550100"
+
+
+def test_a_number_box_takes_the_phone_only_when_it_names_a_phone(browser_page):
+    browser_page.set_content("""<body><form>
+      <label>Phone number <input id="p" type="number"></label>
+      <label>Years of experience <input id="y" type="number"></label>
+      <label>Contact <input id="t" name="tel" type="number"></label></form></body>""")
+    d = apply_form.extract(browser_page)
+    p, y, t = (next(f for f in d.fields if f.locator[1] == css) for css in ("#p", "#y", "#t"))
+    errors: list[dict] = []
+    filled = apply_fill.apply(browser_page, FillPlan(fields=[
+        _planned(p, "fill", "(555) 555-0100", fact_key="phone"),
+        _planned(y, "fill", "(555) 555-0100", fact_key="phone"),
+        _planned(t, "fill", "555-555-0100", fact_key="phone")]), errors=errors)
+    got = {x.n: x.value for x in filled}
+    assert (got[p.n], got[y.n], got[t.n]) == ("5555550100", "", "5555550100")
+    assert [e["n"] for e in errors] == [y.n]
+
+
+# --- cycle 18 FM-4: clear empties a control, and says so --------------------------------
+
+_CLEARABLE = """<body><form>
+  <label>Nickname <input id="nick"></label>
+  <label>Notes <textarea id="notes"></textarea></label>
+  <label>Team <select id="team"><option value="">Select...</option><option>Data</option>
+    <option>Platform</option></select></label>
+  <label>Size <select id="size"><option>Small</option><option>Large</option></select></label>
+  <label><input id="news" type="checkbox"> Send me news</label>
+  <fieldset><legend>Shift</legend>
+    <label><input type="radio" name="shift" value="day"> Day</label>
+    <label><input type="radio" name="shift" value="night"> Night</label></fieldset>
+  </form></body>"""
+
+
+def test_clear_empties_a_box_a_list_and_a_tick_and_says_when_it_cannot(browser_page):
+    browser_page.set_content(_CLEARABLE)
+    d = apply_form.extract(browser_page)
+    by = {f.label.strip(): f for f in d.fields}
+    plan = [_planned(by["Nickname"], "fill", "JD"), _planned(by["Notes"], "fill", "Hello"),
+            _planned(by["Team"], "select", option="Data"),
+            _planned(by["Size"], "select", option="Large"),
+            _planned(by["Send me news"], "select", option="checked"),
+            _planned(by["Shift"], "select", option="Night")]
+    filled = apply_fill.apply(browser_page, FillPlan(fields=plan))
+    assert [x.value for x in filled] == ["JD", "Hello", "Data", "Large", "checked", "Night"]
+    got = [apply_fill.clear(browser_page, pf) for pf in plan]
+    assert got == [True, True, True, False, True, False]
+    assert browser_page.locator("#nick").input_value() == ""
+    assert browser_page.locator("#notes").input_value() == ""
+    assert browser_page.locator("#team").input_value() == ""
+    assert not browser_page.locator("#news").is_checked()
+    # a control already empty is cleared; one gone is nothing to clear
+    assert apply_fill.clear(browser_page, plan[0]) is True
+    gone = _planned(by["Nickname"], "fill", "JD")
+    gone.locator = (0, "#nothing-here")
+    assert apply_fill.clear(browser_page, gone) is True
+
+
+# --- cycle 18 FM-2: a list whose options were never read takes only a code match --------
+
+_UNREAD_LIST = """<body><form>
+  <span id="auth-label">Work authorization</span>
+  <div id="auth" role="combobox" aria-labelledby="auth-label" aria-expanded="false"
+       aria-haspopup="listbox" aria-controls="auth-menu" tabindex="0">
+    <input id="auth-input" type="text" autocomplete="off" aria-labelledby="auth-label"></div>
+  <ul id="auth-menu" role="listbox" hidden>
+    <li role="option">Yes - on a work visa (OPT/H-1B)</li>
+    <li role="option">U.S. citizen or permanent resident</li></ul>
+  <script>
+    const box = document.getElementById('auth'), menu = document.getElementById('auth-menu');
+    const input = document.getElementById('auth-input');
+    const open = () => { menu.hidden = false; box.setAttribute('aria-expanded', 'true'); };
+    box.addEventListener('click', open);
+    input.addEventListener('input', open);
+    menu.querySelectorAll('li').forEach((li) => li.onclick = () => {
+      input.value = li.textContent; menu.hidden = true;
+      box.setAttribute('aria-expanded', 'false'); });
+  </script></form></body>"""
+
+
+def test_a_list_whose_options_were_never_read_takes_no_option_but_its_own_words(browser_page):
+    browser_page.set_content(_UNREAD_LIST)
+    d = apply_form.extract(browser_page)
+    auth = next(f for f in d.fields if f.label.startswith("Work authorization"))
+    pf = _planned(auth, "fill", "Yes", fact_key="work_authorized")
+    pf.options = []
+    errors: list[dict] = []
+    filled = apply_fill.apply(browser_page, FillPlan(fields=[pf]), errors=errors)
+    assert [e["error"] for e in errors] == ["OptionsUnread"]
+    assert filled[0].value == "" and browser_page.locator("#auth-input").input_value() == ""
+    # the same list read ahead is the judge's pick: a failed code match is a
+    # plain miss there
+    pf.options = ["Yes - on a work visa (OPT/H-1B)", "U.S. citizen or permanent resident"]
+    errors = []
+    apply_fill.apply(browser_page, FillPlan(fields=[pf]), errors=errors)
+    assert [e["error"] for e in errors] == ["LookupError"]
+    # an exact match still takes its option
+    pf.options, pf.value = [], "U.S. citizen or permanent resident"
+    filled = apply_fill.apply(browser_page, FillPlan(fields=[pf]), errors=errors)
+    assert filled[0].value == "U.S. citizen or permanent resident"
+
+
+def test_a_list_that_shows_its_options_only_when_typed_in_is_left_blank(browser_page):
+    browser_page.set_content(_UNREAD_LIST.replace(
+        "box.addEventListener('click', open);", ""))
+    d = apply_form.extract(browser_page)
+    auth = next(f for f in d.fields if f.label.startswith("Work authorization"))
+    pf = _planned(auth, "fill", "Yes", fact_key="work_authorized")
+    pf.options = []
+    errors: list[dict] = []
+    apply_fill.apply(browser_page, FillPlan(fields=[pf]), errors=errors)
+    assert [e["error"] for e in errors] == ["OptionsUnread"]
+    # the words typed to bring the options are taken out again
+    assert browser_page.locator("#auth-input").input_value() == ""

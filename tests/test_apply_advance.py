@@ -356,8 +356,15 @@ def test_a_number_box_takes_the_number(browser_page):
       <label>Years of experience <input id="y" type="number"></label></form></body>""")
     d = apply_form.extract(browser_page)
     s, y = _by_label(d, "Expected salary"), _by_label(d, "Years of experience")
-    got = _fill(browser_page, _planned(s, "fill", "$120,000"), _planned(y, "fill", "5+"))
-    assert (got[s.n], got[y.n]) == ("120000", "5")
+    # moved on purpose (cycle 18, FM-5): a value that is no plain number
+    # leaves the box blank ("$120,000" was 120000 and "5+" was 5)
+    errors: list = []
+    out = apply_fill.apply(browser_page, FillPlan(fields=[
+        _planned(s, "fill", "$120,000"), _planned(y, "fill", "5+")]), errors=errors)
+    assert [f.value for f in out] == ["", ""]
+    assert [e["n"] for e in errors] == [s.n, y.n]
+    got = _fill(browser_page, _planned(s, "fill", "120000"), _planned(y, "fill", "5.5"))
+    assert (got[s.n], got[y.n]) == ("120000", "5.5")
 
 
 def test_an_upload_the_widget_consumed_is_read_from_its_chip_and_never_sent_twice(

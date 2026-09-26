@@ -59,8 +59,10 @@ def _choice(choice, conf):
 def _digest():
     return FormDigest(url_host="jobs.example.com", title="Apply", text="", fields=[
         _f(0, "Are you authorized to work in the US?", "select", options=("Yes", "No")),
+        # qualified options (cycle 18, FM-1): a plain Yes / No is settled in
+        # code and never waits for a pick
         _f(1, "Will you now or in the future require sponsorship?", "radio",
-           options=("Yes", "No")),
+           options=("Yes, I will require sponsorship", "No, I do not require sponsorship")),
         _f(2, "I consent to a background check", "checkbox", options=("checked",)),
         _f(3, "Anything else?", "textarea", required=False),
         _f(4, "What is your favourite colour?", "text"),
@@ -90,7 +92,7 @@ def test_the_second_look_takes_a_dropped_or_weak_source_and_a_consent_under_its_
     answers["field_1_pick"] = _choice("no_match", 0.9)
     plan = apply_judge.plan(digest, catalog, answers)
     assert apply_judge.reask_targets(digest, catalog, answers, plan, what="pick") == []
-    answers["field_1_pick"] = _choice("No", 0.5)
+    answers["field_1_pick"] = _choice("No, I do not require sponsorship", 0.5)
     plan = apply_judge.plan(digest, catalog, answers)
     assert apply_judge.reask_targets(digest, catalog, answers, plan, what="pick") == [1]
     # a routine consent (SP5 round 2) at 0.80 ticks: it is no target

@@ -295,6 +295,12 @@ CHECKBOX_NOTE = "a CAPTCHA checkbox is on the form: tick it, then submit"
 # a box whose options tie on the answer (`apply_fill.OptionTie`, final review
 # B R2 M2): none was chosen
 OPTION_TIE_WORDS = "the options that hold its answer tie and differ in meaning"
+# a list whose options were never read ahead, and none of them is the answer
+# in code (`apply_fill.OptionsUnread`, cycle 18 FM-2): none was chosen
+OPTIONS_UNREAD_WORDS = "its options could not be read"
+# an optional field's answer that failed its check and stays on the page
+# (cycle 18 FM-4: a radio group keeps its choice)
+WRONG_ANSWER_STAYS = "a wrong answer could not be removed"
 # The site's own dead ends (SP4): a job it says was applied to before
 # (TERM-04's ATS part), a posting that takes no more applications (READ-08).
 ALREADY_APPLIED_REASON = "already applied: the site says this job was applied to before"
@@ -3814,11 +3820,33 @@ def new_fields(before: apply_form.FormDigest,
     return out
 
 
-def _draft_key(f) -> str:
+# labels that name no question of their own: a follow-up box under the
+# question it follows (cycle 18, FM-6), normalised as `apply_judge._norm_option`
+_GENERIC_LABELS = frozenset((
+    "please explain", "if yes please explain", "if so please explain", "explain", "details",
+    "please specify", "other", "comments", "additional information",
+    "if other please specify"))
+_REQUIRED_WORD = re.compile(r"\s+(?:required|optional)$")
+
+
+def _park_on_stuck(stuck: list[str]) -> None:
+    """An optional field whose wrong answer could not be taken out
+    (`_JobRun._clear_wrong_optional`) parks the job (cycle 18, FM-4)."""
+    if stuck:
+        raise _Parked("needs_human", f"{WRONG_ANSWER_STAYS}: {stuck[0]}")
+
+
+def _draft_key(f) -> str | None:
     """A generated answer's question, as the draft cache keys it (FILL-12):
-    its label and its help (a length budget), case and spacing aside."""
+    its label, its help (a length budget) and the section it sits in, case
+    and spacing aside. None for a label that names no question of its own
+    ("If yes, please explain", `_GENERIC_LABELS`): its draft is never
+    reused or kept (cycle 18, FM-6)."""
+    label = _REQUIRED_WORD.sub("", apply_judge._norm_option(getattr(f, "label", "")))
+    if label in _GENERIC_LABELS:
+        return None
     return " | ".join(" ".join(str(getattr(f, attr, "") or "").lower().split())
-                      for attr in ("label", "help"))
+                      for attr in ("label", "help", "section"))
 
 
 def buttons_moved(before: apply_form.FormDigest, after: apply_form.FormDigest) -> bool:
@@ -6989,6 +7017,8 @@ class _JobRun:
             self._last_filled.update({f.n: f for f in fixed})
             verification = [again.get(v.n, v) for v in verification]
             _record_verification(rec, list(again.values()))
+            _park_on_stuck(self._clear_wrong_optional(
+                FillPlan(fields=[by_pf[n] for n in typed]), list(again.values()), rec))
         if missed and depth == 0:
             # M1: the judge named a blank field that has no answer; its
             # messages are mapped once more without it (a fresh question).
@@ -7149,7 +7179,7 @@ class _JobRun:
         dropped or weak is asked alone once more, then the picks, then a
         required field whose pick came back dropped or weak."""
         plan = self._reask(digest, answers, plan, rec, "source")
-        s2, q2 = apply_judge.option_questions(digest, plan)
+        s2, q2 = apply_judge.option_questions(digest, plan, catalog=self.catalog)
         if q2:
             picks = self.r.jev.judge(s2, q2)
             answers.update(picks)
@@ -7238,6 +7268,7 @@ class _JobRun:
         verification = self._verify(filled, drafts, _picks(plan), shaped)
         verification = self._retry_failed(plan, filled, verification, drafts, shaped)
         self._last_filled.update({f.n: f for f in filled})
+        stuck = self._clear_wrong_optional(plan, verification, rec)
         self._record_fill(rec, digest, plan, filled, verification)
         self._trace("verify", results=[{"n": v.n, "label": v.label, "ok": v.ok,
                                         "p_correct": v.p_correct,
@@ -7247,6 +7278,7 @@ class _JobRun:
                  and any(pf.n == v.n and pf.required for pf in plan.fields)]
         if still:
             raise _Parked("needs_human", "could not verify: " + ", ".join(still))
+        _park_on_stuck(stuck)
         return verification
 
     def _after_fill(self, digest: apply_form.FormDigest, plan: FillPlan,
@@ -7332,11 +7364,13 @@ class _JobRun:
         self._last_filled.update({f.n: f for f in again})
         verification = [results.get(v.n, v) for v in verification]
         _record_verification(rec, list(results.values()))
+        stuck = self._clear_wrong_optional(FillPlan(fields=changed), list(results.values()), rec)
         still = [v.label for v in verification if not v.ok
                  and any(pf.n == v.n and pf.required for pf in plan.fields)]
         if still:
             raise _Parked("needs_human", "could not verify: " + ", ".join(still)
                           + " (the page changed the value after the fill)")
+        _park_on_stuck(stuck)
         return verification
 
     def _page_writes(self, rec: dict) -> None:
@@ -7694,7 +7728,7 @@ class _JobRun:
             f = by_n.get(pf.n)
             text, note, record_note = None, "", ""
             key = _draft_key(f if f is not None else pf)
-            if key in self._drafts_by_question:
+            if key is not None and key in self._drafts_by_question:
                 # FILL-12: the same question read again (a page the form sent
                 # back, a re-read): its accepted draft, no second generation
                 pf.action, pf.value = "fill", self._drafts_by_question[key]
@@ -7723,7 +7757,8 @@ class _JobRun:
                     record_note = "no generator"
             if text:
                 pf.action, pf.value = "fill", str(text)
-                self._drafts_by_question[key] = str(text)
+                if key is not None:
+                    self._drafts_by_question[key] = str(text)
                 rows.append({"label": pf.label, "ok": True, "note": note or "generated"})
                 continue
             rows.append({"label": pf.label, "ok": False,
@@ -7736,30 +7771,70 @@ class _JobRun:
                 if note:
                     plan.park_reason += f"; {note}"
 
-    def _option_ties(self, plan: FillPlan, errors: list[dict]) -> set[int]:
-        """The fields whose options tie on the planned answer
-        (`apply_fill.OptionTie`, final review B R2 M2: the options that hold
-        it differ in meaning, and none was chosen). Each is an open question
-        for the person; the caller parks a required one and leaves an
-        optional one blank, out of the verification."""
-        tied = {e.get("n") for e in errors if e.get("error") == apply_fill.OptionTie.__name__}
+    def _option_ties(self, plan: FillPlan, errors: list[dict]) -> dict[int, str]:
+        """The fields left with no option chosen, each with the words for
+        why: the options tie on the planned answer (`apply_fill.OptionTie`,
+        final review B R2 M2: the options that hold it differ in meaning), or
+        a list whose options were never read ahead holds no option code
+        matches to the answer (`apply_fill.OptionsUnread`, cycle 18 FM-2).
+        Each is an open question for the person; the caller parks a required
+        one and leaves an optional one blank, out of the verification."""
+        why = {apply_fill.OptionTie.__name__: OPTION_TIE_WORDS,
+               apply_fill.OptionsUnread.__name__: OPTIONS_UNREAD_WORDS}
+        tied = {e.get("n"): why[e.get("error")] for e in errors if e.get("error") in why}
         for pf in plan.fields:
-            if pf.n in tied:
+            if pf.n not in tied:
+                continue
+            if tied[pf.n] == OPTION_TIE_WORDS:
                 self._decide("option_tie", f"the options that hold the answer for {pf.label!r} "
                                            f"tie and differ in meaning: none was chosen",
                              fields=[pf.label])
-                self._add_missing(pf.label, OPTION_TIE_WORDS)
+            else:
+                self._decide("options_unread", f"the options of {pf.label!r} could not be "
+                                               f"read and none is the answer: none was chosen",
+                             fields=[pf.label])
+            self._add_missing(pf.label, tied[pf.n])
         return tied
 
+    def _clear_wrong_optional(self, plan: FillPlan, verification: list[VerifyResult],
+                              rec: dict) -> list[str]:
+        """An optional field whose answer failed its check has the answer
+        taken out (cycle 18, FM-4, `apply_fill.clear`): the form goes with
+        the field blank. Each one cleared is
+        traced (`cleared_optional`), recorded on the page (`cleared`) and
+        dropped from the values the page is read against. Returns the
+        labels of the ones whose answer stays (a radio group keeps its
+        choice): the caller parks on the first (`_park_on_stuck`)."""
+        failed = {v.n for v in verification if not v.ok}
+        cleared: list[str] = []
+        stuck: list[str] = []
+        for pf in plan.fields:
+            if pf.n not in failed or pf.required or pf.action not in _ACTED:
+                continue
+            got = self._last_filled.get(pf.n)
+            if got is None or not str(got.value or "").strip():
+                continue        # the read-back holds nothing to take out
+            if apply_fill.clear(self.page, pf):
+                self._last_filled.pop(pf.n, None)
+                cleared.append(pf.label)
+            else:
+                stuck.append(pf.label)
+        if cleared:
+            rec.setdefault("cleared", []).extend(cleared)
+            self._decide("cleared_optional",
+                         f"the answer of {len(cleared)} optional field(s) failed its check and "
+                         f"was taken out: {_cap(', '.join(cleared), 160)}", fields=cleared)
+        return stuck
+
     @staticmethod
-    def _park_a_required_tie(plan: FillPlan, tied: set[int]) -> None:
+    def _park_a_required_tie(plan: FillPlan, tied: Mapping[int, str]) -> None:
         """A required field among `tied` (`_option_ties`) parks the job: its
         answer is the person's to pick. The form and an account screen park
         the same way; an optional one stays blank."""
-        required = [pf.label for pf in plan.fields if pf.n in tied and pf.required]
+        required = [pf for pf in plan.fields if pf.n in tied and pf.required]
         if required:
-            raise _Parked("needs_human", f"required field without an answer: {required[0]} "
-                                         f"({OPTION_TIE_WORDS})")
+            raise _Parked("needs_human", f"required field without an answer: "
+                                         f"{required[0].label} ({tied[required[0].n]})")
 
     def _add_missing(self, question: str, context: str) -> None:
         self.missing.append({"question": question, "context": context, "suggestion": ""})

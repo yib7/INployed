@@ -1000,7 +1000,7 @@ def field_problem(f: Field, value: Any) -> str | None:
     line-break rule, and `pattern`. `validate()` is a thin loop over this, so a
     caller with ONE field and ONE candidate value (the Settings tab, re-checking
     as the user edits) gets the exact same message Save would: one shared source
-    for the rules, not a second, hand-kept copy that can drift from it.
+    for the rules, so the two can never drift apart.
     """
     if not _coerce_ok(f, value):
         return f"Expected {f.type}, got {type(value).__name__}."

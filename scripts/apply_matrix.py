@@ -417,6 +417,8 @@ def main(argv: list[str] | None = None) -> int:
               f"{h.SUITE_SEEDS[-1]}): noisy {h.SUCCESS_FLOOR:.1%}, fake "
               f"{h.FAKE_SUCCESS_FLOOR:.1%}; {len(flows)} flows x {len(judge_list)} judges in "
               f"{time.monotonic() - started:.0f}s")
+        # the summary before the stderr lines below, when both go to one file
+        sys.stdout.flush()
         crashed = _crashed(results)
         if crashed:
             print(f"apply_matrix: {crashed} run(s) lost to a crashed or hung worker, each "

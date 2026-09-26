@@ -1230,8 +1230,11 @@ FLOWS: tuple[Flow, ...] = (
          ats={"system": "greenhouse"}, recorded=False,
          covers="the same in park mode: the code is typed and its button never clicked, "
                 "whatever role the judge gave it (final review A-I2, A Known Minor 10)"),
+    # a master password is stored, as for every flow with an address screen: a
+    # noisy read of that screen as a login wall takes the account step's way
+    # through it (the 20-seed matrix of the fix round found seeds 6 and 18 so)
     Flow("email_code_first_park", "email_code_first.html", False, "ready_to_submit", _PARKED,
-         confirm="#thanks:visible", gate="#btn-submit:visible", inbox=True,
+         confirm="#thanks:visible", gate="#btn-submit:visible", inbox=True, password=True,
          ats={"system": "greenhouse"}, recorded=False,
          covers="an email-first start, its emailed code, then the application: the address alone "
                 "is no application on the site, so park mode passes the code step and stops at "

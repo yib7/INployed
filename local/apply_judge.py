@@ -62,7 +62,8 @@ from typing import Any, Mapping
 
 from urllib.parse import urlsplit
 
-from apply_facts import DESCRIPTIONS, YES_NO_KEYS, FactCatalog, quick_map
+from apply_facts import (DESCRIPTIONS, STORED_YES_NO_KEYS, YES_NO_KEYS, FactCatalog,
+                         asks_own_question, quick_map)
 from apply_form import FormDigest, password_box
 from jev import APOSTROPHES, PAGE_KIND_NOULS, Answer, request_fits
 # pure data (no package imports, no .env): the one US state list the store shares
@@ -649,14 +650,16 @@ def code_pick(value: str, options: list[str]) -> str | None:
 
 def candidate_answer(catalog: FactCatalog | None, key: str, value: str) -> str:
     """The answer a pick question carries for `key`'s `value`. For a yes /
-    no fact it is every yes / no fact the catalog holds, one line each and
-    `key` first ("Legally authorized to work ...: Yes"), so a combined option
-    ("Yes, I am authorized and need no sponsorship") is read against the
-    whole story; any other fact carries its value alone."""
+    no fact it is every stored yes / no fact the catalog holds, one line each
+    and `key` first ("Legally authorized to work ...: Yes"), so a combined
+    option ("Yes, I am authorized and need no sponsorship") is read against
+    the whole story; a derived fact (`apply_facts.DERIVED_YES_NO`) leads its
+    own pick and adds no line to another's, since the stored lines already
+    say it. Any other fact carries its value alone."""
     if catalog is None or key not in YES_NO_KEYS:
         return value
     lines = [f"{DESCRIPTIONS[key]}: {value}"]
-    lines += [f"{DESCRIPTIONS[k]}: {catalog.value(k)}" for k in YES_NO_KEYS
+    lines += [f"{DESCRIPTIONS[k]}: {catalog.value(k)}" for k in STORED_YES_NO_KEYS
               if k != key and catalog.has(k)]
     return "\n".join(lines)
 
@@ -1791,7 +1794,11 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
     label is a routine consent, the job's `company` the one name it may
     carry; else `CONSENT_MIN_CONF`), and below it follows the unanswerable
     rule; a sensitive box is never
-    answered, and a password box is `PASSWORD_ACTION`, with no value. Buttons
+    answered, and a password box is `PASSWORD_ACTION`, with no value. A
+    yes / no or years fact whose own question the field does not ask
+    (`asks_own_question`: "authorized to work without sponsorship" mapped to
+    `work_authorized`, "years of Python" to `years_experience`) gives no
+    value, and the judge's pick does not override it (cycle 18, SP6c). Buttons
     keep the highest-confidence n per role. The one
     park reason is a required field without an answer; the flags are recorded only. A
     button of the site's header or top bar (`Button.chrome`) holds a role only
@@ -1863,6 +1870,13 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
             # lands in one
             fact_key, pf.fact_key = None, None
             pf.action = PASSWORD_ACTION
+        elif fact_key and not asks_own_question(fact_key, f.label, f.help):
+            # the fact answers another question than the field's (cycle 18,
+            # SP6c): no value from it, so a required field parks and an
+            # optional one stays blank
+            log.debug("field %d %r: %s does not answer its question; no value",
+                      f.n, f.label, fact_key)
+            fact_key, pf.fact_key = None, None
         elif fact_key == "needs_generation":
             pf.action = "generate" if generation_enabled else "skip"
         elif fact_key == "consent_attest":
@@ -1934,7 +1948,8 @@ def option_questions(digest: FormDigest, fill_plan: FillPlan,
     """Option picks (`field_{n}_pick`) for every field with options whose fact
     the model chose (quick_map did not know it), with the fact's answer in the
     instruction (`candidate_answer`: every yes / no fact of `catalog` for
-    one of them). A pick code settles (`code_pick`) is never asked. Empty
+    one of them). A pick code settles (`code_pick`) is never asked, nor one
+    for a fact whose own question the field does not ask. Empty
     when there is nothing to ask; merge the answers over the first
     request's and call `plan` again."""
     by_n = {f.n: f for f in digest.fields}
@@ -1946,7 +1961,8 @@ def option_questions(digest: FormDigest, fill_plan: FillPlan,
             continue
         if pf.fact_key in SPECIAL_SOURCES or pf.quick:
             continue
-        if code_pick(pf.value, f.options) is not None:
+        if code_pick(pf.value, f.options) is not None \
+                or not asks_own_question(pf.fact_key, f.label, f.help):
             continue
         i = len(state["fields"])
         state["fields"].append(_compact_field(f))
@@ -1975,7 +1991,8 @@ def reask_targets(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str
     `leave_blank` too: an unsure "nothing fits" is no answer), or a
     `consent_attest` tick under its floor (`consent_floor`); a field `quick_map`
     settles is never one. With "pick": its fact is known and has a value,
-    the field has options and its pick is missing or under
+    the field asks the fact's own question (`asks_own_question`), has options
+    and its pick is missing or under
     `OPTION_MIN_CONF`. A confident `leave_blank` or a confident `no_match` is
     the data's own answer: that field parks as it did. A consent tick's
     second look stands alone against its floor (review I1)."""
@@ -2000,7 +2017,8 @@ def reask_targets(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str
                 out.append(f.n)
             continue
         if not (f.options and pf.fact_key and pf.fact_key not in SPECIAL_SOURCES
-                and catalog.has(pf.fact_key)):
+                and catalog.has(pf.fact_key)
+                and asks_own_question(pf.fact_key, f.label, f.help)):
             continue
         opt, oconf = _choice_of(answers, _pick_qid(pf))
         if opt is None or (opt != "no_match" and oconf < OPTION_MIN_CONF):

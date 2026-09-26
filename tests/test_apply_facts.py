@@ -569,3 +569,85 @@ def test_a_degree_under_way_gives_no_graduation_year_but_its_expected_one(tmp_pa
     cat = apply_facts.build(tmp_path, answers=_bank())
     assert cat.value("education_grad_year") == year
     assert cat.value("education_school") == "State University"
+
+
+# --- cycle 18 SP6c: the derived yes / no facts ----------------------------------------------
+
+def _yes_no_bank(**states):
+    """The standard answers with each named yes / no answer set to "Yes" or
+    "No", taken out ("unset") or kept but unconfirmed ("unconfirmed")."""
+    answers = {k: ("" if v == "unset" else "Yes" if v == "unconfirmed" else v)
+               for k, v in states.items()}
+    return unconfirmed(standard_bank(**answers),
+                       *(k for k, v in states.items() if v == "unconfirmed"))
+
+
+@pytest.mark.parametrize("auth, sponsor, want", [
+    ("Yes", "No", "Yes"),
+    ("Yes", "Yes", "No"),
+    ("No", "No", "No"),
+    ("No", "Yes", "No"),
+    ("Yes", "unset", ""),
+    ("unset", "No", ""),
+    ("No", "unset", ""),
+    ("unset", "Yes", ""),
+    ("Yes", "unconfirmed", ""),
+    ("unconfirmed", "No", ""),
+    ("No", "unconfirmed", ""),
+    ("unset", "unset", ""),
+])
+def test_authorized_without_sponsorship_is_derived_from_both_confirmed_answers(
+        tmp_path, auth, sponsor, want):
+    cat = apply_facts.build(tmp_path, answers=_yes_no_bank(work_authorized=auth,
+                                                           requires_sponsorship=sponsor))
+    assert cat.value("authorized_without_sponsorship") == want
+    assert ("authorized_without_sponsorship" in cat.to_criteria()) is bool(want)
+    assert cat.facts["authorized_without_sponsorship"].kind == "bool"
+
+
+@pytest.mark.parametrize("onsite, want", [
+    ("Yes", "No"), ("No", "Yes"), ("unset", ""), ("unconfirmed", "")])
+def test_remote_only_is_the_inverse_of_a_confirmed_onsite_answer(tmp_path, onsite, want):
+    cat = apply_facts.build(tmp_path, answers=_yes_no_bank(onsite_ok=onsite))
+    assert cat.value("remote_only") == want
+    assert ("remote_only" in cat.to_criteria()) is bool(want)
+    assert cat.facts["remote_only"].kind == "bool"
+
+
+def test_the_derived_facts_are_yes_no_facts_the_store_never_holds():
+    d = apply_facts.DESCRIPTIONS
+    for key in apply_facts.DERIVED_YES_NO:
+        assert key in d and key in apply_facts.YES_NO_KEYS, key
+        assert apply_facts._KIND_BY_KEY[key] == "bool", key
+        # never stored or edited: no store id, no named bank id
+        assert key not in apply_answers.BUILTINS and key not in apply_answers.BOOL_IDS, key
+        assert key not in apply_facts._NAMED_BANK_IDS, key
+    # the judge reads their own questions in their descriptions
+    assert "without" in d["authorized_without_sponsorship"]
+    assert "only" in d["remote_only"]
+    # the store's yes / no answers come first, in the judge's order
+    assert apply_facts.YES_NO_KEYS == ("work_authorized", "requires_sponsorship",
+                                       "willing_to_relocate", "onsite_ok",
+                                       "authorized_without_sponsorship", "remote_only")
+
+
+def test_a_custom_answer_with_a_derived_id_stays_a_custom_fact(tmp_path):
+    bank = standard_bank(onsite_ok="Yes") + [
+        custom("remote_only", "Remote only?", "Yes")]
+    cat = apply_facts.build(tmp_path, answers=bank)
+    assert cat.value("remote_only") == "No"
+    assert cat.value("answer_remote_only") == "Yes"
+
+
+@pytest.mark.parametrize("label, expected", [
+    ("Years of experience", "years_experience"),
+    ("Years of Python experience", None),
+    ("How many years of experience do you have with Python?", None),
+])
+def test_quick_map_leaves_a_label_that_fails_the_own_question_gate_to_the_judge(
+        monkeypatch, label, expected):
+    # no quick_map phrase names a yes / no or years fact today; one that did
+    # would still hand the judge a label its fact does not answer
+    monkeypatch.setattr(apply_facts, "_QUICK", apply_facts._QUICK + (
+        (("years",), "years_experience", apply_facts._NOT_FILE),))
+    assert apply_facts.quick_map(label, "", "number") == expected

@@ -64,6 +64,10 @@ DESCRIPTIONS: dict[str, str] = {
     "willing_to_relocate": "Whether the candidate is willing to relocate to the job's location",
     "onsite_ok": "Whether the candidate is willing to work on-site in the employer's office, "
                  "in person",
+    # derived from the store's yes / no answers (`DERIVED_YES_NO`)
+    "authorized_without_sponsorship": "Whether the candidate can take a job without employer "
+                                      "sponsorship, now and in the future",
+    "remote_only": "Whether the candidate is looking for fully remote work only",
     "gender": "The candidate's gender, for EEO self-identification",
     "race_ethnicity": "The candidate's race or ethnicity, for EEO self-identification",
     "veteran_status": "The candidate's veteran status, for EEO self-identification",
@@ -86,11 +90,19 @@ DESCRIPTIONS: dict[str, str] = {
 # lists equal). Their facts are `bool`.
 _BOOL_BANK_IDS = frozenset(("work_authorized", "requires_sponsorship", "willing_to_relocate",
                             "onsite_ok"))
-# the same facts in the order the judge reads them (`DESCRIPTIONS`)
-YES_NO_KEYS: tuple[str, ...] = tuple(k for k in DESCRIPTIONS if k in _BOOL_BANK_IDS)
+# Yes / no facts the run works out from the store's confirmed answers
+# (cycle 18, SP6c), for the questions whose polarity or scope the stored ones
+# do not answer ("authorized to work without sponsorship", "remote only").
+# Never stored or edited; unset while an input is unset or unconfirmed.
+DERIVED_YES_NO: tuple[str, ...] = ("authorized_without_sponsorship", "remote_only")
+# every yes / no fact, in the order the judge reads them (`DESCRIPTIONS`), and
+# the store's own among them
+YES_NO_KEYS: tuple[str, ...] = tuple(k for k in DESCRIPTIONS
+                                     if k in _BOOL_BANK_IDS or k in DERIVED_YES_NO)
+STORED_YES_NO_KEYS: tuple[str, ...] = tuple(k for k in YES_NO_KEYS if k in _BOOL_BANK_IDS)
 
 _KIND_BY_KEY: dict[str, str] = {
-    **dict.fromkeys(_BOOL_BANK_IDS, "bool"),
+    **dict.fromkeys(YES_NO_KEYS, "bool"),
     "gender": "choice_text", "race_ethnicity": "choice_text", "veteran_status": "choice_text",
     "disability_status": "choice_text", "how_did_you_hear": "choice_text",
     "address_state": "choice_text", "address_country": "choice_text",
@@ -250,6 +262,8 @@ def build(folder: Path, *, answers: list[dict] | None = None,
                                      description=question or eid.replace("_", " "),
                                      kind="text"))
 
+    values.update(_derived(values))
+
     sections = _h2_sections(text)
     values.update(_education(sections.get("education", "")))
     values.update(_current_job(sections.get("work experience", "")))
@@ -263,6 +277,28 @@ def build(folder: Path, *, answers: list[dict] | None = None,
                   kind=_KIND_BY_KEY.get(k, "text"))
              for k, desc in DESCRIPTIONS.items()]
     return FactCatalog(facts + answer_facts, sheet_text=text, answers=bank)
+
+
+def _yes(value: str) -> bool | None:
+    """A stored yes / no answer as True / False; None when it is unset."""
+    v = (value or "").strip().lower()
+    return True if v == "yes" else False if v == "no" else None
+
+
+def _derived(values: dict[str, str]) -> dict[str, str]:
+    """`DERIVED_YES_NO` from the confirmed answers in `values` ("" when an
+    input is unset or unconfirmed). `authorized_without_sponsorship` is Yes
+    for authorized and no sponsorship, else No; `remote_only` is the inverse
+    of `onsite_ok`."""
+    auth, sponsor = _yes(values.get("work_authorized", "")), \
+        _yes(values.get("requires_sponsorship", ""))
+    onsite = _yes(values.get("onsite_ok", ""))
+    return {
+        "authorized_without_sponsorship": (
+            "" if auth is None or sponsor is None
+            else "Yes" if auth and not sponsor else "No"),
+        "remote_only": "" if onsite is None else "No" if onsite else "Yes",
+    }
 
 
 def _strip_nested_address(candidate_section: str) -> str:
@@ -432,6 +468,14 @@ def _contains(tokens: tuple[str, ...], phrase: tuple[str, ...]) -> bool:
 
 
 def quick_map(label: str, id_or_name: str, type_: str) -> str | None:
+    """`_quick_key`, and None for a label its fact does not answer
+    (`asks_own_question`, cycle 18 SP6c): the judge maps that one, to a
+    derived fact when one answers it."""
+    key = _quick_key(label, id_or_name, type_)
+    return key if key is None or asks_own_question(key, label) else None
+
+
+def _quick_key(label: str, id_or_name: str, type_: str) -> str | None:
     """The fact key for an unmistakable field, else None. Both strings are
     lowercased, non-alphanumerics become spaces, and a phrase has to appear as
     whole tokens (`email` matches "Email address", never "emailing"). `name`
@@ -466,3 +510,155 @@ def quick_map(label: str, id_or_name: str, type_: str) -> str | None:
                 if type_ in types and _contains(tokens, phrase):
                     return key
     return None
+
+
+# --- a fact's own question (cycle 18, SP6c) -------------------------------------------
+
+# Code fills or settles a yes / no or number fact only when the field asks that
+# fact's own question. A saved "Yes" to "authorized to work?" is no answer to
+# "authorized to work without sponsorship?", and total years are no answer to
+# "years of Python". One table per fact: the subject the question must name,
+# and the scope or polarity words that make it another question unless the
+# fact's own question uses them.
+
+@dataclass(frozen=True)
+class _OwnQuestion:
+    topic: re.Pattern                        # the subject the question names
+    own: frozenset[str] = frozenset()        # `_SCOPE` words its own question uses
+    scope: tuple[re.Pattern, ...] = ()       # its scope words beside `_SCOPE`
+    skills: bool = False                     # a named skill or field narrows it (years)
+
+
+# every fact's scope and polarity words, by name
+_SCOPE: dict[str, re.Pattern] = {name: re.compile(p) for name, p in (
+    ("without", r"\bwithout\b"),
+    ("only", r"\bonly\b"),
+    ("transfer", r"\btransfer"),
+    ("other than", r"\bother than\b"),
+    ("except", r"\bexcept"),
+    ("never", r"\bnever\b"),
+    ("not", r"\bnot\b|n't\b"),
+    ("no longer", r"\bno longer\b"),
+    ("ever", r"\bever\b"),
+)}
+# a visa type named outside an example, or a visa the candidate holds now
+_VISA = re.compile(r"\b(?:h-?1b?|h-?4|l-?1[ab]?|o-?1[ab]?|e-?3|f-?1|j-?1|tn|opt|cpt|ead)\b"
+                   r"|\bcurrently sponsored\b|\bcurrent visa\b"
+                   r"|\bcurrently (?:on|hold|holding|have|in)\b[^.?!]*\bvisa\b")
+_SPONSOR = re.compile(r"sponsor")
+# sponsorship now only: "currently" with no word of the future
+_NOW_ONLY = re.compile(r"(?s)^(?!.*\bfuture\b).*\bcurrent(?:ly)?\b")
+
+OWN_QUESTIONS: dict[str, _OwnQuestion] = {
+    "work_authorized": _OwnQuestion(
+        re.compile(r"authori[sz]|eligib|\blegal(?:ly)?\b|\bright to work\b"
+                   r"|\b(?:permitted|allowed) to\b|\bwork permit\b"),
+        scope=(_VISA, _SPONSOR)),
+    "requires_sponsorship": _OwnQuestion(_SPONSOR, scope=(_VISA, _NOW_ONLY)),
+    "authorized_without_sponsorship": _OwnQuestion(
+        re.compile(r"\bwithout\b[^.?!]*\bsponsor"), own=frozenset({"without"}),
+        scope=(_VISA,)),
+    "willing_to_relocate": _OwnQuestion(re.compile(r"relocat|\bmov(?:e|ing) (?:to|for)\b")),
+    "onsite_ok": _OwnQuestion(
+        re.compile(r"\bon[- ]?site\b|\bin[- ]person\b|\boffice\b|\bhybrid\b")),
+    "remote_only": _OwnQuestion(
+        re.compile(r"\bremote(?:ly)?\b[^.?!]*\bonly\b|\bonly\b[^.?!]*\bremote"),
+        own=frozenset({"only"})),
+    "years_experience": _OwnQuestion(
+        re.compile(r"(?s)^(?=.*\b(?:years?|yrs?)\b).*\bexperience\b"), skills=True),
+}
+OWN_QUESTION_KEYS = frozenset(OWN_QUESTIONS)
+
+_ABBREV = re.compile(r"\b(?:[a-z]\.){2,}")              # u.s. -> us, e.g. -> eg
+# an example is no scope: "(e.g., H-1B visa status)", "such as an H-1B"
+_EXAMPLE = re.compile(r"\((?:eg|for example|for instance|such as|including|like)\b[^)]*\)"
+                      r"|\b(?:eg|for example|for instance|such as|including)\b[^.?!;()]*")
+_SENTENCE = re.compile(r"(?<=[.?!])\s+|\n+")
+_WORD = re.compile(r"[a-z0-9]+")
+_YEARS = frozenset(("year", "years", "yr", "yrs"))
+# the qualifiers "years of ... experience" may carry and still ask the total
+_GENERIC_EXPERIENCE = frozenset((
+    "relevant", "professional", "work", "working", "total", "overall", "industry", "related",
+    "full", "time", "fulltime", "paid", "practical", "hands", "prior", "previous", "field",
+    "job", "employment", "career", "combined", "role", "position", "experience", *_YEARS))
+_FILLER = frozenset((
+    "a", "an", "the", "this", "that", "your", "our", "of", "you", "do", "does", "have", "has",
+    "had", "how", "many", "much", "what", "is", "are", "at", "least", "more", "or", "than",
+    "and", "plus", "minimum", "please", "enter", "number", "approximately", "about", "in",
+    "on"))
+_OBJECT_OF = frozenset(("with", "in", "using", "at", "as", "on", "for", "within"))
+
+
+def _question_text(label: str, help_text: str) -> str:
+    """The label and help, lowercased, with abbreviations joined ("U.S."
+    reads "us", so a sentence never ends inside one) and examples dropped."""
+    text = f"{label or ''}\n{help_text or ''}".lower().replace(chr(0x2019), "'")
+    text = _ABBREV.sub(lambda m: m.group(0).replace(".", ""), text)
+    return _EXAMPLE.sub(" ", text)
+
+
+def _narrowed(words: list[str]) -> bool:
+    return any(w not in _GENERIC_EXPERIENCE and w not in _FILLER and not w.isdigit()
+               for w in words)
+
+
+def _names_a_skill(text: str) -> bool:
+    """Does a years question name a skill, tool, language or field ("years
+    of Python experience", "experience with React", "in a similar role")?
+    Generic qualifiers (relevant, professional, total, industry, ...) do
+    not."""
+    for sentence in _SENTENCE.split(text):
+        words = _WORD.findall(sentence)
+        if "experience" not in words or not _YEARS & set(words):
+            continue
+        for i, w in enumerate(words):
+            if w != "experience":
+                continue
+            before = words[:i]
+            years = [j for j, b in enumerate(before) if b in _YEARS]
+            if years:
+                qualifiers = before[years[-1] + 1:]
+            else:
+                qualifiers = []
+                for b in reversed(before):
+                    if b in _FILLER:
+                        break
+                    qualifiers.append(b)
+            after = words[i + 1:]
+            at = next((j for j, a in enumerate(after) if a in _OBJECT_OF), None)
+            if _narrowed(qualifiers) or (at is not None and _narrowed(after[at + 1:])):
+                return True
+    return False
+
+
+def asks_own_question(fact_key: str | None, label: str, help_text: str = "") -> bool:
+    """Does a field with this label and help ask `fact_key`'s own question
+    (`OWN_QUESTIONS`)? A fact with no table always does.
+
+    The question sentences (those holding "?") that name the fact's subject
+    are read; with none, a question sentence on another fact's subject says
+    no ("This role is on-site. Are you willing to relocate?" is no on-site
+    question), and else the whole text is read. The text read must name the
+    subject and carry no scope or polarity word the fact's own question does
+    not use (`_SCOPE`, and its own list: a visa type or a visa held now for
+    the work facts, "currently" with no future for sponsorship), and a years
+    question must name no skill (`_names_a_skill`). An example ("e.g.
+    H-1B") is no scope."""
+    spec = OWN_QUESTIONS.get(fact_key or "")
+    if spec is None:
+        return True
+    text = _question_text(label, help_text)
+    questions = [s for s in _SENTENCE.split(text) if "?" in s]
+    own = [s for s in questions if spec.topic.search(s)]
+    if own:
+        text = " ".join(own)
+    elif any(other.topic.search(s) for key, other in OWN_QUESTIONS.items()
+             if key != fact_key for s in questions):
+        return False
+    elif not spec.topic.search(text):
+        return False
+    if any(p.search(text) for name, p in _SCOPE.items() if name not in spec.own):
+        return False
+    if any(p.search(text) for p in spec.scope):
+        return False
+    return not (spec.skills and _names_a_skill(text))

@@ -192,7 +192,7 @@
         "No"
       ],
       "required": true,
-      "expected_fact": "requires_sponsorship",
+      "expected_fact": "authorized_without_sponsorship",
       "expect": {
         "citizen": "Yes",
         "sponsor": "No"
@@ -611,7 +611,7 @@
         "No"
       ],
       "required": true,
-      "expected_fact": "onsite_ok",
+      "expected_fact": "remote_only",
       "expect": {
         "citizen": "No",
         "sponsor": "No"

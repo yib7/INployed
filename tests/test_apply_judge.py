@@ -1373,6 +1373,14 @@ def test_the_pick_for_a_yes_no_fact_carries_every_yes_no_fact_the_catalog_holds(
     assert apply_judge.candidate_answer(catalog, "requires_sponsorship", "No") == "\n".join([
         f"{d['requires_sponsorship']}: No", f"{d['work_authorized']}: Yes",
         f"{d['willing_to_relocate']}: Yes", f"{d['onsite_ok']}: Yes"])
+    # a derived fact (cycle 18, SP6c) leads its own pick over the stored
+    # lines and adds no line to another's: the stored lines already say it
+    assert catalog.value("authorized_without_sponsorship") == "Yes"
+    assert apply_judge.candidate_answer(
+        catalog, "authorized_without_sponsorship", "Yes") == "\n".join([
+            f"{d['authorized_without_sponsorship']}: Yes", f"{d['work_authorized']}: Yes",
+            f"{d['requires_sponsorship']}: No", f"{d['willing_to_relocate']}: Yes",
+            f"{d['onsite_ok']}: Yes"])
     # any other fact's pick carries its value alone
     assert apply_judge.candidate_answer(catalog, "gender", "Decline to self-identify") == \
         "Decline to self-identify"
@@ -1472,3 +1480,285 @@ def test_a_number_box_whose_answer_is_no_plain_number_is_left_blank(value, actio
 ])
 def test_declines_reads_a_refusal_and_never_a_statement(text, declined):
     assert apply_judge.declines(text) is declined
+
+
+# --- cycle 18 SP6c: code settles an answer only for its own question ------------------------
+
+_OWN_QUESTIONS = [
+    # work_authorized: the plain forms (the screening set's, the fixtures', the brief's)
+    ("work_authorized", "Are you legally authorized to work in the United States?", True),
+    ("work_authorized", "Are you authorized to work in the US?", True),
+    ("work_authorized", "Are you authorized to work in the US? *", True),
+    ("work_authorized", "Are you currently authorized to work in the United States?", True),
+    ("work_authorized", "Are you legally eligible to work in the U.S.?", True),
+    ("work_authorized", "Will you be legally able to work in the United States on your start "
+                        "date?", True),
+    ("work_authorized", "I am legally authorized to work in the United States.", True),
+    ("work_authorized", "Do you have the legal right to work in the United States?", True),
+    ("work_authorized", "What is your current work authorization status in the U.S.?", True),
+    ("work_authorized", "Are you legally allowed to take up employment in the United States?",
+     True),
+    ("work_authorized", "Are you legally authorized to work in the United States? (If not, "
+                        "please explain.)", True),
+    # another question: a scope or polarity word, a visa type, sponsorship, no topic
+    ("work_authorized", "Are you able to work in the U.S. without employer sponsorship, now "
+                        "and in the future?", False),
+    ("work_authorized", "Are you authorized to work in the United States without "
+                        "sponsorship?", False),
+    ("work_authorized", "Are you authorized to work in the United States on an H-1B visa?",
+     False),
+    ("work_authorized", "Are you authorized to work in any country other than the United "
+                        "States?", False),
+    ("work_authorized", "Are you no longer authorized to work in the US?", False),
+    ("work_authorized", "Have you ever been authorized to work in the US on a visa?", False),
+    ("work_authorized", "Will you require visa sponsorship to legally work in the US?", False),
+    ("work_authorized", "Are you a U.S. citizen?", False),
+    ("work_authorized", "Are you currently on F-1 OPT or STEM OPT?", False),
+    ("work_authorized", "Are you willing to work on-site?", False),
+    # requires_sponsorship: the plain forms, a visa type named as an example
+    ("requires_sponsorship", "Will you now or in the future require sponsorship for employment "
+                             "visa status (e.g., H-1B visa status)?", True),
+    ("requires_sponsorship", "Do you require visa sponsorship?", True),
+    ("requires_sponsorship", "Will you need the company to sponsor an employment-based visa "
+                             "(such as an H-1B) for you?", True),
+    ("requires_sponsorship", "Will you require sponsorship in the future to continue working "
+                             "in the United States?", True),
+    ("requires_sponsorship", "Do you require sponsorship (e.g., H-1B, TN, O-1) to work for "
+                             "us?", True),
+    ("requires_sponsorship", "Will you now or in the future require sponsorship? *", True),
+    ("requires_sponsorship", "Will you now or in the future require visa sponsorship?", True),
+    ("requires_sponsorship", "Do you require sponsorship to work in the US?", True),
+    ("requires_sponsorship", "Will you now, or in the future, require sponsorship for "
+                             "employment visa status?", True),
+    ("requires_sponsorship", "Do you currently or will you in the future require visa "
+                             "sponsorship?", True),
+    ("requires_sponsorship", "Will you require visa sponsorship to legally work in the US?",
+     True),
+    # another question: the inverse, now only, a visa held, a named visa type
+    ("requires_sponsorship", "Are you able to work in the U.S. without employer sponsorship, "
+                             "now and in the future?", False),
+    ("requires_sponsorship", "Do you currently require visa sponsorship to work in the U.S.?",
+     False),
+    ("requires_sponsorship", "Are you currently sponsored by an employer?", False),
+    ("requires_sponsorship", "Is your current visa sponsored by your employer?", False),
+    ("requires_sponsorship", "Do you currently hold an H-1B visa that would need to be "
+                             "transferred?", False),
+    ("requires_sponsorship", "Will you require H-1B sponsorship?", False),
+    ("requires_sponsorship", "I will require H-1B visa sponsorship now or in the future.",
+     False),
+    ("requires_sponsorship", "Will you require sponsorship for a visa other than a TN?", False),
+    ("requires_sponsorship", "Will you never require sponsorship?", False),
+    ("requires_sponsorship", "Have you ever been sponsored for a work visa?", False),
+    ("requires_sponsorship", "Do you no longer require sponsorship?", False),
+    ("requires_sponsorship", "Will you require a sponsorship transfer?", False),
+    ("requires_sponsorship", "Are you willing to relocate?", False),
+    # authorized_without_sponsorship (derived): its own question says without
+    ("authorized_without_sponsorship", "Are you able to work in the U.S. without employer "
+                                       "sponsorship, now and in the future?", True),
+    ("authorized_without_sponsorship", "Are you authorized to work in the United States "
+                                       "without sponsorship?", True),
+    ("authorized_without_sponsorship", "Can you work in the US without requiring visa "
+                                       "sponsorship now or in the future?", True),
+    ("authorized_without_sponsorship", "Are you authorized to work in the United States?",
+     False),
+    ("authorized_without_sponsorship", "Do you require visa sponsorship?", False),
+    ("authorized_without_sponsorship", "Are you authorized to work without sponsorship while "
+                                       "on OPT?", False),
+    ("authorized_without_sponsorship", "Can you work in the US without an H-1B sponsorship "
+                                       "transfer?", False),
+    # willing_to_relocate
+    ("willing_to_relocate", "Are you willing to relocate?", True),
+    ("willing_to_relocate", "Would you be open to relocating for this role?", True),
+    ("willing_to_relocate", "Are you willing to relocate for this position? Relocation "
+                            "assistance is not provided.", True),
+    ("willing_to_relocate", "I am willing to relocate to the job's location.", True),
+    ("willing_to_relocate", "Are you willing to relocate to the job location (New York)?",
+     True),
+    ("willing_to_relocate", "Open to relocation", True),
+    ("willing_to_relocate", "This role is on-site in our San Francisco office. Are you willing "
+                            "to relocate?", True),
+    ("willing_to_relocate", "Are you willing to relocate only within California?", False),
+    ("willing_to_relocate", "Are you willing to relocate without relocation assistance?",
+     False),
+    ("willing_to_relocate", "Are you not willing to relocate?", False),
+    ("willing_to_relocate", "Have you ever relocated for a job?", False),
+    ("willing_to_relocate", "Are you willing to travel up to 25% of the time?", False),
+    ("willing_to_relocate", "Are you willing to undergo a background check?", False),
+    ("willing_to_relocate", "Are you willing to work on-site?", False),
+    # onsite_ok
+    ("onsite_ok", "Are you willing to work on-site?", True),
+    ("onsite_ok", "Are you willing to work on-site (in the office)?", True),
+    ("onsite_ok", "Are you able to work in the office 3 days a week?", True),
+    ("onsite_ok", "Are you able to work on-site / in the office (3 days a week)?", True),
+    ("onsite_ok", "Are you able to work in person at our office five days a week?", True),
+    ("onsite_ok", "This role requires working in the office 3 days a week. Are you "
+                  "comfortable with this?", True),
+    ("onsite_ok", "I understand this position is fully on-site and I am able to work in the "
+                  "office.", True),
+    ("onsite_ok", "Our team works from the office. Which describes you?", True),
+    ("onsite_ok", "Are you comfortable with a hybrid schedule?", True),
+    ("onsite_ok", "Are you looking for a fully remote position only?", False),
+    ("onsite_ok", "What is your preferred work arrangement?", False),
+    ("onsite_ok", "This role is on-site in our San Francisco office. Are you willing to "
+                  "relocate?", False),
+    ("onsite_ok", "Are you able to work on-site without accommodation?", False),
+    ("onsite_ok", "Have you ever worked in an office?", False),
+    ("onsite_ok", "What is your current work authorization status in the U.S.?", False),
+    # remote_only (derived): its own question says only
+    ("remote_only", "Are you looking for a fully remote position only?", True),
+    ("remote_only", "Are you only open to remote work?", True),
+    ("remote_only", "Are you seeking remote-only roles?", True),
+    ("remote_only", "Are you open to remote work?", False),
+    ("remote_only", "Are you willing to work on-site?", False),
+    ("remote_only", "What is your preferred work arrangement?", False),
+    # years_experience: generic qualifiers pass, a named skill, tool or field does not
+    ("years_experience", "How many years of professional experience do you have?", True),
+    ("years_experience", "How many years of relevant experience do you have?", True),
+    ("years_experience", "Years of relevant work experience", True),
+    ("years_experience", "How many years of experience do you have in total?", True),
+    ("years_experience", "Do you have at least 2 years of professional work experience?", True),
+    ("years_experience", "Years of experience", True),
+    ("years_experience", "Years of Experience *", True),
+    ("years_experience", "Total years of experience", True),
+    ("years_experience", "How many years of full-time experience do you have?", True),
+    ("years_experience", "Years of industry experience", True),
+    ("years_experience", "How many years of relevant experience do you have in this field?",
+     True),
+    ("years_experience", "How much experience (in years) do you have?", True),
+    ("years_experience", "How many years of experience do you have with Python?", False),
+    ("years_experience", "Years of Python experience", False),
+    ("years_experience", "Years of Python experience?", False),
+    ("years_experience", "Python experience (years)", False),
+    ("years_experience", "How many years of experience do you have working with React?", False),
+    ("years_experience", "How many years of experience do you have in software engineering?",
+     False),
+    ("years_experience", "Do you have 3 or more years of experience in a similar role?", False),
+    ("years_experience", "Years of experience, not counting internships", False),
+    ("years_experience", "Years with SQL", False),
+    ("years_experience", "Years in the role", False),
+    ("years_experience", "Are you at least 18 years of age?", False),
+    ("years_experience", "Do you have experience with Python?", False),
+]
+
+
+@pytest.mark.parametrize("key, label, own", _OWN_QUESTIONS)
+def test_asks_own_question_reads_the_facts_own_question_and_no_other(key, label, own):
+    assert apply_judge.asks_own_question(key, label) is own
+
+
+def test_asks_own_question_reads_the_help_text_and_passes_any_other_fact():
+    assert apply_judge.asks_own_question(
+        "work_authorized", "Work authorization",
+        "Are you authorized to work in the US without sponsorship?") is False
+    assert apply_judge.asks_own_question(
+        "authorized_without_sponsorship", "Work authorization",
+        "Are you authorized to work in the US without sponsorship?") is True
+    # a fact with no own-question table (a name, an EEO answer) is never refused
+    assert apply_judge.asks_own_question("email", "Referrer email only") is True
+    assert apply_judge.asks_own_question("gender", "Gender") is True
+    # every yes / no fact has its table, and so do the years
+    assert set(apply_facts.YES_NO_KEYS) | {"years_experience"} == set(
+        apply_facts.OWN_QUESTION_KEYS)
+
+
+_WITHOUT = "Are you authorized to work in the United States without sponsorship?"
+_REMOTE_ONLY = "Are you looking for a fully remote position only?"
+
+
+def _profile_catalog(tmp_path, **answers):
+    """A catalog over the standard answers with `answers` in place (the
+    screening profiles' shape: every answer confirmed)."""
+    return apply_facts.build(tmp_path, answers=standard_bank(**answers),
+                             today=date(2026, 9, 21))
+
+
+def _one_field(label, type_="radio", required=True, options=("Yes", "No")):
+    return FormDigest(url_host="x", title="t", text="", fields=[
+        _f(0, label, type_, required=required, options=options)])
+
+
+@pytest.mark.parametrize("required", [True, False])
+@pytest.mark.parametrize("label, key, answers", [
+    # the sponsor profile: authorized Yes, needs sponsorship; a Yes here says otherwise
+    (_WITHOUT, "work_authorized", {"requires_sponsorship": "Yes"}),
+    # the citizen: needs no sponsorship; a No here reads as not authorized
+    (_WITHOUT, "requires_sponsorship", {}),
+    # willing to work on-site; a Yes here says remote only
+    (_REMOTE_ONLY, "onsite_ok", {}),
+])
+def test_a_yes_no_list_mapped_to_a_fact_that_answers_another_question_gets_no_value(
+        tmp_path, required, label, key, answers):
+    cat = _profile_catalog(tmp_path, **answers)
+    digest = _one_field(label, required=required)
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: (key, 1.0)},
+                                                    options={0: ("Yes", 1.0)}))
+    pf = p.fields[0]
+    assert (pf.action, pf.option, pf.value, pf.fact_key) == ("skip", None, "", None)
+    assert [m[0] for m in p.missing] == [label]
+    assert p.park_reason == (f"required field without an answer: {label}" if required else "")
+    # nothing is asked of the judge for it: no pick, no second look at a pick
+    assert apply_judge.option_questions(digest, p, catalog=cat)[1] == {}
+    assert apply_judge.reask_targets(digest, cat, {}, p, what="pick") == []
+
+
+@pytest.mark.parametrize("label, key, answers, option", [
+    (_WITHOUT, "authorized_without_sponsorship", {}, "Yes"),
+    (_WITHOUT, "authorized_without_sponsorship", {"requires_sponsorship": "Yes"}, "No"),
+    (_WITHOUT, "authorized_without_sponsorship", {"work_authorized": "No"}, "No"),
+    (_REMOTE_ONLY, "remote_only", {}, "No"),
+    (_REMOTE_ONLY, "remote_only", {"onsite_ok": "No"}, "Yes"),
+])
+def test_the_derived_fact_settles_its_own_question_for_either_profile(tmp_path, label, key,
+                                                                      answers, option):
+    cat = _profile_catalog(tmp_path, **answers)
+    digest = _one_field(label)
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: (key, 1.0)}))
+    pf = p.fields[0]
+    assert (pf.action, pf.option, pf.fact_key) == ("select", option, key)
+    assert p.park_reason == ""
+
+
+@pytest.mark.parametrize("required", [True, False])
+@pytest.mark.parametrize("label, action", [
+    ("Years of Python experience", "skip"),
+    ("How many years of experience do you have with Python?", "skip"),
+    ("Years of experience", "fill"),
+    ("How many years of relevant experience do you have?", "fill"),
+])
+def test_a_number_box_takes_the_total_years_only_for_the_total_years_question(
+        tmp_path, required, label, action):
+    cat = _profile_catalog(tmp_path)
+    digest = _one_field(label, "number", required=required, options=())
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("years_experience", 1.0)}))
+    pf = p.fields[0]
+    assert pf.action == action
+    if action == "fill":
+        assert pf.value == "2" and p.park_reason == ""
+    else:
+        assert (pf.value, pf.fact_key) == ("", None)
+        assert [m[0] for m in p.missing] == [label]
+        assert p.park_reason == (f"required field without an answer: {label}" if required
+                                 else "")
+
+
+def test_a_worded_list_whose_question_is_another_facts_asks_the_judge_nothing(tmp_path):
+    # the judge's pick never overrides the gate: a qualified list mapped to
+    # work_authorized under a without-sponsorship question is no pick question
+    cat = _profile_catalog(tmp_path, requires_sponsorship="Yes")
+    options = ("Yes, I am authorized and do not require sponsorship", "No")
+    digest = _one_field(_WITHOUT, options=options)
+    answers = _page_answers(digest, {0: ("work_authorized", 1.0)}, options={0: (options[0], 1.0)})
+    p = apply_judge.plan(digest, cat, answers)
+    assert (p.fields[0].action, p.fields[0].option) == ("skip", None)
+    # a plan made by hand with the mapping kept still asks nothing and re-asks nothing
+    kept = apply_judge.FillPlan(fields=[apply_judge.PlannedField(
+        n=0, locator=(0, "#f0"), label=_WITHOUT, required=True, fact_key="work_authorized",
+        value="Yes", option=None, confidence=1.0, action="skip", options=list(options))])
+    assert apply_judge.option_questions(digest, kept, catalog=cat)[1] == {}
+    assert apply_judge.reask_targets(digest, cat, {}, kept, what="pick") == []
+    # its own question is asked as before
+    own = _one_field("Are you legally authorized to work in the United States?",
+                     options=options)
+    kept.fields[0].label = own.fields[0].label
+    assert list(apply_judge.option_questions(own, kept, catalog=cat)[1]) == ["field_0_pick"]
+    assert apply_judge.reask_targets(own, cat, {}, kept, what="pick") == [0]

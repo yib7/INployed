@@ -56,9 +56,14 @@ SEEDS = (1, 2, 3, 4, 5)
 
 # Share of non-null expectations picked correctly, at the rate the final run
 # measured (66 questions, 103 non-null expectations over both profiles),
-# rounded down to two places.
-FAKE_PICK_FLOOR = 0.61                                        # 63 of 103
-NOISY_PICK_FLOOR = {1: 0.60, 2: 0.60, 3: 0.60, 4: 0.61, 5: 0.59}  # 62 62 62 63 61
+# rounded down to two places. Cycle 18 SP6c lowered them from 0.61 and
+# {0.60, 0.60, 0.60, 0.61, 0.59} (63; 62 62 62 63 61): a yes / no or years fact
+# now gives no value to a question it does not answer
+# (`apply_facts.asks_own_question`), which takes away nine picks the fake made
+# right by chance through another question's fact and adds four through the
+# derived facts.
+FAKE_PICK_FLOOR = 0.56                                        # 58 of 103
+NOISY_PICK_FLOOR = {1: 0.55, 2: 0.55, 3: 0.55, 4: 0.56, 5: 0.54}  # 57 57 57 58 56
 # The real judge's floor: None reports the rate and checks nothing. The
 # orchestrator sets it from the recording (TS-3).
 REAL_PICK_FLOOR: float | None = None
@@ -67,25 +72,12 @@ REAL_PICK_FLOOR: float | None = None
 REAL_MISREADS: frozenset[tuple[str, str]] = frozenset()
 
 # (question id, profile) cases the fake picks wrong. The fake answers by word
-# overlap at full confidence, so:
+# overlap at full confidence. Both profiles give it the same words for a
+# worded option (every stored yes or no fact as "DESCRIPTION: Yes/No"), so it
+# picks by option order. A mapping to another question's fact no longer gives
+# a wrong pick: the own-question gate (cycle 18, SP6c) leaves that field
+# without a value.
 FAKE_MISREADS: frozenset[tuple[str, str]] = frozenset({
-    # it maps the question to the fact whose words overlap most, which is
-    # another fact (a Yes / No one is then settled in code)
-    ("auth_status", "sponsor"),              # onsite_ok
-    ("disability_select", "citizen"),        # years_experience
-    ("disability_select", "sponsor"),
-    ("veteran_select", "sponsor"),           # years_experience
-    ("veteran_wording", "citizen"),
-    ("veteran_wording", "sponsor"),
-    ("reloc_contoso", "citizen"),            # onsite_ok
-    ("reloc_contoso", "sponsor"),
-    ("onsite_hybrid", "citizen"),            # requires_sponsorship
-    ("none_background", "citizen"),          # willing_to_relocate
-    ("none_background", "sponsor"),
-    ("none_travel", "citizen"),              # willing_to_relocate
-    ("none_travel", "sponsor"),
-    # both profiles give it the same words for a worded option (every yes or
-    # no fact as "DESCRIPTION: Yes/No"), so it picks by option order
     ("auth_contoso", "sponsor"),
     ("auth_with_without", "citizen"),
     ("auth_with_without_radio", "sponsor"),
@@ -93,16 +85,6 @@ FAKE_MISREADS: frozenset[tuple[str, str]] = frozenset({
     ("spon_now_or_future", "citizen"),
     ("spon_now_or_future", "sponsor"),
     ("reloc_replica", "sponsor"),
-    ("onsite_preference", "citizen"),        # null: the profile states no preference
-    ("onsite_preference", "sponsor"),
-    # the mapped fact answers another question, and code settles the plain
-    # Yes / No from it (a real judge can map these the same way; see the report)
-    ("auth_without_sponsor", "citizen"),     # asks the inverse of requires_sponsorship
-    ("auth_without_sponsor", "sponsor"),
-    ("spon_currently", "sponsor"),           # null: the profile says now or later
-    ("spon_h1b_transfer", "sponsor"),        # null: the profile holds no visa fact
-    ("years_python", "citizen"),             # null: total years stand in for Python years
-    ("years_python", "sponsor"),
 })
 
 

@@ -163,6 +163,17 @@ class FactCatalog:
         f = self.facts.get(key)
         return f.value if f else ""
 
+    def note(self, key: str) -> str:
+        """The user's note on the answer behind `key` (a named answer's id,
+        or a custom answer's `answer_<id>`), spaces collapsed; "" for any
+        other fact or an answer with no note. The first entry with the id
+        counts, as for its value."""
+        eid = key[len("answer_"):] if key.startswith("answer_") else key
+        for e in self._bank:
+            if isinstance(e, dict) and str(e.get("id", "")).strip() == eid:
+                return " ".join(str(e.get("note", "") or "").split())
+        return ""
+
     def custom_type(self, key: str) -> str:
         """The store type of a custom answer's fact (`answer_<id>`): a gated
         type (`GATED_CUSTOM_TYPES`) when any entry with that id has one, else

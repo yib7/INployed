@@ -559,3 +559,75 @@ def test_the_commitment_flow_parks_on_its_box_and_never_ticks_it(_browser, flow_
     # the run parks before it acts: no box is ticked, nothing is sent
     assert not [a for a in r.actions if a.kind in ("tick", "click", "pick")], r.actions
     assert r.sends == 0
+
+
+
+# --- a held-back answer, asked whether it settles a reworded question (2026-09-26) ------------
+
+_NY = """<!doctype html><html><head><title>Apply - Fabrikam</title></head><body>
+<h1>Analytics Engineer</h1>
+<form id="app" onsubmit="event.preventDefault(); document.body.dataset.submitted = 1">
+  <label for="fn">First name *</label><input id="fn" name="first_name" required>
+  <label for="em">Email *</label><input id="em" name="email" type="email" required>
+  <label for="office">Are you willing to work in the office in New York? *</label>
+  <select id="office" name="office" required><option value="">Select</option>
+    <option>Yes</option><option>No</option></select>
+  <button type="submit" id="btn-submit">Submit application</button>
+</form></body></html>"""
+
+
+class SettleWith:
+    """The fake, with the New York question mapped to on-site work and its
+    settle question answered `choice` at `conf`."""
+
+    def __init__(self, inner, choice: str, conf: float):
+        self.inner, self.choice, self.conf = inner, choice, conf
+
+    def judge(self, state, questions):
+        out = dict(self.inner.judge(state, questions))
+        labels = {f"field_{row.get('n')}": row.get("label", "")
+                  for row in state.get("fields") or []}
+        for qid in questions:
+            field = qid.rsplit("_", 1)[0]
+            if "New York" not in labels.get(field, ""):
+                continue
+            if qid.endswith("_source"):
+                out[qid] = jev.Answer(kind="choice", choice="onsite_ok",
+                                      probabilities={"onsite_ok": 0.95}, confidence=0.95)
+            elif qid.endswith("_settle"):
+                rest = round((1 - self.conf) / 2, 4)
+                probs = {"Yes": rest, "No": rest, "not_settled": rest, self.choice: self.conf}
+                out[qid] = jev.Answer(kind="choice", choice=self.choice, probabilities=probs,
+                                      confidence=self.conf)
+        return out
+
+
+def _ny_flow():
+    import dataclasses
+    return dataclasses.replace(h.flow("lever_single_park"), name="ny_office",
+                               start="https://careers.fabrikam.example/apply/42",
+                               routes=lambda base: {"https://careers.fabrikam.example/**": _NY})
+
+
+def _reworded(trace_dir):
+    return [e for e in _events(trace_dir, "decision") if e["what"] == "reworded"]
+
+
+def test_a_sure_read_of_a_reworded_office_question_fills_it(_browser, flow_server, tmp_path):
+    r = h.run_flow(_ny_flow(), SettleWith(jev.FakeJev(), "Yes", 0.97), "wrapped",
+                   browser=_browser, server=flow_server, workdir=tmp_path)
+    assert not r.breaks
+    assert r.reason != "required field without an answer: Are you willing to work in the " \
+                       "office in New York?", (r.status, r.reason)
+    asked = _reworded(r.trace)
+    assert len(asked) == 1 and asked[0]["filled"] == asked[0]["fields"] == [2]
+
+
+def test_an_unsure_read_of_a_reworded_office_question_parks(_browser, flow_server, tmp_path):
+    r = h.run_flow(_ny_flow(), SettleWith(jev.FakeJev(), "Yes", 0.80), "wrapped",
+                   browser=_browser, server=flow_server, workdir=tmp_path)
+    assert (r.status, r.reason) == ("needs_human", "required field without an answer: Are "
+                                                   "you willing to work in the office in New "
+                                                   "York?")
+    asked = _reworded(r.trace)
+    assert len(asked) == 1 and asked[0]["filled"] == [] and not r.breaks

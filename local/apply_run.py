@@ -7191,7 +7191,8 @@ class _JobRun:
         """The option picks the first request could not carry, around the
         second look (`_reask`): a required field whose mapping came back
         dropped or weak is asked alone once more, then the picks, then a
-        required field whose pick came back dropped or weak."""
+        required field whose pick came back dropped or weak, then the saved
+        answers the own-question gate held back (`_reworded`)."""
         plan = self._reask(digest, answers, plan, rec, "source")
         s2, q2 = apply_judge.option_questions(digest, plan, catalog=self.catalog,
                                               company=self._company())
@@ -7204,7 +7205,36 @@ class _JobRun:
             rec["flags"] = dict(plan.flags)
             self._trace("option_picks", answers=apply_trace.answers_json(picks),
                         plan=apply_trace.plan_json(plan))
-        return self._reask(digest, answers, plan, rec, "pick")
+        plan = self._reask(digest, answers, plan, rec, "pick")
+        return self._reworded(digest, answers, plan, rec)
+
+    def _reworded(self, digest: apply_form.FormDigest, answers: dict, plan: FillPlan,
+                rec: dict) -> FillPlan:
+        """The saved answers the own-question gate held back, asked in one
+        request whether each settles its field's question as worded there
+        (`apply_judge.settle_questions`); the plan made again fills the sure
+        ones (`apply_judge.settled_pick`). Work authorization and sponsorship
+        are never asked."""
+        s, q = apply_judge.settle_questions(digest, plan, answers, self.catalog,
+                                            company=self._company())
+        if not q:
+            return plan
+        got = {k: v for k, v in self.r.jev.judge(s, q).items() if k in q}
+        answers.update(got)
+        plan = apply_judge.plan(digest, self.catalog, answers,
+                                generation_enabled=bool(self.r.settings["auto_apply_generate"]),
+                                company=self._company())
+        rec["flags"] = dict(plan.flags)
+        asked = sorted(int(k.split("_")[1]) for k in q)
+        filled = [pf.n for pf in plan.fields if pf.n in asked and pf.action == "select"]
+        labels = {f.n: f.label for f in digest.fields}
+        self._decide("reworded", f"asked whether {len(asked)} saved answer(s) settle a question "
+                               f"worded another way, {len(filled)} sure: "
+                               f"{_cap(', '.join(labels.get(n, '') for n in asked), 160)}",
+                     fields=asked, filled=filled)
+        self._trace("reworded", answers=apply_trace.answers_json(got),
+                    plan=apply_trace.plan_json(plan))
+        return plan
 
     def _reask(self, digest: apply_form.FormDigest, answers: dict, plan: FillPlan, rec: dict,
                what: str) -> FillPlan:

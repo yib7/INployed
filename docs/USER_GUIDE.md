@@ -560,6 +560,15 @@ yes, no or number answer you add fills only the question it was saved for, word 
 a job stops on a question like that, add a custom answer with the question exactly as the form
 words it, then run the job again.
 
+**Relocation and on-site questions in other words.** When a form asks about relocating or
+working on-site in words the check above does not match, such as "Are you willing to work in the
+office in New York?", Jev reads your relocation and on-site answers and fills the field only when
+it is sure (0.85 or more, far ahead of every other choice) that anyone with those answers would
+pick that option. Otherwise the field stops the job as before. No other answer is read this way:
+work authorization, sponsorship and years of experience always need their own question. The note
+on an answer goes to Jev with it, so "only in NYC or Austin" or "at my own expense is fine" tells
+it what your Yes covers.
+
 **Test my answers.** Click **Test my answers** to run the shipped screening questions against
 your saved, confirmed answers, off the UI thread, with the judge your Auto-apply judge setting
 names. The dialog lists what each question would get filled with, or "stops here" when nothing

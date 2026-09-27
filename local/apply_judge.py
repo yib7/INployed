@@ -23,6 +23,10 @@ browser or the network.
                                            for fields whose fact the first
                                            answer chose (quick_map covers the
                                            rest; code settles a plain Yes / No)
+    settle_questions(digest, plan, answers, catalog)  a saved answer the
+                                           own-question gate held back, asked
+                                           whether it settles the field's
+                                           question as worded there
     verify_questions(filled, sheet)        every typed value against the sheet
     inbox_questions / code_pick_questions  the emailed-code path (from-site-or-ATS
                                            and has-code Nouls per message, then
@@ -71,7 +75,7 @@ from apply_facts import (DESCRIPTIONS, NO_FORMS, PLAIN_NUMBER, STORED_YES_NO_KEY
 from apply_facts import asks_own_question as asks_own_question
 from apply_facts import question_fit as question_fit
 from apply_form import FormDigest, password_box
-from jev import APOSTROPHES, PAGE_KIND_NOULS, Answer, request_fits
+from jev import APOSTROPHES, NOT_SETTLED, PAGE_KIND_NOULS, Answer, request_fits
 # pure data (no package imports, no .env): the one US state list the store shares
 from resume_tailor.answer_tables import US_STATES as _US_STATES
 
@@ -88,6 +92,12 @@ CONFIRMATION_MIN_CONF = 0.60    # after the submit click, a confirmation read wi
 FIELD_MAP_MIN_CONF = 0.70       # below it: optional -> blank + flagged; required -> park
 CONSENT_MIN_CONF = 0.85         # consent_attest needs this much: a tick cannot be taken back
 OPTION_MIN_CONF = 0.70          # the same rule for select / radio picks
+# A saved answer the own-question gate held back fills its field only when the
+# judge says it settles the field's question as worded there (`settle_questions`)
+# at this confidence, this far ahead of every other choice (the user's call,
+# 2026-09-26: reworded questions are read by the judge when it is sure)
+SETTLE_MIN_CONF = 0.85
+SETTLE_MIN_GAP = 0.60
 BUTTON_SUBMIT_MIN_CONF = 0.50   # a click on a submit-role button needs this
 BUTTON_ADVANCE_MIN_CONF = 0.50
 BUTTON_SENDS_MIN = 0.40         # an "Apply"-worded button is the submit only with this
@@ -462,6 +472,8 @@ _BUTTON_CRITERIA: dict[str, dict[str, Any]] = {
 }
 
 NO_MATCH_DESCRIPTION = "nothing listed fits"
+NOT_SETTLED_DESCRIPTION = ("the right option also turns on something the saved answer does not "
+                           "say, or it is unclear")
 
 # The subtle boundary of `button_{n}_sends` (the Jev guide: a Noul's
 # true / false criteria pin it down).
@@ -683,15 +695,23 @@ def candidate_answer(catalog: FactCatalog | None, key: str, value: str,
     say it. Among `options` naming a status after a yes (`status_choices`),
     the saved authorization statement is the last line (`STATEMENT_LINE`,
     final review M5); any other list's answer is the same with or without
-    `options`. Any other fact carries its value alone."""
+    `options`. Any other fact carries its value alone. Each line carries
+    the user's note on its answer when there is one (`_noted`)."""
     if catalog is None or key not in YES_NO_KEYS:
-        return value
-    lines = [f"{DESCRIPTIONS[key]}: {value}"]
-    lines += [f"{DESCRIPTIONS[k]}: {catalog.value(k)}" for k in STORED_YES_NO_KEYS
-              if k != key and catalog.has(k)]
+        return _noted(catalog, key, value)
+    lines = [_noted(catalog, key, f"{DESCRIPTIONS[key]}: {value}")]
+    lines += [_noted(catalog, k, f"{DESCRIPTIONS[k]}: {catalog.value(k)}")
+              for k in STORED_YES_NO_KEYS if k != key and catalog.has(k)]
     if catalog.has(STATEMENT_KEY) and status_choices(options):
         lines.append(f"{STATEMENT_LINE}: {catalog.value(STATEMENT_KEY)}")
     return "\n".join(lines)
+
+
+def _noted(catalog: FactCatalog | None, key: str, line: str) -> str:
+    """`line` with the user's note on `key`'s answer after it, when there
+    is one (`FactCatalog.note`), so the judge reads what the user meant."""
+    note = catalog.note(key) if catalog is not None else ""
+    return f"{line} (the candidate's note: {note})" if note else line
 
 
 _PHONE_NAMED = re.compile(r"phone|mobile|(?<![a-z])tel", re.I)
@@ -1911,10 +1931,18 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
             # narrower form its value does not settle, or a cut label; a
             # custom yes / no or number answer another question than its
             # saved one (cycle 18, SP6c): no value from it, so a required
-            # field parks and an optional one stays blank
-            log.debug("field %d %r: %s does not answer its question; no value",
-                      f.n, f.label, fact_key)
-            fact_key, pf.fact_key = None, None
+            # field parks and an optional one stays blank, unless the judge
+            # is sure the saved answer settles the question as worded here
+            # (`settled_pick`, never for work authorization or sponsorship)
+            pick = settled_pick(answers, f, fact_key, catalog)
+            if pick is not None:
+                log.debug("field %d %r: %s settles it by the judge's read: %r",
+                          f.n, f.label, fact_key, pick)
+                pf.value, pf.action, pf.option = catalog.value(fact_key), "select", pick
+            else:
+                log.debug("field %d %r: %s does not answer its question; no value",
+                          f.n, f.label, fact_key)
+                fact_key, pf.fact_key = None, None
         elif fact_key and catalog.has(fact_key) and _yes_no_fact(catalog, fact_key) \
                 and noun_phrase(f.label) and code_pick(catalog.value(fact_key), f.options) is None:
             # a label with no verb ("Work authorization") heads a status list
@@ -2034,6 +2062,129 @@ def option_questions(digest: FormDigest, fill_plan: FillPlan,
         state["fields"].append(_compact_field(f))
         questions[f"field_{f.n}_pick"] = _option_question(
             i, f.options, candidate_answer(catalog, pf.fact_key, pf.value, f.options), pf.value)
+    return state, questions
+
+
+# --- the third request: a held-back answer, asked whether it settles the field -------
+
+# Work authorization and sponsorship are read in code only: a wrong answer
+# there is the worst end of an application (the user's call, 2026-09-26).
+# The words mark a question of the same weight in any field or saved question.
+# The facts the judge may read a reworded question for: the two willingness
+# answers. On the screening set's recording (2026-09-26) its sure reads of
+# them were right and every wrong read of them came in at 0.82 or less; its
+# reads of a years count and of fully remote work came in wrong at up to
+# 0.92, so those stay with the gate.
+SETTLE_KEYS = frozenset(("willing_to_relocate", "onsite_ok"))
+STRICT_KEYS = frozenset(("work_authorized", "requires_sponsorship",
+                         "authorized_without_sponsorship", STATEMENT_KEY))
+_STRICT_WORDS = re.compile(
+    r"authori[sz]|sponsor|\bvisas?\b|citizen|permanent residen|green card|work permit"
+    r"|immigra|\bh-?1b\b|\bopt\b|\bcpt\b|\bead\b|clearance|convict|felon|criminal"
+    r"|background check|drug", re.I)
+SETTLE_QUESTION = (
+    "The candidate saved `saved_answer` as the answer to `saved_question`, with any note it "
+    "carries. The form field `fields[{i}].label` may ask the same thing in other words. Pick "
+    "an option only when every candidate who saved that answer and note would give that "
+    "option, whatever else is true of them. Choose not_settled when the right option could "
+    "also turn on something the saved answer does not say: where the candidate lives now or "
+    "whether they already live near the job, whether they would take something they are not "
+    "looking for, a cost the candidate pays, a number of days or years, a visa type, or a "
+    "fact about the role or the company. A city or an office the field names for this job "
+    "is the job's location. Choose not_settled when unsure.")
+
+
+def strict_fact(catalog: FactCatalog | None, key: str, label: str, help_text: str = "") -> bool:
+    """Is `key` under this label read in code only (`STRICT_KEYS`, or
+    `_STRICT_WORDS` in the label, the help or the fact's saved question)?"""
+    if key in STRICT_KEYS:
+        return True
+    saved = catalog.facts[key].description if catalog is not None and key in catalog.facts else ""
+    return bool(_STRICT_WORDS.search(" ".join((label or "", help_text or "", saved))))
+
+
+def _settle_ok(f, key: str, catalog: FactCatalog) -> bool:
+    """May the judge read whether `key`'s saved answer settles field `f`:
+    a list of options the run picks from, a whole label, a willingness fact
+    (`SETTLE_KEYS`) with a value, and nothing read in code only or never
+    answered?"""
+    return (bool(f.options) and _action_for(f) == "select"
+            and not getattr(f, "label_partial", False)
+            and key in SETTLE_KEYS and catalog.has(key)
+            and not strict_fact(catalog, key, f.label, f.help)
+            and not is_sensitive_field(f.label, f.id_or_name) and not password_box(f))
+
+
+def settled_pick(answers: Mapping[str, Answer], f, key: str,
+                 catalog: FactCatalog) -> str | None:
+    """The option the judge's settle answer (`field_{n}_settle`) gives
+    field `f` for `key`'s saved answer: one of the field's options at
+    `SETTLE_MIN_CONF` or more, `SETTLE_MIN_GAP` ahead of every other choice
+    (`not_settled` included); None otherwise, or when `_settle_ok` says no."""
+    a = answers.get(f"field_{f.n}_settle")
+    if a is None or a.choice is None or not _settle_ok(f, key, catalog):
+        return None
+    choice = str(a.choice)
+    if choice == NOT_SETTLED or choice not in f.options:
+        return None
+    top = float(a.confidence or 0.0)
+    rest = [float(p) for n, p in (a.probabilities or {}).items() if n != choice]
+    if top < SETTLE_MIN_CONF or top - max(rest, default=0.0) < SETTLE_MIN_GAP:
+        return None
+    return choice
+
+
+def _held_back(f, answers: Mapping[str, Answer], catalog: FactCatalog,
+               company: str) -> str | None:
+    """The fact `plan` took for field `f` (its `quick_map` hit with a value,
+    else the judge's mapping at `FIELD_MAP_MIN_CONF` or more) when the
+    own-question gate held its answer back and the judge may read it
+    (`_settle_ok`); None otherwise."""
+    quick = quick_map(f.label, f.id_or_name, f.type)
+    if quick and catalog.has(quick):
+        key = quick
+    else:
+        key, conf = _choice_of(answers, f"field_{f.n}_source")
+        if key in (None, "leave_blank") or conf < FIELD_MAP_MIN_CONF:
+            return None
+    if not _settle_ok(f, key, catalog) or catalog.answers_field(
+            key, f.label, f.help, partial=bool(getattr(f, "label_partial", False)),
+            company=company):
+        return None
+    return key
+
+
+def settle_questions(digest: FormDigest, fill_plan: FillPlan, answers: Mapping[str, Answer],
+                     catalog: FactCatalog, *, company: str = "") -> tuple[dict, dict]:
+    """The third request: each field the plan left blank because the
+    own-question gate held back its fact's saved answer (`_held_back`) is
+    asked whether that answer, with its note and the other yes / no lines
+    (`candidate_answer`), settles the field's question as worded there
+    (`SETTLE_QUESTION`, escape `not_settled`). `plan` fills the sure ones
+    (`settled_pick`). Never asked for work authorization or sponsorship
+    (`strict_fact`). Empty when there is nothing to ask; merge the answers
+    and call `plan` again."""
+    by_n = {f.n: f for f in digest.fields}
+    state: dict[str, Any] = {"fields": []}
+    questions: dict[str, Any] = {}
+    for pf in fill_plan.fields:
+        f = by_n.get(pf.n)
+        if f is None or pf.action != "skip" or pf.fact_key:
+            continue
+        key = _held_back(f, answers, catalog, company)
+        if key is None:
+            continue
+        i = len(state["fields"])
+        state["fields"].append(_compact_field(f))
+        value = catalog.value(key)
+        criteria: dict[str, Any] = {o: None for o in shortlist(list(f.options), value)}
+        criteria[NOT_SETTLED] = NOT_SETTLED_DESCRIPTION
+        questions[f"field_{f.n}_settle"] = {
+            "type": "choice",
+            "instructions": {"saved_question": catalog.facts[key].description,
+                             "saved_answer": candidate_answer(catalog, key, value, f.options),
+                             "question": SETTLE_QUESTION.format(i=i)},
+            "criteria": criteria}
     return state, questions
 
 

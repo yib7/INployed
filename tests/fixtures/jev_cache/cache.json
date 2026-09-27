@@ -14580,5 +14580,723 @@
       },
       "confidence": 0.97
     }
+  },
+  "eceab0e6cd8de5d6eea396a997503d91dc5360e70751a6a5326586142b6640b7": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "No": 0.01,
+        "Yes": 0.81,
+        "not_settled": 0.18
+      },
+      "confidence": 0.72
+    }
+  },
+  "093cc9da1525dd9f944fc41c28bd65783e82c28cc4a9bd3a06895cddb77443c2": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "not_settled",
+      "score": null,
+      "probabilities": {
+        "I do not want to work in office": 0.0,
+        "not_settled": 0.6,
+        "I am willing to relocate": 0.39,
+        "I already live in the San Francisco Bay Area": 0.01,
+        "I am not willing to relocate": 0.0
+      },
+      "confidence": 0.5
+    }
+  },
+  "12fc2050b4b623df2ead824a1da26a29991c1dc73277740035b49ec8e6b3c8c7": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.41,
+        "Yes": 0.57,
+        "No": 0.02
+      },
+      "confidence": 0.36
+    }
+  },
+  "a46661c8ab8b3e92dd7a44c06790dbca225ff87d35fe7c1ae34e87717f3c693c": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.28,
+        "No": 0.02,
+        "Yes": 0.7
+      },
+      "confidence": 0.56
+    }
+  },
+  "c451c2a07e98f7fc731a56107beb9d2499119d547b37398751914c35fc82bded": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.18,
+        "Yes": 0.81,
+        "No": 0.01
+      },
+      "confidence": 0.72
+    }
+  },
+  "b8020e7b7eb0492d642e01517362c56a349ee400ad89a3e43b89567e29f5e677": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "No": 0.01,
+        "not_settled": 0.4,
+        "Yes": 0.59
+      },
+      "confidence": 0.39
+    }
+  },
+  "d1107518463f2faab9f427d67290092c43bc066102748a04e6b7058ecec8011a": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.38,
+        "No": 0.03,
+        "Yes": 0.59
+      },
+      "confidence": 0.38
+    }
+  },
+  "56841bac1fb95bdff2bd33806a4bcd8a7c62bc0a6426e5ee751fde34c11b41bd": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "No": 0.01,
+        "Yes": 0.74,
+        "not_settled": 0.25
+      },
+      "confidence": 0.6
+    }
+  },
+  "e42942eadfca2f05d59b63c231badf52e7480525b7a3cd4a3f368af2d6f7f3ff": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.18,
+        "Yes": 0.8,
+        "No": 0.02
+      },
+      "confidence": 0.7
+    }
+  },
+  "fe7a0cbb561a0498713cbb3c9b6fdabe91bf62201fc759a06afa29d38ed2ff06": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "checked",
+      "score": null,
+      "probabilities": {
+        "checked": 0.76,
+        "not_settled": 0.24
+      },
+      "confidence": 0.52
+    }
+  },
+  "a238d7fe23053abc524d0467bf31049e11a7b6c79135eb4f6a6204889742e0e2": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "I am able to work on-site",
+      "score": null,
+      "probabilities": {
+        "I am only able to work remotely": 0.0,
+        "I am able to work on-site": 0.86,
+        "not_settled": 0.14
+      },
+      "confidence": 0.78
+    }
+  },
+  "ed0444cd95d027b990d31ddb8e2f64c6391e8684270c7d91b32a7b0ae8994d55": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "not_settled",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.52,
+        "No": 0.01,
+        "Yes": 0.47
+      },
+      "confidence": 0.27
+    }
+  },
+  "33d662bfe96790f0f20270f09801487c354c45154ab7b16f60b3eda94a8871fb": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.47,
+        "Yes": 0.51,
+        "No": 0.02
+      },
+      "confidence": 0.26
+    }
+  },
+  "46be2367ac0d4c59e317167e73865e99fa42e9fc39ac0365e513b73f78c3ce73": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "No": 0.02,
+        "Yes": 0.61,
+        "not_settled": 0.37
+      },
+      "confidence": 0.41
+    }
+  },
+  "e4d7fab2a681e45ca51a942a926f2f6bf43c7b357c9f7145f4d0f92b8bac9096": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "No": 0.01,
+        "Yes": 0.8,
+        "not_settled": 0.19
+      },
+      "confidence": 0.71
+    }
+  },
+  "e09be15f773d30774ef7141f4ba8b0488171ee4f892a1fabfee704a5a3a1424e": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "not_settled",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.66,
+        "Yes": 0.29,
+        "No": 0.05
+      },
+      "confidence": 0.48
+    }
+  },
+  "a9bba835fadc175565516d94a09fbe44c3d51304543bd98659af37f89b1413ae": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "No",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.05,
+        "Yes": 0.07,
+        "No": 0.88
+      },
+      "confidence": 0.82
+    }
+  },
+  "5dc07c9a34b3b617af55a69fa60db8a1e245753d4a323e34626d02fc7020bac6": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "I am not willing to relocate",
+      "score": null,
+      "probabilities": {
+        "I do not want to work in office": 0.01,
+        "I am willing to relocate": 0.01,
+        "I am not willing to relocate": 0.88,
+        "not_settled": 0.09,
+        "I already live in the San Francisco Bay Area": 0.01
+      },
+      "confidence": 0.87
+    }
+  },
+  "21953bf0f6e6060edf223fd6fddc7d886ee3d0a511d88a2f6875eb44be05d17c": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "No",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.21,
+        "No": 0.72,
+        "Yes": 0.07
+      },
+      "confidence": 0.58
+    }
+  },
+  "cb9ba184d9d8f1db090d07dec066e1950bdd98979bbd3bff52d3bb08cf953bc1": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "No",
+      "score": null,
+      "probabilities": {
+        "No": 0.71,
+        "Yes": 0.15,
+        "not_settled": 0.14
+      },
+      "confidence": 0.57
+    }
+  },
+  "7eb1e81755a63b4d9d0bccb34aef8a502b69cad342e65cc2ff64581f33947c69": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "No",
+      "score": null,
+      "probabilities": {
+        "Yes": 0.06,
+        "No": 0.89,
+        "not_settled": 0.05
+      },
+      "confidence": 0.82
+    }
+  },
+  "c7954357096c091dab1ba9f3867d8390092cf9d28a6426b41dadce655572a5fb": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "No",
+      "score": null,
+      "probabilities": {
+        "Yes": 0.14,
+        "No": 0.78,
+        "not_settled": 0.08
+      },
+      "confidence": 0.66
+    }
+  },
+  "869a0bd93d6ccd629ff2e403a2530e7adf679d16f4a9e84c0d9339e71b380714": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "No",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.16,
+        "No": 0.57,
+        "Yes": 0.27
+      },
+      "confidence": 0.35
+    }
+  },
+  "3d501ad555a014aa58f97c9edcb1d4b21477395885455f53cdd7f1544b1f47f3": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "No",
+      "score": null,
+      "probabilities": {
+        "No": 0.72,
+        "not_settled": 0.12,
+        "Yes": 0.16
+      },
+      "confidence": 0.58
+    }
+  },
+  "20ac78ac66b40aa73a1d935fc5ac089382fd25b2263d64c3a7f8cc7b668bdb53": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "No",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.14,
+        "No": 0.63,
+        "Yes": 0.23
+      },
+      "confidence": 0.45
+    }
+  },
+  "3c6ef7aeff8c67b08b424c772ae81d457acf360ecfbf9e5684577b464a209565": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "not_settled",
+      "score": null,
+      "probabilities": {
+        "checked": 0.44,
+        "not_settled": 0.56
+      },
+      "confidence": 0.13
+    }
+  },
+  "10102485d1c6b9f76f5d849fe07258ab000230505bc84e12bc693c4722d11197": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "I am able to work on-site",
+      "score": null,
+      "probabilities": {
+        "I am able to work on-site": 0.62,
+        "I am only able to work remotely": 0.05,
+        "not_settled": 0.33
+      },
+      "confidence": 0.43
+    }
+  },
+  "300e5c2fb760e285579cbc55457b278356ece789c697c9d9b1a4504eafd5fb56": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "not_settled",
+      "score": null,
+      "probabilities": {
+        "Yes": 0.43,
+        "not_settled": 0.5,
+        "No": 0.07
+      },
+      "confidence": 0.25
+    }
+  },
+  "0a570afb31b5c312261876f08e939ec899e0ca0a257096b799846a317127cbf9": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "No": 0.05,
+        "not_settled": 0.37,
+        "Yes": 0.58
+      },
+      "confidence": 0.37
+    }
+  },
+  "bf33b741ccb4040951d2a40df01cc410b154ee877183150b4849774732fc2b93": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.42,
+        "Yes": 0.5,
+        "No": 0.08
+      },
+      "confidence": 0.25
+    }
+  },
+  "8420a474bf10941f3aae58ed57bddb07f411fabb3b8d543262410cbea8e9688c": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "No": 0.07,
+        "not_settled": 0.3,
+        "Yes": 0.63
+      },
+      "confidence": 0.45
+    }
+  },
+  "a946cc6c026ecfa26300ce79f4b98a0fa7bcd7e8c72ebb4c2df0408ccfd6611c": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "not_settled",
+      "score": null,
+      "probabilities": {
+        "No": 0.19,
+        "Yes": 0.24,
+        "not_settled": 0.57
+      },
+      "confidence": 0.36
+    }
+  },
+  "9bb69f2f816c6b130e7d8f7880a7044412eb12804461b41364fe54d834be0235": {
+    "field_0_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "onsite_ok",
+      "score": null,
+      "probabilities": {
+        "gender": 0.0,
+        "authorized_without_sponsorship": 0.0,
+        "how_did_you_hear": 0.0,
+        "address_state": 0.0,
+        "remote_only": 0.0,
+        "leave_blank": 0.01,
+        "needs_generation": 0.0,
+        "willing_to_relocate": 0.0,
+        "work_authorized": 0.0,
+        "onsite_ok": 0.99,
+        "years_experience": 0.0,
+        "race_ethnicity": 0.0,
+        "address_zip": 0.0,
+        "answer_authorization_statement": 0.0,
+        "address_street": 0.0,
+        "veteran_status": 0.0,
+        "address_city": 0.0,
+        "requires_sponsorship": 0.0,
+        "disability_status": 0.0,
+        "address_country": 0.0
+      },
+      "confidence": 0.99
+    },
+    "asks_for_prohibited": {
+      "kind": "noul",
+      "noul": 0.03,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    }
+  },
+  "b02cc22fb5ae5413263b4ac23dc16c6b9871ffc4c27dac809e64169a7478b733": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "No": 0.0,
+        "Yes": 0.92,
+        "not_settled": 0.08
+      },
+      "confidence": 0.88
+    }
+  },
+  "14de40ff85264cb12198e3ed1795c4d795c0e37bd9d1f31ba2895fe4cd794de1": {
+    "field_0_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "onsite_ok",
+      "score": null,
+      "probabilities": {
+        "answer_authorization_statement": 0.0,
+        "willing_to_relocate": 0.0,
+        "gender": 0.0,
+        "disability_status": 0.0,
+        "veteran_status": 0.0,
+        "address_state": 0.0,
+        "needs_generation": 0.0,
+        "address_street": 0.0,
+        "years_experience": 0.0,
+        "address_country": 0.0,
+        "authorized_without_sponsorship": 0.0,
+        "how_did_you_hear": 0.0,
+        "address_zip": 0.0,
+        "race_ethnicity": 0.0,
+        "leave_blank": 0.0,
+        "work_authorized": 0.0,
+        "requires_sponsorship": 0.0,
+        "onsite_ok": 1.0,
+        "remote_only": 0.0,
+        "address_city": 0.0
+      },
+      "confidence": 1.0
+    },
+    "asks_for_prohibited": {
+      "kind": "noul",
+      "noul": 0.04,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    }
+  },
+  "01a2f396b31b6e968757fa11be39132f32a1d9f9ca8f3841a2bc0db645f9afa7": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "No": 0.01,
+        "Yes": 0.82,
+        "not_settled": 0.17
+      },
+      "confidence": 0.73
+    }
+  },
+  "cb5ec55b4d5a885b2f5ca876eda978c022a86da517c688bb6076b8c5a4b586d8": {
+    "field_0_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "onsite_ok",
+      "score": null,
+      "probabilities": {
+        "address_city": 0.0,
+        "gender": 0.0,
+        "address_state": 0.0,
+        "needs_generation": 0.0,
+        "veteran_status": 0.0,
+        "address_street": 0.0,
+        "willing_to_relocate": 0.03,
+        "onsite_ok": 0.96,
+        "leave_blank": 0.01,
+        "work_authorized": 0.0,
+        "address_country": 0.0,
+        "requires_sponsorship": 0.0,
+        "authorized_without_sponsorship": 0.0,
+        "remote_only": 0.0,
+        "address_zip": 0.0,
+        "race_ethnicity": 0.0,
+        "answer_authorization_statement": 0.0,
+        "years_experience": 0.0,
+        "how_did_you_hear": 0.0,
+        "disability_status": 0.0
+      },
+      "confidence": 0.96
+    },
+    "asks_for_prohibited": {
+      "kind": "noul",
+      "noul": 0.04,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    }
+  },
+  "cf27564c5d9c44b88884d2dd7e16d57a30e19c0fbd52bc820ba2a5568de56069": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.12,
+        "No": 0.01,
+        "Yes": 0.87
+      },
+      "confidence": 0.81
+    }
+  },
+  "8e02727de537dfa3a090e785229498296c26871379369e72d0079bc80398a18f": {
+    "field_0_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "willing_to_relocate",
+      "score": null,
+      "probabilities": {
+        "needs_generation": 0.0,
+        "address_country": 0.0,
+        "willing_to_relocate": 1.0,
+        "leave_blank": 0.0,
+        "remote_only": 0.0,
+        "onsite_ok": 0.0,
+        "work_authorized": 0.0,
+        "how_did_you_hear": 0.0,
+        "requires_sponsorship": 0.0,
+        "race_ethnicity": 0.0,
+        "disability_status": 0.0,
+        "address_street": 0.0,
+        "address_city": 0.0,
+        "answer_authorization_statement": 0.0,
+        "address_state": 0.0,
+        "address_zip": 0.0,
+        "veteran_status": 0.0,
+        "years_experience": 0.0,
+        "authorized_without_sponsorship": 0.0,
+        "gender": 0.0
+      },
+      "confidence": 1.0
+    },
+    "asks_for_prohibited": {
+      "kind": "noul",
+      "noul": 0.03,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    }
+  },
+  "630f9fc298925f37b48ed836a5c848e579d94ecd72c1f9bd525192bd88d1bdaf": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "No": 0.01,
+        "Yes": 0.86,
+        "not_settled": 0.13
+      },
+      "confidence": 0.79
+    }
+  },
+  "2438bc40fe33b54b8bc50c1a50e179b472cdc2b7680d7c2e66e5d8c03dc464a8": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "No": 0.21,
+        "Yes": 0.58,
+        "not_settled": 0.21
+      },
+      "confidence": 0.38
+    }
+  },
+  "5809b4a421b165b4ae2ad7c68b18d0d28ec277f16ab332c25f55b7d99de21e26": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "No": 0.24,
+        "Yes": 0.48,
+        "not_settled": 0.28
+      },
+      "confidence": 0.22
+    }
+  },
+  "c8f203b93de27c90109e80f2dd2f8c221e3b9dd781c7b612bdc050aca2a32dd3": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "No": 0.19,
+        "not_settled": 0.16,
+        "Yes": 0.65
+      },
+      "confidence": 0.47
+    }
+  },
+  "db85f97950147cb725f32bff32df862dafa6e6a51dfc8d043d99e9017641759e": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "No",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.06,
+        "No": 0.72,
+        "Yes": 0.22
+      },
+      "confidence": 0.58
+    }
   }
 }

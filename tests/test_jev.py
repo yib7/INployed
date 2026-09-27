@@ -456,3 +456,12 @@ def test_a_judge_that_stays_down_gets_the_guards_retries_alone():
     assert len(sent) == 1 + len(jev.RETRY_DELAYS_S), sent
     assert sleeps == list(jev.RETRY_DELAYS_S) and sum(sleeps) <= 60
     assert judge.down.endswith(" 529")
+
+
+def test_fake_takes_not_settled_whenever_it_is_listed():
+    # the fake cannot read whether a saved answer settles a reworded question
+    q = {"type": "choice", "instructions": {"saved_answer": "Willing to work on-site: Yes"},
+         "criteria": {"Yes": None, "No": None, "not_settled": "the saved answer does not decide"}}
+    a = jev.FakeJev().judge({"fields": []}, {"q": q})["q"]
+    assert (a.choice, a.confidence) == (jev.NOT_SETTLED, 1.0)
+    assert a.probabilities == {"Yes": 0.0, "No": 0.0, "not_settled": 1.0}

@@ -386,6 +386,10 @@ we our ours they them their he she his her him i me my mine
 _WHOLE_STATE_CAP = 20_000     # characters of serialised state the fake reads
 _NOUL_MIN_WORD = 4
 _FALLBACK_ORDER = ("none", "other", "leave_blank", "no_match")
+# the escape of a settle question (`apply_judge.settle_questions`): the fake
+# cannot read whether a saved answer settles a reworded question, so it
+# always takes this one when it is listed
+NOT_SETTLED = "not_settled"
 
 
 class FakeJev:
@@ -412,6 +416,9 @@ class FakeJev:
       `none`, `other`, `leave_blank`, `no_match`, else the first option.
       `probabilities` puts 1.0 on the winner and 0.0 elsewhere; `confidence`
       is 1.0.
+    - Choice, `not_settled` (`NOT_SETTLED`): when it is one of the options
+      it wins at 1.0, whatever the words: the fake cannot read whether a
+      saved answer settles a question worded another way.
     - Choice, a named option table: a backticked path that resolves to a map
       sharing a key with the option names is the options' description table.
       Each option also scores against its own entry, and the table stays out
@@ -479,6 +486,10 @@ class FakeJev:
         names = list(criteria)
         if not names:
             raise ValueError("a choice question needs at least one option")
+        if NOT_SETTLED in criteria:
+            return Answer(kind="choice", choice=NOT_SETTLED,
+                          probabilities={n: (1.0 if n == NOT_SETTLED else 0.0) for n in names},
+                          confidence=1.0)
         scores: dict[str, int] = {}
         for name, desc in criteria.items():
             pos, neg = _split_desc(desc)

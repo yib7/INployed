@@ -37248,5 +37248,20 @@
       "probabilities": {},
       "confidence": null
     }
+  },
+  "b940e76c6b7e14f84c372c50a615fc808581fba072bdfef98896c10263ea6d98": {
+    "field_5_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes, I am willing to relocate",
+      "score": null,
+      "probabilities": {
+        "No, I would prefer to stay where I am": 0.0,
+        "Yes, I am willing to relocate": 0.77,
+        "I do not want to work in office": 0.0,
+        "not_settled": 0.23
+      },
+      "confidence": 0.69
+    }
   }
 }

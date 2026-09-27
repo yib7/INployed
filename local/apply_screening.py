@@ -15,14 +15,16 @@ stands for and asks `judge` what the runner asks, in the runner's order
 (`apply_run._JobRun._map` and `_complete_option_plan`): the page's mapping
 (`apply_judge.page_requests`), the plan, the second look at a required field's
 dropped or weak mapping, the option picks for a mapping the judge made
-(`apply_judge.option_questions`), the plan again and the second look at a
-dropped or weak pick. It returns what the plan puts in the field, or None.
+(`apply_judge.option_questions`), the plan again, the second look at a
+dropped or weak pick, and the settle question for a saved answer the
+own-question gate held back (`apply_judge.settle_questions`). It returns what
+the plan puts in the field, or None.
 `run_screening(answers, judge)` does that for every question over the fact
 catalog one answer list gives. The page read (what kind of page this is) is
 left out: every question sits on an application form.
 
 Pure: no Qt, no browser, no file written but a temporary empty job folder.
-Each question costs one to three judge requests; the judge is the only thing
+Each question costs one to four judge requests; the judge is the only thing
 that leaves the process.
 """
 from __future__ import annotations
@@ -159,6 +161,11 @@ def screen(question: dict[str, Any], catalog, judge) -> Outcome:
         answers.update(_asked(judge, state, questions))
         plan = _plan(digest, catalog, answers)
     plan = _second_look(digest, catalog, answers, plan, judge, "pick")
+    state, questions = apply_judge.settle_questions(digest, plan, answers, catalog,
+                                                    company=JOB["company_name"])
+    if questions:
+        answers.update(_asked(judge, state, questions))
+        plan = _plan(digest, catalog, answers)
     pf = plan.fields[0]
     answer = _given(pf)
     f = digest.fields[0]

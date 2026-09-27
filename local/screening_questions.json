@@ -1456,6 +1456,70 @@
       }
     },
     {
+      "id": "onsite_office_named_city",
+      "label": "Are you willing to work in the office in New York?",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "onsite_ok",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": null
+      }
+    },
+    {
+      "id": "onsite_named_office",
+      "label": "Can you work on-site at our Austin, TX office?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "onsite_ok",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": null
+      }
+    },
+    {
+      "id": "onsite_based_in_city",
+      "label": "This role is based in our New York office. Are you willing to work from there?",
+      "help": "",
+      "widget": "toggle",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "onsite_ok",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": null
+      }
+    },
+    {
+      "id": "reloc_named_city",
+      "label": "Would you be open to relocating to Denver, CO for this role?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "willing_to_relocate",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": "No"
+      }
+    },
+    {
       "id": "years_select",
       "label": "How many years of professional experience do you have?",
       "help": "",

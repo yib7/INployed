@@ -3564,3 +3564,120 @@ def test_a_list_the_yes_no_story_reads_keeps_its_request_byte_for_byte(tmp_path,
         0, list(options), apply_judge.candidate_answer(cat, "work_authorized", "Yes"), "Yes")
     assert json.dumps(_pick_request(cat, options), sort_keys=True) == \
         json.dumps(old, sort_keys=True)
+
+
+# --- a held-back answer, asked whether it settles a reworded question (2026-09-26) ------------
+
+_NY_OFFICE = "Are you willing to work in the office in New York?"
+
+
+def _settle_answer(choice, conf, probs=None):
+    probs = probs or {choice: conf}
+    return jev.Answer(kind="choice", choice=choice, probabilities=probs, confidence=conf)
+
+
+def _held_back_plan(tmp_path, label=_NY_OFFICE, key="onsite_ok", bank=None, settle=None,
+                    options=("Yes", "No")):
+    cat = apply_facts.build(tmp_path, answers=bank or standard_bank(), today=date(2026, 9, 26))
+    digest = _field_with(label, options=options)
+    answers = _page_answers(digest, {0: (key, 0.95)})
+    first = apply_judge.plan(digest, cat, answers)
+    state, questions = apply_judge.settle_questions(digest, first, answers, cat)
+    if settle is not None:
+        answers["field_0_settle"] = settle
+    return cat, first, state, questions, apply_judge.plan(digest, cat, answers)
+
+
+def test_a_reworded_office_question_is_asked_whether_the_saved_answer_settles_it(tmp_path):
+    cat, first, state, questions, _ = _held_back_plan(tmp_path)
+    assert first.fields[0].action == "skip"            # the gate holds it back
+    assert list(questions) == ["field_0_settle"]
+    q = questions["field_0_settle"]
+    assert list(q["criteria"]) == ["Yes", "No", "not_settled"]
+    saved = q["instructions"]["saved_answer"]
+    assert saved.splitlines()[0] == f"{apply_facts.DESCRIPTIONS['onsite_ok']}: Yes"
+    assert f"{apply_facts.DESCRIPTIONS['willing_to_relocate']}: Yes" in saved
+    assert q["instructions"]["saved_question"] == apply_facts.DESCRIPTIONS["onsite_ok"]
+    assert "not_settled" in q["instructions"]["question"]
+    assert state["fields"][0]["label"] == _NY_OFFICE
+    _assert_clean_text(questions)
+
+
+@pytest.mark.parametrize("settle, filled", [
+    (_settle_answer("Yes", 0.97, {"Yes": 0.97, "No": 0.01, "not_settled": 0.02}), "Yes"),
+    # under the floor, too close to the next choice, the escape, an option
+    # the field does not have: no value, so the required field parks
+    (_settle_answer("Yes", 0.80, {"Yes": 0.80, "No": 0.05, "not_settled": 0.15}), None),
+    (_settle_answer("Yes", 0.92, {"Yes": 0.92, "No": 0.0, "not_settled": 0.40}), None),
+    (_settle_answer("not_settled", 0.95, {"Yes": 0.03, "No": 0.02, "not_settled": 0.95}), None),
+    (_settle_answer("Maybe", 0.99, {"Maybe": 0.99}), None),
+])
+def test_only_a_sure_settle_answer_fills_the_held_back_field(tmp_path, settle, filled):
+    *_, p = _held_back_plan(tmp_path, settle=settle)
+    pf = p.fields[0]
+    if filled:
+        assert (pf.action, pf.option, pf.fact_key, pf.value) == ("select", filled, "onsite_ok",
+                                                                  "Yes")
+        assert p.park_reason == ""
+    else:
+        assert (pf.action, pf.option, pf.fact_key) == ("skip", None, None)
+        assert p.park_reason == f"required field without an answer: {_NY_OFFICE}"
+
+
+@pytest.mark.parametrize("label, key, bank", [
+    ("Are you authorized to work in New York?", "work_authorized", None),
+    ("Will you require sponsorship to work in the UK?", "requires_sponsorship", None),
+    ("Can you work in the US without an H-1B transfer?", "authorized_without_sponsorship", None),
+    # a strict word in the field's own label, whatever the fact
+    ("Are you willing to work in the office once your visa arrives?", "onsite_ok", None),
+    # a custom answer whose saved question is a legal one
+    ("Are you legally allowed to work in Canada?", "answer_canada",
+     standard_bank() + [custom("canada", "Are you authorized to work in Canada?", "No",
+                               type="yes_no")]),
+])
+def test_work_authorization_and_sponsorship_are_never_asked_nor_settled(tmp_path, label, key,
+                                                                         bank):
+    sure = _settle_answer("Yes", 0.99, {"Yes": 0.99, "No": 0.0, "not_settled": 0.01})
+    _, first, _, questions, p = _held_back_plan(tmp_path, label=label, key=key, bank=bank,
+                                                settle=sure)
+    assert first.fields[0].action == "skip"
+    assert questions == {}
+    assert (p.fields[0].action, p.fields[0].option) == ("skip", None)
+
+
+@pytest.mark.parametrize("label, key, options", [
+    # the judge read these wrong at up to 0.92 on the screening set
+    ("Are you willing to work remote only?", "remote_only", ("Yes", "No")),
+    ("How many years of experience in your previous role?", "years_experience",
+     ("0-2 years", "3-5 years", "6+ years")),
+])
+def test_only_the_willingness_answers_are_asked(tmp_path, label, key, options):
+    sure = _settle_answer(options[0], 0.99)
+    _, first, _, questions, p = _held_back_plan(tmp_path, label=label, key=key, settle=sure,
+                                                options=options)
+    assert first.fields[0].action == "skip"
+    assert questions == {}
+    assert (p.fields[0].action, p.fields[0].option) == ("skip", None)
+
+
+def test_a_field_the_gate_passes_is_never_asked(tmp_path):
+    _, first, _, questions, _ = _held_back_plan(tmp_path,
+                                                label="Are you willing to work on-site?")
+    assert (first.fields[0].action, first.fields[0].option) == ("select", "Yes")
+    assert questions == {}
+
+
+def test_the_user_s_note_rides_with_the_saved_answer(tmp_path):
+    bank = standard_bank()
+    for e in bank:
+        if e["id"] == "onsite_ok":
+            e["note"] = "Only  in NYC or Austin"
+    cat, _, _, questions, _ = _held_back_plan(tmp_path, bank=bank)
+    saved = questions["field_0_settle"]["instructions"]["saved_answer"]
+    assert saved.splitlines()[0] == (f"{apply_facts.DESCRIPTIONS['onsite_ok']}: Yes "
+                                     f"(the candidate's note: Only in NYC or Austin)")
+    assert cat.note("onsite_ok") == "Only in NYC or Austin"
+    assert cat.note("willing_to_relocate") == "" and cat.note("full_name") == ""
+    # a text answer carries its note too
+    assert apply_judge.candidate_answer(cat, "onsite_ok", "Yes").startswith(
+        f"{apply_facts.DESCRIPTIONS['onsite_ok']}: Yes (the candidate's note:")

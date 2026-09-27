@@ -19,7 +19,7 @@ correctly keeps a run that picks nothing from passing.
   runner target of `scripts/jev_record.ps1` records it): no wrong pick outside
   REAL_MISREADS (empty). The rule raises `pytest.fail`, which the harness
   never turns into a recorded divergence (an xfail). REAL_PICK_FLOOR is the
-  recording's rate (cycle 18 SP6: 96 of 130, no wrong pick); the rate prints
+  recording's rate (cycle 18: 98 of 135, no wrong pick); the rate prints
   either way. The fixture pins the catalog's `today` to the recording
   day, as it does for the runner tests. In fake mode the test skips: its judge
   would be the fake, which the fake test holds already.
@@ -84,12 +84,17 @@ SEEDS = (1, 2, 3, 4, 5)
 # (auth_noun_status, auth_noun_status_radio). The code before gave 34 wrong
 # answers on them and now gives none; the picks on the 109 questions before
 # are unchanged (69 of 128), and the status lists count as expected but
-# unpicked, since the fake maps no fact to them.
-FAKE_PICK_FLOOR = 0.53                                        # 69 of 130
-NOISY_PICK_FLOOR = {1: 0.52, 2: 0.52, 3: 0.52, 4: 0.53, 5: 0.52}  # 68 68 68 69 68 of 130
-# The real judge's floor, from cycle 18's recording (SP6, 2026-09-26): 96 of
-# 130 expected picks and no wrong one. None would report the rate only.
-REAL_PICK_FLOOR: float | None = 0.73                          # 96 of 130
+# unpicked, since the fake maps no fact to them. Round 8 added four questions
+# that name the job's city (onsite_office_named_city, onsite_named_office,
+# onsite_based_in_city, reloc_named_city): the gate holds each back and the
+# fake never settles one, so they count as expected but unpicked.
+FAKE_PICK_FLOOR = 0.51                                        # 69 of 135
+NOISY_PICK_FLOOR = {1: 0.50, 2: 0.50, 3: 0.50, 4: 0.51, 5: 0.50}  # 68 68 68 69 68 of 135
+# The real judge's floor, from cycle 18's recording (2026-09-26): 98 of 135
+# expected picks and no wrong one, two of them the judge's sure read of a
+# reworded willingness question (`apply_judge.settle_questions`). None would
+# report the rate only.
+REAL_PICK_FLOOR: float | None = 0.72                          # 98 of 135
 # (question id, profile) cases where a wrong pick by the real judge is
 # accepted, each with its cause. Empty: every wrong pick fails.
 REAL_MISREADS: frozenset[tuple[str, str]] = frozenset()
@@ -252,7 +257,7 @@ def test_the_set_covers_the_topics_the_spec_names():
     # cycle 18 SP6c round 3 added the review's wrong-answer forms and the
     # plain forms each vocabulary passes (69 to 90), round 5 the second
     # review's wrong-settle forms (90 to 109), round 7 the recheck's (109 to
-    # 128)
+    # 128), round 8 four that name the job's city (128 to 132)
     assert 55 <= len(QUESTIONS) <= 135
     assert {q["widget"] for q in QUESTIONS} == set(apply_screening.WIDGETS)
     prefixes = {q["id"].split("_")[0] for q in QUESTIONS}
@@ -290,3 +295,37 @@ def test_the_profiles_are_confirmed_v2_stores_with_their_stated_answers():
         assert set(apply_answers.BUILTINS) <= {e["id"] for e in answers}, name
         got = {e["id"]: e["answer"] for e in answers}
         assert {k: got[k] for k in stated[name]} == stated[name]
+
+
+class _SureSettle:
+    """The fake, with a field about New York mapped to on-site work and every
+    settle question answered Yes at 0.97."""
+
+    def __init__(self):
+        self.inner = jev.FakeJev()
+        self.settle_asked = 0
+
+    def judge(self, state, questions):
+        out = dict(self.inner.judge(state, questions))
+        for qid in questions:
+            if qid.endswith("_source"):
+                out[qid] = jev.Answer(kind="choice", choice="onsite_ok",
+                                      probabilities={"onsite_ok": 0.95}, confidence=0.95)
+            elif qid.endswith("_settle"):
+                self.settle_asked += 1
+                out[qid] = jev.Answer(kind="choice", choice="Yes",
+                                      probabilities={"Yes": 0.97, "No": 0.01,
+                                                     "not_settled": 0.02}, confidence=0.97)
+        return out
+
+
+def test_screen_asks_whether_a_held_back_answer_settles_the_question():
+    q = {"id": "ny_office", "label": "Are you willing to work in the office in New York?",
+         "help": "", "widget": "radio", "options": ["Yes", "No"], "required": True}
+    catalog = apply_screening.catalog_for(PROFILES["citizen"]["answers"])
+    judge = _SureSettle()
+    out = apply_screening.screen(q, catalog, judge)
+    assert judge.settle_asked == 1
+    assert (out.answer, out.fact_key) == ("Yes", "onsite_ok")
+    # the fake never settles one: the question stays unanswered
+    assert apply_screening.screen(q, catalog, jev.FakeJev()).answer is None

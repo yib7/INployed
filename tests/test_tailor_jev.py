@@ -75,6 +75,18 @@ def _recording(stages, calls):
     return _call
 
 
+def _seeing(stages, systems):
+    """The golden stub, keeping every system prompt BEFORE the stub answers. The stub
+    raises on the skills fallback call, and `compress_skills` swallows that error, so
+    only a prompt kept first can show that the call was made."""
+    stub = golden._make_stub(stages)
+
+    def _call(system, user, tier, **kw):
+        systems.append(system)
+        return stub(system, user, tier, **kw)
+    return _call
+
+
 def _run_tailor(monkeypatch, tmp_path, job=None, **kw):
     """`run.tailor()` over the golden job, stubbed at the render seam exactly as
     `test_run_tailor_matches_the_golden` stubs it. Returns what reached the page."""
@@ -433,12 +445,13 @@ def test_select_takes_the_skills_and_the_focus_from_jev(wide_master, monkeypatch
 
 
 def test_compress_skills_fills_each_line_by_probability(wide_master, monkeypatch):
-    def no_call(*a, **k):
-        raise AssertionError("the skills fallback call ran with Jev's lines in hand")
-
-    monkeypatch.setattr(skills, "call", no_call)
+    # compress_skills swallows any error its fallback call raises, so a raising guard
+    # would pass unseen; the calls are counted instead.
+    fallback_calls = []
+    monkeypatch.setattr(skills, "call", lambda *a, **k: fallback_calls.append(a) or {})
     _system, _user, sel = _select_prompts(monkeypatch, skill_pick=_SKILL_PICK)
     lines = {ln["label"]: ln["items"] for ln in compose.compress_skills(_JD, "Analyst", sel)}
+    assert fallback_calls == [], "the skills fallback call ran with Jev's lines in hand"
     assert lines == {"Languages": "SQL, Python, Go", "Frameworks": "Flask",
                      "Developer Tools": "Docker, Git", "Libraries": "pandas"}
 
@@ -465,23 +478,35 @@ def _p1_sel():
             "projects": [{"name": "P1", "groups": [["p1_2"], ["p1_1"]]}]}
 
 
-def _no_llm(*a, **k):
-    raise AssertionError("the ordering call ran with Jev's answer in hand")
+def _ordering_calls(monkeypatch):
+    """Counts the ordering calls. `lead_with_overview` swallows any error its model
+    pass raises, so a raising guard would pass unseen. Each call answers bullet 1,
+    which differs from P1's file order, so a call that ran shows in the result too."""
+    calls = []
+
+    def fake_call(system, user, tier, **kw):
+        calls.append(system)
+        return {"projects": [{"project": "P1", "lead": 1}]}
+
+    monkeypatch.setattr(compose, "call", fake_call)
+    return calls
 
 
 @pytest.mark.parametrize("confidence", [0.9, 0.5])
 def test_a_sure_jev_pick_leads_and_the_ordering_call_is_skipped(wide_master, monkeypatch,
                                                                 confidence):
-    monkeypatch.setattr(compose, "call", _no_llm)
+    calls = _ordering_calls(monkeypatch)
     sel = _p1_sel()
     compose.lead_with_overview(_JD, "Analyst", sel, judge=_Pick("1", confidence))
+    assert calls == [], "the ordering call ran with Jev's answer in hand"
     assert sel["projects"][0]["groups"] == [["p1_2"], ["p1_1"]]
 
 
 def test_an_unsure_jev_pick_keeps_file_order(wide_master, monkeypatch):
-    monkeypatch.setattr(compose, "call", _no_llm)
+    calls = _ordering_calls(monkeypatch)
     sel = _p1_sel()
     compose.lead_with_overview(_JD, "Analyst", sel, judge=_Pick("1", 0.4))
+    assert calls == [], "the ordering call ran with Jev's answer in hand"
     assert sel["projects"][0]["groups"] == [["p1_1"], ["p1_2"]]
 
 
@@ -502,13 +527,13 @@ def test_a_failing_judge_leaves_the_ordering_call_as_it_was(wide_master, monkeyp
 
 
 def test_with_no_project_to_order_the_lead_line_says_so(wide_master, monkeypatch):
-    monkeypatch.setattr(compose, "call", _no_llm)
+    calls = _ordering_calls(monkeypatch)
     rec = _Recording(jev.FakeJev())
     jev_assist.reset_usage()
     sel = {"experience": [], "leadership": [],
            "projects": [{"name": "P1", "groups": [["p1_1"]]}]}
     compose.lead_with_overview(_JD, "Analyst", sel, judge=rec)
-    assert rec.requests == []
+    assert rec.requests == [] and calls == []
     assert sel["projects"][0]["groups"] == [["p1_1"]]
     assert jev_assist.usage_line(jev_assist.STEP_LEAD) == (
         "jev lead: 0 requests, 0 tokens (estimated), $0.000000; nothing to ask")
@@ -534,7 +559,10 @@ def test_a_golden_run_with_jev_on_makes_fewer_llm_calls(pinned_engine, stub_temp
                                                         tmp_path, monkeypatch):
     """Jev answers the lead, so the ordering call goes; the bullets, the grounding
     gate and the page are the golden's. The skills lines come from Jev and the pools,
-    with no fallback call (the golden stub raises on one)."""
+    with no fallback call: every system prompt is kept before the stub answers, and
+    none is the ordering call's or the fallback call's."""
+    systems: list = []
+    golden._install_stub(monkeypatch, _seeing(pinned_engine, systems))
     rec = _Recording(jev.FakeJev())
     areas = _jev_on(monkeypatch, rec)
     gate = []
@@ -546,6 +574,9 @@ def test_a_golden_run_with_jev_on_makes_fewer_llm_calls(pinned_engine, stub_temp
 
     monkeypatch.setattr(verify, "enforce_grounded", _recording_gate)
     captured = _run_tailor(monkeypatch, tmp_path)
+    assert len(systems) == len(pinned_engine)
+    assert not any("PURE ORDERING" in s for s in systems), "the ordering call ran"
+    assert not any("EXACTLY FOUR fixed lines" in s for s in systems), "the fallback ran"
     assert pinned_engine == [s for s in golden._GOLDEN_STAGES if s != "lead_with_overview"]
     assert len(pinned_engine) == len(golden._GOLDEN_STAGES) - 1
     assert captured["bullets"] == golden._GOLDEN_BULLETS

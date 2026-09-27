@@ -219,11 +219,12 @@ def test_the_default_judge_is_the_tailor_client(master, monkeypatch, helper):
 
 @pytest.mark.parametrize("helper", _HELPERS)
 def test_judge_none_means_off_without_building_a_client(master, monkeypatch, helper):
-    def client(area):
-        raise AssertionError("judge=None must not build a client")
-
-    monkeypatch.setattr(jev_switch, "client", client)
+    # default_judge() swallows any error the switch raises, so a raising guard would
+    # pass unseen; the client requests are counted instead.
+    areas = []
+    monkeypatch.setattr(jev_switch, "client", lambda area: areas.append(area) or jev.FakeJev())
     assert helper(None) is None
+    assert areas == [], "judge=None built a client"
 
 
 def test_a_client_that_cannot_be_built_reads_as_off(monkeypatch):

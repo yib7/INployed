@@ -45,6 +45,8 @@ pinned_engine = golden.pinned_engine
 stub_template_head = golden.stub_template_head
 
 _H1, _H1_LED, _H2 = faith._H1, faith._H1_LED, faith._H2
+# The letter's style gate as the module has it, before any test replaces it.
+_REAL_ENFORCE_BODY_STYLE = coverletter.enforce_body_style
 # A second grounded draft of h1, with every token in its atom.
 _H1_ALT = "Helped move the billing service to a queue-based design with the team."
 _H2_KAFKA = "Wrote 40 integration tests for the billing service on Kafka."
@@ -414,13 +416,27 @@ def test_a_repair_the_check_drove_goes_back_through_the_style_gate(letter, style
 
 
 @pytest.mark.parametrize("judge", [None, ClaimReader()], ids=["check off", "nothing flagged"])
-def test_a_repair_the_gate_alone_drove_is_todays(letter, style_gate, judge):
-    """The grounding gate alone asked for the repair: the style gate runs once, as it
-    did before TL-8."""
+def test_a_repair_the_gate_alone_drove_goes_back_through_the_style_gate(letter, style_gate,
+                                                                       judge):
+    """The grounding gate alone asked for the repair, with Jev off or nothing flagged:
+    the repaired body goes through the style gate as well, and its em dash never
+    prints. The repair prompt is today's (`test_a_repair_with_no_claim_is_todays_prompt`)."""
     letter.unseen[_BODY] = ["Kubernetes"]
     kw = {} if judge is None else {"judge": judge}
-    letter.generate(**kw)
-    assert style_gate == [_BODY]
+    body = letter.generate(**kw)
+    assert style_gate == [_BODY, _DASHED]
+    assert body == compose._strip_em_dashes(_DASHED) and chr(0x2014) not in body
+
+
+def test_with_jev_off_a_repaired_em_dash_never_ships(letter, monkeypatch):
+    """The real style gate, Jev off: the gate-only repair returns an em dash, and the
+    body that ships has none."""
+    monkeypatch.setattr(coverletter, "enforce_body_style", _REAL_ENFORCE_BODY_STYLE)
+    letter.unseen[_BODY] = ["Kubernetes"]
+    letter.calls.repaired = _DASHED
+    body = letter.generate()
+    assert "repair" in letter.calls.roles()
+    assert chr(0x2014) not in body
 
 
 def test_the_letter_sentences_keep_an_abbreviation_whole():

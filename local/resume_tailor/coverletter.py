@@ -384,12 +384,11 @@ Write the body now."""
     if bad or claims:
         body = _repair_ungrounded_body(job_title, company, body, bullets, bad, tone,
                                        background=background, claims=claims)
-        if claims:
-            # A repair TL-8 asked for rewrites sentences after the style gate ran, and
-            # nothing later strips an em dash (`to_latex` prints one), so the repaired
-            # body goes through the gate again.
-            body = enforce_body_style(job_title, company, body, bullets, tone=tone,
-                                      background=background)
+        # The repair rewrites the letter after the style gate ran, and nothing later
+        # strips an em dash (`to_latex` prints one), so every repaired body goes
+        # through the gate again, then the grounding re-check reads what it returns.
+        body = enforce_body_style(job_title, company, body, bullets, tone=tone,
+                                  background=background)
         bad = verify.letter_unseen(body, allowed)
         if bad:
             raise LLMError(

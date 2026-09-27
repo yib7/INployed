@@ -622,9 +622,9 @@ def test_archive_mode_replaces_the_four_legacy_keys():
     assert (f.type, f.default, f.section, f.target) == (
         "choice", "Keep everything", "Settings history", "config")
     assert f.choices == ("Keep everything", "Keep newest 20", "Keep newest 100", "Off")
-    # Index 0 is the default on purpose: QComboBox falls back to it when a stored
-    # value matches no item, so a hand-edited typo lands on "keep everything"
-    # rather than silently switching snapshots off.
+    # Index 0 is the default, the reading that deletes nothing. A hand-edited
+    # value matching no choice stays on screen as typed and Save flags it
+    # (settings_tab._set_combo, cycle 19's ST-7).
     assert f.choices[0] == f.default
 
 
@@ -1598,3 +1598,10 @@ def test_opus_5_5_is_offered_in_all_six_claude_dropdowns_and_is_the_pro_default(
     assert by_key["RESUME_TAILOR_CLAUDE_MODEL_PRO"].default == "claude-opus-5-5"
     assert by_key["stage1_model_claude"].default == "claude-haiku-4-5"
     assert by_key["stage2_model_claude"].default == "claude-sonnet-5"
+
+
+def test_a_blank_choice_names_the_fix_in_plain_words():
+    """A stored choice the form keeps on screen (ST-7) can be blank; the note
+    under it then asks for a pick, since "Not allowed: ." names nothing."""
+    assert settings.validate({"provider": ""})["provider"] == "Pick one of the listed options."
+    assert settings.validate({"provider": "openai"})["provider"] == "Not allowed: openai."

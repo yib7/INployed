@@ -575,16 +575,23 @@ def test_a_legacy_archive_config_opens_reading_keep_newest_20(qtbot, tmp_path):
     assert form._getters["archive_mode"]() == "Keep newest 20"
 
 
-def test_an_unrecognised_stored_archive_mode_falls_back_to_the_default(qtbot, tmp_path):
-    """Why "Keep everything" is choices[0] and not "Off": QComboBox falls back to
-    the FIRST item when a stored value matches none of them, so a hand-edited typo
-    must land on the harmless default rather than silently stopping snapshots."""
+def test_an_unrecognised_stored_archive_mode_stays_on_screen_and_save_flags_it(
+        qtbot, tmp_path, monkeypatch):
+    """Cycle 19's ST-7: a hand-edited mode matching no choice stays in the
+    dropdown as typed, so the form shows what the file holds and Save names it.
+    Reading it as choices[0] let the next Save rewrite the file with nothing
+    said (the pruner reads "Keep newest 7" as keep seven)."""
     targets = _targets(tmp_path)
     targets["config"].write_text(json.dumps({"archive_mode": "Keep newest 7"}),
                                  encoding="utf-8")
     form = _form(tmp_path)
     qtbot.addWidget(form)
-    assert form._getters["archive_mode"]() == "Keep everything"
+    assert form._getters["archive_mode"]() == "Keep newest 7"
+    assert "archive_mode" not in form._dirty          # opening as stored is no edit
+    _no_modals(monkeypatch)
+    assert form.save() is False
+    assert _note(form, "archive_mode") == "Not allowed: Keep newest 7."
+    assert json.loads(targets["config"].read_text("utf-8"))["archive_mode"] == "Keep newest 7"
 
 
 def test_save_forwards_the_archive_mode_to_prune(qtbot, tmp_path, monkeypatch):
@@ -2313,32 +2320,55 @@ def test_search_leaves_a_gated_field_out_and_names_its_gate(qtbot, tmp_path):
 def test_the_gate_footer_reads_the_widgets_not_the_stored_file(qtbot, tmp_path):
     """Routed here from the P3 review, and P7 is where it stops being latent.
 
-    `settings.is_visible` compares gate values EXACTLY while `_set_combo` coerces
-    an unrecognised stored value to `choices[0]` before the form ever sees it — so
-    a hand-edited `"provider": "openai"` makes `visible_keys(load())` hide all
-    twelve gated fields while the form renders them normally. A footer built from
-    the FILE would then announce that the Gemini pickers on screen in front of the
-    user are missing.
+    `settings.is_visible` compares gate values EXACTLY while `_set_combo` reads a
+    stored value in another case as its match (cycle 19's ST-7), so a hand-edited
+    `"provider": "Claude"` makes `visible_keys(load())` hide the two Claude
+    pickers the form renders. A footer built from the FILE would then announce
+    that the pickers on screen in front of the user are missing.
     """
     targets = _targets(tmp_path)
-    targets["scoring"].write_text(json.dumps({"provider": "openai"}), encoding="utf-8")
+    targets["scoring"].write_text(json.dumps({"provider": "Claude"}), encoding="utf-8")
     form = SettingsForm(targets=targets, collapsed_sections=[], save_collapsed=lambda s: None,
                         show_advanced=False, save_show_advanced=lambda v: None)
     qtbot.addWidget(form)
-    # The two readings genuinely disagree — that is the whole hazard.
+    # The two readings genuinely disagree: that is the whole hazard.
     stored = settings.load(targets)
-    assert stored["provider"] == "openai"
-    assert "stage1_model" not in settings.visible_keys(stored)
-    assert form._widgets["provider"].currentText() == "gemini"
+    assert stored["provider"] == "Claude"
+    assert "stage1_model_claude" not in settings.visible_keys(stored)
+    assert form._widgets["provider"].currentText() == "claude"
 
     form.set_search("model")
     shown = _on_screen_field_keys(form)
-    assert {"stage1_model", "stage2_model"} <= shown       # what the user can see
-    assert not {"stage1_model_claude", "stage2_model_claude"} & shown
+    assert {"stage1_model_claude", "stage2_model_claude"} <= shown   # what the user sees
+    assert not {"stage1_model", "stage2_model"} & shown
 
     foot = form._search_footer.text()
-    assert "2 more settings apply when Scoring provider is 'claude'" in foot
-    assert "gemini" not in foot        # never names a gate that is standing open
+    assert "apply when Scoring provider is 'gemini'" in foot
+    assert "Scoring provider is 'claude'" not in foot   # that gate is standing open
+
+
+def test_an_unknown_stored_choice_stays_on_screen_and_both_readings_agree(
+        qtbot, tmp_path, monkeypatch):
+    """ST-7's other arm: a value matching no choice in any case is kept as typed,
+    so the form, the file and `settings.is_visible` all read the same thing
+    (neither model pair applies to "openai"), and Save flags the row by name
+    and writes nothing."""
+    targets = _targets(tmp_path)
+    targets["scoring"].write_text(json.dumps({"provider": "openai"}), encoding="utf-8")
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    assert form._widgets["provider"].currentText() == "openai"
+    assert "provider" not in form._dirty
+    stored = settings.load(targets)
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    for key in ("stage1_model", "stage1_model_claude"):
+        assert settings.is_visible(by_key[key], stored) is False, key
+        assert not _rows_visible(form, key), key
+
+    _no_modals(monkeypatch)
+    assert form.save() is False
+    assert _note(form, "provider") == "Not allowed: openai."
+    assert json.loads(targets["scoring"].read_text("utf-8")) == {"provider": "openai"}
 
 
 def test_clearing_search_restores_collapse_state(qtbot, tmp_path):
@@ -2804,3 +2834,39 @@ def test_the_six_claude_dropdowns_offer_opus_5_5(qtbot, tmp_path):
         items = [combo.itemText(i) for i in range(combo.count())]
         assert "claude-opus-5-5" in items and "claude-opus-5" in items, key
     assert form._widgets["RESUME_TAILOR_CLAUDE_MODEL_PRO"].currentText() == "claude-opus-5-5"
+
+
+def test_set_combo_matches_another_case_and_keeps_an_unknown_value(qtbot):
+    """ST-7 at the unit: c18's U1 read a hand-edited "Api_Key" as index 0 (vertex
+    billing); it now reads as api_key, and a value matching nothing in any case
+    is added and shown as typed."""
+    combo = QtWidgets.QComboBox()
+    qtbot.addWidget(combo)
+    combo.addItems(["vertex", "api_key", "pool"])
+    SettingsForm._set_combo(combo, "Api_Key")
+    assert combo.currentText() == "api_key" and combo.count() == 3
+    SettingsForm._set_combo(combo, " POOL ")
+    assert combo.currentText() == "pool" and combo.count() == 3
+    SettingsForm._set_combo(combo, "keyring")
+    assert combo.currentText() == "keyring" and combo.count() == 4
+    SettingsForm._set_combo(combo, "vertex")
+    assert combo.currentText() == "vertex" and combo.count() == 4
+    SettingsForm._set_combo(combo, "KEYRING")
+    assert combo.currentText() == "keyring" and combo.count() == 4
+
+
+def test_a_choice_stored_in_another_case_reads_as_its_match(qtbot, tmp_path, monkeypatch):
+    """ST-7 end to end, on the setting c18's U1 named: a hand-edited
+    `"gemini_auth": "Api_Key"` opens as api_key (clean, with its key row on
+    screen), and a Save writes the canonical spelling. Reading it as vertex
+    would have moved the tailor's billing to the cloud project on that Save."""
+    targets = _targets(tmp_path)
+    targets["config"].write_text(json.dumps({"gemini_auth": "Api_Key"}), encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert form._widgets["gemini_auth"].currentText() == "api_key"
+    assert "gemini_auth" not in form._dirty
+    assert _rows_visible(form, "RESUME_TAILOR_GEMINI_API_KEY")
+    _no_modals(monkeypatch)
+    assert form.save() is True
+    assert json.loads(targets["config"].read_text("utf-8"))["gemini_auth"] == "api_key"

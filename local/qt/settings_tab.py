@@ -1078,9 +1078,35 @@ class SettingsForm(QtWidgets.QWidget):
         return edit
 
     @staticmethod
-    def _set_combo(combo: QtWidgets.QComboBox, value) -> None:
-        i = combo.findText("" if value is None else str(value))
-        combo.setCurrentIndex(i if i >= 0 else 0)
+    def _match_choice(choices, value) -> str:
+        """`value` as the choice it names: the exact entry, else the entry it
+        matches ignoring case and surrounding spaces, else the stripped text.
+
+        Cycle 19's ST-7. The old setter fell back to index 0, so a hand-edited
+        `"gemini_auth": "Api_Key"` opened as vertex billing and the next Save
+        wrote vertex over the user's choice. A value that matches no entry in any
+        case comes back as typed, so the dropdown shows what the file says and
+        Save names it (`settings.field_problem`) until the user picks one."""
+        text = "" if value is None else str(value)
+        if text in choices:
+            return text
+        folded = text.strip().casefold()
+        for choice in choices:
+            if choice.casefold() == folded:
+                return choice
+        return text.strip()
+
+    @classmethod
+    def _set_combo(cls, combo: QtWidgets.QComboBox, value) -> None:
+        """Select `value` in a fixed-choice dropdown (`_match_choice`), adding it
+        as an extra entry when it matches none of them."""
+        items = [combo.itemText(i) for i in range(combo.count())]
+        text = cls._match_choice(items, value)
+        i = combo.findText(text)
+        if i < 0:
+            combo.addItem(text)
+            i = combo.count() - 1
+        combo.setCurrentIndex(i)
 
     @staticmethod
     def _as_int(value, default: int) -> int:
@@ -1403,13 +1429,12 @@ class SettingsForm(QtWidgets.QWidget):
         search are the other kind — view folds — and `_reveal_view_folds` opens
         those instead.
 
-        READS THE WIDGETS (`_gate_values`), never `settings.load()`, and that is
-        deliberate rather than incidental. `settings.is_visible` compares gate
-        values EXACTLY while `_set_combo` coerces an unrecognised stored value to
-        `choices[0]` before the form ever sees it, so a hand-edited
-        `"provider": "openai"` makes `visible_keys(load())` hide all twelve gated
-        fields while the form renders them normally. Anything phrased off the file
-        would then tell the user that the rows in front of them are missing.
+        READS THE WIDGETS (`_gate_values`), never `settings.load()`, on purpose.
+        `settings.is_visible` compares gate values EXACTLY while `_set_combo`
+        reads a stored value in another case as its match, so a hand-edited
+        `"provider": "Claude"` makes `visible_keys(load())` hide the Claude model
+        pickers the form renders. Anything phrased off the file would then tell
+        the user that the rows in front of them are missing.
         """
         by_key = {x.key: x for x in settings.SETTINGS_SCHEMA}
         section_gate = self._shut_section_gate(f)
@@ -1577,9 +1602,13 @@ class SettingsForm(QtWidgets.QWidget):
         would replace it with the default. `list`/`multichoice` are returned as-is
         because `_coerce` does not speak them (`_field_value` reaches them through
         their own branches), and a secret because .env values are already text.
+        A fixed choice goes through `_match_choice`, the reading `_set_combo`
+        gives the dropdown: a stored "Api_Key" opens clean as api_key.
         """
         if f.secret or f.type in ("multichoice", "list"):
             return raw
+        if f.type == "choice":
+            return cls._match_choice([str(c) for c in f.choices], raw)
         return cls._coerce(f, raw)[0]
 
     @classmethod

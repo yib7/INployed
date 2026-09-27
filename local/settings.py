@@ -205,9 +205,10 @@ CLAUDE_MODELS = ("claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude
 # because a value outside the pair is a typo the runtime would silently read
 # as 'tiers'.
 #
-# Index 0 is 'tiers' because it is the DEFAULT twice over: `settings_tab._set_combo`
-# falls back to `choices[0]` for an unrecognised stored value, and 'tiers' is the
-# mode that reproduces what every install did before this setting existed.
+# Index 0 is 'tiers', the default, because it is the mode that reproduces what
+# every install did before this setting existed. A stored value in another case
+# ('Simple') reads as its match; any other stored value stays on screen as typed
+# and Save flags it (settings_tab._set_combo).
 MODEL_MODE_TIERS = "tiers"
 MODEL_MODE_SIMPLE = "simple"
 MODEL_MODES = (MODEL_MODE_TIERS, MODEL_MODE_SIMPLE)
@@ -223,10 +224,10 @@ ARCHIVE_KEEP_ALL = "Keep everything"
 ARCHIVE_KEEP_20 = "Keep newest 20"
 ARCHIVE_KEEP_100 = "Keep newest 100"
 ARCHIVE_OFF = "Off"
-# Order matters: index 0 is the DEFAULT because QComboBox falls back to the first
-# item when a stored value matches none of them (settings_tab._set_combo), so a
-# hand-edited typo lands on "keep everything" rather than silently switching
-# snapshots off.
+# Index 0 is the default, the mode that deletes nothing. A hand-edited value that
+# matches none of them stays on screen as typed and Save flags it
+# (settings_tab._set_combo), so a typo changes no snapshots until the user picks
+# one of these four.
 ARCHIVE_MODES = (ARCHIVE_KEEP_ALL, ARCHIVE_KEEP_20, ARCHIVE_KEEP_100, ARCHIVE_OFF)
 
 
@@ -888,10 +889,11 @@ def is_visible(field: Field, values: Mapping[str, Any]) -> bool:
 
     Values are compared as strings, EXACTLY: no strip/lower, unlike the runtime
     resolvers (`resume_tailor.config`, `score_jobs._active_scoring`) which
-    normalise. That cannot diverge through the form, because `_gate_values` reads
-    a non-editable QComboBox whose text is always one of `Field.choices` — a
-    hand-edited `"provider": "Claude"` is already coerced to the first choice by
-    `settings_tab._set_combo` before this ever sees it.
+    normalise. Through the form the two agree on every choice the resolvers
+    know: `settings_tab._set_combo` reads a hand-edited `"provider": "Claude"` as
+    the "claude" choice before `_gate_values` hands it here. A value matching no
+    choice in any case stays on screen as typed, so it hides every field gated
+    on it here and in the form alike, and Save flags it.
 
     Raises on a broken graph rather than degrading quietly, matching the posture
     of `settings_tab._set_field_visible` (KeyError) and `_connect_gate_signals`
@@ -1089,7 +1091,9 @@ def field_problem(f: Field, value: Any) -> str | None:
     if not _coerce_ok(f, value):
         return f"Expected {f.type}, got {type(value).__name__}."
     if f.type == "choice" and value not in f.choices:
-        return f"Not allowed: {value}."
+        # The Settings tab keeps an unknown stored choice on screen as typed, and a
+        # blank one would read "Not allowed: ." under its dropdown.
+        return f"Not allowed: {value}." if value.strip() else "Pick one of the listed options."
     # An .env value is one physical KEY=VALUE line and envfile.read parses line by
     # line, so a newline does not round-trip: it writes a second line the reader
     # takes for a whole new assignment. envfile.update refuses it too, but that

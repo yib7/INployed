@@ -55,7 +55,13 @@ SKILLS_WORDS: tuple[tuple[float, str], ...] = (
 # Stage 2 follows the stage 2 prompt: the deep score is a mix of must-have coverage
 # (the mean met probability over the must-have lines), nice-to-have coverage and
 # the three fits, each 0-1; a part with no lines drops out and the rest are
-# reweighted. deep = 1 + 9 * mix, rounded half up.
+# reweighted. deep = DEEP_BASE + DEEP_SPAN * mix, rounded half up and kept to 1-10.
+# Jev's met reads run conservative: with 1 + 9 * mix its deep scores sat 1.7 below
+# Gemini's (VL-2, 151 jobs), and the recommendation agreed on 55%. 3 + 8 * mix puts
+# the two scales within 0.8 of each other on average and agrees on 82%, so a mixed
+# table of Jev and Gemini rows sorts on one scale and the bands keep their meaning.
+DEEP_BASE = 3.0
+DEEP_SPAN = 8.0
 MIN_REQUIREMENT_LINES = 3       # fewer: that job's stage 2 takes the LLM path
 MAX_REQUIREMENT_LINES = 30
 MET_YES = 0.5                   # req_{i}_met at or above this counts the line as met
@@ -806,7 +812,7 @@ def compose_stage2(reqs: Sequence[Req], reads: Mapping[str, Any]) -> dict:
     present = {k: v for k, v in parts.items() if v is not None}
     total = sum(DEEP_WEIGHTS[k] for k in present)
     mix = sum(DEEP_WEIGHTS[k] * v for k, v in present.items()) / total if total else 0.0
-    deep = max(1, min(10, math.floor(1 + 9 * mix + 0.5)))
+    deep = max(1, min(10, math.floor(DEEP_BASE + DEEP_SPAN * mix + 0.5)))
     strengths = ([t for t, met, must in lines if must and met >= MET_YES]
                  + [t for t, met, must in lines if not must and met >= MET_YES])
     gaps = [t for t, met, must in lines if must and met < MET_YES]

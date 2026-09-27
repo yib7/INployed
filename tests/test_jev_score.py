@@ -759,7 +759,7 @@ def test_stage2_everything_met_is_a_ten_to_apply():
 def test_stage2_nothing_met_is_a_skip_with_the_must_haves_as_gaps():
     reqs = _reqs(True, True, False, True)
     got = jev_score.compose_stage2(reqs, _reads2([0.1] * 4, resp=0.0, seniority=0.0, domain=0.0))
-    assert got["deep_score"] == 1 and got["recommendation"] == "skip"
+    assert got["deep_score"] == 3 and got["recommendation"] == "skip"
     assert got["strengths"] == ""
     assert got["gaps"] == "Requirement 0 | Requirement 1 | Requirement 3"
 
@@ -798,12 +798,14 @@ def test_stage2_lines_are_trimmed_and_keep_the_separator_free():
 
 @pytest.mark.parametrize("fit,deep,rec", [
     (1.0, 10, "apply"),
-    (0.70, 7, "apply"),
-    (0.60, 6, "consider"),
-    (0.45, 5, "consider"),
-    (0.40, 5, "consider"),
-    (0.30, 4, "skip"),
-    (0.0, 1, "skip"),
+    (0.85, 10, "apply"),
+    (0.70, 9, "apply"),
+    (0.45, 7, "apply"),
+    (0.40, 6, "consider"),
+    (0.25, 5, "consider"),
+    (0.20, 5, "consider"),
+    (0.15, 4, "skip"),
+    (0.0, 3, "skip"),
 ])
 def test_stage2_deep_score_maps_the_mix_to_one_to_ten(fit, deep, rec):
     reqs = _reqs(True, True, False)

@@ -626,6 +626,11 @@ def test_an_inline_preferred_cue_beats_a_required_heading():
     "Must not require a work visa",
     "Visa status must allow full-time work",
     "H-1B visa holders are welcome",
+    # sponsorship in its immigration wording
+    "Visa sponsorship is not available for this role",
+    "Must not require sponsorship now or in the future",
+    "Sponsorship for employment is not offered",
+    "Candidates needing employer sponsorship cannot be considered",
 ])
 def test_requirement_lines_drop_location_visa_and_eligibility_lines(line):
     md = f"## Requirements\n- Python and SQL\n- {line}\n- Tableau dashboards\n- Statistics\n"
@@ -650,6 +655,7 @@ def test_requirement_lines_drop_location_visa_and_eligibility_lines(line):
     "Hybrid/multi-cloud architecture",
     "Remote/edge device telemetry",
     "Travel requirements gathering for booking systems",
+    "Project sponsorship and stakeholder alignment",
 ])
 def test_requirement_lines_keep_skills_that_share_a_word_with_a_dropped_line(line):
     md = f"## Requirements\n- Python and SQL\n- {line}\n- Tableau dashboards\n"

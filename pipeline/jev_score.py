@@ -524,7 +524,8 @@ _NICE_LINE_RE = re.compile(
 # authorization, citizenship, checks, age, lifting). A word with a second sense
 # (hybrid, remote, location, travel, visa, sponsor, citizen, shift, commute) drops a
 # line only in its work-arrangement or eligibility wording, so "hybrid cloud",
-# "remote sensing" and "Visa and Mastercard payment data" stay.
+# "remote sensing", "Visa and Mastercard payment data" and "project sponsorship"
+# stay.
 _ARRANGED = r"(?:hybrid|remote(?:ly)?)"
 _DROP_PARTS = (
     # where the work happens
@@ -553,7 +554,11 @@ _DROP_PARTS = (
     r"(?:overnight|occasional|frequent|domestic|international|minimal|limited|extensive"
     r"|some) travel\b",
     # eligibility
-    r"sponsorship\b|(?:not|cannot|to) sponsor\b|[’']t sponsor\b",
+    r"(?:not|cannot|to) sponsor\b|[’']t sponsor\b",
+    r"(?:visa|immigration|employment|employer|work|h-?1-?b)\s+sponsorship\b",
+    r"sponsorship\s+(?:for|of)\s+(?:an?\s+)?(?:employment|work|visas?|immigration|h-?1-?b)\b",
+    r"sponsorship\s+(?:is\s+|will\s+)?(?:not\s+)?(?:available|provided|offered)\b",
+    r"(?:requir\w*|need\w*|without|no|offer\w*|provid\w*)\s+(?:an?\s+|any\s+)?sponsorship\b",
     r"h-?1-?b\b|(?:work|employment|immigration|student)\s+visas?\b",
     r"visas?\s+(?:status|holders?|support|transfers?|requirements?|required|needed"
     r"|restrictions?)\b",

@@ -1,4 +1,4 @@
-"""The tailor's Jev requests (TL-1 to TL-4).
+"""The tailor's Jev requests (TL-1 to TL-4 and TL-6).
 
 Jev (`local/jev.py`) answers typed questions about a state and writes no text, so
 each helper here asks one kind of question and hands the answers back as data for
@@ -17,6 +17,9 @@ code to compose. The LLM still writes every bullet.
                         choice), `inflates` and `adds_claim` (nouls). A flagged
                         bullet comes back with its finding, which the run hands to
                         one reground call before it reverts or drops the bullet.
+  pick_verb       TL-6  one choice per repeated opening verb, over the palette's
+                        unused verbs: dedupe_leading_verbs swaps the bullet's first
+                        word for a sure pick and keeps its reverb call otherwise.
 
 Every helper takes `judge=`. Left out, it is `jev_switch.client("tailor")`, which is
 None when Jev is off for the tailor. A helper returns None when Jev is off, when
@@ -56,6 +59,7 @@ log = logging.getLogger(__name__)
 STEP_SKILLS = "skills"
 STEP_SHORTLIST = "shortlist"
 STEP_LEAD = "lead"
+STEP_VERB = "verb"
 STEP_FAITHFULNESS = "faithfulness"
 
 # What a step's note says its caller fell back to when the step fails.
@@ -73,6 +77,9 @@ JD_CHARS = 12_000
 # TL-3: a lead Jev picks with a confidence under this keeps file order.
 LEAD_MIN_CONFIDENCE = 0.5
 
+# TL-6: a verb Jev picks with a confidence under this keeps the LLM `reverb` call.
+VERB_MIN_CONFIDENCE = 0.5
+
 # TL-4: a bullet passes when Jev picks "verified" at this confidence or more and
 # neither noul reaches FAITHFULNESS_FLAG. Any other `supported` pick is flagged,
 # whatever its confidence: only a sure "verified" lets a bullet through.
@@ -86,6 +93,8 @@ ATOM_QUESTION = "Does `atoms[{i}]` show experience `job` asks for?"
 LEAD_QUESTION = ("Which bullet describes `projects[{i}]` as a whole, saying what the "
                  "project is?")
 FOCUS_QUESTION = "Which focus fits the work `job` describes?"
+# TL-6, asked of a bullet whose opening verb another bullet already uses.
+PICK_VERB_QUESTION = "Which verb best names the action in `bullet`?"
 # select()'s skill_focus enum, each value with the description Jev reads.
 SKILL_FOCUS = {
     "ml_research": "Machine learning research: training and evaluating models",
@@ -450,3 +459,35 @@ def faithfulness(entries: Sequence[Mapping[str, Any]], *, judge: Any = _DEFAULT
                         _noul_prob(answers.get(f"adds_claim_{i}")))
         return out
     return _run_step(STEP_FAITHFULNESS, judge, ask, fallback=GATE_ALONE)
+
+
+def pick_verb(bullet: str, options: Mapping[str, str], *, judge: Any = _DEFAULT
+              ) -> Optional[Tuple[str, float]]:
+    """TL-6: the verb that best names the action in `bullet`, a bullet whose opening
+    verb another bullet already uses.
+
+    `options` is {verb: its palette category}: the palette's unused verbs, the
+    category holding the repeated verb first. One choice over them
+    (PICK_VERB_QUESTION) with the bullet as the state. One question cannot be split,
+    so past Jev's limits the options are halved from the end until the request fits.
+    Returns (verb, confidence); the caller swaps the bullet's first word for the verb
+    at VERB_MIN_CONFIDENCE or more and keeps its LLM `reverb` call under it. The verb
+    is always one of `options`. None when Jev is off or fails, or there is no option."""
+    def ask(j: Any) -> Tuple[str, float]:
+        jev, _switch = _jev_modules()
+        criteria = {str(v): str(cat) for v, cat in options.items() if str(v).strip()}
+        if not criteria:
+            raise _NothingToAsk
+        state = {"bullet": str(bullet or "")}
+        names = list(criteria)
+
+        def question(n: int) -> Dict[str, dict]:
+            return {"verb": {"type": "choice", "instructions": PICK_VERB_QUESTION,
+                             "criteria": {v: criteria[v] for v in names[:n]}}}
+
+        n = len(names)
+        while n > 1 and not jev.request_fits(state, question(n)):
+            n //= 2
+        answers = _send(STEP_VERB, j, state, question(n))
+        return _choice_pick(answers.get("verb"), names[:n])
+    return _run_step(STEP_VERB, judge, ask)

@@ -771,12 +771,21 @@ def _note_still_underfull(ctx: PassCtx, before: Dict[str, str], *,
     return still
 
 
+def _jev_kw(ctx: PassCtx) -> Dict[str, Any]:
+    """`judge=` for a stage a Jev step sits in, or nothing with Jev off. Off, the stage
+    is called as it was before cycle 19, so a caller or a test double written against
+    that signature keeps working."""
+    return {"judge": ctx.judge} if ctx.judge is not None else {}
+
+
 def _pass_dedupe_verbs(ctx: PassCtx) -> None:
     """Guarantee every tailored bullet opens with a DISTINCT action verb — none reused,
     none colliding with a verbatim block's opener (verbatim text is reserved, never
-    modified)."""
+    modified). With Jev on, Jev picks each repeated opener's new verb first (TL-6)."""
     compose.dedupe_leading_verbs(ctx.bullets, compose.group_map(ctx.sel), ctx.jd,
-                                 reserved=ctx.reserved)
+                                 reserved=ctx.reserved, **_jev_kw(ctx))
+    if ctx.judge is not None and ctx.report is not None:
+        ctx.report.jev_step(jev_assist.STEP_VERB)
 
 
 def _pass_merge_verbatim(ctx: PassCtx) -> None:
@@ -1210,8 +1219,9 @@ def tailor(
 
     When Jev is on for the tailor (`jev_switch.client("tailor")`), one judge serves
     the whole run: it rates the skills and the atoms before `select` (TL-1, TL-2),
-    picks each project's lead bullet (TL-3), and checks each bullet the rephrase and
-    every later rewrite wrote against its atoms (TL-4, `_check_faithfulness`). A step
+    picks each project's lead bullet (TL-3), picks the new verb for each repeated
+    opener (TL-6), and checks each bullet the rephrase and every later rewrite wrote
+    against its atoms (TL-4, `_check_faithfulness`). A step
     whose request fails keeps its LLM path (TL-4 leaves the grounding gate to stand
     alone), and once the judge's breaker opens every later step does too. Each step's
     usage line goes to `tailor_report.txt` and to the status log.

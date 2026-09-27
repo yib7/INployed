@@ -1,4 +1,4 @@
-"""jev_assist: the tailor's Jev requests (TL-1 to TL-3).
+"""jev_assist: the tailor's Jev requests (TL-1 to TL-4 and TL-6).
 
 Each helper asks the judge one kind of question and hands Jev's answers back as
 data; its caller composes. The helpers run here against the key-free FakeJev,
@@ -196,8 +196,19 @@ def _faith(judge):
     return jev_assist.faithfulness([_CHESS], judge=judge)
 
 
+# TL-6's options: the palette's unused verbs, each with its category, the category
+# holding the repeated verb first.
+_VERB_BULLET = "Built a sales model to analyze regional demand."
+_VERB_OPTIONS = {"Designed": "Build", "Modeled": "Analyze", "Coordinated": "Lead"}
+
+
+def _verb(judge):
+    return jev_assist.pick_verb(_VERB_BULLET, _VERB_OPTIONS, judge=judge)
+
+
 _HELPERS = [pytest.param(_skills, id="skills_pick"), pytest.param(_atoms, id="atom_relevance"),
-            pytest.param(_lead, id="lead_group"), pytest.param(_faith, id="faithfulness")]
+            pytest.param(_lead, id="lead_group"), pytest.param(_faith, id="faithfulness"),
+            pytest.param(_verb, id="pick_verb")]
 
 
 # ── off, default judge, failures ─────────────────────────────────────────────
@@ -215,7 +226,8 @@ def test_every_helper_is_none_and_asks_nothing_when_jev_is_off(master, monkeypat
     assert jev_assist.atom_relevance(_JD, _TITLE) is None
     assert jev_assist.lead_group(_PROJECTS) is None
     assert jev_assist.faithfulness([_CHESS]) is None
-    assert areas == ["tailor"] * 4
+    assert jev_assist.pick_verb(_VERB_BULLET, _VERB_OPTIONS) is None
+    assert areas == ["tailor"] * 5
 
 
 def test_the_suite_default_client_is_off(master):
@@ -272,7 +284,8 @@ _GATE_ALONE = "the deterministic gate alone"
     pytest.param(_atoms, jev_assist.STEP_SHORTLIST, _LLM_PATH, id="atom_relevance"),
     pytest.param(_lead, jev_assist.STEP_LEAD, _LLM_PATH, id="lead_group"),
     # TL-4 has no LLM path to fall back to: without it the grounding gate runs alone.
-    pytest.param(_faith, jev_assist.STEP_FAITHFULNESS, _GATE_ALONE, id="faithfulness")])
+    pytest.param(_faith, jev_assist.STEP_FAITHFULNESS, _GATE_ALONE, id="faithfulness"),
+    pytest.param(_verb, jev_assist.STEP_VERB, _LLM_PATH, id="pick_verb")])
 def test_a_failure_is_named_by_its_class_only(master, helper, step, fallback, caplog):
     caplog.set_level(logging.WARNING, logger=jev_assist.log.name)
     helper(Failing())
@@ -319,8 +332,10 @@ def test_once_the_breaker_opens_every_later_helper_returns_none(master):
     assert jev_assist.atom_relevance(_JD, _TITLE, judge=judge) is None
     assert jev_assist.lead_group(_PROJECTS, judge=judge) is None
     assert jev_assist.faithfulness([_CHESS], judge=judge) is None
+    assert jev_assist.pick_verb(_VERB_BULLET, _VERB_OPTIONS, judge=judge) is None
     assert down.calls == tries
-    for step in (jev_assist.STEP_SKILLS, jev_assist.STEP_SHORTLIST, jev_assist.STEP_LEAD):
+    for step in (jev_assist.STEP_SKILLS, jev_assist.STEP_SHORTLIST, jev_assist.STEP_LEAD,
+                 jev_assist.STEP_VERB):
         assert "fell back to the LLM path (JudgeOutage _Busy 503)" in jev_assist.usage_line(step)
     assert (f"fell back to {_GATE_ALONE} (JudgeOutage _Busy 503)"
             in jev_assist.usage_line(jev_assist.STEP_FAITHFULNESS))
@@ -656,6 +671,53 @@ def test_faithfulness_with_no_bullets_asks_nothing(master):
     assert judge.calls == 0
 
 
+# ── TL-6 pick_verb ───────────────────────────────────────────────────────────
+def test_pick_verb_is_one_choice_over_the_options(master):
+    rec = Recording(jev.FakeJev())
+    got = jev_assist.pick_verb(_VERB_BULLET, _VERB_OPTIONS, judge=rec)
+    (state, questions), = rec.requests
+    assert state == {"bullet": _VERB_BULLET}
+    assert questions == {"verb": {
+        "type": "choice", "instructions": "Which verb best names the action in `bullet`?",
+        "criteria": _VERB_OPTIONS}}
+    # The fake reads words: "analyze" in the bullet is the Analyze category's word.
+    assert got == ("Modeled", 1.0)
+
+
+def test_pick_verb_hands_back_the_confidence(master):
+    judge = Scripted(choice="Coordinated", confidence=0.4)
+    assert jev_assist.pick_verb(_VERB_BULLET, _VERB_OPTIONS, judge=judge) == ("Coordinated", 0.4)
+
+
+def test_pick_verb_with_no_option_asks_nothing(master):
+    judge = Failing()
+    assert jev_assist.pick_verb(_VERB_BULLET, {}, judge=judge) is None
+    assert judge.calls == 0
+    assert jev_assist.usage_line(jev_assist.STEP_VERB).endswith("; nothing to ask")
+
+
+def test_a_palette_too_big_to_fit_is_cut_from_its_end(master, monkeypatch):
+    """One choice cannot be split, so past Jev's limits the options are halved from
+    the end, which keeps the repeated verb's own category (it comes first)."""
+    options = {f"Verb{i:03d}": "Build" for i in range(64)}
+    whole = Recording(jev.FakeJev())
+    jev_assist.pick_verb(_VERB_BULLET, options, judge=whole)
+    (state, questions), = whole.requests
+    longest, _total = jev.request_size(state, questions)
+    monkeypatch.setattr(jev, "STATE_TOKENS_MAX", int(longest * 0.7 / jev.SIZE_MARGIN))
+    cut = Recording(jev.FakeJev())
+    verb, _conf = jev_assist.pick_verb(_VERB_BULLET, options, judge=cut)
+    (state, questions), = cut.requests
+    criteria = questions["verb"]["criteria"]
+    assert jev.request_fits(state, questions)
+    assert list(criteria) == list(options)[:len(criteria)] and 1 <= len(criteria) < 64
+    assert verb in criteria
+
+
+def test_the_verb_floor_is_the_specs():
+    assert jev_assist.VERB_MIN_CONFIDENCE == 0.5
+
+
 # ── the wording ──────────────────────────────────────────────────────────────
 def test_every_judge_question_is_free_of_the_banned_phrasing():
     """The questions follow the rules the prompts do: `compose.style_violations`
@@ -666,7 +728,7 @@ def test_every_judge_question_is_free_of_the_banned_phrasing():
              jev_assist.FOCUS_QUESTION, *jev_assist.SKILL_FOCUS.values(),
              jev_assist.SUPPORTED_QUESTION, *jev_assist.SUPPORTED_OPTIONS.values(),
              jev_assist.INFLATES_QUESTION, jev_assist.ADDS_CLAIM_QUESTION,
-             *jev_assist.FINDINGS.values()]
+             *jev_assist.FINDINGS.values(), jev_assist.PICK_VERB_QUESTION]
     for text in texts:
         assert compose.style_violations(text) == [], text
         assert "\u2014" not in text and not re.search(r",\s*never\s", text), text

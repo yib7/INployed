@@ -625,6 +625,23 @@ def _swap_leading_verb(text: str, repl: str) -> str:
     return f"{repl} {rest}".strip()
 
 
+def _unused_verbs(palette: Dict[str, List[str]], current: str, taken) -> Dict[str, str]:
+    """TL-6's options: {verb: its category} for each palette verb whose lowercase is not
+    in `taken`, in `_pick_unused_verb`'s order (the category holding `current` first,
+    then the rest as written), each verb once."""
+    cl = (current or "").lower()
+    home = [cat for cat, items in palette.items() if any(v.lower() == cl for v in items)]
+    out: Dict[str, str] = {}
+    seen: set = set()
+    for cat in home + [c for c in palette if c not in home]:
+        for v in palette[cat]:
+            lv = v.lower()
+            if lv not in taken and lv not in seen:
+                seen.add(lv)
+                out[v] = cat
+    return out
+
+
 def reverb(jd: str, ids: List[str], bad_text: str, used) -> str:
     """Regenerate ONE bullet so it opens with a fresh action verb NOT in `used`, keeping
     every fact/number. Deterministic, cheapest tier — the re-roll arm of dedupe_leading_verbs."""
@@ -657,23 +674,41 @@ Return ONLY JSON: {{"text": "<rewritten bullet>"}}"""
 
 
 def dedupe_leading_verbs(bullets: Dict[str, str], gm: Dict[str, List[str]], jd: str,
-                         *, reserved=frozenset()) -> Dict[str, str]:
+                         *, reserved=frozenset(), judge: Any = None) -> Dict[str, str]:
     """Guarantee every tailored bullet opens with a DISTINCT action verb — none reused, none
     colliding with `reserved` (the openers of verbatim bullets, which are never modified).
 
     First occurrence of a verb keeps it. A collision is re-rolled once via the LLM (`reverb`,
     constrained to an unused opener); if that still collides or fails, a deterministic
     in-category swap from `active_verbs()` makes the opener unique. Verbatim gkeys are skipped.
-    Mutates and returns `bullets`."""
+    Mutates and returns `bullets`.
+
+    With `judge` (TL-6: `run.tailor()` passes the run's Jev judge), a collision is first a
+    choice over the palette's unused verbs (`jev_assist.pick_verb`): every verb no other
+    bullet opens with, earlier or later, and no verbatim block either. A pick at
+    `jev_assist.VERB_MIN_CONFIDENCE` or more replaces the first word through the same swap
+    the deterministic arm uses, and `reverb` is skipped. Under it, or when Jev is off or
+    its request fails, the collision goes to `reverb` as it always has."""
     used = {v for v in (reserved or ()) if v}
     palette = assets.active_verbs()
-    for gk, text in list(bullets.items()):
+    asked = False
+    items = list(bullets.items())
+    for pos, (gk, text) in enumerate(items):
         if is_verbatim_gkey(gk):
             continue
         v = leading_verb(text)
         if v and v not in used:
             used.add(v)
             continue
+        if judge is not None:
+            asked = True
+            later = {leading_verb(t) for _gk, t in items[pos + 1:]}
+            pick = jev_assist.pick_verb(text, _unused_verbs(palette, v, used | later),
+                                        judge=judge)
+            if pick is not None and pick[1] >= jev_assist.VERB_MIN_CONFIDENCE:
+                bullets[gk] = _swap_leading_verb(text, pick[0])
+                used.add(pick[0].lower())
+                continue
         ids = gm.get(gk) or gk.split("+")
         try:
             new = reverb(jd, ids, text, used)
@@ -690,6 +725,10 @@ def dedupe_leading_verbs(bullets: Dict[str, str], gm: Dict[str, List[str]], jd: 
             used.add(repl.lower())
         elif v:
             used.add(v)  # palette exhausted (pathological) — keep as-is, record the verb
+    if judge is not None and not asked:
+        # Asked with nothing to pick from, so a run with no repeated opener still gets
+        # a usage line that says so ("nothing to ask").
+        jev_assist.pick_verb("", {}, judge=judge)
     return bullets
 
 

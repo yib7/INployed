@@ -1,4 +1,4 @@
-"""The tailor's Jev steps (TL-1 to TL-4) as `run.tailor()` meets them.
+"""The tailor's Jev steps (TL-1 to TL-4 and TL-6) as `run.tailor()` meets them.
 
 With Jev off the tailor must make exactly the LLM calls it made before cycle 19,
 with byte-identical prompts. `test_jev_off_prompts_match_the_recording` pins that:
@@ -12,7 +12,8 @@ A prompt change made on purpose re-records the file (set TAILOR_JEV_OFF_PROMPTS_
 for one run) and shows the diff in review; a change nobody meant fails here.
 
 The rest covers each Jev step where its answer lands (the shortlist and the skills
-in `select`, the lead in `lead_with_overview`) and whole runs with Jev on, with Jev
+in `select`, the lead in `lead_with_overview`, the new verb for a repeated opener in
+`dedupe_leading_verbs`) and whole runs with Jev on, with Jev
 down from the start and with an outage mid-run. The faithfulness check (TL-4) has its
 own module, `test_tailor_faithfulness.py`; the whole runs here count its requests.
 
@@ -540,6 +541,102 @@ def test_with_no_project_to_order_the_lead_line_says_so(wide_master, monkeypatch
         "jev lead: 0 requests, 0 tokens (estimated), $0.000000; nothing to ask")
 
 
+# ── TL-6: the verb dedupe ────────────────────────────────────────────────────
+_PALETTE = {"Build": ["Built", "Designed", "Engineered"],
+            "Analyze": ["Analyzed", "Modeled", "Quantified"],
+            "Lead": ["Led", "Coordinated"]}
+_REVERBED = "Charted weekly demand for the ops team."
+
+
+def _dedupe_bullets():
+    """b repeats a's "Modeled"; c and d open with verbs no earlier bullet uses."""
+    return {"a": "Modeled churn for the retention team.",
+            "b": "Modeled weekly demand for the ops team.",
+            "c": "Built the ingest service in Go.",
+            "d": "Led a study group of 6."}
+
+
+def _reverb_calls(monkeypatch):
+    """Counts the `reverb` re-rolls, each answering `_REVERBED`, and pins the palette.
+    `dedupe_leading_verbs` swallows any error `reverb` raises, so a raising guard
+    would pass unseen."""
+    calls = []
+
+    def fake_reverb(jd, ids, bad_text, used):
+        calls.append((list(ids), bad_text, sorted(used)))
+        return _REVERBED
+
+    monkeypatch.setattr(compose, "reverb", fake_reverb)
+    monkeypatch.setattr(assets, "active_verbs", lambda: {k: list(v) for k, v in _PALETTE.items()})
+    return calls
+
+
+def _dedupe(bullets, judge, reserved=frozenset({"quantified"})):
+    return compose.dedupe_leading_verbs(bullets, {gk: [gk] for gk in bullets}, _JD,
+                                        reserved=reserved, judge=judge)
+
+
+@pytest.mark.parametrize("confidence", [0.9, 0.5])
+def test_a_sure_verb_pick_swaps_the_first_word_and_skips_reverb(monkeypatch, confidence):
+    calls = _reverb_calls(monkeypatch)
+    rec = _Recording(_Pick("Analyzed", confidence))
+    got = _dedupe(_dedupe_bullets(), rec)
+    assert calls == [], "reverb ran with Jev's answer in hand"
+    assert got["b"] == "Analyzed weekly demand for the ops team."
+    assert [got[k] for k in "acd"] == [_dedupe_bullets()[k] for k in "acd"]
+    (state, questions), = rec.requests
+    assert state == {"bullet": "Modeled weekly demand for the ops team."}
+    # The palette's unused verbs, the repeated verb's category first. Out: the verbs
+    # earlier bullets and the verbatim blocks open with ("modeled", "quantified") and
+    # the ones later bullets open with ("built", "led").
+    assert questions["verb"]["criteria"] == {"Analyzed": "Analyze", "Designed": "Build",
+                                             "Engineered": "Build", "Coordinated": "Lead"}
+
+
+def test_an_unsure_verb_pick_keeps_the_reverb_call(monkeypatch):
+    calls = _reverb_calls(monkeypatch)
+    got = _dedupe(_dedupe_bullets(), _Pick("Analyzed", 0.4))
+    assert calls == [(["b"], "Modeled weekly demand for the ops team.",
+                      ["modeled", "quantified"])]
+    assert got["b"] == _REVERBED
+
+
+def test_a_failing_judge_leaves_the_reverb_call_as_it_was(monkeypatch):
+    calls = _reverb_calls(monkeypatch)
+    off = _dedupe(_dedupe_bullets(), None)
+    failed = _dedupe(_dedupe_bullets(), _Failing())
+    assert len(calls) == 2 and calls[0] == calls[1]
+    assert failed == off and off["b"] == _REVERBED
+
+
+def test_each_repeated_opener_is_its_own_choice(monkeypatch):
+    """A verb picked for one bullet is used from then on: the next repeat is asked
+    without it."""
+    calls = _reverb_calls(monkeypatch)
+    bullets = _dedupe_bullets()
+    bullets["e"] = "Modeled the club budget for the spring term."
+    rec = _Recording(jev.FakeJev())
+    got = _dedupe(dict(bullets), rec)
+    assert calls == []
+    assert [s["bullet"] for s, _q in rec.requests] == [bullets["b"], bullets["e"]]
+    first, second = (list(q["verb"]["criteria"]) for _s, q in rec.requests)
+    # FakeJev finds no option's words in either bullet, so it takes the first option.
+    assert got["b"].split()[0] == first[0] == "Analyzed"
+    assert second == [v for v in first if v != "Analyzed"]
+    assert got["e"] == "Designed the club budget for the spring term."
+
+
+def test_with_no_repeated_opener_the_verb_line_says_so(monkeypatch):
+    calls = _reverb_calls(monkeypatch)
+    rec = _Recording(jev.FakeJev())
+    jev_assist.reset_usage()
+    bullets = {k: v for k, v in _dedupe_bullets().items() if k != "b"}
+    assert _dedupe(dict(bullets), rec) == bullets
+    assert rec.requests == [] and calls == []
+    assert jev_assist.usage_line(jev_assist.STEP_VERB) == (
+        "jev verb: 0 requests, 0 tokens (estimated), $0.000000; nothing to ask")
+
+
 # ── whole runs ───────────────────────────────────────────────────────────────
 # FakeJev rates every golden skill and atom alike (0.1), so each skills line is its
 # pool in the user's order and the shortlist is the whole catalog in file order.
@@ -563,6 +660,11 @@ def test_a_golden_run_with_jev_on_makes_fewer_llm_calls(pinned_engine, stub_temp
     with no fallback call: every system prompt is kept before the stub answers, and
     none is the ordering call's or the fallback call's.
 
+    Jev also picks the new verb for both Trailhead bullets that repeat the verbatim
+    block's "Built" (TL-6), so both `reverb` calls go. FakeJev finds no option's words
+    in either bullet and takes the first option, the repeated verb's category first:
+    "Designed", then "Engineered", the verbs the golden's two dedupe arms reach.
+
     The faithfulness check (TL-4) passes every golden bullet. It asks once per entry
     after the rephrase (4 requests) and once per entry a later pass rewrote: Trailhead
     after the verb dedupe and after the fill, Globex Analytics after the style gate
@@ -584,21 +686,28 @@ def test_a_golden_run_with_jev_on_makes_fewer_llm_calls(pinned_engine, stub_temp
     assert len(systems) == len(pinned_engine)
     assert not any("PURE ORDERING" in s for s in systems), "the ordering call ran"
     assert not any("EXACTLY FOUR fixed lines" in s for s in systems), "the fallback ran"
-    assert pinned_engine == [s for s in golden._GOLDEN_STAGES if s != "lead_with_overview"]
-    assert len(pinned_engine) == len(golden._GOLDEN_STAGES) - 1
+    assert not any("OPENS WITH A DIFFERENT action verb" in s for s in systems), "reverb ran"
+    assert pinned_engine == [s for s in golden._GOLDEN_STAGES
+                             if s not in ("lead_with_overview", "reverb")]
+    assert len(pinned_engine) == len(golden._GOLDEN_STAGES) - 3
     assert captured["bullets"] == golden._GOLDEN_BULLETS
     assert gate == [True, False, False, False, False]
     assert captured["skill_lines"] == _JEV_SKILL_LINES
     assert areas == ["tailor"], "one judge per run, handed to every step"
-    assert len(rec.requests) == 3 + 7
+    assert len(rec.requests) == 3 + 2 + 7
+    verbs = [state["bullet"] for state, questions in rec.requests if "verb" in questions]
+    assert verbs == [
+        "Built Trailhead, a hiking route planner that ranks trails for a given weather window.",
+        "Built a gradient boosting model on 8,400 logged hikes to predict trail difficulty."]
     faith = [state["entry"] for state, questions in rec.requests
              if "supported_0" in questions]
     assert faith == ["Globex Analytics", "Trailhead", "Ledgerly", "Robotics Club",
                      "Trailhead", "Trailhead", "Globex Analytics"]
     report = _report(tmp_path)
-    assert "warnings (0)" in report and "jev (4)" in report
+    assert "warnings (0)" in report and "jev (5)" in report
     for step in ("skills", "shortlist", "lead"):
         assert f"  jev {step}: 1 request, " in report
+    assert "  jev verb: 2 requests, " in report
     assert "  jev faithfulness: 7 requests, " in report
     assert "fell back" not in report
     assert "] faithfulness:" not in report, "no bullet is flagged, so no note is written"
@@ -615,7 +724,10 @@ def test_jev_down_from_the_start_makes_exactly_the_jev_off_calls(
     assert got == json.loads(PROMPTS.read_text(encoding="utf-8"))
     assert down.calls == len(jev.RETRY_DELAYS_S) + 1
     report = _report(tmp_path)
-    assert report.count("fell back to the LLM path (JudgeOutage ServiceDown 503)") == 3
+    for step in ("skills", "shortlist", "lead", "verb"):
+        assert (f"  jev {step}: 0 requests, 0 tokens (estimated), $0.000000; fell back to "
+                "the LLM path (JudgeOutage ServiceDown 503)") in report
+    assert report.count("fell back to the LLM path (JudgeOutage ServiceDown 503)") == 4
     assert report.count("fell back to the deterministic gate alone "
                         "(JudgeOutage ServiceDown 503)") == 1
 
@@ -638,7 +750,7 @@ def test_an_outage_mid_run_moves_the_rest_of_the_run_to_the_llm_path(
     assert _catalog_ids(select_user) == list(assets.atoms_by_id())
     report = _report(tmp_path)
     assert "  jev skills: 1 request, " in report
-    for step in ("shortlist", "lead"):
+    for step in ("shortlist", "lead", "verb"):
         assert (f"  jev {step}: 0 requests, 0 tokens (estimated), $0.000000; fell back to "
                 "the LLM path (JudgeOutage ServiceDown 503)") in report
     assert ("  jev faithfulness: 0 requests, 0 tokens (estimated), $0.000000; fell back "
@@ -663,9 +775,9 @@ def test_the_usage_lines_reach_the_status_log(pinned_engine, stub_template_head,
     jev_lines = [s for s in statuses if s.startswith("jev ")]
     assert jev_lines == [jev_assist.usage_line(step) for step in (
         jev_assist.STEP_SKILLS, jev_assist.STEP_SHORTLIST, jev_assist.STEP_LEAD,
-        jev_assist.STEP_FAITHFULNESS)]
+        jev_assist.STEP_VERB, jev_assist.STEP_FAITHFULNESS)]
     assert [s.split(":")[0] for s in jev_lines] == ["jev skills", "jev shortlist", "jev lead",
-                                                   "jev faithfulness"]
+                                                   "jev verb", "jev faithfulness"]
     report = _report(tmp_path)
     assert all(f"  {line}" in report for line in jev_lines)
 
@@ -680,4 +792,5 @@ def test_each_run_counts_its_own_jev_requests(pinned_engine, stub_template_head,
     report = _report(tmp_path)
     for step in ("skills", "shortlist", "lead"):
         assert f"  jev {step}: 1 request, " in report
+    assert "  jev verb: 2 requests, " in report
     assert "  jev faithfulness: 7 requests, " in report

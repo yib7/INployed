@@ -35,6 +35,7 @@ import logging
 import math
 import os
 import re
+import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
@@ -100,24 +101,31 @@ class Jev(Protocol):
 # --- usage counter (process-wide) -----------------------------------------------
 
 _USAGE = {"requests": 0, "input_tokens": 0}
+# The scorer judges from worker threads, so every read and write of the counter
+# holds this lock: no count is lost, and a reader never sees one half counted.
+_USAGE_LOCK = threading.Lock()
 
 
 def usage() -> dict:
     """{"requests", "input_tokens", "usd"} for every live request this process
     made. The fake and a replay hit never count."""
-    tokens = _USAGE["input_tokens"]
-    return {"requests": _USAGE["requests"], "input_tokens": tokens, "usd": usd_for(tokens)}
+    with _USAGE_LOCK:
+        requests, tokens = _USAGE["requests"], _USAGE["input_tokens"]
+    return {"requests": requests, "input_tokens": tokens, "usd": usd_for(tokens)}
 
 
 def reset_usage() -> None:
-    _USAGE["requests"] = 0
-    _USAGE["input_tokens"] = 0
+    with _USAGE_LOCK:
+        _USAGE["requests"] = 0
+        _USAGE["input_tokens"] = 0
 
 
 def count_usage(tokens: int) -> None:
     """Add one live request of `tokens` input tokens to the process counter."""
-    _USAGE["requests"] += 1
-    _USAGE["input_tokens"] += max(0, int(tokens))
+    tokens = max(0, int(tokens))
+    with _USAGE_LOCK:
+        _USAGE["requests"] += 1
+        _USAGE["input_tokens"] += tokens
 
 
 def usd_for(tokens: int | float) -> float:

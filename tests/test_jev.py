@@ -8,6 +8,8 @@ fixtures against them.
 """
 import json
 import sys
+import threading
+import time
 import types
 from pathlib import Path
 
@@ -385,6 +387,75 @@ def test_typesafe_adds_input_tokens_to_the_process_usage_counter(monkeypatch):
     assert u["usd"] == pytest.approx(2 * 0.042)
     jev.reset_usage()
     assert jev.usage() == {"requests": 0, "input_tokens": 0, "usd": 0.0}
+
+
+class _SlowReads(dict):
+    """A usage counter whose reads pause, so two threads that read, add and
+    write it without a lock overlap and drop a count."""
+
+    def __getitem__(self, key):
+        value = super().__getitem__(key)
+        time.sleep(0.0005)
+        return value
+
+
+def _run_threads(*targets):
+    start = threading.Barrier(len(targets))
+
+    def run(target):
+        start.wait(timeout=10)
+        target()
+
+    threads = [threading.Thread(target=run, args=(t,)) for t in targets]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=60)
+    assert not any(t.is_alive() for t in threads)
+
+
+def test_the_usage_counter_keeps_every_count_across_threads(monkeypatch):
+    """The scorer makes its Jev requests from worker threads: every request
+    counts, and usage() never reads one half counted."""
+    monkeypatch.setattr(jev, "_USAGE", _SlowReads(requests=0, input_tokens=0))
+    counters, per_thread, tokens = 4, 25, 10
+    torn = []
+
+    def count():
+        for _ in range(per_thread):
+            jev.count_usage(tokens)
+
+    def read():
+        for _ in range(per_thread):
+            u = jev.usage()
+            if u["input_tokens"] != tokens * u["requests"]:
+                torn.append(u)
+
+    _run_threads(*[count] * counters, read)
+    assert torn == []
+    u = jev.usage()
+    assert u["requests"] == counters * per_thread
+    assert u["input_tokens"] == counters * per_thread * tokens
+
+
+def test_a_reset_never_lands_inside_a_count(monkeypatch):
+    """reset_usage() between two threads' counts leaves the tokens matching
+    the requests, since a reset waits for the count in progress."""
+    monkeypatch.setattr(jev, "_USAGE", _SlowReads(requests=0, input_tokens=0))
+    tokens = 10
+
+    def count():
+        for _ in range(40):
+            jev.count_usage(tokens)
+
+    def reset():
+        for _ in range(20):
+            jev.reset_usage()
+            time.sleep(0.001)
+
+    _run_threads(count, count, reset)
+    u = jev.usage()
+    assert u["input_tokens"] == tokens * u["requests"]
 
 
 def test_typesafe_reads_the_key_from_the_environment(monkeypatch):

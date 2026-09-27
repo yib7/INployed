@@ -325,10 +325,10 @@ def test_the_spec_example_reason_is_composed_word_for_word():
 @pytest.mark.parametrize("facts,reads,score,fragment", [
     # in domain, no experience bar: skills_fit alone maps to 3-5
     (NO_FACTS, _reads(skills=1.0), 5, "Skills fit strong (1.00)"),
-    (NO_FACTS, _reads(skills=0.80), 5, "strong"),
-    (NO_FACTS, _reads(skills=0.75), 4, "Skills fit good (0.75)"),
-    (NO_FACTS, _reads(skills=0.55), 4, "good"),
-    (NO_FACTS, _reads(skills=0.50), 3, "Skills fit partial (0.50)"),
+    (NO_FACTS, _reads(skills=0.75), 5, "Skills fit strong (0.75)"),
+    (NO_FACTS, _reads(skills=0.74), 4, "Skills fit good (0.74)"),
+    (NO_FACTS, _reads(skills=0.45), 4, "good"),
+    (NO_FACTS, _reads(skills=0.44), 3, "Skills fit partial (0.44)"),
     (NO_FACTS, _reads(skills=0.10), 3, "Skills fit weak (0.10)"),
     (NO_FACTS, _reads(domain="data_science_ml"), 5, "domain data science or ML"),
     (NO_FACTS, _reads(domain="software_engineering"), 5, "domain software engineering"),

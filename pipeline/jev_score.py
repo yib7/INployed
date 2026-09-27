@@ -29,15 +29,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-# --- composition constants (SC-2, SC-3; tuned in SP7) ------------------------------
+# --- composition constants (SC-2, SC-3; stage 1 tuned in SP8) -----------------------
 #
 # Stage 1 follows the rubric of the stage 1 prompt (score_jobs.STAGE1_TEMPLATE_RESUME):
 # in domain with no experience bar, skills decide 3 to 5; one year or more caps the
 # score at 3 and lowers it as the requirement rises; off domain or a hard advanced
 # degree gives 1 or 2. `skills_fit` arrives scaled to 0-1 (Jev's level over the top
-# level), so 0.75 is the "most of the core tools" level.
-SKILLS_FOR_5 = 0.80             # in domain with no bar: a 5 at or above this
-SKILLS_FOR_4 = 0.55             # a 4 at or above this, else a 3
+# level), so 0.75 is the "most of the core tools" level. VL-2 (400 jobs against
+# Gemini's stage 1): 0.75 / 0.45 raised exact agreement from 37% to 42% and agreement
+# at the stage 2 threshold from 70% to 73%, with the two kinds of miss even (51 / 56).
+SKILLS_FOR_5 = 0.75             # in domain with no bar: a 5 at or above this
+SKILLS_FOR_4 = 0.45             # a 4 at or above this, else a 3
 LOW_BAND_SKILLS_FOR_2 = 0.55    # off domain or a hard advanced degree: a 2 at or above this, else a 1
 # Minimum years code found -> the highest score allowed; the first row reached wins.
 YEARS_CAPS: tuple[tuple[int, int], ...] = ((5, 1), (3, 2), (1, 3))

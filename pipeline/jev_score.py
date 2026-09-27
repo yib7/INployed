@@ -94,6 +94,8 @@ REASON_KEY = "no TypeSafe API key"
 REASON_SDK = "typesafe-sdk is not installed"
 REASON_MODULE = "local/jev.py could not be imported"
 REASON_NO_CONFIG = f"no {ENV_SWITCH} and no dashboard config beside the scorer"
+# The reasons `use_jev` prints its own warning line for (the switch is on).
+WARNED_REASONS = (REASON_KEY, REASON_SDK, REASON_MODULE)
 
 
 # --- JS-4: does this run use Jev? -------------------------------------------------

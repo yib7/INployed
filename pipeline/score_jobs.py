@@ -643,17 +643,21 @@ def make_jev_judge():
 
     `jev_score.use_jev()` decides once per run: SCORE_USE_JEV, else the
     dashboard's local/config.json when it exists, else off (the VM has
-    neither). A missing jev_score.py reads as off, with one line saying so.
+    neither). Off prints one line with the reason: "Jev scoring off (...)",
+    or use_jev's own warning when the switch is on and the key, the SDK or
+    local/jev.py is missing. A missing jev_score.py reads as off the same way.
     """
     if jev_score is None:
         if JEV_IMPORT_ERROR:
             print(f"WARNING: jev_score.py failed to import ({JEV_IMPORT_ERROR}); "
                   "scoring on the LLM path.")
         else:
-            print("Jev scoring off: jev_score.py is not beside score_jobs.py.")
+            print("Jev scoring off (jev_score.py is not beside score_jobs.py).")
         return None
     on, why = jev_score.use_jev()
     if not on:
+        if why not in jev_score.WARNED_REASONS:
+            print(f"Jev scoring off ({why}).")
         return None
     judge = jev_score.make_judge()
     if judge is not None:

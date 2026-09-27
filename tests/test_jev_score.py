@@ -1078,12 +1078,39 @@ def test_jev_run_off_reports_zeros():
 
 def test_make_jev_judge_on_the_vm_stays_on_the_llm(monkeypatch, capsys):
     """No SCORE_USE_JEV and no dashboard config beside the scorer (the VM's flat
-    copy): no judge, and nothing to warn about."""
+    copy): no judge, and one line saying why, with no warning."""
     sj = _sj()
     monkeypatch.delenv("SCORE_USE_JEV", raising=False)
     monkeypatch.setattr(jev_score, "CONFIG_PATH", None)
     assert sj.make_jev_judge() is None
-    assert capsys.readouterr().out == ""
+    assert capsys.readouterr().out == (
+        "Jev scoring off (no SCORE_USE_JEV and no dashboard config beside the scorer).\n")
+
+
+@pytest.mark.parametrize("env,cfg,why", [
+    ({"SCORE_USE_JEV": "0"}, {}, "SCORE_USE_JEV=0 turns it off"),
+    ({}, {"jev_enabled": False}, "Jev is switched off in Settings"),
+    ({}, {"jev_scoring": False}, "Jev is switched off for scoring in Settings"),
+])
+def test_make_jev_judge_says_in_one_line_why_scoring_stays_off(monkeypatch, capsys, cfg_file,
+                                                               sdk, env, cfg, why):
+    sj = _sj()
+    cfg_file(cfg)
+    monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key")
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    assert sj.make_jev_judge() is None
+    assert capsys.readouterr().out == f"Jev scoring off ({why}).\n"
+
+
+def test_make_jev_judge_leaves_a_missing_key_to_the_one_warning(monkeypatch, capsys, cfg_file,
+                                                                sdk):
+    sj = _sj()
+    cfg_file({})
+    assert sj.make_jev_judge() is None
+    out = capsys.readouterr().out
+    assert out.count("\n") == 1 and out.startswith("WARNING: Jev scoring is on (Settings)")
+    assert "Jev scoring off" not in out
 
 
 def test_make_jev_judge_builds_a_guarded_judge_when_the_switch_is_on(monkeypatch, capsys, sdk):

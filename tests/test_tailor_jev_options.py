@@ -19,7 +19,9 @@ letter's repair call writes any new letter text.
 Nothing here calls a model or Jev: every `call` is replaced, and every judge is a
 fake.
 """
+import json
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -28,8 +30,9 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
 import jev  # noqa: E402
-from resume_tailor import assets, compose, config, jev_assist  # noqa: E402
+from resume_tailor import assets, compose, config, coverletter, jev_assist, verify  # noqa: E402
 from resume_tailor import run as rt_run  # noqa: E402
+from resume_tailor.llm import LLMError  # noqa: E402
 
 import test_tailor_faithfulness as faith  # noqa: E402 - sibling test module
 import test_tailor_golden as golden  # noqa: E402
@@ -223,3 +226,211 @@ def test_the_option_getters_default_off(monkeypatch):
         monkeypatch.delenv(env, raising=False)
     assert (config.best_of_n(), config.cover_letter_jev_check(), config.ats_meaning()) == (
         False, False, False)
+
+
+# ── TL-8: the cover letter check ──────────────────────────────────────────────
+_BULLETS = {"a1": "Wrote SQL reports on warehouse sales data."}
+_BACKGROUND = "- Acme Data, Analyst Intern\n    - wrote SQL reports on warehouse sales data"
+_SEED = "I want work where the data is the product."
+_JD = "Data Analyst at Initech. Lead our analytics team and own the warehouse."
+_RESEARCH = "Initech makes TPS report software."
+_TRUE = "At Acme Data I wrote SQL reports on warehouse sales data."
+_CLAIM = "I led the analytics team through a warehouse migration."
+_BODY = f"{_TRUE} {_CLAIM}\n\nI would like to bring that work to Initech."
+_REPAIRED = f"{_TRUE}\n\nI would like to bring that work to Initech."
+
+
+class LetterCalls:
+    """`compose.call` for the letter: the draft, then the repair. Keeps each call's
+    role, system and user prompt."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, system, user, tier, **kw):
+        role = "repair" if "You repair a cover-letter body" in system else "draft"
+        self.calls.append((role, system, user))
+        return _REPAIRED if role == "repair" else _BODY
+
+    def roles(self):
+        return [role for role, _s, _u in self.calls]
+
+    def repair_user(self):
+        (user,) = [u for role, _s, u in self.calls if role == "repair"]
+        return user
+
+
+class ClaimReader:
+    """A TL-8 judge: a sentence holding one of `words` claims more than its sources
+    (0.9); every other sentence passes. Keeps each request's state."""
+
+    def __init__(self, *words, down=False):
+        self.words = tuple(w.lower() for w in words)
+        self.down = down
+        self.states = []
+
+    def judge(self, state, questions):
+        self.states.append(state)
+        if self.down:
+            raise RuntimeError("the judge is down")
+        return {f"claims_{i}": jev.Answer(
+                    kind="noul", noul=0.9 if any(w in s.lower() for w in self.words) else 0.1)
+                for i, s in enumerate(state["sentences"])}
+
+
+@pytest.fixture()
+def letter(monkeypatch):
+    """generate_body with its two middle passes and its master reads pinned, and the
+    deterministic gate answering from `unseen` ({body: tokens})."""
+    calls = LetterCalls()
+    unseen = {}
+    monkeypatch.setattr(compose, "call", calls)
+    monkeypatch.setattr(coverletter, "refine_body", lambda jt, c, body, *a, **k: body)
+    monkeypatch.setattr(coverletter, "enforce_body_style", lambda jt, c, body, *a, **k: body)
+    monkeypatch.setattr(verify, "letter_unseen", lambda body, allowed: list(unseen.get(body, [])))
+    monkeypatch.setattr(assets, "load_master",
+                        lambda: {"basics": {"name": "Sam Rivera", "location": "Austin"}})
+    monkeypatch.setattr(coverletter, "_education_context", lambda: "BS Statistics: graduated")
+    jev_assist.reset_usage()
+
+    def generate(**kw):
+        return coverletter.generate_body(_JD, "Data Analyst", "Initech", dict(_BULLETS),
+                                         research=_RESEARCH, background=_BACKGROUND,
+                                         seed=_SEED, **kw)
+    return types.SimpleNamespace(calls=calls, unseen=unseen, generate=generate)
+
+
+def test_a_flagged_sentence_goes_to_the_repair_call(letter):
+    body = letter.generate(judge=ClaimReader("led"))
+    assert body == _REPAIRED
+    assert letter.calls.roles() == ["draft", "repair"]
+    user = letter.calls.repair_user()
+    assert coverletter.LETTER_CLAIMS_NOTE in user and f"- {_CLAIM}" in user
+    # the gate found nothing, so the repair names no unsupported item
+    assert "UNSUPPORTED ITEMS TO REMOVE" not in user
+
+
+def test_the_check_reads_every_sentence_against_the_sources_never_the_job(letter):
+    judge = ClaimReader()
+    letter.generate(judge=judge)
+    (state,) = judge.states
+    assert state["sentences"] == [_TRUE, _CLAIM, "I would like to bring that work to Initech."]
+    assert state["sources"] == {
+        "resume bullets": list(_BULLETS.values()), "background": _BACKGROUND,
+        "own words": _SEED, "basics": "Sam Rivera, Austin. Education: BS Statistics: graduated"}
+    assert _JD not in json.dumps(state) and _RESEARCH not in json.dumps(state)
+
+
+def test_with_nothing_flagged_the_letter_is_todays(letter):
+    assert letter.generate(judge=ClaimReader()) == _BODY
+    assert letter.calls.roles() == ["draft"]
+
+
+@pytest.mark.parametrize("judge", [None, ClaimReader("led", down=True)],
+                         ids=["no judge", "failing judge"])
+def test_without_a_working_check_the_path_is_todays(letter, judge):
+    kw = {} if judge is None else {"judge": judge}
+    assert letter.generate(**kw) == _BODY
+    assert letter.calls.roles() == ["draft"]
+
+
+def test_the_gate_and_the_check_share_one_repair_and_the_gate_decides(letter):
+    """Both find something: one repair names both; the repaired body still holding a
+    gate finding fails the letter, as it does today."""
+    letter.unseen[_BODY] = ["Kubernetes"]
+    letter.unseen[_REPAIRED] = ["Kubernetes"]
+    with pytest.raises(LLMError):
+        letter.generate(judge=ClaimReader("led"))
+    user = letter.calls.repair_user()
+    assert "UNSUPPORTED ITEMS TO REMOVE" in user and "Kubernetes" in user
+    assert coverletter.LETTER_CLAIMS_NOTE in user
+
+
+def test_a_repair_with_no_claim_is_todays_prompt(letter):
+    """The gate alone found something: the repair prompt is byte for byte what it
+    was before TL-8, check on or off."""
+    letter.unseen[_BODY] = ["Kubernetes"]
+    letter.generate()
+    today = letter.calls.repair_user()
+    letter.calls.calls.clear()
+    letter.generate(judge=ClaimReader())
+    assert letter.calls.repair_user() == today
+    assert coverletter.LETTER_CLAIMS_NOTE not in today
+
+
+def test_the_claims_note_is_free_of_the_banned_phrasing():
+    note = coverletter.LETTER_CLAIMS_NOTE
+    assert compose.style_violations(note) == [] and chr(0x2014) not in note
+
+
+# ── TL-8 in the run ───────────────────────────────────────────────────────────
+def _letter_run(monkeypatch, tmp_path, option):
+    """The golden run with a cover letter: the body call is captured and the render
+    fails (an advisory), so the run reaches the letter and goes on."""
+    monkeypatch.setenv("RESUME_TAILOR_COVER_LETTER_JEV_CHECK", option)
+    got = {}
+
+    def fake_body(jd, job_title, company, bullets, research="", tone="professional",
+                  background="", seed="", **kw):
+        got.update(kw)
+        return "body"
+
+    monkeypatch.setattr(coverletter, "generate_body", fake_body)
+    monkeypatch.setattr(coverletter, "render_cover_letter",
+                        lambda *a, **k: (types.SimpleNamespace(ok=False, pdf_path=None,
+                                                               error="stub"), ""))
+    tailor_jev._run_tailor(monkeypatch, tmp_path, cover_letter=True)
+    return got
+
+
+@pytest.mark.parametrize("option", ["1", "0"], ids=["option on", "option off"])
+def test_the_run_hands_the_letter_its_judge_only_with_the_option(
+        pinned_engine, stub_template_head, tmp_path, monkeypatch, option):
+    golden._install_stub(monkeypatch, tailor_jev._recording([], []))
+    tailor_jev._jev_on(monkeypatch, jev.FakeJev())
+    got = _letter_run(monkeypatch, tmp_path, option)
+    assert ("judge" in got) == (option == "1")
+    assert ("jev letter check:" in tailor_jev._report(tmp_path)) == (option == "1")
+
+
+def test_with_jev_off_the_letter_gets_no_judge(pinned_engine, stub_template_head,
+                                               tmp_path, monkeypatch):
+    golden._install_stub(monkeypatch, tailor_jev._recording([], []))
+    tailor_jev._jev_off(monkeypatch)
+    assert "judge" not in _letter_run(monkeypatch, tmp_path, "1")
+
+
+@pytest.mark.parametrize("option", ["1", "0"], ids=["option on", "option off"])
+def test_the_standalone_letter_builds_a_judge_only_with_the_option(tmp_path, monkeypatch,
+                                                                  option):
+    """The Generate cover letter button: with the check on it builds the tailor's
+    judge and hands it over; with it off it never asks for one."""
+    import test_coverletter_inputs as cl_inputs
+    monkeypatch.setenv("RESUME_TAILOR_COVER_LETTER_JEV_CHECK", option)
+    areas = tailor_jev._jev_on(monkeypatch, jev.FakeJev())
+    monkeypatch.setattr(rt_run.assets, "load_master", lambda: cl_inputs.MASTER)
+    monkeypatch.setattr(rt_run, "pdflatex_available", lambda: True)
+    monkeypatch.setattr(rt_run.research, "company_blurb", lambda *a, **k: "")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (out_dir / "apply.md").write_text(
+        "# Apply sheet\n\n## Work experience\n\n**X** Intern\n\n- Built it.\n\n"
+        "<!-- inployed-apply-meta: {\"job_posting_id\": \"1\"} -->\n", encoding="utf-8")
+    got = {}
+
+    def fake_body(jd, job_title, company, bullets, research="", tone="professional",
+                  background="", seed="", **kw):
+        got.update(kw)
+        return "body"
+
+    monkeypatch.setattr(rt_run.coverletter, "generate_body", fake_body)
+    pdf = tmp_path / "c.pdf"
+    pdf.write_bytes(b"%PDF")
+    monkeypatch.setattr(rt_run.coverletter, "render_cover_letter", cl_inputs._fake_render(pdf))
+    monkeypatch.setattr(rt_run.coverletter, "cover_letter_text", lambda b, c: "txt")
+    logs = []
+    job = {"company_name": "BigCo", "job_title": "Engineer", "job_description": "x" * 200}
+    rt_run.generate_cover_letter(job, out_dir, on_status=logs.append)
+    assert ("judge" in got) == (option == "1")
+    assert areas == (["tailor"] if option == "1" else [])
+    assert any(line.startswith("jev letter check:") for line in logs) == (option == "1")

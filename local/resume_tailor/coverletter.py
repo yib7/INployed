@@ -10,6 +10,9 @@ subject bolted on, and the deterministic style gate runs last
 letter-level bullet-echo and uniform-rhythm checks), so banned AI-tell phrasing
 and a copied bullet never reach the letter. The grounding gate has the final
 word: a fact from nowhere fails the letter.
+With the cover letter check on (TL-8, Settings, with Jev on) the caller passes a
+Jev judge, which reads each sentence against the letter's sources; a sentence it
+flags goes to the same repair call as the gate's findings.
 Template is self-contained (ported from Resume_Tailor) so there's no file dep.
 """
 from __future__ import annotations
@@ -18,9 +21,9 @@ import calendar
 import re
 from datetime import date
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
-from . import aiwriting, assets, compose, config, verify
+from . import aiwriting, assets, compose, config, jev_assist, verify
 from .llm import LLMError
 from .compile import CompileResult, compile_tex
 from .latexutil import to_latex
@@ -222,6 +225,32 @@ _STRUCTURAL_NOTES = {
 }
 
 
+# TL-8's section of the repair prompt, sent only when the check flagged a sentence.
+LETTER_CLAIMS_NOTE = (
+    "SENTENCES THAT CLAIM MORE THAN THE SOURCES STATE (a check found each one saying "
+    "something about the candidate that the resume bullets and BACKGROUND notes do "
+    "not state; rewrite each one to say only what those sources state, or cut it):")
+
+_SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
+
+
+def _letter_sentences(body: str) -> List[str]:
+    """The body's sentences in order, paragraph by paragraph."""
+    out: List[str] = []
+    for para in re.split(r"\n\s*\n", body or ""):
+        out += [s.strip() for s in _SENTENCE_END_RE.split(para.strip()) if s.strip()]
+    return out
+
+
+def _letter_sources(bullets: Dict[str, str], background: str, seed: str) -> Dict[str, Any]:
+    """What TL-8 reads a letter sentence against: what the letter may say about the
+    candidate. The job description and the company research stay out."""
+    location = assets.load_master().get("basics", {}).get("location", "")
+    return {"resume bullets": list(bullets.values()), "background": background or "",
+            "own words": (seed or "").strip(),
+            "basics": f"{_display_name()}, {location}. Education: {_education_context()}"}
+
+
 def _structural_notes(violations: list) -> str:
     """What the letter-level findings mean, for the repair prompt. The named
     phrasing bans explain themselves; these two need a sentence each."""
@@ -231,13 +260,19 @@ def _structural_notes(violations: list) -> str:
 
 def generate_body(jd: str, job_title: str, company: str, bullets: Dict[str, str],
                   research: str = "", tone: str = "professional",
-                  background: str = "", seed: str = "") -> str:
+                  background: str = "", seed: str = "", judge: Any = None) -> str:
     """The letter body, generated then humanized then gated.
 
     `background` is the candidate's own notes behind the bullets (the caller
     flattens them from the master with assets.flatten_entries, bounded) and
     `seed` their own words on what they want next (assets.letter_seed). Both
-    are optional; blank means the letter is written from the bullets alone."""
+    are optional; blank means the letter is written from the bullets alone.
+
+    `judge` (TL-8) is the run's Jev judge when the cover letter check is on. Jev
+    reads each sentence against the letter's sources (`_letter_sources`, never the
+    job or the research), and a flagged sentence goes to the grounding repair call
+    beside the gate's findings; the deterministic re-check still decides. None, or
+    a check that fails, leaves the path as it was."""
     used = _bullets_block(bullets)
     system = (
         "Write the body of a cover letter for an early-career candidate as narrative "
@@ -327,10 +362,15 @@ Write the body now."""
     # fabricated one.
     allowed = verify.letter_allowed_source(bullets, research=research,
                                            company=company, job_title=job_title, jd=jd)
+    claims: List[str] = []
+    if judge is not None:
+        claims = jev_assist.letter_unsupported(
+            _letter_sentences(body), _letter_sources(bullets, background, seed),
+            judge=judge) or []
     bad = verify.letter_unseen(body, allowed)
-    if bad:
+    if bad or claims:
         body = _repair_ungrounded_body(job_title, company, body, bullets, bad, tone,
-                                       background=background)
+                                       background=background, claims=claims)
         bad = verify.letter_unseen(body, allowed)
         if bad:
             raise LLMError(
@@ -340,9 +380,11 @@ Write the body now."""
 
 def _repair_ungrounded_body(job_title: str, company: str, body: str,
                             bullets: Dict[str, str], bad: list, tone: str,
-                            background: str = "") -> str:
+                            background: str = "", claims: Sequence[str] = ()) -> str:
     """One flash repair pass removing the named ungrounded tokens (same letter,
-    same paragraphs, no new facts). Best-effort: a failed call returns the body
+    same paragraphs, no new facts). `claims` are the sentences TL-8 flagged; they
+    ride in a section of their own (LETTER_CLAIMS_NOTE), and with none the prompt
+    is the one this pass always sent. Best-effort: a failed call returns the body
     unchanged and the caller's re-check decides."""
     system = (
         "You repair a cover-letter body that mentions facts with NO SOURCE. Rewrite "
@@ -353,12 +395,16 @@ def _repair_ungrounded_body(job_title: str, company: str, body: str,
         "credential. " + tone_directive(tone)
     )
     system = _with_ai_writing_rules(system)
+    flagged = (f"""UNSUPPORTED ITEMS TO REMOVE (they appear in the letter but trace to no source):
+{", ".join(str(b) for b in bad)}""" if bad else "")
+    if claims:
+        flagged += ("\n\n" if flagged else "") + LETTER_CLAIMS_NOTE + "\n" + "\n".join(
+            f"- {c}" for c in claims)
     user = f"""ROLE: {job_title} at {company}
 
 {_sources_block(bullets, background)}
 
-UNSUPPORTED ITEMS TO REMOVE (they appear in the letter but trace to no source):
-{", ".join(str(b) for b in bad)}
+{flagged}
 
 LETTER BODY TO REPAIR:
 {body}

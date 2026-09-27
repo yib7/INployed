@@ -1478,6 +1478,10 @@ def tailor(
         if cover_letter:
             log("writing cover letter…")
             report.stage("cover letter")
+            # TL-8: the letter gets the run's judge only with the check on, so a
+            # letter writer that takes no judge keeps working with it off.
+            letter_kw = ({"judge": judge}
+                         if judge is not None and config.cover_letter_jev_check() else {})
             try:
                 blurb = ""
                 try:
@@ -1493,7 +1497,8 @@ def tailor(
                                                   warn=report.advisory)
                 body = coverletter.generate_body(jd, job_title, company, final_bullets,
                                                  research=blurb, tone=tone,
-                                                 background=background, seed=seed)
+                                                 background=background, seed=seed,
+                                                 **letter_kw)
                 cl_tex = tmp_path / "cover_letter.tex"
                 cl_res, _ = coverletter.render_cover_letter(body, company, cl_tex, tmp_path)
                 if cl_res.ok and cl_res.pdf_path:
@@ -1508,6 +1513,8 @@ def tailor(
             except Exception as exc:  # noqa: BLE001 - cover letter is optional, never fatal
                 log(f"cover letter skipped ({exc})")
                 report.advisory(f"cover letter skipped ({exc})")
+            if letter_kw:
+                report.jev_step(jev_assist.STEP_LETTER)
 
         if prep_sheet:
             log("building interview-prep sheet…")
@@ -1561,6 +1568,7 @@ def generate_cover_letter(
     """
     log = on_status or _noop
     llm.reset_usage()
+    jev_assist.reset_usage()
 
     company = _line_field(job, "company_name") or "Unknown Company"
     job_title = _line_field(job, "job_title") or "Role"
@@ -1595,9 +1603,14 @@ def generate_cover_letter(
     # No selection survives here (the bullets came off the sheet), so the
     # background is the whole master, bounded, and the seed rides as always.
     background, seed = _letter_inputs(None, bullets, log)
+    # TL-8, as in tailor(): the judge only with the check on, built only then.
+    judge = jev_assist.default_judge() if config.cover_letter_jev_check() else None
+    letter_kw = {"judge": judge} if judge is not None else {}
     body = coverletter.generate_body(jd, job_title, company, bullets,
                                      research=blurb, tone=tone,
-                                     background=background, seed=seed)
+                                     background=background, seed=seed, **letter_kw)
+    if letter_kw:
+        log(jev_assist.usage_line(jev_assist.STEP_LETTER))
 
     with tempfile.TemporaryDirectory(prefix="resume_tailor_") as tmp:
         tmp_path = Path(tmp)

@@ -146,3 +146,108 @@ def test_chrome_install_paths_cover_the_windows_locations(monkeypatch):
     paths = [str(p) for p in setup_check.chrome_install_paths()]
     assert any(p.startswith(r"C:\Program Files") and p.endswith("chrome.exe") for p in paths)
     assert any(p.startswith(r"C:\Users\x\AppData\Local") for p in paths)
+
+
+# --- SP6 fix round 1: one browser on the profile --------------------------------------------
+
+class _EventCtx(_Ctx):
+    """A context double with the close event Playwright's has."""
+
+    def __init__(self):
+        super().__init__()
+        self.handlers = {}
+
+    def on(self, name, fn):
+        self.handlers.setdefault(name, []).append(fn)
+
+    def close(self):
+        for fn in self.handlers.get("close", []):
+            fn(self)
+
+
+def test_launch_profile_holds_the_sentinel_until_the_context_closes(tmp_path):
+    import profile_lock
+    chromium = _Chromium()
+    chromium.ctx = _EventCtx()
+    profile = tmp_path / "profile"
+    ctx = apply_run.launch_profile(_PW(chromium), profile, headless=True)
+    assert profile_lock.sentinel_held(profile) is True
+    ctx.close()
+    assert profile_lock.sentinel_held(profile) is False
+
+
+def test_launch_profile_holds_the_sentinel_on_the_bundled_fallback(tmp_path):
+    # the bundled Chromium leaves no Chrome lock: the sentinel is what the
+    # difficulty check sees
+    import profile_lock
+    chromium = _Chromium(fail_channels={"chrome"})
+    chromium.ctx = _EventCtx()
+    profile = tmp_path / "profile"
+    ctx = apply_run.launch_profile(_PW(chromium), profile, headless=True)
+    assert [kw.get("channel") for _, kw in chromium.calls] == ["chrome", None]
+    assert profile_lock.busy(profile) is True
+    ctx.close()
+    assert profile_lock.busy(profile) is False
+
+
+def test_launch_profile_opens_nothing_while_another_browser_holds_the_sentinel(tmp_path,
+                                                                               monkeypatch):
+    import profile_lock
+    from test_profile_lock import hold_sentinel
+    monkeypatch.setattr(profile_lock, "HOLD_WAIT_S", 0)
+    chromium = _Chromium()
+    guard = hold_sentinel(tmp_path / "profile")
+    try:
+        with pytest.raises(profile_lock.ProfileBusy) as err:
+            apply_run.launch_profile(_PW(chromium), tmp_path / "profile", headless=True)
+    finally:
+        guard.release()
+    assert chromium.calls == []
+    assert str(err.value) == profile_lock.RUN_BUSY
+
+
+def test_launch_profile_never_falls_back_onto_a_profile_chrome_holds(tmp_path):
+    # Chrome refuses a profile another Chrome holds; the bundled build would
+    # open it all the same
+    import profile_lock
+    from test_profile_lock import hold_chrome_lock
+    chromium = _Chromium(fail_channels={"chrome"})
+    release = hold_chrome_lock(tmp_path / "profile")
+    try:
+        with pytest.raises(profile_lock.ProfileBusy):
+            apply_run.launch_profile(_PW(chromium), tmp_path / "profile", headless=True)
+    finally:
+        release()
+    assert [kw.get("channel") for _, kw in chromium.calls] == ["chrome"]
+    assert profile_lock.sentinel_held(tmp_path / "profile") is False
+
+
+def test_launch_profile_with_no_fallback_launches_chrome_alone(tmp_path):
+    import profile_lock
+    chromium = _Chromium(fail_channels={"chrome"})
+    with pytest.raises(RuntimeError) as err:
+        apply_run.launch_profile(_PW(chromium), tmp_path / "profile", headless=True,
+                                 fallback=False)
+    assert not isinstance(err.value, profile_lock.ProfileBusy)
+    assert [kw.get("channel") for _, kw in chromium.calls] == ["chrome"]
+    assert profile_lock.sentinel_held(tmp_path / "profile") is False
+
+
+def test_login_refuses_in_a_sentence_while_another_browser_holds_the_profile(tmp_path,
+                                                                             monkeypatch,
+                                                                             capsys):
+    pytest.importorskip("playwright")
+    import profile_lock
+    from test_profile_lock import hold_sentinel
+    monkeypatch.setattr(profile_lock, "HOLD_WAIT_S", 0)
+    chromium = _Chromium()
+    _fake_playwright(monkeypatch, chromium)
+    monkeypatch.setattr(apply_run.apply_queue, "build_context",
+                        lambda: {"inbox_url": "https://mail.example.com/inbox"})
+    guard = hold_sentinel(tmp_path / "profile")
+    try:
+        assert apply_run.main(["login", "--profile", str(tmp_path / "profile")]) == 2
+    finally:
+        guard.release()
+    assert chromium.calls == []
+    assert capsys.readouterr().err.strip() == profile_lock.RUN_BUSY

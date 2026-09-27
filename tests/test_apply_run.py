@@ -3489,3 +3489,53 @@ def test_an_optional_answer_that_failed_its_check_and_cannot_be_cleared_parks(
     assert (parked.value.status, parked.value.reason) == (
         "needs_human", "a wrong answer could not be removed: Preferred shift")
     assert h.policy_park(parked.value.status, parked.value.reason) is True
+
+
+# --- SP6 fix round 1: the drain and the difficulty check never share the profile --------------
+
+@pytest.mark.parametrize("verb", [["drain"], ["one", "42"]])
+@pytest.mark.parametrize("holder", ["chrome", "sentinel"])
+def test_the_drain_refuses_before_a_claim_while_another_browser_holds_the_profile(
+        hermetic_cli, monkeypatch, tmp_path, capsys, verb, holder):
+    """A difficulty check (or a sign-in) holds the profile: by Chrome's own
+    lock, or by the sentinel when its browser leaves none. The drain and
+    `one` refuse in the panel's words, before a judge, a claim or a
+    browser."""
+    import profile_lock
+    from test_profile_lock import hold_chrome_lock, hold_sentinel
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    profile = apply_run.default_profile_dir()
+    _past_the_jev_gate_fails(monkeypatch)
+    release = hold_chrome_lock(profile) if holder == "chrome" else hold_sentinel(profile).release
+    try:
+        assert apply_run.main([*verb, "--jev", "typesafe"]) == 2
+    finally:
+        release()
+    assert capsys.readouterr().err.strip() == profile_lock.RUN_BUSY
+
+
+def test_one_gives_the_job_back_when_a_check_takes_the_profile_after_the_read(
+        hermetic_cli, monkeypatch, tmp_path, capsys):
+    """A check that opens the profile between the busy read and the launch:
+    `launch_profile` refuses, and `one` hands the claimed job back to the
+    queue with its attempt not counted."""
+    import profile_lock
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    queue = tmp_path / "queue.json"
+    apply_queue.enqueue(apply_queue.new_entry("42", company="Acme", title="A"), path=queue)
+    monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev_harness.judge())
+
+    class R:
+        def __init__(self, **kw):
+            pass
+
+        def load_answers(self):
+            return []
+
+        def run_job(self, entry):
+            raise profile_lock.ProfileBusy(profile_lock.RUN_BUSY)
+    monkeypatch.setattr(apply_run, "Runner", R)
+    assert apply_run.main(["one", "42", "--jev", "typesafe", "--queue", str(queue)]) == 2
+    assert capsys.readouterr().err.strip() == profile_lock.RUN_BUSY
+    entry = apply_queue.load(queue)["jobs"][0]
+    assert (entry["status"], entry["attempts"], entry["claimed_by"]) == ("queued", 0, "")

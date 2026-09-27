@@ -119,6 +119,7 @@ import apply_verify  # noqa: E402
 import ats_accounts  # noqa: E402
 import jev  # noqa: E402
 import jev_switch  # noqa: E402
+import profile_lock  # noqa: E402
 from apply_judge import FillPlan, VerifyResult  # noqa: E402
 
 log = logging.getLogger("apply_run")
@@ -418,24 +419,62 @@ def _cap(text: str, limit: int = EVIDENCE_CAP) -> str:
     return text if len(text) <= limit else text[:limit - 3].rstrip() + "..."
 
 
-def launch_profile(pw, profile_dir: Path, *, headless: bool, log=None):
+def launch_profile(pw, profile_dir: Path, *, headless: bool, log=None, fallback: bool = True):
     """Open the auto-apply profile in the installed Google Chrome, or in the
-    bundled Playwright Chromium when Chrome will not start.
+    bundled Playwright Chromium when Chrome will not start (never with
+    `fallback=False`: Chrome's error is raised then).
 
     The profile is its own directory, apart from the user's everyday Chrome
     profile: Chrome refuses automation on its default profile and locks a
     profile to one running browser. The logins made once through `login`
-    stay in this directory for every later run."""
+    stay in this directory for every later run.
+
+    One browser at a time (SP6 fix round 1): the profile's sentinel
+    (`profile_lock.hold`) is taken first and kept until the context closes,
+    so the difficulty check and the Auto-apply panel see every browser
+    opened here, the bundled one too, which leaves no Chrome lock. A taken
+    sentinel, or a Chrome that fails while Chrome's own lock is held, raises
+    `profile_lock.ProfileBusy` before the bundled build could open a
+    profile another browser holds."""
     log = log or logging.getLogger("apply_run")
+    guard = profile_lock.hold(profile_dir)
+    if guard is None:
+        raise profile_lock.ProfileBusy(profile_lock.RUN_BUSY)
     try:
-        return pw.chromium.launch_persistent_context(
-            str(profile_dir), channel=BROWSER_CHANNEL, headless=headless, viewport=VIEWPORT)
-    except Exception as e:      # noqa: BLE001  (Chrome absent or broken: use the bundled build)
-        first = str(e).strip().splitlines()[0][:200] if str(e).strip() else ""
-        log.warning("Google Chrome did not start (%s: %s); using the bundled Chromium",
-                    type(e).__name__, first)
-    return pw.chromium.launch_persistent_context(
-        str(profile_dir), headless=headless, viewport=VIEWPORT)
+        try:
+            ctx = pw.chromium.launch_persistent_context(
+                str(profile_dir), channel=BROWSER_CHANNEL, headless=headless, viewport=VIEWPORT)
+        except Exception as e:      # noqa: BLE001  (Chrome absent or broken: the bundled build)
+            if not fallback:
+                raise
+            if profile_lock.chrome_holds(profile_dir):
+                raise profile_lock.ProfileBusy(profile_lock.RUN_BUSY) from None
+            first = str(e).strip().splitlines()[0][:200] if str(e).strip() else ""
+            log.warning("Google Chrome did not start (%s: %s); using the bundled Chromium",
+                        type(e).__name__, first)
+            ctx = pw.chromium.launch_persistent_context(
+                str(profile_dir), headless=headless, viewport=VIEWPORT)
+    except BaseException:
+        guard.release()
+        raise
+    _release_on_close(ctx, guard)
+    return ctx
+
+
+def _release_on_close(ctx, guard) -> None:
+    """Give the profile's sentinel back when `ctx` closes (the browser
+    window closed, or `close()`); the process ending gives it back too."""
+    try:
+        ctx._inployed_profile_guard = guard
+    except Exception:       # noqa: BLE001  (a context double without attributes)
+        pass
+    on = getattr(ctx, "on", None)
+    if on is None:
+        return
+    try:
+        on("close", lambda *_: guard.release())
+    except Exception:       # noqa: BLE001  (a context double without events)
+        pass
 
 
 def default_profile_dir() -> Path:
@@ -9748,7 +9787,8 @@ def probe(url: str, *, follow_apply: bool = False, judge: Any = None, headed: bo
 def main(argv: list[str] | None = None) -> int:
     """Exit codes: 0 drained (or nothing queued), 1 unexpected error, 2 not
     configured (Jev switched off or unusable, no judge, the job id is not
-    queued, or the Apply Answers file is damaged: nothing is claimed then)."""
+    queued, the Apply Answers file is damaged, or another browser holds the
+    auto-apply profile: nothing is claimed then)."""
     ap = argparse.ArgumentParser(prog="apply_run",
                                  description="Jev-judged auto-apply: drain the queue.")
     sub = ap.add_subparsers(dest="verb", required=True)
@@ -9797,7 +9837,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.verb == "doctor":
             return doctor(profile)
         if args.verb == "login":
-            return login(profile)
+            return login(profile)       # `launch_profile` refuses a held profile
         if args.verb == "probe":
             judge = None
             if args.judge:
@@ -9833,6 +9873,12 @@ def main(argv: list[str] | None = None) -> int:
         if blocked:
             print(blocked, file=sys.stderr)
             return 2
+        # SP6 fix round 1: a difficulty check or a sign-in holds the profile
+        # (Chrome's lock or the sentinel): refused before a judge or a claim,
+        # in the sentence the panel's Start button shows
+        if profile_lock.busy(profile or default_profile_dir()):
+            print(profile_lock.RUN_BUSY, file=sys.stderr)
+            return 2
         try:
             judge = jev.get(cfg["auto_apply_jev_mode"])
         except (jev.JevUnavailable, ValueError) as e:
@@ -9851,7 +9897,13 @@ def main(argv: list[str] | None = None) -> int:
                 if entry is None:
                     print(f"apply_run: job {args.job_id} is not queued", file=sys.stderr)
                     return 2
-                outcomes = [runner.run_job(entry)]
+                try:
+                    outcomes = [runner.run_job(entry)]
+                except profile_lock.ProfileBusy:
+                    # a check opened the profile after the busy read: the
+                    # job goes back to the queue with its attempt not counted
+                    apply_queue.unclaim(args.job_id, give_back=True, outage=False, path=queue)
+                    raise
             else:
                 outcomes = runner.drain(cfg["auto_apply_batch_cap"])
         except apply_answers.AnswerStoreError as e:
@@ -9860,6 +9912,9 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         print(summary_line(outcomes))
         return 0
+    except profile_lock.ProfileBusy as e:
+        print(e, file=sys.stderr)       # another browser opened the profile first
+        return 2
     except Exception as e:      # noqa: BLE001  (one line, documented exit 1)
         # the type and the step only (final review A-M6, RES-05): a
         # Playwright message carries the page's words and the values typed;

@@ -534,7 +534,13 @@ _PAGE = "Built Python services and sales dashboarding views. Loaded warehouse da
 @pytest.fixture()
 def ats_page(monkeypatch, tmp_path):
     """write_report over a fixed keyword list and page text: literally, the page
-    holds "python" alone ("dashboarding" is no word match for "dashboards")."""
+    holds "python" alone ("dashboarding" is no word match for "dashboards"). A synthetic
+    master with no skills keeps the user's own alias maps out of the literal count."""
+    master = tmp_path / "master.yaml"
+    master.write_text("skills: {}\n", encoding="utf-8")
+    monkeypatch.setattr(config, "MASTER_YAML", master)
+    for fn in (assets.load_master, assets.skill_aliases, assets.skill_aliases_match_only):
+        fn.cache_clear()
     monkeypatch.setattr(ats, "extract_keywords", lambda jd: list(_KEYWORDS))
     monkeypatch.setattr(ats, "_pdf_text", lambda pdf: _PAGE)
     pdf = tmp_path / "resume.pdf"
@@ -542,7 +548,9 @@ def ats_page(monkeypatch, tmp_path):
     def write(**kw):
         frac = ats.write_report("jd", pdf, tmp_path, **kw)
         return frac, (tmp_path / "ats_report.txt").read_text(encoding="utf-8")
-    return write
+    yield write
+    for fn in (assets.load_master, assets.skill_aliases, assets.skill_aliases_match_only):
+        fn.cache_clear()
 
 
 def test_the_meaning_line_sits_beside_the_literal_one(ats_page):

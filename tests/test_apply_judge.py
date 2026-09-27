@@ -3624,25 +3624,166 @@ def test_only_a_sure_settle_answer_fills_the_held_back_field(tmp_path, settle, f
         assert p.park_reason == f"required field without an answer: {_NY_OFFICE}"
 
 
+_SURE_YES = _settle_answer("Yes", 0.99, {"Yes": 0.99, "No": 0.0, "not_settled": 0.01})
+_SURE_NO = _settle_answer("No", 0.99, {"Yes": 0.0, "No": 0.99, "not_settled": 0.01})
+# the Contoso questions (2026-09-27), as the form words them
+_CONTOSO_RELOCATE = "We work 5 days on-site in NYC. If you're not local, are you willing to relocate?"
+_CONTOSO_SPONSOR = ("Do you require visa sponsorship to work legally in the United States (now or "
+                    "in the future)? This includes needing sponsorship for CPT, OPT or other visa "
+                    "types to work in the US.")
+_CONTOSO_AUTH = ("Are you legally authorized to work in the United States? You are a US citizen, "
+                 "already have an employment visa (O1, H1B, etc.), or are specifically covered "
+                 "under a TN/H1-B1/E-3.")
+
+
+@pytest.mark.parametrize("label, key, settle, filled", [
+    (_CONTOSO_RELOCATE, "willing_to_relocate", _SURE_YES, "Yes"),
+    (_CONTOSO_SPONSOR, "requires_sponsorship", _SURE_NO, "No"),
+    (_CONTOSO_AUTH, "work_authorized", _SURE_YES, "Yes"),
+    # a US state is no other country
+    ("Are you authorized to work in New Mexico?", "work_authorized", _SURE_YES, "Yes"),
+])
+def test_the_contoso_questions_are_asked_and_a_sure_read_fills_them(tmp_path, label, key,
+                                                                    settle, filled):
+    _, first, _, questions, p = _held_back_plan(tmp_path, label=label, key=key, settle=settle)
+    assert first.fields[0].action == "skip"            # the gate holds each back
+    assert list(questions) == ["field_0_settle"]
+    assert (p.fields[0].action, p.fields[0].option, p.fields[0].fact_key) == (
+        "select", filled, key)
+    assert p.park_reason == ""
+
+
+def test_a_settle_question_carries_the_authorization_statement(tmp_path):
+    bank = standard_bank(authorization_statement=_STATEMENT)
+    cat, _, _, questions, _ = _held_back_plan(tmp_path, label=_CONTOSO_AUTH,
+                                              key="work_authorized", bank=bank)
+    saved = questions["field_0_settle"]["instructions"]["saved_answer"].split("\n")
+    assert saved[0] == f"{apply_facts.DESCRIPTIONS['work_authorized']}: Yes"
+    assert f"{apply_facts.DESCRIPTIONS['requires_sponsorship']}: No" in saved
+    assert saved[-1] == f"{apply_judge.STATEMENT_LINE}: {_STATEMENT}"
+    assert sum(line.startswith(apply_judge.STATEMENT_LINE) for line in saved) == 1
+    # with no statement saved, the yes / no lines alone
+    _, _, _, bare, _ = _held_back_plan(tmp_path / "bare", label=_CONTOSO_AUTH,
+                                       key="work_authorized",
+                                       bank=standard_bank(authorization_statement=""))
+    assert apply_judge.STATEMENT_LINE not in bare["field_0_settle"]["instructions"]["saved_answer"]
+
+
 @pytest.mark.parametrize("label, key, bank", [
-    ("Are you authorized to work in New York?", "work_authorized", None),
+    # another country
     ("Will you require sponsorship to work in the UK?", "requires_sponsorship", None),
-    ("Can you work in the US without an H-1B transfer?", "authorized_without_sponsorship", None),
-    # a strict word in the field's own label, whatever the fact
-    ("Are you willing to work in the office once your visa arrives?", "onsite_ok", None),
-    # a custom answer whose saved question is a legal one
+    ("Do you require sponsorship to work in Canada (now or in the future)? This includes "
+     "needing a work permit.", "requires_sponsorship", None),
+    # the present job or employer, a visa or sponsor held now, a sponsorship
+    # carried on, a fact about the role, relocation help asked for
+    ("Are you currently legally employed in the United States?", "work_authorized", None),
+    ("Are you employed? Are you authorized to work in the US?", "work_authorized", None),
+    ("Does your employer require visa sponsorship?", "requires_sponsorship", None),
+    ("Do you have visa sponsorship?", "requires_sponsorship", None),
+    ("Do you have a sponsor?", "requires_sponsorship", None),
+    ("Will you require the company to continue your visa sponsorship?", "requires_sponsorship",
+     None),
+    ("Is this role on-site?", "onsite_ok", None),
+    ("Do you currently work on-site?", "onsite_ok", None),
+    ("Do you require relocation assistance?", "willing_to_relocate", None),
+    ("Are you willing to work in the office once you pass a background check?", "onsite_ok", None),
+    # no word of work authorization: "restrictions" may ask about health
+    ("Are you able to work without restrictions?", "work_authorized", None),
+    # a yes to relocating answers willingness only; a yes to on-site work
+    # says nothing of commuting or where the candidate lives
+    ("Are you relocating to the job location?", "willing_to_relocate", None),
+    ("Will you be moving for this job?", "willing_to_relocate", None),
+    ("Are you able to commute to our office?", "onsite_ok", None),
+    ("We work 5 days on-site in NYC. Do you currently live in the New York City area?",
+     "onsite_ok", None),
+    # a custom answer is never read against another wording
     ("Are you legally allowed to work in Canada?", "answer_canada",
      standard_bank() + [custom("canada", "Are you authorized to work in Canada?", "No",
                                type="yes_no")]),
 ])
-def test_work_authorization_and_sponsorship_are_never_asked_nor_settled(tmp_path, label, key,
-                                                                         bank):
-    sure = _settle_answer("Yes", 0.99, {"Yes": 0.99, "No": 0.0, "not_settled": 0.01})
+def test_a_question_the_saved_answers_do_not_say_is_never_asked_nor_settled(tmp_path, label,
+                                                                            key, bank):
     _, first, _, questions, p = _held_back_plan(tmp_path, label=label, key=key, bank=bank,
-                                                settle=sure)
+                                                settle=_SURE_YES)
     assert first.fields[0].action == "skip"
     assert questions == {}
     assert (p.fields[0].action, p.fields[0].option) == ("skip", None)
+
+
+@pytest.mark.parametrize("label, key", [
+    ("Are you currently able to work without sponsorship?", "work_authorized"),
+    ("Will you be able to work without sponsorship on your start date?", "work_authorized"),
+    ("Do you currently have unrestricted work authorization?", "work_authorized"),
+    ("Are there any restrictions on your authorization to work in the U.S.?", "work_authorized"),
+    ("Will you require H-1B visa sponsorship to work for us?", "requires_sponsorship"),
+    (_CONTOSO_AUTH, "work_authorized"),
+])
+def test_for_a_candidate_who_needs_sponsorship_a_question_that_turns_on_the_visa_is_not_asked(
+        tmp_path, label, key):
+    """Sponsorship now or later says nothing of now alone, of restrictions,
+    of one visa type or of a list of who counts as authorized; for a
+    candidate who needs none, the same question is filled or asked."""
+    sponsor = standard_bank(requires_sponsorship="Yes")
+    _, first, _, questions, p = _held_back_plan(tmp_path, label=label, key=key, bank=sponsor,
+                                                settle=_SURE_YES)
+    assert questions == {}
+    assert (p.fields[0].action, p.fields[0].option) == ("skip", None)
+    _, first, _, questions, _ = _held_back_plan(tmp_path / "citizen", label=label, key=key)
+    assert first.fields[0].action == "select" or list(questions) == ["field_0_settle"]
+
+
+def test_for_a_candidate_who_needs_sponsorship_the_contoso_sponsorship_question_is_asked(
+        tmp_path):
+    """"CPT, OPT or other visa types" widens the question: any visa counts."""
+    sponsor = standard_bank(requires_sponsorship="Yes")
+    _, _, _, questions, p = _held_back_plan(tmp_path, label=_CONTOSO_SPONSOR,
+                                            key="requires_sponsorship", bank=sponsor,
+                                            settle=_SURE_YES)
+    assert list(questions) == ["field_0_settle"]
+    assert (p.fields[0].action, p.fields[0].option) == ("select", "Yes")
+
+
+@pytest.mark.parametrize("label, asked_for_yes, asked_for_no", [
+    # "located in or willing": a yes answers it, a no turns on where the candidate lives
+    ("Are you located in or willing to relocate to Austin, TX?", True, False),
+    (_CONTOSO_RELOCATE, True, False),
+    # a move with no relocation help is a move too
+    ("Are you willing to relocate to the job location (No Relocation Assistance)?", True, True),
+    # a no to relocating is a no to moving; a yes asks no plan to move
+    ("Will you be moving for this job?", False, True),
+])
+def test_a_relocation_answer_settles_only_what_its_yes_or_no_says(tmp_path, label,
+                                                                  asked_for_yes, asked_for_no):
+    for value, asked in (("Yes", asked_for_yes), ("No", asked_for_no)):
+        bank = standard_bank(willing_to_relocate=value)
+        _, first, _, questions, _ = _held_back_plan(tmp_path / value, label=label,
+                                                    key="willing_to_relocate", bank=bank)
+        assert first.fields[0].action == "skip", value
+        assert (list(questions) == ["field_0_settle"]) is asked, value
+
+
+def test_a_named_office_is_asked_only_for_a_candidate_willing_to_relocate(tmp_path):
+    _, _, _, questions, _ = _held_back_plan(tmp_path, label=_NY_OFFICE)
+    assert list(questions) == ["field_0_settle"]
+    stays = standard_bank(willing_to_relocate="No")
+    _, _, _, questions, p = _held_back_plan(tmp_path / "stays", label=_NY_OFFICE, bank=stays,
+                                            settle=_SURE_YES)
+    assert questions == {}
+    assert (p.fields[0].action, p.fields[0].option) == ("skip", None)
+
+
+@pytest.mark.parametrize("text, other", [
+    ("Do you require sponsorship to work in Canada?", True),
+    ("Will you require sponsorship to work in the UK?", True),
+    ("Are you authorized to work in the U.K.?", True),
+    ("Are you authorized to work in the EU?", True),
+    ("Are you authorized to work in Georgia?", False),        # a US state first
+    ("Are you willing to relocate to New Mexico?", False),
+    ("Are you authorized to work in Puerto Rico?", False),
+    ("Are you authorized to work in the United States?", False),
+])
+def test_other_country_reads_the_us_states_first(text, other):
+    assert apply_judge._other_country(text) is other
 
 
 @pytest.mark.parametrize("label, key, options", [
@@ -3651,7 +3792,7 @@ def test_work_authorization_and_sponsorship_are_never_asked_nor_settled(tmp_path
     ("How many years of experience in your previous role?", "years_experience",
      ("0-2 years", "3-5 years", "6+ years")),
 ])
-def test_only_the_willingness_answers_are_asked(tmp_path, label, key, options):
+def test_a_years_count_and_remote_work_are_never_asked(tmp_path, label, key, options):
     sure = _settle_answer(options[0], 0.99)
     _, first, _, questions, p = _held_back_plan(tmp_path, label=label, key=key, settle=sure,
                                                 options=options)

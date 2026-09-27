@@ -1001,9 +1001,9 @@
         "No"
       ],
       "required": true,
-      "expected_fact": null,
+      "expected_fact": "willing_to_relocate",
       "expect": {
-        "citizen": null,
+        "citizen": "Yes",
         "sponsor": null
       }
     },
@@ -1017,10 +1017,10 @@
         "No"
       ],
       "required": true,
-      "expected_fact": null,
+      "expected_fact": "willing_to_relocate",
       "expect": {
-        "citizen": null,
-        "sponsor": null
+        "citizen": "Yes",
+        "sponsor": "No"
       }
     },
     {
@@ -1033,10 +1033,10 @@
         "No"
       ],
       "required": true,
-      "expected_fact": null,
+      "expected_fact": "willing_to_relocate",
       "expect": {
-        "citizen": null,
-        "sponsor": null
+        "citizen": "Yes",
+        "sponsor": "No"
       }
     },
     {
@@ -1049,10 +1049,10 @@
         "No"
       ],
       "required": true,
-      "expected_fact": null,
+      "expected_fact": "willing_to_relocate",
       "expect": {
-        "citizen": null,
-        "sponsor": null
+        "citizen": "Yes",
+        "sponsor": "No"
       }
     },
     {
@@ -1065,10 +1065,10 @@
         "No"
       ],
       "required": true,
-      "expected_fact": null,
+      "expected_fact": "willing_to_relocate",
       "expect": {
         "citizen": null,
-        "sponsor": null
+        "sponsor": "No"
       }
     },
     {
@@ -1081,10 +1081,10 @@
         "No"
       ],
       "required": true,
-      "expected_fact": null,
+      "expected_fact": "willing_to_relocate",
       "expect": {
         "citizen": null,
-        "sponsor": null
+        "sponsor": "No"
       }
     },
     {
@@ -2172,6 +2172,134 @@
         "Within 2 weeks",
         "Within a month",
         "More than a month"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "contoso_reloc_not_local",
+      "label": "We work 5 days on-site in NYC. If you're not local, are you willing to relocate?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "willing_to_relocate",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": null
+      }
+    },
+    {
+      "id": "contoso_spon_cpt_opt",
+      "label": "Do you require visa sponsorship to work legally in the United States (now or in the future)? This includes needing sponsorship for CPT, OPT or other visa types to work in the US.",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "requires_sponsorship",
+      "expect": {
+        "citizen": "No",
+        "sponsor": "Yes"
+      }
+    },
+    {
+      "id": "contoso_spon_cpt_opt_help",
+      "label": "Do you require visa sponsorship to work legally in the United States (now or in the future)?",
+      "help": "This includes needing sponsorship for CPT, OPT or other visa types to work in the US.",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "requires_sponsorship",
+      "expect": {
+        "citizen": "No",
+        "sponsor": "Yes"
+      }
+    },
+    {
+      "id": "contoso_auth_listed",
+      "label": "Are you legally authorized to work in the United States? You are a US citizen, already have an employment visa (O1, H1B, etc.), or are specifically covered under a TN/H1-B1/E-3.",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "work_authorized",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": null
+      }
+    },
+    {
+      "id": "contoso_auth_listed_help",
+      "label": "Are you legally authorized to work in the United States?",
+      "help": "You are a US citizen, already have an employment visa (O1, H1B, etc.), or are specifically covered under a TN/H1-B1/E-3.",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "work_authorized",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": null
+      }
+    },
+    {
+      "id": "onsite_live_in_city",
+      "label": "We work 5 days on-site in NYC. Do you currently live in the New York City area?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "auth_uk_listed",
+      "label": "Are you legally authorized to work in the United Kingdom? You are a UK citizen, or hold a Skilled Worker or Graduate visa.",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "spon_canada_permit",
+      "label": "Do you require sponsorship to work in Canada (now or in the future)? This includes needing a work permit.",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
       ],
       "required": true,
       "expected_fact": null,

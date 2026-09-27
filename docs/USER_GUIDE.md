@@ -564,20 +564,27 @@ qualified one. A field that asks something narrower or the reverse of a saved an
 answered only when that answer covers it: "authorized to work without sponsorship" is answered
 from your authorization and sponsorship answers together, while your total years of experience
 does not answer "years of Python experience", so a required field like that stops the job for
-you. The same goes for a question naming another country, a city, a visa type, a number of
-years or your current job, and for a status list under a "Work authorization" heading. A custom
-yes, no or number answer you add fills only the question it was saved for, word for word. When
-a job stops on a question like that, add a custom answer with the question exactly as the form
-words it, then run the job again.
+you. The same goes for a question naming a number of years or your current job, and for a status
+list under a "Work authorization" heading; the next paragraph says which other wordings Jev reads
+for you. A custom yes, no or number answer you add fills only the question it was saved for, word
+for word. When a job stops on a question like that, add a custom answer with the question exactly
+as the form words it, then run the job again.
 
-**Relocation and on-site questions in other words.** When a form asks about relocating or
-working on-site in words the check above does not match, such as "Are you willing to work in the
-office in New York?", Jev reads your relocation and on-site answers and fills the field only when
-it is sure (0.85 or more, far ahead of every other choice) that anyone with those answers would
-pick that option. Otherwise the field stops the job as before. No other answer is read this way:
-work authorization, sponsorship and years of experience always need their own question. The note
-on an answer goes to Jev with it, so "only in NYC or Austin" or "at my own expense is fine" tells
-it what your Yes covers.
+**Questions in other words.** When a form asks about relocating, working on-site, work
+authorization or sponsorship in words the check above does not match, such as "Are you willing to
+work in the office in New York?" or "Do you require visa sponsorship? This includes needing
+sponsorship for CPT, OPT or other visa types", Jev reads your saved answers, with your work
+authorization statement, and fills the field only when it is sure (0.85 or more, far ahead of
+every other choice) that anyone with those answers would pick that option. Otherwise the field
+stops the job as before. Some questions always stop the job, since none of your answers says
+them: another country, whether you are employed now, a visa or sponsor you hold now, your
+employer's needs, relocation help you ask for, commuting or where you live. If you need
+sponsorship, so do questions about now alone, about restrictions, about one visa type such as
+H-1B, or with a list of who counts as authorized, since your answers do not name your visa. A No
+to relocating leaves "Are you located in or willing to relocate?" open, since you may live there
+already. Years of experience and remote-only work always need their own question. The note on an
+answer goes to Jev with it, so "only in NYC or Austin" or "only with relocation help" tells it
+what your Yes covers.
 
 **Test my answers.** Click **Test my answers** to run the shipped screening questions against
 your saved, confirmed answers, off the UI thread, with the judge your Auto-apply judge setting

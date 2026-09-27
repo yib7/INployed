@@ -1064,6 +1064,20 @@ def asks_own_question(fact_key: str | None, label: str, help_text: str = "",
     return question_fit(fact_key, label, help_text, partial, company=company) == "own"
 
 
+def asks_willingness(fact_key: str | None, label: str, help_text: str = "", *,
+                     company: str = "") -> bool:
+    """Does every question sentence of a field (with none, every sentence
+    naming the fact's subject) hold one of `fact_key`'s willingness or
+    ability anchors ("willing", "open to", "would you": `_asked_willing`),
+    whatever its other words? "If you are not local, are you willing to
+    relocate?" does; "Are you relocating to the job location?" and "Will you
+    be moving for this job?" do not. A fact with no anchors never does."""
+    spec = OWN_QUESTIONS.get(fact_key or "")
+    if spec is None or not spec.anchors:
+        return False
+    return _asked_willing(_sentences(_phrased(label, help_text, company)), spec)
+
+
 def answers_question(fact_key: str | None, value: str, label: str,
                      help_text: str = "", partial: bool = False, *, company: str = "") -> bool:
     """Does `value` of `fact_key` answer the field's question? Its own

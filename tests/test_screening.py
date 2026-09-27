@@ -19,7 +19,7 @@ correctly keeps a run that picks nothing from passing.
   runner target of `scripts/jev_record.ps1` records it): no wrong pick outside
   REAL_MISREADS (empty). The rule raises `pytest.fail`, which the harness
   never turns into a recorded divergence (an xfail). REAL_PICK_FLOOR is the
-  recording's rate (cycle 18: 98 of 135, no wrong pick); the rate prints
+  recording's rate (cycle 18: 126 of 151, no wrong pick); the rate prints
   either way. The fixture pins the catalog's `today` to the recording
   day, as it does for the runner tests. In fake mode the test skips: its judge
   would be the fake, which the fake test holds already.
@@ -87,14 +87,25 @@ SEEDS = (1, 2, 3, 4, 5)
 # unpicked, since the fake maps no fact to them. Round 8 added four questions
 # that name the job's city (onsite_office_named_city, onsite_named_office,
 # onsite_based_in_city, reloc_named_city): the gate holds each back and the
-# fake never settles one, so they count as expected but unpicked.
-FAKE_PICK_FLOOR = 0.51                                        # 69 of 135
-NOISY_PICK_FLOOR = {1: 0.50, 2: 0.50, 3: 0.50, 4: 0.51, 5: 0.50}  # 68 68 68 69 68 of 135
-# The real judge's floor, from cycle 18's recording (2026-09-26): 98 of 135
-# expected picks and no wrong one, two of them the judge's sure read of a
-# reworded willingness question (`apply_judge.settle_questions`). None would
-# report the rate only.
-REAL_PICK_FLOOR: float | None = 0.72                          # 98 of 135
+# fake never settles one, so they count as expected but unpicked. Round 9
+# (2026-09-27, a live run on the Contoso form) added eight questions: the three
+# Contoso questions as worded there (contoso_reloc_not_local,
+# contoso_spon_cpt_opt and contoso_auth_listed, the last two also with the
+# second sentence as help) and three that stay unanswered (a city the
+# candidate lives in, the UK, Canada). It also reads six relocation
+# questions the saved answers do answer: a No to relocating is No to
+# relocating without help, to moving for the job and to relocating to its
+# location; a Yes is Yes to "located in or willing to relocate" and to a
+# move with no relocation help. A No leaves "If you're not local, are you
+# willing to relocate?" open, since the candidate may be local. The fake
+# settles none of them, so its picks stay at 69 and its rate falls.
+FAKE_PICK_FLOOR = 0.45                                        # 69 of 151
+NOISY_PICK_FLOOR = {1: 0.45, 2: 0.45, 3: 0.45, 4: 0.45, 5: 0.45}  # 68 68 68 69 68 of 151
+# The real judge's floor, from cycle 18's recording (2026-09-27): 126 of 151
+# expected picks and no wrong one, 30 of them the judge's sure read of a
+# reworded relocation, on-site, work authorization or sponsorship question
+# (`apply_judge.settle_questions`). None would report the rate only.
+REAL_PICK_FLOOR: float | None = 0.83                          # 126 of 151
 # (question id, profile) cases where a wrong pick by the real judge is
 # accepted, each with its cause. Empty: every wrong pick fails.
 REAL_MISREADS: frozenset[tuple[str, str]] = frozenset()
@@ -257,8 +268,9 @@ def test_the_set_covers_the_topics_the_spec_names():
     # cycle 18 SP6c round 3 added the review's wrong-answer forms and the
     # plain forms each vocabulary passes (69 to 90), round 5 the second
     # review's wrong-settle forms (90 to 109), round 7 the recheck's (109 to
-    # 128), round 8 four that name the job's city (128 to 132)
-    assert 55 <= len(QUESTIONS) <= 135
+    # 128), round 8 four that name the job's city (128 to 132), round 9 the
+    # Contoso questions as worded there and three that stay open (132 to 140)
+    assert 55 <= len(QUESTIONS) <= 145
     assert {q["widget"] for q in QUESTIONS} == set(apply_screening.WIDGETS)
     prefixes = {q["id"].split("_")[0] for q in QUESTIONS}
     assert {"auth", "spon", "reloc", "onsite", "years", "gender", "race", "veteran",

@@ -70,13 +70,15 @@ from urllib.parse import urlsplit
 # are no number, cycle 18 FM-5) and the yes and no forms are the own-question
 # gate's too, so both read one list (final review C1)
 from apply_facts import (DESCRIPTIONS, NO_FORMS, PLAIN_NUMBER, STORED_YES_NO_KEYS, YES_FORMS,
-                         YES_NO_KEYS, FactCatalog, answers_question, noun_phrase, quick_map)
+                         YES_NO_KEYS, FactCatalog, answers_question, asks_willingness,
+                         noun_phrase, question_tokens, quick_map)
 # the own-question gate's other names, re-exported for the judge's callers
 from apply_facts import asks_own_question as asks_own_question
 from apply_facts import question_fit as question_fit
 from apply_form import FormDigest, password_box
 from jev import APOSTROPHES, NOT_SETTLED, PAGE_KIND_NOULS, Answer, request_fits
 # pure data (no package imports, no .env): the one US state list the store shares
+from resume_tailor.answer_tables import COUNTRIES as _COUNTRIES
 from resume_tailor.answer_tables import US_STATES as _US_STATES
 
 log = logging.getLogger("apply_judge")
@@ -472,8 +474,8 @@ _BUTTON_CRITERIA: dict[str, dict[str, Any]] = {
 }
 
 NO_MATCH_DESCRIPTION = "nothing listed fits"
-NOT_SETTLED_DESCRIPTION = ("the right option also turns on something the saved answer does not "
-                           "say, or it is unclear")
+NOT_SETTLED_DESCRIPTION = ("the field asks something the saved answers do not say, or its right "
+                           "option turns on it, or it is unclear")
 
 # The subtle boundary of `button_{n}_sends` (the Jev guide: a Noul's
 # true / false criteria pin it down).
@@ -2067,52 +2069,167 @@ def option_questions(digest: FormDigest, fill_plan: FillPlan,
 
 # --- the third request: a held-back answer, asked whether it settles the field -------
 
-# Work authorization and sponsorship are read in code only: a wrong answer
-# there is the worst end of an application (the user's call, 2026-09-26).
-# The words mark a question of the same weight in any field or saved question.
-# The facts the judge may read a reworded question for: the two willingness
-# answers. On the screening set's recording (2026-09-26) its sure reads of
-# them were right and every wrong read of them came in at 0.82 or less; its
-# reads of a years count and of fully remote work came in wrong at up to
-# 0.92, so those stay with the gate.
-SETTLE_KEYS = frozenset(("willing_to_relocate", "onsite_ok"))
-STRICT_KEYS = frozenset(("work_authorized", "requires_sponsorship",
-                         "authorized_without_sponsorship", STATEMENT_KEY))
-_STRICT_WORDS = re.compile(
-    r"authori[sz]|sponsor|\bvisas?\b|citizen|permanent residen|green card|work permit"
-    r"|immigra|\bh-?1b\b|\bopt\b|\bcpt\b|\bead\b|clearance|convict|felon|criminal"
-    r"|background check|drug", re.I)
+# The facts the judge may read a reworded question for. The willingness
+# answers came first (2026-09-26). The work authorization answers joined on
+# 2026-09-27: a live run on the Contoso form parked on "Do you require visa
+# sponsorship ... This includes needing sponsorship for CPT, OPT or other visa
+# types" and on an authorization question that listed who counts, both
+# answered by the saved answers, because a word list held them back. The
+# user's call: the judge reads them. Their saved answer carries every stored
+# yes / no line and the authorization statement (`_settle_answer_text`). A
+# years count and fully remote work stay with the gate: the recording read
+# them wrong at up to 0.92.
+SETTLE_KEYS = frozenset(("willing_to_relocate", "onsite_ok", "work_authorized",
+                         "requires_sponsorship", "authorized_without_sponsorship"))
+# The questions no saved answer settles, whatever the fact: a conviction, a
+# background or drug check or a security clearance; the candidate's present
+# job or employer ("Are you currently legally employed in the United
+# States?", "Does your employer require visa sponsorship?"); a visa or a
+# sponsor the candidate holds now, or a sponsorship carried on; a fact about
+# the role ("Is this role on-site?"); relocation help the candidate asks for.
+# The 2026-09-27 recording read each of these from the saved answers at 0.87
+# to 0.97.
+_NEVER_SETTLED = re.compile(
+    r"clearance|convict|felon|criminal|background check|drug"
+    r"|\b(?:are|were) you (?:currently |now |presently )?(?:legally |lawfully )?employed\b"
+    r"|\bdo you (?:currently |now |presently )?work\b"
+    r"|\byour (?:current |present |previous |former )?employer\b"
+    r"|\b(?:do|does) you (?:currently |now )?(?:have|hold|possess) (?:an? |any )?"
+    r"(?:(?:current|valid|active|work|employment|u\.?s\.?) )*(?:visa|sponsor)"
+    r"|\bcontinue\b[^.?!]*\bsponsor"
+    r"|\bis (?:this|the) (?:role|position|job)\b"
+    r"|\b(?:need|require|want|expect)\w* (?:any )?relocation "
+    r"(?:assistance|support|help|package|benefits?)\b", re.I)
+# a country other than the United States, read after the US states and
+# territories are taken out ("New Mexico", "Georgia", "Puerto Rico")
+_US_PLACES = re.compile(r"\b(?:" + "|".join(
+    re.escape(n) for n in sorted((*_US_STATES.values(), "Puerto Rico", "United States"),
+                                 key=len, reverse=True)) + r")\b", re.I)
+_OTHER_COUNTRY = re.compile(r"\b(?:" + "|".join(
+    re.escape(c) for c in sorted((*(c for c in _COUNTRIES
+                                    if c not in ("United States", "Puerto Rico")),
+                                  "England", "Scotland", "Wales", "Britain", "Europe"),
+                                 key=len, reverse=True)) + r")\b", re.I)
+_OTHER_COUNTRY_CODE = re.compile(r"\bU\.?K\b\.?|\bEU\b")
+# where the candidate lives now, and commuting from there
+_WHERE_THEY_LIVE = re.compile(
+    r"\b(?:local|locally|located|live|lives|living|reside|resides|residing|commut\w*)\b", re.I)
+# a place named after "in", "at", "to", "near" or "from" ("in NYC", "at our
+# Austin, TX office"), the United States and the office words aside
+_NAMED_PLACE = re.compile(
+    r"\b(?:in|at|to|near|from|around) (?:our |the |an? )?"
+    r"(?!(?:Office|Offices|On|Onsite|Hybrid|Remote|HQ|Headquarters|U\.?S|USA|America|United)"
+    r"\b)[A-Z][A-Za-z.]+")
+# a work authorization question names the United States or a word of its own
+_AUTH_TOKENS = frozenset(("US", "RIGHTTOWORK", "NOSPONSOR", "VISATYPE", "VISAEXAMPLE"))
+_AUTH_WORDS = re.compile(r"authori[sz]|eligib|visa|sponsor|citizen|permanent resident|"
+                         r"green card|immigration|permit|\blegal|\blawful", re.I)
+# the authorization words a list of visa types counts against ("legally"
+# reads as a place of work: "to work legally in the United States")
+_AUTHORIZED_WORDS = frozenset(("authorized", "authorised", "authorization", "authorisation",
+                               "eligible", "permitted", "RIGHTTOWORK"))
+_RESTRICTED = frozenset(("UNRESTRICTED", "restriction", "restrictions", "restricted"))
+_SPONSORED = frozenset(("sponsor", "sponsorship", "sponsored", "NOSPONSOR"))
 SETTLE_QUESTION = (
-    "The candidate saved `saved_answer` as the answer to `saved_question`, with any note it "
-    "carries. The form field `fields[{i}].label` may ask the same thing in other words. Pick "
-    "an option only when every candidate who saved that answer and note would give that "
-    "option, whatever else is true of them. Choose not_settled when the right option could "
-    "also turn on something the saved answer does not say: where the candidate lives now or "
-    "whether they already live near the job, whether they would take something they are not "
-    "looking for, a cost the candidate pays, a number of days or years, a visa type, or a "
-    "fact about the role or the company. A city or an office the field names for this job "
-    "is the job's location. Choose not_settled when unsure.")
+    "The candidate saved `saved_answer`: its first line answers `saved_question`, the other "
+    "lines are the candidate's other saved answers, and a note is the candidate's own words. "
+    "The form field `fields[{i}].label`, with its help, may ask the same thing in the "
+    "employer's words: naming the job's city, office or days on site, listing the visa types "
+    "it counts or who counts as authorized, or adding a condition such as \"if you are not "
+    "local\" or \"if needed\". Read the field as the employer means it and pick the option "
+    "every candidate with these saved answers would give. A condition the saved answers "
+    "already cover does not stop a pick: a candidate willing to relocate answers \"If you "
+    "are not local, are you willing to relocate?\" with yes. Choose not_settled when the "
+    "field asks something these answers do not say, or when its right option turns on it: "
+    "another country, where the candidate lives now, a cost the candidate pays, a number of "
+    "years or a skill, a date, pay, or a fact about the role or the company. Choose "
+    "not_settled when unsure.")
 
 
-def strict_fact(catalog: FactCatalog | None, key: str, label: str, help_text: str = "") -> bool:
-    """Is `key` under this label read in code only (`STRICT_KEYS`, or
-    `_STRICT_WORDS` in the label, the help or the fact's saved question)?"""
-    if key in STRICT_KEYS:
+def _settle_answer_text(catalog: FactCatalog, key: str, value: str,
+                        options: list[str] | tuple[str, ...]) -> str:
+    """The saved answer a settle question carries: `candidate_answer`, with
+    the authorization statement last for a yes / no fact when the catalog
+    holds one and the lines do not carry it yet, so a question that lists
+    visa types or who counts as authorized is read against the candidate's
+    own words."""
+    text = candidate_answer(catalog, key, value, options)
+    if (key in YES_NO_KEYS and catalog.has(STATEMENT_KEY)
+            and f"{STATEMENT_LINE}:" not in text):
+        text += f"\n{STATEMENT_LINE}: {catalog.value(STATEMENT_KEY)}"
+    return text
+
+
+def _said(catalog: FactCatalog, key: str, forms: frozenset[str]) -> bool:
+    """Does the catalog hold `key` with a value among `forms` (`YES_FORMS`,
+    `NO_FORMS`)?"""
+    return catalog.has(key) and str(catalog.value(key) or "").strip().lower() in forms
+
+
+def _other_country(text: str) -> bool:
+    """Does `text` name a country other than the United States ("Canada",
+    "the UK"; "New Mexico" and "Georgia" are US states)?"""
+    return bool(_OTHER_COUNTRY.search(_US_PLACES.sub(" ", text))
+                or _OTHER_COUNTRY_CODE.search(text))
+
+
+def _unsaid(f, key: str, catalog: FactCatalog) -> bool:
+    """Does field `f`'s right option turn on something the saved answers do
+    not say? Read in code before the judge is asked and again on its
+    answer, since the 2026-09-27 recording read each of these at 0.85 to
+    0.98.
+
+    Any fact: a question `_NEVER_SETTLED` holds, or another country.
+    Relocation: a yes settles a question that asks the candidate's
+    willingness (`asks_willingness`: "If you are not local, are you willing
+    to relocate?"; a move with no relocation help is a move too, and a note
+    carries any condition the candidate has); a no settles one that
+    leaves out where the candidate lives ("Are you located in or willing to
+    relocate to Austin, TX?" turns on it). On-site work: a yes settles no
+    question of commuting or of where the candidate lives, and one that
+    names a place only for a candidate willing to relocate. Work
+    authorization: the field names the United States or a word of work
+    authorization ("Are you able to work without restrictions?" may ask
+    about health); and unless the saved answers say no sponsorship, the
+    candidate's visa is unsaid, so no question of restrictions, of
+    sponsorship now or on the start date alone, of one visa type, or of
+    authorization under a list of visa types."""
+    text = f"{f.label}\n{f.help or ''}"
+    if _NEVER_SETTLED.search(text) or _other_country(text):
         return True
-    saved = catalog.facts[key].description if catalog is not None and key in catalog.facts else ""
-    return bool(_STRICT_WORDS.search(" ".join((label or "", help_text or "", saved))))
+    if key == "willing_to_relocate":
+        if _said(catalog, key, YES_FORMS):
+            return not asks_willingness(key, f.label, f.help or "")
+        return _said(catalog, key, NO_FORMS) and bool(_WHERE_THEY_LIVE.search(text))
+    if key == "onsite_ok":
+        if not _said(catalog, key, YES_FORMS):
+            return False
+        return bool(_WHERE_THEY_LIVE.search(text)) or (
+            not _said(catalog, "willing_to_relocate", YES_FORMS)
+            and bool(_NAMED_PLACE.search(text)))
+    words = set(question_tokens(f.label, f.help or ""))
+    if not (words & _AUTH_TOKENS or _AUTH_WORDS.search(text)):
+        return True
+    if (_said(catalog, "requires_sponsorship", NO_FORMS)
+            or _said(catalog, "authorized_without_sponsorship", YES_FORMS)):
+        return False
+    now_only = bool(words & {"NOW", "STARTDATE"}) and not words & {"NOWFUTURE", "FUTURE"}
+    return bool(words & _RESTRICTED or (now_only and words & _SPONSORED)
+                or ("VISATYPE" in words
+                    and (words & _AUTHORIZED_WORDS or not words & {"other", "any"})))
 
 
 def _settle_ok(f, key: str, catalog: FactCatalog) -> bool:
     """May the judge read whether `key`'s saved answer settles field `f`:
-    a list of options the run picks from, a whole label, a willingness fact
-    (`SETTLE_KEYS`) with a value, and nothing read in code only or never
+    a list of options the run picks from, a whole label, a fact it may read
+    (`SETTLE_KEYS`) with a value, and no question whose right option turns
+    on something the saved answers do not say (`_unsaid`) or never
     answered?"""
     return (bool(f.options) and _action_for(f) == "select"
             and not getattr(f, "label_partial", False)
             and key in SETTLE_KEYS and catalog.has(key)
-            and not strict_fact(catalog, key, f.label, f.help)
-            and not is_sensitive_field(f.label, f.id_or_name) and not password_box(f))
+            and not is_sensitive_field(f.label, f.id_or_name) and not password_box(f)
+            and not _unsaid(f, key, catalog))
 
 
 def settled_pick(answers: Mapping[str, Answer], f, key: str,
@@ -2158,12 +2275,11 @@ def settle_questions(digest: FormDigest, fill_plan: FillPlan, answers: Mapping[s
                      catalog: FactCatalog, *, company: str = "") -> tuple[dict, dict]:
     """The third request: each field the plan left blank because the
     own-question gate held back its fact's saved answer (`_held_back`) is
-    asked whether that answer, with its note and the other yes / no lines
-    (`candidate_answer`), settles the field's question as worded there
-    (`SETTLE_QUESTION`, escape `not_settled`). `plan` fills the sure ones
-    (`settled_pick`). Never asked for work authorization or sponsorship
-    (`strict_fact`). Empty when there is nothing to ask; merge the answers
-    and call `plan` again."""
+    asked whether that answer, with its note, the other yes / no lines and
+    the authorization statement (`_settle_answer_text`), settles the field's
+    question as worded there (`SETTLE_QUESTION`, escape `not_settled`).
+    `plan` fills the sure ones (`settled_pick`). Empty when there is nothing
+    to ask; merge the answers and call `plan` again."""
     by_n = {f.n: f for f in digest.fields}
     state: dict[str, Any] = {"fields": []}
     questions: dict[str, Any] = {}
@@ -2182,7 +2298,8 @@ def settle_questions(digest: FormDigest, fill_plan: FillPlan, answers: Mapping[s
         questions[f"field_{f.n}_settle"] = {
             "type": "choice",
             "instructions": {"saved_question": catalog.facts[key].description,
-                             "saved_answer": candidate_answer(catalog, key, value, f.options),
+                             "saved_answer": _settle_answer_text(catalog, key, value,
+                                                                 f.options),
                              "question": SETTLE_QUESTION.format(i=i)},
             "criteria": criteria}
     return state, questions

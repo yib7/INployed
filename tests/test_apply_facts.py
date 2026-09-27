@@ -669,3 +669,19 @@ def test_the_derived_description_says_it_answers_unrestricted_work_authorization
     d = apply_facts.DESCRIPTIONS["authorized_without_sponsorship"]
     assert "unrestricted work authorization" in d.lower()
     assert "without" in d
+
+@pytest.mark.parametrize("key, label, help_text, asks", [
+    ("willing_to_relocate", "We work 5 days on-site in NYC. If you're not local, are you "
+                            "willing to relocate?", "", True),
+    ("willing_to_relocate", "Are you located in or willing to relocate to Austin, TX?", "", True),
+    ("willing_to_relocate", "Would you relocate for this role?", "", True),
+    ("willing_to_relocate", "Are you relocating to the job location?", "", False),
+    ("willing_to_relocate", "Will you be moving for this job?", "", False),
+    ("onsite_ok", "Are you open to working on-site in our Denver office?", "", True),
+    # a fact with no anchors never asks one
+    ("work_authorized", "Are you willing to work in the US?", "", False),
+    ("not_a_fact", "Are you willing to relocate?", "", False),
+])
+def test_asks_willingness_reads_every_question_sentence_for_an_anchor(key, label, help_text,
+                                                                      asks):
+    assert apply_facts.asks_willingness(key, label, help_text) is asks

@@ -1125,6 +1125,9 @@ def test_make_jev_judge_builds_a_guarded_judge_when_the_switch_is_on(monkeypatch
     monkeypatch.setattr(jev, "TypeSafeJev", Live)
     judge = sj.make_jev_judge()
     assert isinstance(judge, jev.Guarded) and isinstance(judge.inner, Live)
+    # The short retries jev_switch.client gives scoring: an outage reaches the
+    # LLM path in seconds, since the batch has that path to fall back on.
+    assert judge.delays == jev.QUICK_RETRY_DELAYS_S
     out = capsys.readouterr().out
     assert "Jev scoring on (SCORE_USE_JEV=1)" in out and "not-a-real-key" not in out
 

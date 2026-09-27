@@ -168,12 +168,16 @@ def use_jev(env: Any = None) -> tuple[bool, str]:
 
 
 def make_judge() -> Any:
-    """The run's judge: `jev.Guarded(jev.TypeSafeJev())`, whose breaker opens
-    after an outage so the rest of the run takes the LLM path (SC-5). None,
-    with one warning naming the error's class only, when it cannot be built."""
+    """The run's judge: a `jev.Guarded` TypeSafe judge with the short retries
+    `jev_switch.client("scoring")` gives (`jev.QUICK_RETRY_DELAYS_S`), so an
+    outage reaches the LLM path in seconds, and whose breaker opens after it so
+    the rest of the run takes that path (SC-5). The scorer builds it here: it
+    reads its own switch (`use_jev`) and also runs on the VM, which has no
+    dashboard config for `jev_switch.client` to read. None, with one warning
+    naming the error's class only, when it cannot be built."""
     try:
         jev = _jev_module()
-        return jev.Guarded(jev.TypeSafeJev())
+        return jev.Guarded(jev.TypeSafeJev(), delays=jev.QUICK_RETRY_DELAYS_S)
     except Exception as e:      # noqa: BLE001  (None keeps the run on the LLM path)
         print(f"WARNING: the Jev judge could not be built ({type(e).__name__}); "
               "scoring on the LLM path.")

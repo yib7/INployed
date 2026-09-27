@@ -1020,7 +1020,8 @@ def test_a_gate_that_raises_leaves_start_on_for_the_drain_to_check(qtbot, tmp_pa
 
 def test_the_default_gate_reads_a_broken_settings_backend_as_no_saved_key(monkeypatch):
     """SP1 review F: an unreadable settings file counts as no saved key
-    (`jev_switch.key_saved`), so Start names the key instead of breaking."""
+    (`jev_switch.key_saved`), so Start names the key and the panel keeps
+    working."""
     import settings
 
     def broken():

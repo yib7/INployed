@@ -245,7 +245,7 @@ def test_the_key_value_never_reaches_a_reason_the_log_or_the_console(sdk, monkey
 def test_a_find_spec_that_raises_reads_as_no_sdk(monkeypatch, error):
     """find_spec raises ImportError when a parent package fails to import and
     ValueError when a loaded module has no __spec__. Either reads as no SDK,
-    so the gate names the fix instead of breaking."""
+    so the gate names the fix and the caller keeps running."""
     def fail(name):
         raise error("the probe failed")
     monkeypatch.setattr(jev_switch.importlib.util, "find_spec", fail)

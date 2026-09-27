@@ -212,6 +212,48 @@ def test_retailor_existing_survives_tailor_failure():
     assert res["record"]["job_posting_id"] == "manual-abc"     # row identity preserved
 
 
+# ── Follow-up 1: a re-pasted JD backfills a prune-blanked stored description ──
+
+def test_retailor_existing_fills_blank_description_from_pasted_jd_text(tmp_path):
+    """pipeline/prune_master.py blanks job_description_formatted on a row past
+    its retention window. If the user re-pastes the full text into "Tailor
+    again", the tailor must see it even though the saved row itself is blank."""
+    fake_tailor, seen = _fake_tailor_factory(tmp_path)
+    record = {"job_posting_id": "manual-abc", "job_title": "Data Analyst",
+             "company_name": "Acme Corp", "job_description_formatted": ""}
+    manual_add.retailor_existing(record, jd_text=_JD, tailor_fn=fake_tailor)
+    assert seen["job"]["job_description_formatted"] == manual_add._strip_html(_JD)
+
+
+def test_retailor_existing_keeps_stored_description_over_pasted_jd_text(tmp_path):
+    """A stored description that survived the prune (or was never blanked)
+    wins; a re-paste is a fallback for the blank case only, never an override."""
+    fake_tailor, seen = _fake_tailor_factory(tmp_path)
+    stored = "The original description that was never pruned stays exactly as saved."
+    record = {"job_posting_id": "manual-abc", "job_title": "Data Analyst",
+             "company_name": "Acme Corp", "job_description_formatted": stored}
+    manual_add.retailor_existing(record, jd_text=_JD, tailor_fn=fake_tailor)
+    assert seen["job"]["job_description_formatted"] == stored
+
+
+def test_retailor_existing_backfill_never_writes_the_master_row(tmp_path, monkeypatch):
+    """Filling a blank description from the re-paste is for this tailor run
+    only: it must never rewrite the saved master row, and the caller's own
+    record dict must come back unchanged."""
+    fake_tailor, _ = _fake_tailor_factory(tmp_path)
+
+    def boom(*a, **k):
+        raise AssertionError("retailor_existing must never write the master")
+
+    monkeypatch.setattr(jobsdata, "append_manual_job", boom)
+    monkeypatch.setattr(jobsdata, "update_manual_job", boom)
+    record = {"job_posting_id": "manual-abc", "job_title": "Data Analyst",
+             "company_name": "Acme Corp", "job_description_formatted": ""}
+    res = manual_add.retailor_existing(record, jd_text=_JD, tailor_fn=fake_tailor)
+    assert res["record"]["job_description_formatted"]        # filled for the caller
+    assert record["job_description_formatted"] == ""         # caller's own dict untouched
+
+
 # ── URL path: fetch mocked, and the pasted-JD fallback when fetch fails ───────
 
 def test_url_path_uses_fetched_text_when_no_paste(tmp_path):

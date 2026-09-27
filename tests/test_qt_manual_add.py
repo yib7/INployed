@@ -218,6 +218,9 @@ def test_add_manual_job_dialog_offers_retailor_on_duplicate(qtbot, monkeypatch):
     assert "fn" in launched
     launched["fn"]()
     assert retailor_calls["record"] is dup
+    # Follow-up 1: the freshly pasted JD is threaded through to retailor_existing
+    # (used there only to backfill a prune-blanked stored description).
+    assert retailor_calls["jd_text"] == _JD
 
 
 def test_add_manual_job_dialog_duplicate_cancel_is_noop(qtbot, monkeypatch):

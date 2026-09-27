@@ -187,8 +187,10 @@ def _copy_pipeline(dest: Path, names) -> Path:
 def _run_python(code: str, cwd: Path) -> str:
     env = {k: v for k, v in os.environ.items() if k not in ("TYPESAFE_API_KEY", "SCORE_USE_JEV")}
     env["INPLOYED_NO_DOTENV"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
     done = subprocess.run([sys.executable, "-c", code], cwd=str(cwd), env=env,
-                          capture_output=True, text=True, timeout=90)
+                          capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          timeout=90)
     assert done.returncode == 0, done.stderr[-2000:]
     return done.stdout
 

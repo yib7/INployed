@@ -133,17 +133,19 @@ def auto_apply_warnings(has_key: bool, jev_mode: str, sdk_found: bool,
     truth tables above.
 
     The lines follow the order the drain checks in. `jev_mode` is a mode
-    `jev_switch.apply_mode` resolved. A test judge ('fake', 'replay') is
-    refused as fixture-only first (`jev_switch.fixture_only`, cycle 16), then
-    Jev switched off (Settings > Jev) stops a run in every mode (JS-5); both
-    lines are the sentences the drain and the Auto-apply panel's Start button
-    give. The key and the SDK only matter in 'typesafe' mode, since the test
-    judges need neither. Playwright and Chromium are needed in every mode.
-    A missing Playwright package folds the Chromium row into its own line,
-    since `playwright install chromium` cannot run without it.
+    `jev_switch.apply_mode` resolved. The drain's refusal of the mode comes
+    first (`jev_switch.mode_refusal`): a test judge ('fake', 'replay') is
+    fixture-only (cycle 16), and a mode `jev.get` does not build is unknown
+    (SP1 follow-up 2). Then Jev switched off (Settings > Jev) stops a run in
+    every mode (JS-5); these lines are the sentences the drain and the
+    Auto-apply panel's Start button give. The key and the SDK only matter in
+    'typesafe' mode, since the test judges need neither. Playwright and
+    Chromium are needed in every mode. A missing Playwright package folds the
+    Chromium row into its own line, since `playwright install chromium` cannot
+    run without it.
     """
     out: list[str] = []
-    refused = jev_switch.fixture_only(jev_mode)
+    refused = jev_switch.mode_refusal(jev_mode)
     if refused:
         out.append(refused)
     if not jev_enabled:
@@ -258,7 +260,7 @@ def chrome_installed(paths: Iterable[Path] | None = None) -> bool:
 
 
 def auto_apply_problems() -> list[str]:
-    """Test-judge refusal, Jev switch, key, SDK, Playwright and Chromium rows
+    """Judge-mode refusal, Jev switch, key, SDK, Playwright and Chromium rows
     for the Jev-judged auto-apply run.
 
     Best-effort like `engine_problems`: a failure to read settings returns [].

@@ -68,8 +68,8 @@ def _console_command(root: Path, verb: str) -> str:
 # with the Jev judge, and submits only when the confidence gate passes
 # (`auto_apply_submit` in Settings, `--no-submit` on the command line parks
 # every job at its review page instead). It refuses to start on a test judge
-# (fake, replay) and while Jev cannot run (switched off, no key, no SDK), and
-# the Start button is off then too.
+# (fake, replay) or a judge mode it cannot build, and while Jev cannot run
+# (switched off, no key, no SDK), and the Start button is off then too.
 KICKOFF_COMMAND = _console_command(REPO_ROOT, "drain")
 
 # The one-time sign-in: opens the same persistent profile, headed, at
@@ -175,8 +175,8 @@ def _default_password_exists() -> bool:
 def _default_jev_blocked() -> str:
     """Panel seam for the Start gate: why the drain Start launches would refuse
     to start, in the words `apply_run.py drain` prints, or "" when it would run
-    (`jev_switch.start_blocked`: a test judge's fixture-only refusal, then the
-    Jev gate, JS-5). The drain has no --jev flag, so the gate reads the mode
+    (`jev_switch.start_blocked`: the drain's refusal of a test judge or an
+    unknown one, then the Jev gate, JS-5). The drain has no --jev flag, so the gate reads the mode
     that drain reads (`jev_switch.apply_mode`). A key saved in Settings counts
     (`jev_switch.key_saved`): the drain's console loads `.env` itself, so the
     key reaches it before the dashboard restarts."""
@@ -513,7 +513,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         actions.addWidget(self.start_run_btn)
         v.addLayout(actions)
 
-        # Why Start is off (a test judge, or Jev unable to run: JS-5), in the
+        # Why Start is off (a test or unknown judge, or Jev unable to run: JS-5), in the
         # drain's words; hidden while a run can start. Queueing goes on either way.
         self.jev_notice = QtWidgets.QFrame()
         self.jev_notice.setProperty("callout", "warning")

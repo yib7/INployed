@@ -251,6 +251,21 @@ def test_auto_apply_warnings_jev_switched_off_is_named_in_every_mode():
     assert len(out) == 2 and out[0] == _JEV_OFF and "console.typesafe.ai/keys" in out[1]
 
 
+_UNKNOWN_JUDGE = "Unknown Auto-apply judge 'typesaf'; pick typesafe in Settings > Auto-apply."
+
+
+def test_auto_apply_warnings_name_the_drains_refusal_of_an_unknown_judge():
+    """SP1 follow-up 2: the drain refuses a judge mode `jev.get` does not build
+    before its Jev gate, so Check setup and the doctor lead with that sentence.
+    The key and SDK rows belong to the typesafe judge; the Jev switch and
+    Playwright rows still follow."""
+    assert _aa(jev_mode="typesaf") == [_UNKNOWN_JUDGE]
+    assert _aa(jev_mode="typesaf", has_key=False, sdk_found=False) == [_UNKNOWN_JUDGE]
+    assert _aa(jev_mode="typesaf", jev_enabled=False) == [_UNKNOWN_JUDGE, _JEV_OFF]
+    out = _aa(jev_mode="typesaf", playwright_found=False, chromium_found=False)
+    assert len(out) == 2 and out[0] == _UNKNOWN_JUDGE and "pip install playwright" in out[1]
+
+
 # --- chromium_installed: playwright importable AND a chromium-* build dir ---------
 
 def test_chromium_installed_needs_playwright_and_a_build_dir(monkeypatch, tmp_path):
@@ -385,6 +400,15 @@ def test_auto_apply_problems_names_the_refusal_of_a_test_judge_from_settings(mon
     found here, and the test judges need neither."""
     _stub_auto_apply(monkeypatch, stored={"auto_apply_jev_mode": mode}, found=("playwright",))
     assert setup_check.auto_apply_problems() == [f"[Auto-apply] {_FIXTURE_ONLY}"]
+
+
+@pytest.mark.parametrize("mode", ["typesaf", " TypeSaf "])
+def test_auto_apply_problems_names_the_refusal_of_an_unknown_judge_from_settings(monkeypatch,
+                                                                                 mode):
+    """A hand-edited judge setting the drain cannot build, read the drain's way,
+    with no key saved and no SDK found."""
+    _stub_auto_apply(monkeypatch, stored={"auto_apply_jev_mode": mode}, found=("playwright",))
+    assert setup_check.auto_apply_problems() == [f"[Auto-apply] {_UNKNOWN_JUDGE}"]
 
 
 def test_auto_apply_problems_honours_the_jev_switch_from_settings(monkeypatch):

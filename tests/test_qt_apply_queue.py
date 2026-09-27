@@ -1060,6 +1060,34 @@ def test_a_test_judge_leaves_start_off_with_the_drains_refusal(qtbot, tmp_path, 
             assert p.status_label.text() == jev_switch.FIXTURE_ONLY, case
 
 
+def test_an_unknown_judge_leaves_start_off_with_the_drains_refusal(qtbot, tmp_path,
+                                                                   monkeypatch):
+    """SP1 follow-up 2 (Minor 2): a hand-edited `"auto_apply_jev_mode":
+    "typesaf"` left Start on with a key and the SDK in place, and the drain it
+    launched then stopped at `jev.get`. Start is off with the drain's refusal,
+    with the master switch on or off, and a click launches nothing."""
+    refusal = "Unknown Auto-apply judge 'typesaf'; pick typesafe in Settings > Auto-apply."
+    monkeypatch.setattr(jev_switch, "sdk_installed", lambda: True)
+    monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key")
+    qfile = _qfile(tmp_path)
+    apply_queue.enqueue(apply_queue.new_entry("1", company="Acme", title="A"), path=qfile)
+    spy = []
+    p = _panel(qtbot, qfile, on_start_run=lambda: spy.append(True),
+               password_exists=lambda: True, jev_blocked=None)     # the real gate
+    monkeypatch.setattr(p, "_confirm_run", lambda n: True)
+    for switch in ("true", "false"):
+        jev_switch.config_path().write_text(
+            '{"jev_enabled": %s, "auto_apply_jev_mode": "typesaf"}' % switch, encoding="utf-8")
+        p.refresh()
+        assert not p.start_run_btn.isEnabled(), switch
+        assert p.start_run_btn.toolTip() == refusal, switch
+        assert p.jev_label.text() == refusal, switch
+        assert not p.jev_notice.isHidden(), switch
+        p._start_run()
+        assert spy == [], switch
+        assert p.status_label.text() == refusal, switch
+
+
 def test_an_exported_test_mode_leaves_start_off(qtbot, tmp_path, monkeypatch):
     """SP1 review B: the drain Start launches has no --jev flag and never reads
     AUTO_APPLY_JEV_MODE, so the shell's fake judge does not open the gate for a

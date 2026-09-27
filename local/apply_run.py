@@ -9460,8 +9460,8 @@ def _jev_gate(mode: str) -> str:
     for the live judge; "" when it can. `drain`, `one` and `probe --judge` ask
     it after `_load_env`, so a key saved in `.env` counts. The fake and replay
     judges need neither a key nor the SDK, so only the master switch stops
-    them here; `drain` and `one` refuse them as fixture-only before this
-    (`jev_switch.fixture_only`)."""
+    them here; `drain` and `one` refuse them as fixture-only before this, and
+    a mode `jev.get` does not build with them (`jev_switch.mode_refusal`)."""
     return jev_switch.apply_blocked(mode=mode)
 
 
@@ -9482,9 +9482,9 @@ def _settings_from_args(args: argparse.Namespace) -> dict[str, Any]:
 def doctor(profile_dir: Path | None = None, out=None) -> int:
     """One line per auto-apply setup row, the profile dir, the judge mode and
     the Jev switch, then each line `setup_check.auto_apply_warnings` gives
-    (a test judge's fixture-only refusal first, as the drain checks it
-    first); 0 when it gives none (a missing profile is created by the first
-    run)."""
+    (the drain's refusal of a test judge or an unknown one first, as the
+    drain checks it first); 0 when it gives none (a missing profile is
+    created by the first run)."""
     import setup_check
     out = out or sys.stdout
     profile = Path(profile_dir) if profile_dir else default_profile_dir()
@@ -9814,9 +9814,10 @@ def main(argv: list[str] | None = None) -> int:
             return probe(args.url, follow_apply=args.follow_apply, judge=judge,
                          headed=args.headed, profile_dir=profile, park_mode=args.no_submit)
         cfg = _settings_from_args(args)
-        # cycle 16: a test judge is refused first, in the sentence the Auto-apply
-        # panel's Start button shows for it (`jev_switch.start_blocked`)
-        refused = jev_switch.fixture_only(cfg["auto_apply_jev_mode"])
+        # A test judge (cycle 16) and a mode `jev.get` does not build (SP1
+        # follow-up 2) are refused first, in the sentence the Auto-apply panel's
+        # Start button shows for each (`jev_switch.start_blocked`)
+        refused = jev_switch.mode_refusal(cfg["auto_apply_jev_mode"])
         if refused:
             print(refused, file=sys.stderr)
             return 2

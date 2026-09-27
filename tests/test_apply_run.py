@@ -2797,6 +2797,49 @@ def test_check_setup_and_the_doctor_give_the_drains_refusal_of_a_test_judge(
     assert "MISSING" not in out
 
 
+_UNKNOWN_JUDGE = "Unknown Auto-apply judge 'typesaf'; pick typesafe in Settings > Auto-apply."
+
+
+@pytest.mark.parametrize("verb", [["drain"], ["one", "42"]])
+@pytest.mark.parametrize("key", [False, True])
+@pytest.mark.parametrize("switch", [True, False])
+def test_the_panel_gate_gives_the_drains_refusal_of_an_unknown_judge(monkeypatch, capsys,
+                                                                     switch, key, verb):
+    """SP1 follow-up 2 (Minor 2): a hand-edited `"auto_apply_jev_mode":
+    "typesaf"` left Start on while the drain went on to `jev.get`, which
+    raised. `drain` and `one` now refuse the mode before their Jev gate and
+    `jev.get`, and the panel's gate gives the sentence `main` prints, with or
+    without a key and with the master switch on and off."""
+    from qt import apply_queue_panel
+    _real_settings_no_key(monkeypatch, {"jev_enabled": switch, "auto_apply_jev_mode": "typesaf"})
+    if key:
+        monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key")
+    panel = apply_queue_panel._default_jev_blocked()
+    assert apply_run.main(verb) == 2
+    assert panel == capsys.readouterr().err.strip() == _UNKNOWN_JUDGE
+
+
+@pytest.mark.parametrize("switch", [True, False])
+def test_check_setup_and_the_doctor_give_the_drains_refusal_of_an_unknown_judge(
+        monkeypatch, capsys, tmp_path, switch):
+    """Check setup's first auto-apply line and the doctor's first warning are
+    the sentence `main` prints for drain, and the doctor exits 2. While Jev is
+    off its line follows, the order the drain checks them in."""
+    import setup_check
+    _real_settings_no_key(monkeypatch, {"jev_enabled": switch, "auto_apply_jev_mode": "typesaf"})
+    monkeypatch.setattr(setup_check, "module_found", lambda name: True)
+    monkeypatch.setattr(setup_check, "chromium_installed", lambda **kw: True)
+    assert apply_run.main(["drain"]) == 2
+    refusal = capsys.readouterr().err.strip()
+    assert refusal == _UNKNOWN_JUDGE
+    lines = [refusal] if switch else [refusal, _JEV_OFF]
+    assert setup_check.auto_apply_problems() == [f"[Auto-apply] {w}" for w in lines]
+    assert apply_run.doctor(tmp_path / "profile") == 2
+    out = capsys.readouterr().out
+    assert [row[2:] for row in out.splitlines() if row.startswith("  ")] == lines
+    assert "judge mode: typesaf" in out and "MISSING" not in out
+
+
 @pytest.mark.parametrize("stored", ["", "   ", None])
 def test_a_blank_judge_setting_drains_on_typesafe_whatever_the_shell_exports(
         monkeypatch, capsys, stored):

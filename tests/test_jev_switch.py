@@ -396,6 +396,41 @@ def test_start_blocked_is_the_jev_gate_for_the_live_judge(sdk):
         lead + "Install typesafe-sdk (pip install -r requirements.txt)."
 
 
+_UNKNOWN_JUDGE = "Unknown Auto-apply judge 'typesaf'; pick typesafe in Settings > Auto-apply."
+
+
+def test_a_mode_jev_get_does_not_build_has_one_sentence():
+    """SP1 follow-up 2 (Minor 2): a hand-edited `"auto_apply_jev_mode":
+    "typesaf"` reaches `jev.get`, which raises. `unknown_mode` names every mode
+    outside `jev.MODES` in the words the drain prints, and `mode_refusal`
+    gives it beside the fixture-only refusal."""
+    assert jev_switch.unknown_mode("typesaf") == _UNKNOWN_JUDGE
+    with pytest.raises(ValueError):
+        jev.get("typesaf")
+    for mode in jev.MODES:
+        assert jev_switch.unknown_mode(mode) == "", mode
+    assert jev_switch.mode_refusal("typesaf") == _UNKNOWN_JUDGE
+    for mode in jev_switch.TEST_MODES:
+        assert jev_switch.mode_refusal(mode) == jev_switch.FIXTURE_ONLY, mode
+    assert jev_switch.mode_refusal("typesafe") == ""
+
+
+def test_start_blocked_refuses_an_unknown_mode_before_the_jev_gate(sdk):
+    """The drain refuses the mode before its Jev gate, so Start names it with
+    the switch on or off, with or without a key and the SDK. Asked the gate's
+    way, a keyless setup would send the user to add a key for a judge that
+    cannot run, and a keyed one would leave Start on."""
+    for found in (True, False):
+        sdk(found)
+        for switch in (True, False):
+            cfg = dict(ON, jev_enabled=switch, auto_apply_jev_mode=" TypeSaf ")
+            for env in ({}, KEY):
+                assert jev_switch.start_blocked(config=cfg, env=env) == _UNKNOWN_JUDGE, \
+                    (found, switch, env)
+            assert jev_switch.start_blocked(config=dict(ON, jev_enabled=switch), env=KEY,
+                                            mode="typesaf") == _UNKNOWN_JUDGE, (found, switch)
+
+
 # --- the judge -------------------------------------------------------------------------
 
 class _StubTypeSafe:

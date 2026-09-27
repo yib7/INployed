@@ -1,25 +1,28 @@
 """Toolkit-agnostic "add a job by hand" pipeline (no scraper, no Bright Data).
 
-The dashboard's manual-entry form (qt/manual_add_dialog.py) collects either a
-pasted job description (plus optional link/company/title) or a job URL, then hands
-the input here. This module is pure Python with no Qt dependency, so the widget
-stays a thin shell and the logic is unit-testable.
+The dashboard's manual-entry form (qt/manual_add_dialog.py) collects a job URL,
+title, company and pasted description, then hands the input here. This module
+is pure Python with no Qt dependency, so the widget stays a thin shell and the
+logic is unit-testable.
 
-A manually-added job flows through the SAME pipeline as a scraped one:
+The user already chose this job, so there is no scoring step (SP5/MA-1): it is
+saved and tailored at once.
 
     parse  -> build a job record (master-CSV schema, source="manual")
     fetch  -> optional free HTTP GET for a URL with no pasted JD (NEVER Bright Data)
-    score  -> the existing two-stage Gemini scorer (score_jobs.run_scoring)
     tailor -> the existing résumé engine (resume_tailor.run.tailor)
     append -> jobsdata.append_manual_job -> the master CSV (same dedup as scraped)
 
-Every LLM/HTTP touch point is behind an injectable seam (``pool_factory``,
-``tailor_fn``, ``fetch_fn``) so tests mock them exactly the way the existing suite
-mocks the scorer/tailor, and a real run uses the user's normal Gemini setup.
+`find_duplicate` runs the id check before any of the above, so re-adding the
+same posting never spends a fresh tailor call (MA-2); `retailor_existing` is
+the "Tailor again" path it offers instead.
+
+Every LLM/HTTP touch point is behind an injectable seam (``tailor_fn``,
+``fetch_fn``) so tests mock them exactly the way the existing suite mocks the
+tailor, and a real run uses the user's normal setup.
 """
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import re
 import sys
@@ -248,59 +251,38 @@ def fetch_url_text(url: str, *, timeout: float = 10.0) -> str:
     return text if len(text) >= 40 else ""
 
 
-# ── scoring via the EXISTING two-stage pipeline ───────────────────────────────
-
-def _default_resume() -> str:
-    """The résumé text the scorer matches against (score_jobs.RESUME_PATH)."""
-    import score_jobs as sj
-    try:
-        return sj.RESUME_PATH.read_text(encoding="utf-8")
-    except OSError:
-        return ""
-
-
-def score_record(
+def _run_tailor(
     record: Dict[str, Any],
-    *,
-    pool: Any = None,
-    pool_factory: Optional[Callable[[], Any]] = None,
-    resume: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Score one record through score_jobs' real two-stage pipeline.
+    tailor_opts: Dict[str, Any],
+    tailor_fn: Optional[Callable[..., Path]],
+    log: Callable[[str], None],
+) -> Optional[Path]:
+    """The tailor step shared by a fresh add and a "Tailor again" re-run.
 
-    Reuses ``score_jobs.add_filter_columns`` + ``run_scoring`` (the exact code the
-    scraper feeds) over a one-row DataFrame, then folds the resulting score columns
-    back into ``record``. The Gemini client is the injected ``pool`` (or one from
-    ``pool_factory``), kept behind score_jobs' own pool seam so it is mockable and a
-    real run uses ``score_jobs.make_pool`` (the user's normal key pool / Vertex).
+    Best-effort (MA-4): any failure is logged and swallowed here so the
+    caller's row is never lost over a tailoring error. Returns the tailored
+    output folder, or None.
     """
-    import pandas as pd
-
-    import score_jobs as sj
-
-    if pool is None:
-        pool = (pool_factory or sj.make_pool)()
-    if resume is None:
-        resume = _default_resume()
-
-    df = pd.DataFrame([{
-        "job_posting_id": str(record["job_posting_id"]),
-        "job_title": record.get("job_title", ""),
-        "job_description_formatted": record.get("job_description_formatted", ""),
-    }])
-    df = sj.add_filter_columns(df, "job_description_formatted", "job_title")
-    merged = asyncio.run(sj.run_scoring(pool, resume, df))
-
-    row = merged.iloc[0].to_dict()
-    out = dict(record)
-    for col in sj.SCORE_COLS:
-        if col in row:
-            val = row[col]
-            out[col] = "" if val is None or (isinstance(val, float) and pd.isna(val)) else val
-    return out
+    try:
+        log(f"tailoring résumé for {record.get('job_title')} @ {record.get('company_name')}…")
+        fn = tailor_fn
+        if fn is None:
+            from resume_tailor.run import tailor as fn  # noqa: PLW0127
+        out = fn(
+            record,
+            cover_letter=bool(tailor_opts.get("cover_letter", False)),
+            ats_report=bool(tailor_opts.get("ats_report", True)),
+            prep_sheet=bool(tailor_opts.get("prep_sheet", False)),
+            tone=tailor_opts.get("tone", "professional"),
+            on_status=log,
+        )
+        return Path(out) if out else None
+    except Exception as exc:  # noqa: BLE001 - tailoring is best-effort; the row is kept either way
+        log(f"tailoring failed ({exc}); the job is still saved. Retry with Tailor résumé.")
+        return None
 
 
-# ── orchestration: parse -> (fetch) -> score -> tailor -> append ──────────────
+# ── orchestration: parse -> (fetch) -> tailor -> append ───────────────────────
 
 def add_manual_job(
     *,
@@ -308,11 +290,7 @@ def add_manual_job(
     url: str = "",
     company: str = "",
     title: str = "",
-    do_tailor: bool = True,
     tailor_opts: Optional[Dict[str, Any]] = None,
-    pool: Any = None,
-    pool_factory: Optional[Callable[[], Any]] = None,
-    resume: Optional[str] = None,
     tailor_fn: Optional[Callable[..., Path]] = None,
     fetch_fn: Optional[Callable[[str], str]] = None,
     master_csv: Optional[Path] = None,
@@ -320,19 +298,18 @@ def add_manual_job(
 ) -> Dict[str, Any]:
     """Full manual-add flow. Returns {record, resume_dir, appended}.
 
-    record       the scored job record (source="manual") appended to the master
-    resume_dir   the tailored-résumé output folder (Path), or None when tailoring
-                 was skipped (do_tailor=False) or failed
+    record       the job record (source="manual") appended to the master;
+                 never scored (SP5/MA-1) -- the user already chose this job
+    resume_dir   the tailored-résumé output folder (Path), or None when
+                 tailoring failed (the record is still appended -- MA-4)
     appended     True when the record landed in the master CSV (False if a dup)
 
-    `do_tailor` False = "just score": score the résumé against the job and append it
-    to the dataset, skipping the tailor pass entirely (so it never fails on a thin
-    record, and no cover letter is generated).
+    Call `find_duplicate` first: this always tailors, so running it again on a
+    posting already in the master spends a fresh tailor call for no reason.
 
-    Seams (all default to the real implementations, overridden in tests):
-      pool / pool_factory  the Gemini scoring client (score_jobs pool)
-      tailor_fn            resume_tailor.run.tailor
-      fetch_fn             fetch_url_text (the free, optional URL GET)
+    Seams (default to the real implementations, overridden in tests):
+      tailor_fn  resume_tailor.run.tailor
+      fetch_fn   fetch_url_text (the free, optional URL GET)
     """
     log = on_status or (lambda _m: None)
     tailor_opts = tailor_opts or {}
@@ -349,29 +326,8 @@ def add_manual_job(
     record = build_job_record(
         jd_text=jd_text, url=url, company=company, title=title, fetched_text=fetched)
 
-    log("scoring through the two-stage pipeline…")
-    record = score_record(record, pool=pool, pool_factory=pool_factory, resume=resume)
-
-    resume_dir: Optional[Path] = None
-    if not do_tailor:
-        log("scored only (tailoring skipped).")
-    else:
-        try:
-            log(f"tailoring résumé for {record.get('job_title')} @ {record.get('company_name')}…")
-            if tailor_fn is None:
-                from resume_tailor.run import tailor as tailor_fn  # noqa: PLW0127
-            out = tailor_fn(
-                record,
-                cover_letter=bool(tailor_opts.get("cover_letter", False)),
-                ats_report=bool(tailor_opts.get("ats_report", True)),
-                prep_sheet=bool(tailor_opts.get("prep_sheet", False)),
-                tone=tailor_opts.get("tone", "professional"),
-                on_status=log,
-            )
-            resume_dir = Path(out) if out else None
-            record["resume"] = str(resume_dir) if resume_dir else ""
-        except Exception as exc:  # noqa: BLE001 - tailoring is best-effort; the job is still added
-            log(f"tailoring failed ({exc}); the job is still added. Tailor it later.")
+    resume_dir = _run_tailor(record, tailor_opts, tailor_fn, log)
+    record["resume"] = str(resume_dir) if resume_dir else ""
 
     log("appending to the master jobs list…")
     import jobsdata
@@ -379,3 +335,63 @@ def add_manual_job(
 
     log("done.")
     return {"record": record, "resume_dir": resume_dir, "appended": appended}
+
+
+def find_duplicate(
+    jd_text: str = "",
+    url: str = "",
+    *,
+    df: Any = None,
+    master_csv: Optional[Path] = None,
+) -> Optional[Dict[str, Any]]:
+    """The existing row for this job's id, or None (MA-2's duplicate check).
+
+    Computes the same deterministic id `add_manual_job` would use and looks
+    for it before any tailoring spend: first in `df` (the rows the dashboard
+    already holds in memory), then in the master CSV file itself, so a row
+    written by another process, or before `df` was last refreshed, still
+    counts.
+    """
+    jid = manual_job_id(jd_text, url)
+    if (df is not None and not getattr(df, "empty", True)
+            and "job_posting_id" in getattr(df, "columns", ())):
+        import pandas as pd
+        hit = df.loc[df["job_posting_id"].astype(str) == jid]
+        if not hit.empty:
+            row = hit.iloc[0].to_dict()
+            return {k: ("" if isinstance(v, float) and pd.isna(v) else v)
+                    for k, v in row.items()}
+    import jobsdata
+    return jobsdata.master_row(jid, master_csv=master_csv)
+
+
+def duplicate_message(dup: Dict[str, Any]) -> str:
+    """MA-2's duplicate-found text: "Already added on <date> as <title> at
+    <company>.", or without the date clause when the row carries none."""
+    title = str(dup.get("job_title") or "this job")
+    company = str(dup.get("company_name") or "this company")
+    found = str(dup.get("extracted_date") or "").strip()
+    lead = f"Already added on {found}" if found else "Already added"
+    return f"{lead} as {title} at {company}."
+
+
+def retailor_existing(
+    record: Dict[str, Any],
+    *,
+    tailor_opts: Optional[Dict[str, Any]] = None,
+    tailor_fn: Optional[Callable[..., Path]] = None,
+    on_status: Optional[Callable[[str], None]] = None,
+) -> Dict[str, Any]:
+    """Re-run the tailor step on an ALREADY-SAVED row (MA-2's "Tailor again").
+
+    Never appends a new row (the record already lives in the master), so
+    `appended` is always False. Shares the tailor seam and the MA-4 failure
+    handling with `add_manual_job` through `_run_tailor`.
+    """
+    log = on_status or (lambda _m: None)
+    resume_dir = _run_tailor(record, tailor_opts or {}, tailor_fn, log)
+    record = dict(record)
+    if resume_dir:
+        record["resume"] = str(resume_dir)
+    log("done.")
+    return {"record": record, "resume_dir": resume_dir, "appended": False}

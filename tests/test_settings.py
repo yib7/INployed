@@ -859,13 +859,22 @@ SHOW_IF_GATES = {
     "tailor_fallback_flash_lite": ("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
     "tailor_fallback_flash": ("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
     "tailor_fallback_pro": ("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
+    # cycle 19: the Jev section's three area switches gate on its master switch,
+    # and the three Jev options in the Resume section gate on the tailor's area
+    # switch. is_visible walks both links, so either switch off hides those three.
+    "jev_scoring": ("jev_enabled", ("True",)),
+    "jev_tailor": ("jev_enabled", ("True",)),
+    "jev_difficulty": ("jev_enabled", ("True",)),
+    "tailor_best_of_n": ("jev_tailor", ("True",)),
+    "cover_letter_jev_check": ("jev_tailor", ("True",)),
+    "tailor_ats_meaning": ("jev_tailor", ("True",)),
 }
 
 
 def test_every_gate_is_declared_on_the_schema():
     gated = {f.key: f.show_if for f in settings.SETTINGS_SCHEMA if f.show_if is not None}
     assert gated == SHOW_IF_GATES
-    assert len(SHOW_IF_GATES) == 23
+    assert len(SHOW_IF_GATES) == 29
 
 
 def test_show_if_is_a_declarative_tuple_not_a_callable():
@@ -1019,6 +1028,9 @@ ADVANCED_KEYS = {
     # until you have decided one model's free quota is not enough for a day
     "stage1_models", "stage2_models", "model_limits", "tailor_fallback_models",
     "tailor_fallback_flash_lite", "tailor_fallback_flash", "tailor_fallback_pro",
+    # cycle 19: one Jev switch per area (the master switch stays in plain sight),
+    # and the Auto-apply judge mode, whose only other choice is the test judge
+    "jev_scoring", "jev_tailor", "jev_difficulty", "auto_apply_jev_mode",
 }
 
 
@@ -1027,12 +1039,13 @@ def test_the_advanced_set_is_declared_on_the_schema():
     singles + 6 + 3), and the four rate-limit rows added alongside the keypool
     LIMITS fix made 22; dropping those four for one per-model table and adding
     the multi-model rows makes 25; SP6's repost-reuse window (cycle 15) makes
-    26. The enumeration names every key explicitly, so it is the authoritative
+    26; cycle 19's three Jev area switches and the Auto-apply judge make 30.
+    The enumeration names every key explicitly, so it is the authoritative
     half; see DECISIONS.md. Nothing in the UI hardcodes either number: the
     checkbox counts at runtime."""
     declared = {f.key for f in settings.SETTINGS_SCHEMA if f.advanced}
     assert declared == ADVANCED_KEYS
-    assert len(ADVANCED_KEYS) == 26
+    assert len(ADVANCED_KEYS) == 30
 
 
 def test_advanced_set_excludes_country_pdflatex_and_max_scored():
@@ -1367,12 +1380,14 @@ def test_no_per_stage_rate_limit_boxes_remain():
 
 # --- Auto-apply (cycle 16): the Jev judge, the submit gate, the browser --------
 
-def test_typesafe_api_key_is_a_masked_secret_in_the_auto_apply_section():
+def test_typesafe_api_key_is_a_masked_secret_in_the_jev_section():
     """The env-target rule: Field.key IS the environment-variable name, so the
-    key round-trips to .env under the exact name jev.TypeSafeJev reads."""
+    key round-trips to .env under the exact name jev.TypeSafeJev reads. Cycle 19
+    moved the row from Auto-apply to Jev, since every Jev use spends it."""
     f = {f.key: f for f in settings.SETTINGS_SCHEMA}["TYPESAFE_API_KEY"]
-    assert (f.type, f.default, f.section, f.target) == ("str", "", "Auto-apply", "env")
+    assert (f.type, f.default, f.section, f.target) == ("str", "", "Jev", "env")
     assert f.secret and f.optional and f.restart
+    assert f.label == "TypeSafe API key (Jev judge)"
     assert "console.typesafe.ai/keys" in f.help
 
 
@@ -1440,7 +1455,123 @@ def test_auto_apply_headless_is_a_config_bool_defaulting_off(tmp_path):
 
 def test_the_new_auto_apply_fields_are_neither_advanced_nor_gated():
     by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
-    for key in ("TYPESAFE_API_KEY", "auto_apply_jev_mode", "auto_apply_submit",
-                "auto_apply_headless", "auto_apply_generate"):
+    for key in ("TYPESAFE_API_KEY", "auto_apply_submit", "auto_apply_headless",
+                "auto_apply_generate", "auto_apply_pause_minutes"):
         assert by_key[key].advanced is False, key
         assert by_key[key].show_if is None, key
+
+
+def test_the_auto_apply_judge_stays_in_auto_apply_under_advanced():
+    """ST-5: its one other choice is the test-only judge the drain refuses, so
+    the row folds away with the other knobs whose default is already right."""
+    f = {f.key: f for f in settings.SETTINGS_SCHEMA}["auto_apply_jev_mode"]
+    assert f.section == "Auto-apply"
+    assert f.advanced is True
+    assert f.show_if is None
+
+
+# --- cycle 19: the Jev section, the pause, the tailor's Jev options, Opus 5.5 -----
+
+JEV_SECTION_KEYS = ["jev_enabled", "TYPESAFE_API_KEY", "jev_scoring", "jev_tailor",
+                    "jev_difficulty"]
+JEV_TAILOR_OPTIONS = ("tailor_best_of_n", "cover_letter_jev_check", "tailor_ats_meaning")
+
+
+def _section_keys(section: str) -> list[str]:
+    return [f.key for f in settings.SETTINGS_SCHEMA if f.section == section]
+
+
+def test_the_jev_section_holds_the_master_switch_the_key_and_three_area_switches():
+    """ST-1: the master checkbox first and in plain sight, the key it spends,
+    then one switch per area under the advanced fold, each gated on the master
+    through the ordinary show_if wiring."""
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    assert _section_keys("Jev") == JEV_SECTION_KEYS
+    master = by_key["jev_enabled"]
+    assert (master.type, master.default, master.target) == ("bool", True, "config")
+    assert master.label == "Use Jev"
+    assert master.advanced is False and master.show_if is None
+    # A bool gate is spelled with these choices or its checkbox never re-renders
+    # what it gates (settings_tab._connect_gate_signals).
+    assert master.choices == ("True", "False")
+    for key in ("jev_scoring", "jev_tailor", "jev_difficulty"):
+        f = by_key[key]
+        assert (f.type, f.default, f.target) == ("bool", True, "config"), key
+        assert f.advanced is True, key
+        assert f.show_if == ("jev_enabled", ("True",)), key
+    assert by_key["jev_tailor"].choices == ("True", "False")     # it gates the options
+
+
+def test_the_jev_switch_keys_are_the_ones_jev_switch_reads():
+    """The schema writes these keys and jev_switch reads them: a rename on either
+    side would leave a checkbox that switches nothing."""
+    import jev_switch
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    assert jev_switch.MASTER_KEY == "jev_enabled"
+    assert jev_switch.AREA_KEYS == {"scoring": "jev_scoring", "tailor": "jev_tailor",
+                                    "difficulty": "jev_difficulty"}
+    for key in (jev_switch.MASTER_KEY, *jev_switch.AREA_KEYS.values()):
+        assert by_key[key].target == "config", key
+    assert by_key[jev_switch.MODE_KEY].target == "config"
+
+
+def test_saving_the_master_switch_turns_jev_off_where_jev_switch_reads_it():
+    """End to end through the real writer and reader: a Settings save of the
+    master switch lands in `jev_switch.config_path()`, and the next check reads
+    it with no restart. (The conftest points both at a per-test sandbox.)"""
+    import jev_switch
+    key = {"TYPESAFE_API_KEY": "not-a-real-key"}
+    assert jev_switch.jev_why_off("scoring", env=key) in ("", jev_switch.REASON_SDK)
+    settings.save({"jev_enabled": False})
+    assert json.loads(jev_switch.config_path().read_text("utf-8"))["jev_enabled"] is False
+    assert jev_switch.jev_on("scoring", env=key) is False
+    assert jev_switch.jev_why_off("scoring", env=key) == jev_switch.REASON_SWITCH
+    settings.save({"jev_enabled": True, "jev_tailor": False})
+    assert jev_switch.jev_why_off("tailor", env=key) == (
+        "Jev is switched off for tailoring in Settings")
+
+
+def test_each_provider_leads_its_section():
+    """ST-2, ST-3: the row that decides what the rest of the section means comes
+    first, and the Jev section leads with its master switch."""
+    assert _section_keys("Scoring")[0] == "provider"
+    assert _section_keys("Engine")[0] == "tailor_provider"
+    assert _section_keys("Jev")[0] == "jev_enabled"
+
+
+def test_the_provider_help_texts_say_what_jev_changes():
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    scoring = by_key["provider"].help
+    assert "when Jev is off" in scoring and "fallback when Jev is down" in scoring
+    tailor = by_key["tailor_provider"].help
+    assert "writes every" in tailor and "bullet" in tailor
+    assert "Jev (when on) picks, checks and gates around it" in tailor
+
+
+def test_auto_apply_pause_minutes_is_a_config_int_from_0_to_60(tmp_path):
+    """ST-5: how long a paused run waits for the user's answer; 0 parks at once,
+    the behaviour every run had before the pause existed."""
+    f = {f.key: f for f in settings.SETTINGS_SCHEMA}["auto_apply_pause_minutes"]
+    assert (f.type, f.default, f.section, f.target) == ("int", 10, "Auto-apply", "config")
+    assert (f.min, f.max) == (0, 60)
+    assert "0 parks at once" in f.help
+    assert settings.load(_targets(tmp_path))["auto_apply_pause_minutes"] == 10
+    assert settings.validate({"auto_apply_pause_minutes": 0}) == {}
+    assert settings.validate({"auto_apply_pause_minutes": 60}) == {}
+    assert "auto_apply_pause_minutes" in settings.validate({"auto_apply_pause_minutes": 61})
+    assert "auto_apply_pause_minutes" in settings.validate({"auto_apply_pause_minutes": -1})
+
+
+def test_the_jev_tailor_options_default_off_and_show_only_while_jev_tailors():
+    """ST-6: the three extras sit in Resume, off by default, on screen only while
+    both the master switch and the tailor's switch are on."""
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    for key in JEV_TAILOR_OPTIONS:
+        f = by_key[key]
+        assert (f.type, f.default, f.section, f.target) == (
+            "bool", False, "Resume", "config"), key
+        assert f.advanced is False, key
+        assert settings.is_visible(f, {}) is True, key          # both switches default on
+        assert settings.is_visible(f, {"jev_enabled": True, "jev_tailor": True}) is True
+        assert settings.is_visible(f, {"jev_tailor": False}) is False, key
+        assert settings.is_visible(f, {"jev_enabled": False, "jev_tailor": True}) is False

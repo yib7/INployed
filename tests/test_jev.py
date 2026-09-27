@@ -272,6 +272,7 @@ def test_get_typesafe_without_a_key_raises_jev_unavailable_naming_the_console():
     msg = str(exc.value)
     assert "console.typesafe.ai/keys" in msg
     assert "TYPESAFE_API_KEY" in msg and ".env" in msg
+    assert "Settings > Jev" in msg          # the key row's section since cycle 19
 
 
 def test_jev_unavailable_is_a_runtime_error():

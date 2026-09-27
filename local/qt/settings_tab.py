@@ -40,13 +40,22 @@ from qt import theme
 from qt.widgets import CollapsibleSection
 
 SECTION_HELP = {
+    # Cycle 19's ST-1: what Jev does in each area, and what off means. The three
+    # per-area switches are advanced rows, so the blurb names the disclosure by
+    # its label (test_no_section_tagline_calls_its_own_section_advanced).
+    "Jev": ("Jev is the TypeSafe judge. It makes the yes-or-no calls when jobs are "
+            "scored, picks and checks résumé bullets, rates how hard each queued "
+            "application is (the difficulty check), and reads every auto-apply form. "
+            "Off means Gemini or Claude everywhere, as before Jev, and auto-apply "
+            "cannot start. One switch per area sits under \"Show advanced settings\"."),
     "Credentials": ("API keys and tokens, saved to your private .env file on this PC. Saved "
                     "values are masked by default; untick Hide to reveal one, edit it to "
                     "change it, or clear the box to remove it."),
     "Connection & paths": "Your cloud project, your name, and where files live on this PC.",
-    "Engine": ("Which AI service (Gemini or Claude) tailors résumés, how the Gemini side "
-               "bills (Cloud project, one API key, or the scorer's free-key pool), and "
-               "which model each tailoring stage runs."),
+    "Engine": ("Which AI service (Gemini or Claude) writes your résumé and cover letter, "
+               "how the Gemini side bills (Cloud project, one API key, or the scorer's "
+               "free-key pool), and which model each tailoring stage runs. Jev's checks "
+               "around the writing are switched in the Jev section."),
     "Dashboard": "How the dashboard surfaces and tracks jobs.",
     "Scraper": "What job searches the discovery step runs (this drives its API spend).",
     # Rewritten in P8: the old blurb ("which models score jobs … changing the model
@@ -55,17 +64,19 @@ SECTION_HELP = {
     # provider / stage2_threshold / max_scored_per_run / min_filter_years — a
     # section header describing a screen the reader is not looking at is worse than
     # none, because it reads as a bug in the form.
-    "Scoring": ("Which AI service scores collected jobs, the score that earns a deeper "
-                "second pass, and the caps on how much one run may spend. The per-stage "
-                "model names and throughput knobs live under \"Show advanced settings\"; "
-                "their defaults are tuned, and a model id your account cannot use breaks "
-                "scoring silently."),
-    "Resume": "What the resume tailor generates, and how the cover letter reads.",
+    "Scoring": ("Which AI service scores collected jobs when Jev is off, the score that "
+                "earns a deeper second pass, and the caps on how much one run may spend. "
+                "The per-stage model names and throughput knobs live under \"Show "
+                "advanced settings\"; their defaults are tuned, and a model id your "
+                "account cannot use breaks scoring silently."),
+    "Resume": ("What the resume tailor generates, and how the cover letter reads. Three "
+               "Jev options appear here while Jev runs for the résumé tailor."),
     "Auto-apply": ("The batch auto-apply queue (Auto-apply tab): how many jobs one 'Queue for "
                    "auto-apply' action may add, which webmail inbox the run may open for "
-                   "account-verification emails, the Jev judge key, and the submit gate. The "
-                   "run submits when every required field is filled and verified; anything "
-                   "less is parked at its review page for you."),
+                   "account-verification emails, the submit gate, and how long a run waits "
+                   "for your answer. The run submits when every required field is filled "
+                   "and verified; anything else waits for you or is parked at its review "
+                   "page. Runs need Jev on (Jev section)."),
     "Settings history": ("Every Save snapshots all your settings to a dated folder so you can "
                          "roll one back later with 'Restore from archive...' below. Snapshots "
                          "include your saved keys and live alongside your settings on this PC."),
@@ -73,14 +84,18 @@ SECTION_HELP = {
                            "schedule, and pause changes to it. Uses your existing `gcloud` login; "
                            "no SSH password or key is ever stored."),
 }
-SECTION_ORDER = ["Credentials", "Connection & paths", "Engine",
+# Jev first (cycle 19's ST-1): its master switch changes what Scoring, the
+# résumé tailor and Auto-apply do, so it is read before any of them.
+SECTION_ORDER = ["Jev", "Credentials", "Connection & paths", "Engine",
                  "Dashboard", "Scraper", "Scoring", "Resume", "Auto-apply",
                  "Settings history", "VM (cloud scraper)"]
 
 # Friendlier section headers shown in the UI. The dict KEYS above stay the canonical
 # section names (they must match settings.Field.section); this only changes the
-# visible title so the dashboard reads as a "job discovery" tool.
+# visible title so the dashboard reads as a "job discovery" tool. "Engine" shows as
+# "Résumé tailor" (ST-3), the thing its rows configure.
 SECTION_DISPLAY = {
+    "Engine": "Résumé tailor",
     "Scraper": "Job discovery",
     "VM (cloud scraper)": "VM (cloud job discovery)",
 }
@@ -88,6 +103,7 @@ SECTION_DISPLAY = {
 # Short one-liners shown next to each section header — always visible, even when the
 # section is collapsed, so a user knows what to expand without clicking through.
 SECTION_TAGLINE = {
+    "Jev": "The TypeSafe judge: master switch, API key & per-area switches",
     "Credentials": "API keys & tokens: saved to your private .env file on this PC",
     "Connection & paths": "Project, your name, file locations",
     "Engine": "Tailor AI service, billing & per-stage models",
@@ -99,7 +115,7 @@ SECTION_TAGLINE = {
     # that claims a folded-away section reads as an empty one.
     "Scoring": "Scoring engine, thresholds & spend guards",
     "Resume": "Cover letter, ATS report & prep-sheet toggles",
-    "Auto-apply": "Batch cap & inbox for the apply agent",
+    "Auto-apply": "Batch cap, inbox, submit gate & pause",
     "Settings history": "Snapshot & restore your settings",
     "VM (cloud scraper)": "Manage the cloud job-discovery VM",
 }
@@ -761,11 +777,12 @@ class SettingsForm(QtWidgets.QWidget):
     def _connect_gate_signals(self) -> None:
         """Connect every gate's change signal, in ONE pass at the end of `_build`.
 
-        Deferring this is mandatory, not stylistic: two gates render AFTER what
-        they gate. `provider` follows `stage1_model` in the Scoring section, and
-        `gemini_auth` lives in Engine while it gates `RESUME_TAILOR_GEMINI_API_KEY`
-        in Credentials — which `SECTION_ORDER` renders FIRST. Connecting as each
-        dependent is built would leave both of those gates inert.
+        Deferring this is mandatory: two gates render AFTER what they gate.
+        `RESUME_TAILOR_MODEL_MODE` follows the `tailor_fallback_*` rows it gates
+        in Engine, and `gemini_auth` lives in Engine while it gates
+        `RESUME_TAILOR_GEMINI_API_KEY` in Credentials, which `SECTION_ORDER`
+        renders before Engine. Connecting as each dependent is built would leave
+        both of those gates inert.
 
         An unsupported gate widget raises rather than silently never firing (the
         same posture as `_set_field_visible`'s KeyError). Only a bounded-value
@@ -1415,9 +1432,21 @@ class SettingsForm(QtWidgets.QWidget):
         if found is None:
             return None
         gate, allowed = found
-        if not allowed:
-            return f'turn on "{gate.label}" to see it'
+        state = self._switch_state(gate, allowed)
+        if state is not None:
+            return f'turn {state} "{gate.label}" to see it'
         return f'set "{gate.label}" to {" or ".join(allowed)} to see it'
+
+    @staticmethod
+    def _switch_state(gate: settings.Field, allowed) -> str | None:
+        """"on" or "off" when the shut gate is a checkbox (the VM section's master
+        switch, or a bool `show_if` gate such as "Use Jev"), else None. A checkbox
+        has no value to type, so its hint names the state to put it in."""
+        if not allowed:
+            return "on"
+        if gate.type == "bool":
+            return "on" if "True" in allowed else "off"
+        return None
 
     def _gate_condition(self, f: settings.Field) -> str | None:
         """The same gate phrased as the CONDITION under which the field applies —
@@ -1429,8 +1458,9 @@ class SettingsForm(QtWidgets.QWidget):
         if found is None:
             return None
         gate, allowed = found
-        if not allowed:
-            return f"{gate.label} is on"
+        state = self._switch_state(gate, allowed)
+        if state is not None:
+            return f"{gate.label} is {state}"
         return f"{gate.label} is " + " or ".join(f"'{a}'" for a in allowed)
 
     def _reveal_view_folds(self, f: settings.Field) -> None:
@@ -1983,10 +2013,10 @@ class SettingsForm(QtWidgets.QWidget):
                     self._flag_a_rewritten_int(f, incoming[f.key])
             self._apply_section_visibility()
             # Revert / Restore defaults / snapshot-load all land here, and any of
-            # them can change a gate. Re-evaluate EXPLICITLY: every gate is a
-            # QComboBox today, whose setter emits currentTextChanged and would get
-            # there by itself, but that is a side-effect of the widget type, not a
-            # contract.
+            # them can change a gate. Re-evaluate EXPLICITLY: each gate's setter
+            # emits its change signal today (a dropdown's currentTextChanged, a
+            # checkbox's toggled) and would get there by itself, but that comes
+            # from the widget types, and nothing promises it.
             self._apply_field_visibility()
             # The one marker refresh for the whole fill — the per-setter ones were
             # suspended above, so this is not a belt-and-braces call: drop it and

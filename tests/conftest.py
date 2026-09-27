@@ -115,6 +115,12 @@ for _leaked in (
     # see run.
     "RESUME_TAILOR_REGROUND", "RESUME_TAILOR_AIWRITING_SWEEP",
     "RESUME_TAILOR_SWEEP_P2",
+    # cycle 19: the tailor's three Jev options, read the same way, and the
+    # auto-apply judge mode, which jev_switch reads before the Auto-apply setting:
+    # a shell export of `fake` would open its auto-apply gate (the panel's Start
+    # button, the drain) for every test that expects it shut.
+    "RESUME_TAILOR_BEST_OF_N", "RESUME_TAILOR_COVER_LETTER_JEV_CHECK",
+    "RESUME_TAILOR_ATS_MEANING", "AUTO_APPLY_JEV_MODE",
 ):
     os.environ.pop(_leaked, None)
 

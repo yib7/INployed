@@ -131,7 +131,7 @@ def auto_apply_warnings(has_key: bool, jev_mode: str, sdk_found: bool,
         if not has_key:
             out.append("Auto-apply judge is 'typesafe' but no TypeSafe API key is saved. "
                        "Create one at console.typesafe.ai/keys and paste it into "
-                       "Settings -> Auto-apply -> TypeSafe API key (Jev judge).")
+                       "Settings -> Jev -> TypeSafe API key (Jev judge).")
         if not sdk_found:
             out.append("The typesafe_sdk package is not installed: run "
                        "`pip install typesafe-sdk` (it is in requirements.txt).")

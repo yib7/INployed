@@ -330,7 +330,7 @@ class TypeSafeJev:
             raise JevUnavailable(
                 f"No TypeSafe API key. Create one at {CONSOLE_KEYS_URL}, then add the "
                 f"row `{KEY_ENV}=<your key>` to .env (or paste it into Settings > "
-                "Auto-apply > TypeSafe API key) and restart the dashboard.")
+                "Jev > TypeSafe API key) and restart the dashboard.")
         try:
             import typesafe_sdk
         except ImportError as exc:

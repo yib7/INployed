@@ -369,6 +369,47 @@ def sweep_p2_enabled() -> bool:
     return bool(_config_json().get("resume_sweep_p2", False))
 
 
+# ── Jev options for the tailor (cycle 19's TL-7 to TL-9) ──────────────────────
+# Three Settings > Resume toggles, on screen while Jev runs for the résumé tailor
+# (settings.py gates them on `jev_tailor`). Each defaults OFF and each spends more
+# per run, so the file arm reads `is True`: a stray string in config.json (an
+# editor's "false") leaves the option off. A getter says only whether the user asked
+# for its option; the caller also needs a Jev client (jev_switch.client("tailor")),
+# and with none the option does nothing.
+
+
+def _jev_option(env_name: str, key: str) -> bool:
+    """One of the three: env > config.json `key` > False, a blank env reading as unset."""
+    env = os.getenv(env_name)
+    if env is not None and str(env).strip():
+        return str(env).strip().lower() not in ("0", "false", "no", "off")
+    return _config_json().get(key, False) is True
+
+
+def best_of_n() -> bool:
+    """TL-7: whether the rephrase call asks for 3 drafts of each bullet and Jev keeps,
+    among the drafts that pass the faithfulness check, the one that shows the most of
+    what the job asks for. About three times the output tokens of that call.
+    Precedence: RESUME_TAILOR_BEST_OF_N env > config.json 'tailor_best_of_n' > False."""
+    return _jev_option("RESUME_TAILOR_BEST_OF_N", "tailor_best_of_n")
+
+
+def cover_letter_jev_check() -> bool:
+    """TL-8: whether Jev reads each cover-letter sentence against the selected atoms
+    and background notes, and a sentence claiming something they do not state goes to
+    the letter's existing repair step. Precedence: RESUME_TAILOR_COVER_LETTER_JEV_CHECK
+    env > config.json 'cover_letter_jev_check' > False."""
+    return _jev_option("RESUME_TAILOR_COVER_LETTER_JEV_CHECK", "cover_letter_jev_check")
+
+
+def ats_meaning() -> bool:
+    """TL-9: whether ats_report.txt gains a line counting the job's keywords the résumé
+    shows by meaning (a direct equivalent counts), beside the literal coverage, with
+    Jev judging each keyword. Precedence: RESUME_TAILOR_ATS_MEANING env > config.json
+    'tailor_ats_meaning' > False."""
+    return _jev_option("RESUME_TAILOR_ATS_MEANING", "tailor_ats_meaning")
+
+
 def resume_layout_enabled() -> bool:
     """Master on/off for the custom bullet layout (config.json `resume_layout_enabled`).
     Defaults True when absent, so existing configs keep applying their saved targets.

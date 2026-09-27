@@ -898,6 +898,7 @@ def test_test_answers_button_disabled_without_a_key(qtbot, tmp_path, monkeypatch
     ed = _editor(qtbot, store)
     assert ed.test_answers_btn.isEnabled() is False
     assert "TypeSafe API key" in ed.test_answers_btn.toolTip()
+    assert "Settings > Jev" in ed.test_answers_btn.toolTip()     # where the key row lives
 
 
 def test_test_answers_button_enabled_with_a_key(qtbot, tmp_path, monkeypatch):

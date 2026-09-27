@@ -172,7 +172,7 @@ def test_enforce_fixed_counts_splits_a_fused_group_when_no_atom_is_left(syntheti
     """Side Gig has 3 atoms and a 3-bullet config, and select fused two of
     them into one group: with no unused atom to pad from, the largest fused
     group splits in place so the block still renders its configured count
-    (the 2026-09-20 Octus run shipped 2 of 3)."""
+    (a 2026-09-20 run shipped 2 of 3)."""
     monkeypatch.setattr(config, "_config_json", lambda: {"resume_layout": {
         "Side Gig": {"line_targets": [2, 2, 2]},
         "Big Co": {"line_targets": [1]},
@@ -1171,3 +1171,50 @@ def test_projects_max_still_resolves_after_a_garbage_env(reload_config):
     was unreachable code because the import raised first."""
     c = reload_config(RESUME_TAILOR_PROJECTS_MAX="three")
     assert c.projects_max() == 3
+
+
+# --- cycle 19: the tailor's three Jev options (TL-7 to TL-9), all off by default ---
+# Each is read env > config.json > False, the pattern of every default-off toggle
+# in config.py (sweep_p2_enabled). Only a real True in config.json turns one on,
+# so an editor's stray "true" string leaves the extra cost off.
+_JEV_OPTIONS = [
+    ("best_of_n", "RESUME_TAILOR_BEST_OF_N", "tailor_best_of_n"),
+    ("cover_letter_jev_check", "RESUME_TAILOR_COVER_LETTER_JEV_CHECK", "cover_letter_jev_check"),
+    ("ats_meaning", "RESUME_TAILOR_ATS_MEANING", "tailor_ats_meaning"),
+]
+
+
+@pytest.mark.parametrize("getter,env,key", _JEV_OPTIONS)
+def test_a_jev_option_defaults_off(monkeypatch, getter, env, key):
+    monkeypatch.delenv(env, raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    assert getattr(config, getter)() is False
+
+
+@pytest.mark.parametrize("getter,env,key", _JEV_OPTIONS)
+def test_a_jev_option_reads_the_settings_key(monkeypatch, getter, env, key):
+    monkeypatch.delenv(env, raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {key: True})
+    assert getattr(config, getter)() is True
+    monkeypatch.setattr(config, "_config_json", lambda: {key: "true"})
+    assert getattr(config, getter)() is False       # only a real True turns it on
+
+
+@pytest.mark.parametrize("getter,env,key", _JEV_OPTIONS)
+def test_a_jev_option_env_beats_the_file(monkeypatch, getter, env, key):
+    monkeypatch.setenv(env, "1")
+    monkeypatch.setattr(config, "_config_json", lambda: {key: False})
+    assert getattr(config, getter)() is True
+    monkeypatch.setenv(env, "off")
+    monkeypatch.setattr(config, "_config_json", lambda: {key: True})
+    assert getattr(config, getter)() is False
+    monkeypatch.setenv(env, "  ")                   # blank reads as unset
+    assert getattr(config, getter)() is True
+
+
+@pytest.mark.parametrize("getter,env,key", _JEV_OPTIONS)
+def test_a_jev_option_key_is_a_settings_field(getter, env, key):
+    """The Settings row writes the key this getter reads."""
+    import settings
+    f = {f.key: f for f in settings.SETTINGS_SCHEMA}[key]
+    assert (f.type, f.default, f.target) == ("bool", False, "config")

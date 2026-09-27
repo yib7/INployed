@@ -163,7 +163,7 @@ def test_auto_apply_warnings_missing_key_names_the_console_and_the_settings_row(
     out = _aa(has_key=False)
     assert len(out) == 1
     assert "console.typesafe.ai/keys" in out[0]
-    assert "Settings -> Auto-apply" in out[0]
+    assert "Settings -> Jev -> TypeSafe API key (Jev judge)" in out[0]
 
 
 def test_auto_apply_warnings_fake_mode_needs_neither_key_nor_sdk():

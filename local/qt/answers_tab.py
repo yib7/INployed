@@ -923,7 +923,7 @@ class AnswersEditor(QtWidgets.QWidget):
         elif live and not key_ok:
             self.test_answers_btn.setToolTip(
                 "Uses the Auto-apply judge setting (currently: %s). Set 'TypeSafe "
-                "API key (Jev judge)' in Settings > Auto-apply to use this." % mode)
+                "API key (Jev judge)' in Settings > Jev to use this." % mode)
         elif live:
             self.test_answers_btn.setToolTip(
                 "Uses the Auto-apply judge setting (currently: %s). Runs the "

@@ -244,6 +244,53 @@ TARGET_FILES: dict[str, Path] = {
 
 
 SETTINGS_SCHEMA: list[Field] = [
+    # --- Jev (cycle 19): one switch for every Jev use, read by local/jev_switch.py
+    # at call time from config.json, so a flip needs no restart. The master
+    # switch stays in plain sight; the three area switches fold under advanced
+    # and gate on it, so the chain hides them (and the Resume section's three
+    # Jev options, which gate on jev_tailor) while Jev is off. A bool gate
+    # spells its choices ("True", "False"): settings_tab._connect_gate_signals
+    # watches a checkbox gate through them. Auto-apply runs on Jev alone, so it
+    # has no area switch here and only the master turns it off.
+    Field("jev_enabled", "Use Jev", "bool", True, "Jev", "config",
+          choices=("True", "False"),
+          help="Jev is the TypeSafe judge. On: it makes the yes-or-no calls when jobs "
+               "are scored, picks and checks résumé bullets (your tailor provider "
+               "still writes each one), rates how hard each queued application is, "
+               "and reads every auto-apply form. Off: scoring and tailoring run on "
+               "Gemini or Claude alone, as they did before Jev, and auto-apply cannot "
+               "start. Takes effect on the next run."),
+    # The key row sits in the section whose feature spends it, with the same
+    # secret/env/restart shape as the Credentials rows: Field.key is the exact
+    # environment-variable name jev.TypeSafeJev reads. The apply_run child
+    # loads `.env` without overriding what it inherits, so a first paste reaches
+    # it and a rotated key sits behind the dashboard's startup snapshot until a
+    # restart (hence `restart`). Never gated: a key pasted while Jev is off is
+    # there when it comes back on.
+    Field("TYPESAFE_API_KEY", "TypeSafe API key (Jev judge)", "str", "",
+          "Jev", "env", secret=True, optional=True, restart=True,
+          help="Needed while 'Use Jev' is on: every Jev judgment in scoring, tailoring, "
+               "the difficulty check and auto-apply goes to the TypeSafe Jev model with "
+               "this key. Create a key at console.typesafe.ai/keys; it bills $0.042 per "
+               "million input tokens (output is free)."),
+    Field("jev_scoring", "Jev for scoring", "bool", True, "Jev", "config",
+          show_if=("jev_enabled", ("True",)), advanced=True,
+          help="Jev reads each collected job against your résumé in both scoring "
+               "stages. Off: the Scoring provider scores every job on its own. Takes "
+               "effect on the next scoring run."),
+    Field("jev_tailor", "Jev for the résumé tailor", "bool", True, "Jev", "config",
+          choices=("True", "False"), show_if=("jev_enabled", ("True",)), advanced=True,
+          help="Jev picks your skills lines, shortlists the experience a job asks for, "
+               "and checks each rewritten bullet against what you wrote. Off: the "
+               "Résumé tailor provider does every step itself. The three Jev options "
+               "in the Resume section need this on."),
+    Field("jev_difficulty", "Jev difficulty check", "bool", True, "Jev", "config",
+          show_if=("jev_enabled", ("True",)), advanced=True,
+          help="The Auto-apply tab's difficulty check: it opens each queued posting, "
+               "reads the first application page without typing anything, and rates "
+               "it 1 to 10 so you know which jobs to leave to the run. About 2 to 4 "
+               "Jev requests per job. Off hides it."),
+
     Field("min_score", "Min score to highlight", "int", 4, "Dashboard", "config",
           help="Jobs at/above this score are surfaced as high-priority.", min=1, max=5),
     Field("repost_window_days", "Hide reposts for (days)", "int", 30, "Dashboard", "config",
@@ -319,9 +366,16 @@ SETTINGS_SCHEMA: list[Field] = [
                "to the VM after changing this, and re-upload score_jobs.py once."),
 
     # --- Scoring: written to root-level scoring_config.json (read by score_jobs.py) ---
-    # The two model PAIRS below are gated on `provider` (declared after them — see
-    # the deferred signal wiring in settings_tab._build): only the pair the chosen
-    # provider actually uses is on screen. The other pair keeps its stored value.
+    # `provider` leads the section (cycle 19's ST-2) and gates the two model PAIRS
+    # after it: only the pair the chosen provider uses is on screen, and the other
+    # pair keeps its stored value.
+    Field("provider", "Scoring provider", "choice", "gemini", "Scoring", "scoring",
+          help="Which AI service scores jobs when Jev is off, and the fallback when Jev "
+               "is down. 'claude' uses your local Claude Code CLI (subscription). This "
+               "setting IS pushed to the cloud VM, but the VM has no claude CLI "
+               "installed, so it falls back to Gemini there. Applies from the next "
+               "scoring run.",
+          choices=("gemini", "claude")),
     Field("stage1_model", "Stage-1 model", "editable_choice", "gemini-3.5-flash-lite",
           "Scoring", "scoring", choices=GEMINI_MODELS, show_if=("provider", ("gemini",)),
           advanced=True,
@@ -352,12 +406,6 @@ SETTINGS_SCHEMA: list[Field] = [
                "requests, one per line, best first. Stage 2 is the expensive stage: the "
                "full Flash models allow only 20 requests/day each, so listing three of "
                "them is 4x the deep scores before anything is billed."),
-    Field("provider", "Scoring provider", "choice", "gemini", "Scoring", "scoring",
-          help="Which AI service scores jobs when scoring runs ON THIS PC. 'claude' uses "
-               "your local Claude Code CLI (subscription). This setting IS pushed to the "
-               "cloud VM, but the VM has no claude CLI installed, so it silently falls back "
-               "to Gemini regardless. Applies from the next scoring run.",
-          choices=("gemini", "claude")),
     Field("stage1_model_claude", "Stage-1 model (Claude)", "editable_choice",
           "claude-haiku-4-5", "Scoring", "scoring", choices=CLAUDE_MODELS,
           show_if=("provider", ("claude",)), advanced=True,
@@ -439,6 +487,26 @@ SETTINGS_SCHEMA: list[Field] = [
                "list, every bullet the same length, a three-part series in each line. "
                "COSTS ONE MODEL CALL PER RÉSUMÉ ENTRY ON EVERY TAILOR RUN. Turn it off "
                "to save that; the always-on per-bullet style gate is unaffected."),
+    # The tailor's three Jev options (cycle 19, TL-7 to TL-9), each off by default
+    # and on screen only while Jev runs for the tailor: they gate on jev_tailor,
+    # which gates on jev_enabled. Read through resume_tailor/config.py's
+    # best_of_n(), cover_letter_jev_check() and ats_meaning().
+    Field("tailor_best_of_n", "Best of 3 bullet drafts (Jev picks)", "bool", False,
+          "Resume", "config", show_if=("jev_tailor", ("True",)),
+          help="The rewrite asks for 3 drafts of each bullet, and Jev keeps the one "
+               "that shows the most of what the job asks for, among the drafts that "
+               "pass the faithfulness check. That call's model output costs about "
+               "three times as much."),
+    Field("cover_letter_jev_check", "Jev checks the cover letter's claims", "bool", False,
+          "Resume", "config", show_if=("jev_tailor", ("True",)),
+          help="Jev reads each sentence of the cover letter against your selected "
+               "experience and background notes. A sentence that claims something "
+               "about you they do not state goes to the letter's repair step."),
+    Field("tailor_ats_meaning", "ATS report: coverage by meaning (Jev)", "bool", False,
+          "Resume", "config", show_if=("jev_tailor", ("True",)),
+          help="Adds a line to ats_report.txt counting the job's keywords your résumé "
+               "covers by meaning (a direct equivalent counts), beside the literal "
+               "count. Jev judges each keyword. Needs 'Write ATS report' on."),
 
     # --- Auto-apply: the batch queue knobs (config.json). Read by the dashboard's
     # _queue_for_auto_apply and by apply_queue.build_context() for the agent run. ---
@@ -471,20 +539,12 @@ SETTINGS_SCHEMA: list[Field] = [
                "https://outlook.office.com/mail/' for Microsoft 365. Your signup "
                "email's domain (basics.email) is looked up here; a domain not listed "
                "falls back to Gmail. That inbox must already be signed in in Chrome."),
-    # The Jev-judged run (cycle 16, local/jev.py + local/apply_run.py). The key
-    # row sits here, in the section whose feature spends it, with the same
-    # secret/env/restart shape as the Credentials rows: Field.key is the exact
-    # environment-variable name jev.TypeSafeJev reads. The apply_run child
-    # loads `.env` without overriding what it inherits, so a first paste reaches
-    # it and a rotated key sits behind the dashboard's startup snapshot until a
-    # restart (hence `restart`).
-    Field("TYPESAFE_API_KEY", "TypeSafe API key (Jev judge)", "str", "",
-          "Auto-apply", "env", secret=True, optional=True, restart=True,
-          help="Needed for auto-apply runs in 'typesafe' mode: every form-field judgment "
-               "goes to the TypeSafe Jev model. Create a key at console.typesafe.ai/keys; "
-               "it bills $0.042 per million input tokens (output is free)."),
+    # The Jev-judged run (cycle 16, local/jev.py + local/apply_run.py). Its key row
+    # moved to the Jev section in cycle 19, since every Jev use spends it. The
+    # judge mode stays in this section under advanced (ST-5): its one other
+    # choice is the test judge the drain refuses.
     Field("auto_apply_jev_mode", "Auto-apply judge", "choice", "typesafe",
-          "Auto-apply", "config", choices=("typesafe", "fake"),
+          "Auto-apply", "config", choices=("typesafe", "fake"), advanced=True,
           help="'typesafe' judges each page with the Jev model (needs the API key). "
                "'fake' is a test-only judge that never calls the API: it answers from word "
                "overlap and the drain refuses it. For a dry run keep 'typesafe' and turn "
@@ -494,6 +554,15 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Submit an application when every required field is filled from your "
                "answers, verified, and no CAPTCHA, payment, or blocked question appeared. "
                "Off: park at the review page for you."),
+    # The pause (cycle 19, PR): how long a run waits for the user's answer before it
+    # parks the job. 0 is the behaviour every run had before the pause existed.
+    # apply_run.DEFAULT_SETTINGS carries the same default for a run with no config.
+    Field("auto_apply_pause_minutes", "Wait for your answer (minutes)", "int", 10,
+          "Auto-apply", "config", min=0, max=60,
+          help="When a run meets a question it needs you for (a required field your "
+               "answers cannot fill, a tie between options, a field only you should "
+               "type), it waits this many minutes for your answer in the Auto-apply tab "
+               "or the browser, then parks the job. 0 parks at once."),
     Field("auto_apply_generate", "Draft free-text answers", "bool", True,
           "Auto-apply", "config",
           help="Draft an answer for a required open-ended question (your motivation, a "
@@ -550,8 +619,9 @@ SETTINGS_SCHEMA: list[Field] = [
     # (gemini_auth == api_key), and gemini_auth is itself only live when the
     # tailor runs on Gemini. The transitive rule in is_visible() is what stops a
     # stored "api_key" from leaving this box on screen under the Claude tailor.
-    # It also renders in the FIRST section while its gate lives in Engine — the
-    # reason gate signals are connected in a second pass (settings_tab._build).
+    # It also renders in Credentials, a section SECTION_ORDER puts before Engine
+    # where its gate lives: one reason gate signals are connected in a second
+    # pass (settings_tab._build).
     Field("RESUME_TAILOR_GEMINI_API_KEY", "Gemini API key (resume tailor)", "str", "",
           "Credentials", "env", secret=True, optional=True, restart=True,
           show_if=("gemini_auth", ("api_key",)),
@@ -592,9 +662,19 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Open job links in the Chrome profile signed in to this Google account. "
                "Blank = your default browser."),
 
-    # --- Engine: which AI service tailors résumés (gemini/claude provider switch,
-    # local/config.json), which Google billing method the Gemini side uses, and
-    # the per-stage Gemini + Claude model pickers (.env). ---------------------
+    # --- Engine (shown as "Résumé tailor"): which AI service tailors résumés
+    # (gemini/claude provider switch, local/config.json, leading the section since
+    # cycle 19's ST-3), which Google billing method the Gemini side uses, and the
+    # per-stage Gemini + Claude model pickers (.env). -------------------------
+    Field("tailor_provider", "Resume tailor provider", "choice", "gemini",
+          "Engine", "config",
+          help="The AI service that writes every résumé bullet and the cover letter. "
+               "Jev (when on) picks, checks and gates around it. 'gemini' uses Google, "
+               "billed the way 'Resume tailor engine' says (that setting is on screen "
+               "only while this is 'gemini'). 'claude' runs your locally installed "
+               "Claude Code CLI on your claude.ai subscription (run `claude` once to log "
+               "in). Takes effect on the next tailor run.",
+          choices=("gemini", "claude")),
     Field("gemini_auth", "Resume tailor engine", "choice", "vertex",
           "Engine", "config", show_if=("tailor_provider", ("gemini",)),
           help="How the Gemini side bills. 'pool' shares the job scorer's 'Gemini API keys': "
@@ -641,15 +721,6 @@ SETTINGS_SCHEMA: list[Field] = [
                "only models you would accept that from; a '-lite' model here quietly "
                "lowers their quality. Empty is a fine answer. Used only while the engine "
                "is 'pool'."),
-
-    Field("tailor_provider", "Resume tailor provider", "choice", "gemini",
-          "Engine", "config",
-          help="Which AI service tailors resumes. 'gemini' uses Google, billed the way "
-               "'Resume tailor engine' says (that setting is on screen only while this is "
-               "'gemini'). 'claude' runs your locally installed Claude Code CLI on your "
-               "claude.ai subscription (run `claude` once to log in). Takes effect on the "
-               "next tailor run.",
-          choices=("gemini", "claude")),
 
     # --- Resume tailor models: which Gemini model each tailoring stage uses, ----
     # written to .env (read by local/resume_tailor/config.py as RESUME_TAILOR_MODEL_*).

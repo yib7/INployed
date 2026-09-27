@@ -662,18 +662,26 @@ def test_gate_signals_are_wired_when_the_gate_renders_after_its_dependent(qtbot,
     """The reason gate signals are connected in a SECOND pass at the end of
     `_build()` rather than as each dependent is built.
 
-    Two gates render after what they gate: `provider` follows `stage1_model` in
-    the Scoring section, and `gemini_auth` lives in Engine while it gates
-    `RESUME_TAILOR_GEMINI_API_KEY` in Credentials — which SECTION_ORDER renders
-    FIRST. Connect at dependent-build time and neither of these flips anything.
+    Two gates render after what they gate: `RESUME_TAILOR_MODEL_MODE` follows the
+    `tailor_fallback_*` rows in the Engine section, and `gemini_auth` lives in
+    Engine while it gates `RESUME_TAILOR_GEMINI_API_KEY` in Credentials, which
+    SECTION_ORDER renders earlier. Connect at dependent-build time and neither of
+    these flips anything. (Cycle 19 moved `provider` to the top of Scoring, which
+    retired the pair this test used to name.) The layout premise is asserted too,
+    so a reorder that makes it false fails here before this test goes vacuous.
     """
-    form = _form(tmp_path, show_advanced=True)   # stage1_model is advanced too
+    keys = [f.key for f in settings.SETTINGS_SCHEMA]
+    assert keys.index("RESUME_TAILOR_MODEL_MODE") > keys.index("tailor_fallback_flash_lite")
+    assert st.SECTION_ORDER.index("Credentials") < st.SECTION_ORDER.index("Engine")
+    form = _form(tmp_path, show_advanced=True)   # the fallback rows are advanced too
     qtbot.addWidget(form)
 
     # gate declared after its dependents, same section
-    assert _rows_visible(form, "stage1_model")
-    form._widgets["provider"].setCurrentText("claude")
-    assert not _rows_visible(form, "stage1_model")
+    assert _rows_visible(form, "tailor_fallback_flash_lite")
+    assert not _rows_visible(form, "tailor_fallback_models")
+    form._widgets["RESUME_TAILOR_MODEL_MODE"].setCurrentText("simple")
+    assert not _rows_visible(form, "tailor_fallback_flash_lite")
+    assert _rows_visible(form, "tailor_fallback_models")
 
     # gate in a LATER section than the field it gates
     assert not _rows_visible(form, "RESUME_TAILOR_GEMINI_API_KEY")
@@ -871,7 +879,8 @@ def test_revert_and_restore_defaults_re_evaluate_visibility(qtbot, tmp_path):
 def test_repopulate_re_evaluates_visibility_without_relying_on_setter_signals(qtbot, tmp_path):
     """`_repopulate` must re-render visibility ITSELF, not get there by luck.
 
-    Every gate is a QComboBox today, and `_set_combo` emits `currentTextChanged`,
+    Every gate's setter emits its change signal today (`_set_combo` emits
+    `currentTextChanged`, a bool gate's `setChecked` emits `toggled`),
     so the test above passes even with `_apply_field_visibility()` deleted from
     `_repopulate` (verified by mutation). That is a property of the widget type,
     not a contract — a gate rendered by a setter that changes its value silently
@@ -1162,7 +1171,8 @@ def test_load_save_show_advanced_roundtrip(tmp_path, monkeypatch):
 # --- cycle 18 P5: spin boxes ----------------------------------------------------
 
 SPIN_KEYS = ("min_score", "repost_window_days", "stale_after_hours", "limit_per_input",
-             "max_scored_per_run", "rescore_cap", "auto_apply_batch_cap")
+             "max_scored_per_run", "rescore_cap", "auto_apply_batch_cap",
+             "auto_apply_pause_minutes")
 
 
 def test_every_non_slider_int_renders_as_a_spin_box(qtbot, tmp_path):
@@ -1170,7 +1180,7 @@ def test_every_non_slider_int_renders_as_a_spin_box(qtbot, tmp_path):
     form that can be wrong in a way the box itself could have prevented. The set
     is derived from the schema, not listed, so a new int field is covered the day
     it lands."""
-    form = _form(tmp_path, show_advanced=True)   # two of the six are advanced
+    form = _form(tmp_path, show_advanced=True)   # some of these are advanced
     qtbot.addWidget(form)
     expected = tuple(f.key for f in settings.SETTINGS_SCHEMA
                      if f.type == "int" and not f.slider)
@@ -2192,7 +2202,8 @@ def test_search_filters_fields_and_sections(qtbot, tmp_path):
                if f.key in shown)
 
     # A section with zero matches goes away entirely — header, tagline and all.
-    assert _sections_on_screen(form) == {"Credentials", "Connection & paths",
+    # Jev stays: its master switch says that off runs everything on Gemini or Claude.
+    assert _sections_on_screen(form) == {"Jev", "Credentials", "Connection & paths",
                                          "Engine", "Scoring"}
 
     form.set_search("")
@@ -2711,3 +2722,70 @@ def test_secret_boxes_carry_an_accessible_name(qtbot, tmp_path):
     for f in secrets:
         assert form._widgets[f.key].accessibleName() == f.label, f.key
         assert form._secret_hides[f.key].accessibleName() == f"Hide {f.label}"
+
+
+# --- cycle 19: the Jev section, providers first, Opus 5.5, the combo case fix ----
+
+_JEV_AREA_SWITCHES = ("jev_scoring", "jev_tailor", "jev_difficulty")
+_JEV_TAILOR_OPTIONS = ("tailor_best_of_n", "cover_letter_jev_check", "tailor_ats_meaning")
+
+
+def test_the_jev_section_renders_first_and_engine_shows_as_resume_tailor(qtbot, tmp_path):
+    """ST-1, ST-3: the switch that changes what every other section does comes
+    first, and the section that picks the writing provider is named for what it
+    configures."""
+    assert st.SECTION_ORDER[0] == "Jev"
+    assert st._ordered_sections()[0][0] == "Jev"
+    assert st.SECTION_DISPLAY["Engine"] == "Résumé tailor"
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert list(form._section_widgets)[0] == "Jev"
+    assert form._section_widgets["Engine"].title == "Résumé tailor"
+    blurb = st.SECTION_HELP["Jev"]
+    for area in ("scor", "résumé", "difficult", "auto-apply"):
+        assert area in blurb.lower(), area
+    assert "Gemini or Claude" in blurb
+    assert st.SECTION_TAGLINE["Jev"]
+
+
+def test_each_provider_is_the_first_row_of_its_section(qtbot, tmp_path):
+    """ST-2, ST-3 through the real form: row 0 of each section's form layout."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    for key in ("jev_enabled", "provider", "tailor_provider"):
+        layout, row = form._rows[key][0]
+        assert row == 0, key
+
+
+def test_the_jev_switches_hide_and_show_what_they_gate(qtbot, tmp_path):
+    """ST-1, ST-6 through the existing gate wiring: the master switch takes the
+    three area switches and the tailor's Jev options with it (transitively for
+    the options), and the tailor's switch takes its options alone."""
+    form = _form(tmp_path, show_advanced=True)          # the area switches are advanced
+    qtbot.addWidget(form)
+    gated = _JEV_AREA_SWITCHES + _JEV_TAILOR_OPTIONS
+    assert all(_rows_visible(form, k) for k in gated)
+
+    form._widgets["jev_enabled"].setChecked(False)
+    assert not any(_rows_visible(form, k) for k in gated)
+    assert _rows_visible(form, "TYPESAFE_API_KEY")      # the key row is never gated
+
+    form._widgets["jev_enabled"].setChecked(True)
+    assert all(_rows_visible(form, k) for k in gated)
+
+    form._widgets["jev_tailor"].setChecked(False)
+    assert not any(_rows_visible(form, k) for k in _JEV_TAILOR_OPTIONS)
+    assert all(_rows_visible(form, k) for k in ("jev_scoring", "jev_difficulty"))
+
+
+def test_a_bool_gate_is_phrased_as_a_switch_to_turn_on(qtbot, tmp_path):
+    """A checkbox gate reads 'turn on "..."' in the hints; 'set "..." to True'
+    names a value nobody can type into a checkbox."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    label = by_key["jev_tailor"].label
+    form._widgets["jev_tailor"].setChecked(False)
+    option = by_key["tailor_best_of_n"]
+    assert form._blocking_gate(option) == f'turn on "{label}" to see it'
+    assert form._gate_condition(option) == f"{label} is on"

@@ -381,6 +381,27 @@ def test_cli_json_output_survives_cp1252_pipe(ledger, monkeypatch):
     sys.stdout.flush()          # second verb through the same cp1252 pipe: fine
 
 
+def test_cli_unexpected_error_secret_verb_prints_class_only(kr, monkeypatch, capsys):
+    # Verbs that touch the secret must never interpolate str(e): an exception
+    # message can carry the password (e.g. a keyring backend error). set-password
+    # is the only verb left in _SECRET_VERBS now that clip-password/clip-clear are
+    # gone (RM-4); feed it a correct, matching password so it reaches the actual
+    # keyring write, then make that write blow up the way a real backend would.
+    answers = iter([SECRET, SECRET])
+    monkeypatch.setattr(ats_accounts, "_getpass", lambda prompt: next(answers))
+
+    def boom(service, user, pw):
+        raise RuntimeError(f"keyring backend exploded holding {SECRET}")
+
+    monkeypatch.setattr(kr, "set_password", boom)
+    assert ats_accounts.main(["set-password"]) == 1
+    out = capsys.readouterr()
+    assert SECRET not in out.out + out.err
+    assert "RuntimeError" in out.err
+    assert "exploded" not in out.err                # class name ONLY
+    assert len(out.err.strip().splitlines()) == 1
+
+
 def test_cli_unexpected_error_ledger_verb_prints_message(ledger, monkeypatch,
                                                          capsys):
     def boom(*a, **kw):

@@ -442,7 +442,7 @@ def clear_clipboard_if_password() -> bool:
 # Verbs whose code path touches the secret: an unexpected exception there is
 # reported by CLASS NAME ONLY: str(e) from a keyring/clipboard backend could
 # carry the password itself.
-_SECRET_VERBS = frozenset(("set-password", "clip-password", "clip-clear"))
+_SECRET_VERBS = frozenset(("set-password",))
 
 
 def _force_utf8_stdio() -> None:
@@ -470,8 +470,6 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     sub.add_parser("set-password", help="store the master password (prompts twice)")
     sub.add_parser("password-status", help="print exactly 'set' or 'not set'")
-    sub.add_parser("clip-password", help="copy the master password to the clipboard")
-    sub.add_parser("clip-clear", help="clear the clipboard if it holds the password")
 
     def add_ledger_flag(p):
         p.add_argument("--ledger", metavar="PATH", default=None,
@@ -515,20 +513,6 @@ def _run_verb(args: argparse.Namespace) -> int:
         return 0 if set_master_password() else 1
     if args.verb == "password-status":
         print("set" if password_exists() else "not set")
-        return 0
-    if args.verb == "clip-password":
-        if not copy_password_to_clipboard():
-            print("no master password stored; run set-password first.",
-                  file=sys.stderr)
-            return 1
-        print("master password copied to clipboard; paste it, then run "
-              "clip-clear.")
-        return 0
-    if args.verb == "clip-clear":
-        if clear_clipboard_if_password():
-            print("clipboard cleared.")
-        else:
-            print("clipboard left untouched (it does not hold the password).")
         return 0
     if args.verb == "record":
         extra = {"note": args.note} if args.note is not None else {}

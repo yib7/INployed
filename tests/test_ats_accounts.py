@@ -351,27 +351,6 @@ def test_cli_set_password_mismatch_exits_nonzero(kr, monkeypatch, capsys):
     _assert_no_secret(capsys)
 
 
-def test_cli_clip_password_prints_copy_line_only(kr, clip, capsys):
-    kr.set_password(ats_accounts.SERVICE, ats_accounts._MASTER_USER, SECRET)
-    assert ats_accounts.main(["clip-password"]) == 0
-    out = _assert_no_secret(capsys)
-    assert "copied to clipboard" in out.out.lower()
-    assert clip.text == SECRET
-
-
-def test_cli_clip_password_without_stored_password_exits_1(kr, clip, capsys):
-    assert ats_accounts.main(["clip-password"]) == 1
-    _assert_no_secret(capsys)
-
-
-def test_cli_clip_clear(kr, clip, capsys):
-    kr.set_password(ats_accounts.SERVICE, ats_accounts._MASTER_USER, SECRET)
-    clip.text = SECRET
-    assert ats_accounts.main(["clip-clear"]) == 0
-    _assert_no_secret(capsys)
-    assert clip.text == ""
-
-
 def test_cli_record_lookup_list_json(ledger, kr, capsys):
     kr.set_password(ats_accounts.SERVICE, ats_accounts._MASTER_USER, SECRET)
     assert ats_accounts.main(["record", "--domain", "a.example.com",
@@ -400,22 +379,6 @@ def test_cli_json_output_survives_cp1252_pipe(ledger, monkeypatch):
     assert data["a.example.com"]["note"] == note
     assert ats_accounts.main(["lookup", "a.example.com", "--json"]) == 0
     sys.stdout.flush()          # second verb through the same cp1252 pipe: fine
-
-
-def test_cli_unexpected_error_secret_verb_prints_class_only(kr, clip, monkeypatch,
-                                                            capsys):
-    # Verbs that touch the secret must never interpolate str(e) — an exception
-    # message can carry the password (e.g. a keyring backend error).
-    def boom():
-        raise RuntimeError(f"clipboard exploded holding {SECRET}")
-
-    monkeypatch.setattr(ats_accounts, "copy_password_to_clipboard", boom)
-    assert ats_accounts.main(["clip-password"]) == 1
-    out = capsys.readouterr()
-    assert SECRET not in out.out + out.err
-    assert "RuntimeError" in out.err
-    assert "exploded" not in out.err                # class name ONLY
-    assert len(out.err.strip().splitlines()) == 1
 
 
 def test_cli_unexpected_error_ledger_verb_prints_message(ledger, monkeypatch,

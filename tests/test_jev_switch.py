@@ -204,16 +204,29 @@ def test_a_config_path_that_cannot_be_resolved_reads_as_the_defaults(sdk, monkey
     assert jev_switch.jev_on("tailor", env=KEY) is True
 
 
-def test_the_key_value_never_reaches_a_reason_or_the_log(sdk, caplog):
+def test_the_key_value_never_reaches_a_reason_the_log_or_the_console(sdk, monkeypatch,
+                                                                     caplog, capsys):
+    """The key sits in the environment and every judge build fails with the key
+    in its message, the way a client library can echo a rejected key back. The
+    reasons, the log and the console carry none of it; the log names the
+    failure by its type."""
     secret = "sk-do-not-print-me"
-    sdk(False)
+    monkeypatch.setenv("TYPESAFE_API_KEY", secret)
+
+    def echo_the_key(*a, **kw):
+        raise jev.JevUnavailable(f"the key {secret} was rejected")
+    monkeypatch.setattr(jev, "TypeSafeJev", echo_the_key)
     caplog.set_level(logging.DEBUG)
-    env = {"TYPESAFE_API_KEY": secret}
-    texts = [_why(a, env=env) for a in jev_switch.AREAS]
-    texts.append(jev_switch.apply_blocked(config=ON, env=env))
-    assert jev_switch.client("tailor") is None
-    assert all(secret not in t for t in texts)
-    assert secret not in caplog.text
+    for area in jev_switch.AREAS:
+        assert jev_switch.client(area) is None, area
+    texts = [jev_switch.jev_why_off(a, config=ON) for a in jev_switch.AREAS]
+    sdk(False)
+    texts += [jev_switch.jev_why_off(a, config=ON) for a in jev_switch.AREAS]
+    texts.append(jev_switch.apply_blocked(config=ON))
+    out, err = capsys.readouterr()
+    assert caplog.text.count("JevUnavailable") == len(jev_switch.AREAS)
+    for text in (*texts, caplog.text, out, err):
+        assert secret not in text
 
 
 def test_the_sdk_probe_asks_find_spec_for_typesafe_sdk(monkeypatch):

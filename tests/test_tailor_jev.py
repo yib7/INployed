@@ -2,10 +2,12 @@
 
 With Jev off the tailor must make exactly the LLM calls it made before cycle 19,
 with byte-identical prompts. `test_jev_off_prompts_match_the_recording` pins that:
-the prompts of the three stages the Jev steps sit beside (`select`, the
-`lead_with_overview` ordering call and `compress_skills`' fallback call) and the
-order and tier of every call a golden run makes were recorded from the engine
-before the Jev wiring landed, into `tests/fixtures/tailor_jev_off_prompts.json`.
+the prompts of the stages the Jev steps sit beside and the order and tier of every
+call a golden run makes were recorded from the engine before the Jev wiring landed,
+into `tests/fixtures/tailor_jev_off_prompts.json`. Part 4a recorded `select`, the
+`lead_with_overview` ordering call and `compress_skills`' fallback call; part 4b
+added the stages its checks gate (both `reverb` calls, every AI-writing sweep call
+and a `reground` re-ask), recorded at its base before the engine changed.
 A prompt change made on purpose re-records the file (set TAILOR_JEV_OFF_PROMPTS_RECORD=1
 for one run) and shows the diff in review; a change nobody meant fails here.
 
@@ -44,14 +46,21 @@ stub_template_head = golden.stub_template_head
 
 PROMPTS = REPO / "tests" / "fixtures" / "tailor_jev_off_prompts.json"
 RECORD_ENV = "TAILOR_JEV_OFF_PROMPTS_RECORD"
-# The stages whose prompts are pinned word for word: the ones a Jev step replaces
-# or trims when Jev is on.
-PINNED_STAGES = ("select", "lead_with_overview")
+# The stages whose prompts are pinned word for word: the ones a Jev step replaces,
+# trims or gates when Jev is on. A stage the golden run calls more than once is
+# recorded once per call, in call order: its first call under the stage's name and
+# each later one as "<stage> #<n>", so the recording 4a made stays as it was.
+PINNED_STAGES = ("select", "lead_with_overview", "reverb", "aiwriting_sweep")
 
 # compress_skills' fallback answer: any pool-backed lines will do, the prompt is
 # what is recorded.
 _FALLBACK_SKILLS = {"Languages": "Python, SQL", "Frameworks": "FastAPI",
                     "Developer Tools": "Git", "Libraries": "pandas"}
+
+# The golden run drops no bullet, so it never reaches the reground re-ask; one
+# direct call over the run's own selection records that prompt. Two groups: one
+# with a length target and one fused by the fill pass.
+_REGROUND_DROPPED = {"gx_dbt": ["kubernetes"], "th_overview+th_api": ["terraform", "graphql"]}
 
 
 def _recording(stages, calls):
@@ -95,12 +104,27 @@ def _lines(text):
     return text.split("\n")
 
 
+def _prompt(call):
+    return {"system": _lines(call["system"]), "user": _lines(call["user"])}
+
+
 def _record_jev_off(monkeypatch, tmp_path):
-    """Everything the recording pins, from one golden run plus one fallback call."""
+    """Everything the recording pins, from one golden run plus one reground call and
+    one skills fallback call."""
     stages: list = []
     calls: list = []
     golden._install_stub(monkeypatch, _recording(stages, calls))
-    _run_tailor(monkeypatch, tmp_path)
+    captured = _run_tailor(monkeypatch, tmp_path)
+
+    reground: dict = {}
+
+    def _reground_call(system, user, tier, **kw):
+        reground.update(system=system, user=user, tier=tier, kw=kw)
+        return {"bullets": []}
+
+    monkeypatch.setattr(compose, "call", _reground_call)
+    compose.reground(golden._JD, golden._JOB["job_title"], captured["sel"],
+                     {gk: list(tokens) for gk, tokens in _REGROUND_DROPPED.items()})
 
     fallback: dict = {}
 
@@ -112,14 +136,19 @@ def _record_jev_off(monkeypatch, tmp_path):
     compose.compress_skills(golden._JD, golden._JOB["job_title"],
                             {"skills": {}, "skill_focus": "data_analytics"})
 
-    prompts = {c["stage"]: {"system": _lines(c["system"]), "user": _lines(c["user"])}
-               for c in calls if c["stage"] in PINNED_STAGES}
-    prompts["skills_fallback"] = {"system": _lines(fallback["system"]),
-                                  "user": _lines(fallback["user"])}
+    prompts: dict = {}
+    seen: dict = {}
+    for c in calls:
+        if c["stage"] in PINNED_STAGES:
+            n = seen[c["stage"]] = seen.get(c["stage"], 0) + 1
+            prompts[c["stage"] if n == 1 else f"{c['stage']} #{n}"] = _prompt(c)
+    prompts["reground"] = _prompt(reground)
+    prompts["skills_fallback"] = _prompt(fallback)
     return {
         "calls": [{"stage": c["stage"], "tier": c["tier"], "kw": c["kw"]} for c in calls],
         "prompts": prompts,
         "skills_fallback_call": {"tier": fallback["tier"], "kw": fallback["kw"]},
+        "reground_call": {"tier": reground["tier"], "kw": reground["kw"]},
     }
 
 
@@ -142,11 +171,24 @@ def test_jev_off_prompts_match_the_recording(pinned_engine, stub_template_head,
     want = json.loads(PROMPTS.read_text(encoding="utf-8"))
     assert [c["stage"] for c in got["calls"]] == [c["stage"] for c in want["calls"]]
     assert got["calls"] == want["calls"]
-    for stage in (*PINNED_STAGES, "skills_fallback"):
+    assert list(got["prompts"]) == list(want["prompts"])
+    for stage in want["prompts"]:
         assert got["prompts"][stage]["system"] == want["prompts"][stage]["system"], stage
         assert got["prompts"][stage]["user"] == want["prompts"][stage]["user"], stage
     assert got["skills_fallback_call"] == want["skills_fallback_call"]
+    assert got["reground_call"] == want["reground_call"]
     assert got == want
+
+
+def test_the_recording_covers_every_gated_stage():
+    """Every stage 4a and 4b gate has its prompt in the recording: select and the
+    lead call once, reverb twice, the sweep once per item, and the reground re-ask."""
+    want = json.loads(PROMPTS.read_text(encoding="utf-8"))
+    assert list(want["prompts"]) == [
+        "select", "lead_with_overview", "reverb", "reverb #2", "aiwriting_sweep",
+        "aiwriting_sweep #2", "aiwriting_sweep #3", "aiwriting_sweep #4", "reground",
+        "skills_fallback"]
+    assert "REJECTED BULLETS" in "\n".join(want["prompts"]["reground"]["user"])
 
 
 # ── fake judges ──────────────────────────────────────────────────────────────

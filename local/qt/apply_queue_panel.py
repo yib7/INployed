@@ -49,6 +49,7 @@ import ats_accounts
 import errmsg
 import jev_switch
 import osopen
+import profile_lock
 from qt import theme
 from qt.chrome import ChipBar, Pill
 from qt.delegates import BAND_ROLE, STATUS_LABELS, STATUS_TAGS, TAG_ROLE, JobRowDelegate
@@ -78,8 +79,9 @@ def _console_command(root: Path, verb: str) -> str:
 # with the Jev judge, and submits only when the confidence gate passes
 # (`auto_apply_submit` in Settings, `--no-submit` on the command line parks
 # every job at its review page instead). It refuses to start on a test judge
-# (fake, replay) or a judge mode it cannot build, and while Jev cannot run
-# (switched off, no key, no SDK), and the Start button is off then too.
+# (fake, replay) or a judge mode it cannot build, while Jev cannot run
+# (switched off, no key, no SDK), and while another browser holds the
+# auto-apply profile (`profile_lock`); the Start button is off then too.
 KICKOFF_COMMAND = _console_command(REPO_ROOT, "drain")
 
 # The one-time sign-in: opens the same persistent profile, headed, at
@@ -228,29 +230,43 @@ def _default_difficulty_hidden() -> bool:
 
 
 def _default_profile_busy() -> bool:
-    """Panel seam: does a running browser hold the auto-apply profile?"""
+    """Panel seam, read by Start and by Check difficulty: does a browser hold
+    the auto-apply profile (Chrome's lock or the sentinel, `profile_lock`)?"""
     return apply_assess.profile_busy()
+
+
+UPLOAD_HINT = "an upload: put the file in the job folder"
+FAILED_CELL = "check failed"
 
 
 def _difficulty_text(d: Dict[str, Any]) -> str:
     """The Difficulty cell: "N/10", with the age of a result older than a
-    week; "" for a job the check has not read."""
-    if not isinstance(d, dict) or not d.get("score"):
+    week; "check failed" for a job whose only check read nothing; "" for a
+    job the check has not tried."""
+    if not isinstance(d, dict):
         return ""
+    if not d.get("score"):
+        return FAILED_CELL if d.get("last_failed_at") else ""
     age = apply_assess.age_text(str(d.get("checked_at") or ""))
     return f"{d['score']}/10" + (f" ({age})" if age else "")
 
 
 def _difficulty_tip(d: Dict[str, Any]) -> str:
     """The Difficulty cell's tooltip: the score and band, when it was read,
-    the reasons and the exact questions the answers cannot fill. The page's
-    words are escaped into the markup."""
-    if not isinstance(d, dict) or not d.get("score"):
+    the reasons and the exact questions the answers cannot fill (an upload
+    says so), with a check that read nothing since (`apply_assess.failed_text`)
+    above them. The page's words are escaped into the markup."""
+    if not isinstance(d, dict):
         return ""
     esc = html.escape
+    failed = apply_assess.failed_text(d)
+    if not d.get("score"):
+        return f"<qt>{esc(failed)}</qt>" if failed else ""
     age = apply_assess.age_text(str(d.get("checked_at") or ""))
-    lines = [f"<b>{esc(str(d['score']))}/10: {esc(str(d.get('band') or ''))}</b>",
-             esc(f"Checked {d.get('checked_at') or '?'}" + (f", {age}" if age else ""))]
+    lines = [f"<b>{esc(str(d['score']))}/10: {esc(str(d.get('band') or ''))}</b>"]
+    if failed:
+        lines.append(esc(failed))
+    lines.append(esc(f"Checked {d.get('checked_at') or '?'}" + (f", {age}" if age else "")))
     reasons = [str(r) for r in d.get("reasons") or []]
     if reasons:
         lines.append("Why:")
@@ -259,7 +275,8 @@ def _difficulty_tip(d: Dict[str, Any]) -> str:
     if questions:
         lines.append("Questions your answers cannot fill:")
         for q in questions:
-            extra = [str(q.get("help") or "")]
+            extra = [UPLOAD_HINT] if q.get("type") == "file" else []
+            extra.append(str(q.get("help") or ""))
             options = [str(o) for o in q.get("options") or []]
             if options:
                 extra.append("options: " + ", ".join(options))
@@ -909,14 +926,21 @@ class ApplyQueuePanel(QtWidgets.QWidget):
     def refresh_jev_state(self) -> str:
         """Start is off, with the reason as its tooltip and in the notice under
         the buttons, while the drain it launches would refuse to start (a test
-        judge, or Jev unable to run: JS-5). Read on every refresh, after a
-        Settings save (the main window calls this), whenever the tab shows or
-        the window comes back to the front while it shows, and at each Start
+        judge, or Jev unable to run: JS-5; then another browser on the
+        auto-apply profile, a difficulty check or a sign-in:
+        `profile_lock.RUN_BUSY`). Read on every refresh, after a Settings
+        save (the main window calls this), whenever the tab shows or the
+        window comes back to the front while it shows, and at each Start
         click. Returns the reason, "" when a run can start."""
         try:
             reason = str(self._jev_blocked() or "")
         except Exception:  # noqa: BLE001 - the drain checks again; never break the panel
             reason = ""
+        if not reason:
+            try:
+                reason = profile_lock.RUN_BUSY if self._profile_busy() else ""
+            except Exception:  # noqa: BLE001 - the drain checks again
+                reason = ""
         self.start_run_btn.setEnabled(not reason)
         self.start_run_btn.setToolTip(reason or self._start_tip)
         self.jev_label.setText(reason)
@@ -1106,11 +1130,14 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         return box.clickedButton() is start_btn
 
     def _questions(self) -> List[Dict[str, Any]]:
-        """The selected job's questions the check found unanswered."""
+        """The selected job's questions the check found unanswered that an
+        answer can fill: an upload wants a file in the job folder, so it is
+        left out of Pre-answer (its tooltip line says so)."""
         d = (self._selected_entry() or {}).get("difficulty") or {}
         if not isinstance(d, dict):
             return []
-        return [q for q in d.get("questions") or [] if isinstance(q, dict) and q.get("label")]
+        return [q for q in d.get("questions") or []
+                if isinstance(q, dict) and q.get("label") and q.get("type") != "file"]
 
     def _confirm_check(self, n: int) -> bool:
         """Ask before checking every queued job; tests monkeypatch this."""
@@ -1184,8 +1211,8 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                        "then close it.")
 
     def _start_run(self) -> None:
-        """Guards, in order: Jev can run -> password set -> queue non-empty ->
-        confirm. Only a confirmed dialog calls the injected on_start_run
+        """Guards, in order: Jev can run and no browser holds the profile ->
+        password set -> queue non-empty -> confirm. Only a confirmed dialog calls the injected on_start_run
         (default: _spawn_kickoff, a brand-new visible PowerShell console)."""
         reason = self.refresh_jev_state()   # the switch may have moved since
         if reason:

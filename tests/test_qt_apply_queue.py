@@ -1600,3 +1600,130 @@ def test_pre_answer_in_the_window_opens_add_answer_on_the_answers_tab(qtbot, mon
     w.apply_queue_panel._on_pre_answer(prefill)
     assert w.tabs.tabText(w.tabs.currentIndex()) == "Apply Answers"
     assert opened == [prefill]
+
+
+# --- SP6 fix round 1 ----------------------------------------------------------------------
+
+def test_start_is_off_with_the_sentence_while_a_browser_holds_the_profile(qtbot, tmp_path,
+                                                                          monkeypatch):
+    import profile_lock
+    qfile = _qfile(tmp_path)
+    apply_queue.enqueue(apply_queue.new_entry("1", company="Acme", title="A"), path=qfile)
+    busy, spy = [True], []
+    p = _panel(qtbot, qfile, on_start_run=lambda: spy.append(True),
+               password_exists=lambda: True, profile_busy=lambda: busy[0])
+    monkeypatch.setattr(p, "_confirm_run", lambda n: True)
+    assert not p.start_run_btn.isEnabled()
+    assert p.start_run_btn.toolTip() == profile_lock.RUN_BUSY
+    assert p.jev_label.text() == profile_lock.RUN_BUSY and not p.jev_notice.isHidden()
+    p._start_run()
+    assert spy == [] and p.status_label.text() == profile_lock.RUN_BUSY
+    busy[0] = False
+    p.refresh_jev_state()
+    assert p.start_run_btn.isEnabled() and p.jev_notice.isHidden()
+    p._start_run()
+    assert spy == [True]
+
+
+def test_the_jev_gate_speaks_before_the_profile(qtbot, tmp_path):
+    p = _panel(qtbot, _qfile(tmp_path), jev_blocked=lambda: "Jev is off",
+               profile_busy=lambda: True)
+    assert p.start_run_btn.toolTip() == "Jev is off"
+
+
+@pytest.mark.parametrize("holder", ["chrome", "sentinel"])
+def test_both_gates_see_chromes_lock_and_the_sentinel(qtbot, tmp_path, monkeypatch, holder):
+    # the panel's own profile seam: Start is off while a check holds the
+    # profile, Check difficulty while a run does, by either sign
+    import profile_lock
+    from test_profile_lock import hold_chrome_lock, hold_sentinel
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    qfile = _qfile(tmp_path)
+    _checked(qfile, "1", difficulty=None)
+    p = _panel(qtbot, qfile, difficulty_blocked=lambda: "", difficulty_hidden=lambda: False)
+    assert p.start_run_btn.isEnabled() and p.check_difficulty_btn.isEnabled()
+    profile = profile_lock.default_profile_dir()
+    release = hold_chrome_lock(profile) if holder == "chrome" else hold_sentinel(profile).release
+    try:
+        p.refresh_jev_state()
+        assert not p.start_run_btn.isEnabled() and not p.check_difficulty_btn.isEnabled()
+        assert p.start_run_btn.toolTip() == profile_lock.RUN_BUSY
+        assert p.check_difficulty_btn.toolTip() == aqp.apply_assess.PROFILE_BUSY
+    finally:
+        release()
+    p.refresh_jev_state()
+    assert p.start_run_btn.isEnabled() and p.check_difficulty_btn.isEnabled()
+
+
+_UNKNOWN_JUDGE = ("Unknown Auto-apply judge 'typesaf'; tick \"Show advanced settings\" "
+                  "and pick typesafe in Settings > Auto-apply.")
+
+
+def test_an_unknown_judge_leaves_check_difficulty_off_in_the_checks_words(qtbot, tmp_path,
+                                                                          monkeypatch, capsys):
+    """The coordinator's heads-up: for an unknown mode `jev_on("difficulty")`
+    reads on while `client` builds nothing, so the button follows the
+    check's refusal, the sentence `apply_assess.py` prints."""
+    import apply_run
+    monkeypatch.setattr(jev_switch, "sdk_installed", lambda: True)
+    monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key")
+    monkeypatch.setattr(apply_run, "_load_env", lambda: None)
+    monkeypatch.setattr(apply_run, "load_settings", lambda: dict(apply_run.DEFAULT_SETTINGS))
+    path = jev_switch.config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"jev_enabled": true, "jev_difficulty": true, '
+                    '"auto_apply_jev_mode": " TypeSaf "}', encoding="utf-8")
+    p = _dpanel(qtbot, _qfile(tmp_path), difficulty_blocked=None)      # the real gate
+    assert not p.check_difficulty_btn.isHidden()
+    assert not p.check_difficulty_btn.isEnabled()
+    assert p.check_difficulty_btn.toolTip() == _UNKNOWN_JUDGE
+    assert aqp.apply_assess.main(["--all"]) == 2
+    assert capsys.readouterr().err.strip() == p.check_difficulty_btn.toolTip()
+
+
+_UPLOAD = {"label": "Portfolio (PDF)", "help": "", "options": [], "required": True,
+           "type": "file"}
+
+
+def test_a_required_upload_shows_in_the_tooltip_and_stays_out_of_pre_answer(qtbot, tmp_path):
+    qfile = _qfile(tmp_path)
+    _checked(qfile, "1", difficulty=_difficulty(
+        6, questions=[_UPLOAD, _QUESTION],
+        reasons=["Application system: Lever (base 2)",
+                 "2 required questions your answers cannot fill (+3)"]))
+    opened = []
+    p = _dpanel(qtbot, qfile, on_pre_answer=opened.append)
+    tip = p.table.item(0, aqp.COLUMNS.index("Difficulty")).toolTip()
+    assert "Portfolio (PDF) (an upload: put the file in the job folder)" in tip
+    p.table.selectRow(0)
+    p.pre_answer_btn.click()                    # one answerable question: no menu
+    assert opened == [aqp._prefill(_QUESTION)]
+
+
+def test_only_an_upload_leaves_pre_answer_off(qtbot, tmp_path):
+    qfile = _qfile(tmp_path)
+    _checked(qfile, "1", difficulty=_difficulty(4, questions=[_UPLOAD]))
+    p = _dpanel(qtbot, qfile)
+    p.table.selectRow(0)
+    assert not p.pre_answer_btn.isEnabled()
+
+
+def test_a_failed_check_shows_in_the_tooltip_over_the_earlier_result(qtbot, tmp_path):
+    import datetime as _dt
+    qfile = _qfile(tmp_path)
+    _checked(qfile, "1", difficulty=_difficulty(3))
+    now = _dt.datetime.now().isoformat(timespec="seconds")
+    apply_queue.note_difficulty_failure("1", "the posting did not load (TimeoutError)",
+                                        at=now, path=qfile)
+    _checked(qfile, "2", difficulty=None)
+    apply_queue.note_difficulty_failure("2", "the posting did not load (TimeoutError)",
+                                        at=now, path=qfile)
+    p = _dpanel(qtbot, qfile)
+    col = aqp.COLUMNS.index("Difficulty")
+    one, two = p.table.item(_row_of(p, "1"), col), p.table.item(_row_of(p, "2"), col)
+    assert one.text() == "3/10"
+    assert ("Last check failed today: the posting did not load (TimeoutError). Showing the "
+            "earlier result.") in one.toolTip()
+    assert "3/10" in one.toolTip()
+    assert two.text() == "check failed"
+    assert "Last check failed today: the posting did not load (TimeoutError)." in two.toolTip()

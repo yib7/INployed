@@ -522,12 +522,29 @@ def test_requirement_lines_fill_from_other_bullets_when_the_headings_hold_too_fe
     ("**Nice to have**", False),
     ("Bonus points:", False),
     ("## What will make you stand out", False),
+    # a heading that names both kinds, or an ideal candidate, leaves each line to Jev
+    ("## Required and Preferred Qualifications", None),
+    ("**Minimum and Preferred Qualifications**", None),
+    ("The Ideal Candidate Will Have:", None),
 ])
 def test_requirement_lines_read_the_heading_cue(heading, must):
     md = f"{heading}\n- Python and SQL\n- Tableau dashboards\n- Statistics coursework\n"
     reqs = jev_score.requirement_lines(md)
     assert _texts(reqs) == ["Python and SQL", "Tableau dashboards", "Statistics coursework"]
     assert {r.must for r in reqs} == {must}
+
+
+def test_jev_must_read_decides_the_gaps_under_a_mixed_heading():
+    md = ("## Required and Preferred Qualifications\n- Python and SQL\n- Tableau dashboards\n"
+          "- Spark pipelines\n- Statistics coursework\n")
+    judge = ScriptedJudge({"req_0_met": 0.9, "req_1_met": 0.1, "req_2_met": 0.1,
+                           "req_3_met": 0.9, "req_1_must": 0.9, "req_2_must": 0.1})
+    got = jev_score.stage2(judge, {"md": md, "facts": NO_FACTS}, RESUME)
+    _state, questions = judge.calls[0]
+    assert {f"req_{i}_must" for i in range(4)} <= set(questions)
+    # Tableau: Jev reads it as a must-have; Spark: Jev reads it as preferred
+    assert got["gaps"] == "Tableau dashboards"
+    assert got["strengths"] == "Python and SQL | Statistics coursework"
 
 
 def test_an_inline_preferred_cue_beats_a_required_heading():

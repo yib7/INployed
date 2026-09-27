@@ -490,20 +490,22 @@ _LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 _ESCAPE_RE = re.compile(r"\\([\\`*_{}\[\]()#+\-.!|>~<])")
 
 # Section headings, read in this order: a skipped section's lines never count; a
-# preferred heading marks its lines nice to have; a requirement heading marks them
-# required when it says so (required, minimum, basic, must) and leaves the rest to Jev.
+# heading that names both kinds ("Required and Preferred") leaves its lines to Jev;
+# a preferred heading marks its lines nice to have; a requirement heading marks them
+# required when it says so (required, minimum, basic, must) and leaves the rest to
+# Jev, as an ideal-candidate heading does.
 _SKIP_HEAD_RE = re.compile(
     r"benefit|perk|we offer|compensation|salary|\bpay\b|total rewards|about us"
     r"|about the company|who we are|equal (?:employment )?opportunit|\beeo\b|our values"
     r"|culture|why join|why you'll love|physical|work environment|working conditions"
     r"|schedule|location|travel|how to apply|disclaimer|accommodation")
 _NICE_HEAD_RE = re.compile(
-    r"prefer|nice[- ]to[- ]have|good[- ]to[- ]have|bonus|\bplus(?:es)?\b|desir|\bideal"
+    r"prefer|nice[- ]to[- ]have|good[- ]to[- ]have|bonus|\bplus(?:es)?\b|desir"
     r"|extra credit|stand out|set you apart")
 _REQ_HEAD_RE = re.compile(
     r"requir|qualif|\bmust\b|minimum|basic|what you(?:'ll)? (?:need|bring|have)"
     r"|you(?:'ll)? (?:need|bring|have)|who you are|about you|skills|experience|competenc"
-    r"|knowledge|education|looking for|expertise|background")
+    r"|knowledge|education|looking for|expertise|background|\bideal\b")
 _MUST_HEAD_RE = re.compile(r"requir|minimum|basic|\bmust\b")
 # A line's own preferred cue beats its heading.
 _NICE_LINE_RE = re.compile(
@@ -545,10 +547,11 @@ def _heading_kind(heading: str) -> tuple[str, bool | None]:
     h = _plain(heading).lower().replace("’", "'")
     if _SKIP_HEAD_RE.search(h):
         return "skip", None
+    must = _MUST_HEAD_RE.search(h) is not None
     if _NICE_HEAD_RE.search(h):
-        return "req", False
+        return "req", (None if must else False)
     if _REQ_HEAD_RE.search(h):
-        return "req", (True if _MUST_HEAD_RE.search(h) else None)
+        return "req", (True if must else None)
     return "other", None
 
 

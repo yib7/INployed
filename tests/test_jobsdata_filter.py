@@ -442,3 +442,33 @@ def test_filter_high_unseen_with_count_reports_the_hidden_total():
         df, 4, marked_at=marked_at, window_days=30, today=TODAY)
     assert out.empty
     assert hidden == 2
+
+
+# --- SP5/MA-3: hand-added (manual-*) rows are never scored, so a score-based
+# filter must not hide them, regardless of min_score. They are NOT exempt from
+# the is_seen filter -- once dismissed/applied, they leave like any other row.
+
+def test_filter_high_unseen_with_count_always_includes_manual_rows_regardless_of_min_score():
+    df = pd.DataFrame([
+        _row("manual-1", "no", "2026-08-20", score=""),    # hand-added, never scored
+        _row("B", "no", "2026-08-20", score="2"),          # normal row, below min_score
+    ])
+    out, _hidden = jobsdata.filter_high_unseen_with_count(df, 4)
+    assert list(out["job_posting_id"]) == ["manual-1"]
+
+
+def test_filter_high_unseen_with_count_manual_row_still_hidden_once_seen():
+    df = pd.DataFrame([_row("manual-1", "yes", "2026-08-20", score="")])
+    out, _hidden = jobsdata.filter_high_unseen_with_count(df, 4)
+    assert out.empty
+
+
+def test_filter_and_sort_min_score_keeps_manual_rows():
+    df = pd.DataFrame([
+        {"job_posting_id": "manual-1", "job_title": "Data Analyst",
+         "company_name": "Acme", "score": ""},
+        {"job_posting_id": "2", "job_title": "ML Engineer",
+         "company_name": "Globex", "score": "1"},
+    ])
+    out = jobsdata.filter_and_sort(df, "", "4", "All", "All", "All", False, None)
+    assert list(out["job_posting_id"]) == ["manual-1"]

@@ -11,6 +11,7 @@ No request leaves the process: every judge here is a fake, and the conftest
 drops TYPESAFE_API_KEY, so `jev_switch.client("tailor")` is None unless a test
 patches it.
 """
+import logging
 import re
 import sys
 import textwrap
@@ -247,9 +248,12 @@ def test_a_failing_judge_returns_none(master, helper):
     pytest.param(_atoms, jev_assist.STEP_SHORTLIST, id="atom_relevance"),
     pytest.param(_lead, jev_assist.STEP_LEAD, id="lead_group")])
 def test_a_failure_is_named_by_its_class_only(master, helper, step, caplog):
+    caplog.set_level(logging.WARNING, logger=jev_assist.log.name)
     helper(Failing())
     line = jev_assist.usage_line(step)
     assert "fell back to the LLM path (RuntimeError)" in line
+    # The warning was logged, so a silenced logger cannot pass the check below.
+    assert f"jev {step} failed (RuntimeError)" in caplog.text
     assert "detail" not in line and "detail" not in caplog.text
 
 

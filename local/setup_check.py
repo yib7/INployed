@@ -132,14 +132,20 @@ def auto_apply_warnings(has_key: bool, jev_mode: str, sdk_found: bool,
     """Warn when an auto-apply run would refuse to start. Pure, like the two
     truth tables above.
 
-    Jev switched off (Settings > Jev) stops a run in every mode, so its line
-    comes first, in the words the drain and the Auto-apply panel use (JS-5).
-    The key and the SDK only matter in 'typesafe' mode: 'fake' is the test-only
-    judge and needs neither. Playwright and Chromium are needed in every mode.
+    The lines follow the order the drain checks in. `jev_mode` is a mode
+    `jev_switch.apply_mode` resolved. A test judge ('fake', 'replay') is
+    refused as fixture-only first (`jev_switch.fixture_only`, cycle 16), then
+    Jev switched off (Settings > Jev) stops a run in every mode (JS-5); both
+    lines are the sentences the drain and the Auto-apply panel's Start button
+    give. The key and the SDK only matter in 'typesafe' mode, since the test
+    judges need neither. Playwright and Chromium are needed in every mode.
     A missing Playwright package folds the Chromium row into its own line,
     since `playwright install chromium` cannot run without it.
     """
     out: list[str] = []
+    refused = jev_switch.fixture_only(jev_mode)
+    if refused:
+        out.append(refused)
     if not jev_enabled:
         out.append(jev_switch.blocked_sentence("switch"))
     if jev_mode == "typesafe":
@@ -252,8 +258,8 @@ def chrome_installed(paths: Iterable[Path] | None = None) -> bool:
 
 
 def auto_apply_problems() -> list[str]:
-    """Jev switch, key, SDK, Playwright and Chromium rows for the Jev-judged
-    auto-apply run.
+    """Test-judge refusal, Jev switch, key, SDK, Playwright and Chromium rows
+    for the Jev-judged auto-apply run.
 
     Best-effort like `engine_problems`: a failure to read settings returns [].
     The key counts as present from either the saved .env or the live

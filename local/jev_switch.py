@@ -77,7 +77,8 @@ _FIXES = {
     "sdk": "Install typesafe-sdk (pip install -r requirements.txt).",
 }
 # `apply_run.py drain` and `one` refuse a test judge before their Jev gate
-# (cycle 16); the panel's Start gate gives the same sentence (`start_blocked`).
+# (cycle 16). The panel's Start gate (`start_blocked`), Check setup and the
+# doctor (`setup_check.auto_apply_warnings`) give the same sentence.
 FIXTURE_ONLY = "Fake and replay judges are fixture-only; use typesafe for a production queue."
 
 

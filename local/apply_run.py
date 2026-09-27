@@ -6,7 +6,7 @@ write `apply_record.md`, finish the queue entry.
                                     [--jev fake|replay|typesafe] [--profile DIR]
     python local/apply_run.py one <job_id> [same flags]
     python local/apply_run.py login      sign in to LinkedIn and the inbox once
-    python local/apply_run.py doctor     Jev switch, key, SDK, Playwright, Chromium, profile
+    python local/apply_run.py doctor     judge mode, Jev switch, key, SDK, Playwright, Chromium, profile
     python local/apply_run.py probe <url> [--follow-apply] [--judge] [--headed]
                                          read one page as the run would; changes nothing
 
@@ -9480,8 +9480,11 @@ def _settings_from_args(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def doctor(profile_dir: Path | None = None, out=None) -> int:
-    """One line per auto-apply setup row plus the profile dir; 0 when every
-    row passes (a missing profile is created by the first run)."""
+    """One line per auto-apply setup row, the profile dir, the judge mode and
+    the Jev switch, then each line `setup_check.auto_apply_warnings` gives
+    (a test judge's fixture-only refusal first, as the drain checks it
+    first); 0 when it gives none (a missing profile is created by the first
+    run)."""
     import setup_check
     out = out or sys.stdout
     profile = Path(profile_dir) if profile_dir else default_profile_dir()

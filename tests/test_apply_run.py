@@ -2774,6 +2774,29 @@ def test_the_panel_gate_gives_the_drains_refusal_of_a_test_judge(monkeypatch, ca
     assert "fixture-only" in panel
 
 
+@pytest.mark.parametrize("switch", [True, False])
+@pytest.mark.parametrize("stored", ["fake", "replay"])
+def test_check_setup_and_the_doctor_give_the_drains_refusal_of_a_test_judge(
+        monkeypatch, capsys, tmp_path, stored, switch):
+    """SP1 follow-up 1: with the Auto-apply judge setting on a test judge and
+    no key, Check setup's first auto-apply line and the doctor's first warning
+    are the sentence `main` prints for drain, and the doctor exits 2. While
+    Jev is off its line follows, the order the drain checks them in."""
+    import setup_check
+    _real_settings_no_key(monkeypatch, {"jev_enabled": switch, "auto_apply_jev_mode": stored})
+    monkeypatch.setattr(setup_check, "module_found", lambda name: True)
+    monkeypatch.setattr(setup_check, "chromium_installed", lambda **kw: True)
+    assert apply_run.main(["drain"]) == 2
+    refusal = capsys.readouterr().err.strip()
+    assert "fixture-only" in refusal
+    lines = [refusal] if switch else [refusal, _JEV_OFF]
+    assert setup_check.auto_apply_problems() == [f"[Auto-apply] {w}" for w in lines]
+    assert apply_run.doctor(tmp_path / "profile") == 2
+    out = capsys.readouterr().out
+    assert [row[2:] for row in out.splitlines() if row.startswith("  ")] == lines
+    assert "MISSING" not in out
+
+
 @pytest.mark.parametrize("stored", ["", "   ", None])
 def test_a_blank_judge_setting_drains_on_typesafe_whatever_the_shell_exports(
         monkeypatch, capsys, stored):

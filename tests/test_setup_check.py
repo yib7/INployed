@@ -7,6 +7,8 @@ a QApplication and two mocked message boxes to test at all.
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "local"))
 import setup_check  # noqa: E402
 
@@ -189,10 +191,6 @@ def test_auto_apply_warnings_missing_key_names_the_console_and_the_settings_row(
     assert "Settings -> Jev -> TypeSafe API key (Jev judge)" in out[0]
 
 
-def test_auto_apply_warnings_fake_mode_needs_neither_key_nor_sdk():
-    assert _aa(has_key=False, sdk_found=False, jev_mode="fake") == []
-
-
 def test_auto_apply_warnings_missing_sdk_says_pip_install():
     out = _aa(sdk_found=False)
     assert len(out) == 1
@@ -219,13 +217,36 @@ def test_auto_apply_warnings_everything_missing_is_three_rows():
 
 
 _JEV_OFF = "Auto-apply runs on Jev. Turn Jev on in Settings > Jev."
+_FIXTURE_ONLY = "Fake and replay judges are fixture-only; use typesafe for a production queue."
 
 
-def test_auto_apply_warnings_jev_switched_off_comes_first_in_every_mode():
-    """JS-5: the drain refuses while the master switch is off, the test judges
-    included. The rows after it still list what else a run needs."""
+@pytest.mark.parametrize("mode", ["fake", "replay"])
+def test_auto_apply_warnings_name_the_drains_refusal_of_a_test_judge(mode):
+    """SP1 follow-up 1: `apply_run.py drain` refuses the fake and replay judges
+    as fixture-only (cycle 16), so Check setup and the doctor say so in the
+    drain's sentence. The test judges need no key and no SDK, so neither row
+    joins it; the Playwright and Chromium rows still do."""
+    assert _aa(jev_mode=mode) == [_FIXTURE_ONLY]
+    assert _aa(jev_mode=mode, has_key=False, sdk_found=False) == [_FIXTURE_ONLY]
+    out = _aa(jev_mode=mode, playwright_found=False, chromium_found=False)
+    assert len(out) == 2 and out[0] == _FIXTURE_ONLY and "pip install playwright" in out[1]
+
+
+def test_auto_apply_warnings_never_refuse_the_live_judge_as_fixture_only():
+    for kw in ({}, {"has_key": False, "sdk_found": False}, {"jev_enabled": False},
+               {"playwright_found": False, "chromium_found": False}):
+        assert _FIXTURE_ONLY not in _aa(**kw), kw
+
+
+def test_auto_apply_warnings_jev_switched_off_is_named_in_every_mode():
+    """JS-5: Jev switched off stops every Jev use, the test judges included
+    (`probe --judge` runs them), so its line leads the typesafe rows and
+    follows a test judge's refusal, the order the drain checks them in. The
+    rows after it still list what else a run needs."""
     assert _aa(jev_enabled=False) == [_JEV_OFF]
-    assert _aa(jev_enabled=False, jev_mode="fake", has_key=False, sdk_found=False) == [_JEV_OFF]
+    for mode in ("fake", "replay"):
+        assert _aa(jev_enabled=False, jev_mode=mode, has_key=False,
+                   sdk_found=False) == [_FIXTURE_ONLY, _JEV_OFF], mode
     out = _aa(jev_enabled=False, has_key=False)
     assert len(out) == 2 and out[0] == _JEV_OFF and "console.typesafe.ai/keys" in out[1]
 
@@ -356,10 +377,14 @@ def test_auto_apply_problems_env_key_counts_as_present(monkeypatch):
     assert setup_check.auto_apply_problems() == []
 
 
-def test_auto_apply_problems_honours_fake_mode_from_settings(monkeypatch):
-    _stub_auto_apply(monkeypatch, stored={"auto_apply_jev_mode": "fake"},
-                     found=("playwright",))
-    assert setup_check.auto_apply_problems() == []
+@pytest.mark.parametrize("mode", ["fake", "replay", " Replay "])
+def test_auto_apply_problems_names_the_refusal_of_a_test_judge_from_settings(monkeypatch,
+                                                                             mode):
+    """The judge setting is read the way the drain reads it (`apply_mode`), so
+    a hand-edited " Replay " is refused too. No key is saved and no SDK is
+    found here, and the test judges need neither."""
+    _stub_auto_apply(monkeypatch, stored={"auto_apply_jev_mode": mode}, found=("playwright",))
+    assert setup_check.auto_apply_problems() == [f"[Auto-apply] {_FIXTURE_ONLY}"]
 
 
 def test_auto_apply_problems_honours_the_jev_switch_from_settings(monkeypatch):

@@ -463,6 +463,19 @@ def test_filter_high_unseen_with_count_manual_row_still_hidden_once_seen():
     assert out.empty
 
 
+def test_filter_high_unseen_with_count_manual_row_survives_missing_score_column():
+    # No "score" column at all -- e.g. the very first hand-added job on a fresh
+    # install, before any scored run has ever landed. Must behave like a
+    # present-but-blank column: the manual row still shows, is_seen still applies.
+    df = pd.DataFrame([
+        {"job_posting_id": "manual-1", "is_seen": "no"},
+        {"job_posting_id": "2", "is_seen": "no"},
+        {"job_posting_id": "manual-2", "is_seen": "yes"},
+    ])
+    out, _hidden = jobsdata.filter_high_unseen_with_count(df, 4)
+    assert list(out["job_posting_id"]) == ["manual-1"]
+
+
 def test_filter_and_sort_min_score_keeps_manual_rows():
     df = pd.DataFrame([
         {"job_posting_id": "manual-1", "job_title": "Data Analyst",

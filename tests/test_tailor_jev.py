@@ -7,7 +7,8 @@ call a golden run makes were recorded from the engine before the Jev wiring land
 into `tests/fixtures/tailor_jev_off_prompts.json`. Part 4a recorded `select`, the
 `lead_with_overview` ordering call and `compress_skills`' fallback call; part 4b
 added the stages its checks gate (both `reverb` calls, every AI-writing sweep call
-and a `reground` re-ask), recorded at its base before the engine changed.
+and a `reground` re-ask), recorded at its base before the engine changed, and part
+4c added the rephrase call that best-of-N (TL-7) gates, recorded the same way.
 A prompt change made on purpose re-records the file (set TAILOR_JEV_OFF_PROMPTS_RECORD=1
 for one run) and shows the diff in review; a change nobody meant fails here.
 
@@ -53,7 +54,11 @@ RECORD_ENV = "TAILOR_JEV_OFF_PROMPTS_RECORD"
 # trims or gates when Jev is on. A stage the golden run calls more than once is
 # recorded once per call, in call order: its first call under the stage's name and
 # each later one as "<stage> #<n>", so the recording 4a made stays as it was.
-PINNED_STAGES = ("select", "lead_with_overview", "reverb", "aiwriting_sweep")
+PINNED_STAGES = ("select", "lead_with_overview", "rephrase", "reverb", "aiwriting_sweep")
+# The tailor's three Jev options (TL-7 to TL-9). Each needs a judge, so with Jev off
+# the recording holds whichever way they are set.
+JEV_OPTION_ENVS = ("RESUME_TAILOR_BEST_OF_N", "RESUME_TAILOR_COVER_LETTER_JEV_CHECK",
+                   "RESUME_TAILOR_ATS_MEANING")
 
 # compress_skills' fallback answer: any pool-backed lines will do, the prompt is
 # what is recorded.
@@ -173,13 +178,17 @@ def _jev_off(monkeypatch):
     monkeypatch.setattr(jev_switch, "client", lambda area: None)
 
 
+@pytest.mark.parametrize("options", ["0", "1"], ids=["options off", "options on"])
 def test_jev_off_prompts_match_the_recording(pinned_engine, stub_template_head,
-                                             tmp_path, monkeypatch):
+                                             tmp_path, monkeypatch, options):
     """Jev off makes exactly the recorded calls, and the stages beside the Jev
-    steps send the recorded prompts."""
+    steps send the recorded prompts, the rephrase among them. The recording is made
+    with the three Jev options off, and they change nothing while Jev is off."""
     _jev_off(monkeypatch)
+    for env in JEV_OPTION_ENVS:
+        monkeypatch.setenv(env, options)
     got = _record_jev_off(monkeypatch, tmp_path)
-    if os.environ.get(RECORD_ENV) == "1":
+    if os.environ.get(RECORD_ENV) == "1" and options == "0":
         PROMPTS.write_text(json.dumps(got, ensure_ascii=False, indent=1) + "\n",
                            encoding="utf-8")
         pytest.skip(f"recorded {PROMPTS.name}; run again without {RECORD_ENV}")
@@ -196,11 +205,12 @@ def test_jev_off_prompts_match_the_recording(pinned_engine, stub_template_head,
 
 
 def test_the_recording_covers_every_gated_stage():
-    """Every stage 4a and 4b gate has its prompt in the recording: select and the
-    lead call once, reverb twice, the sweep once per item, and the reground re-ask."""
+    """Every stage 4a, 4b and 4c gate has its prompt in the recording: select, the
+    lead call and the rephrase once, reverb twice, the sweep once per item, and the
+    reground re-ask."""
     want = json.loads(PROMPTS.read_text(encoding="utf-8"))
     assert list(want["prompts"]) == [
-        "select", "lead_with_overview", "reverb", "reverb #2", "aiwriting_sweep",
+        "select", "lead_with_overview", "rephrase", "reverb", "reverb #2", "aiwriting_sweep",
         "aiwriting_sweep #2", "aiwriting_sweep #3", "aiwriting_sweep #4", "reground",
         "skills_fallback"]
     assert "REJECTED BULLETS" in "\n".join(want["prompts"]["reground"]["user"])

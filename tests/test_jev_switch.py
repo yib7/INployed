@@ -461,3 +461,42 @@ def test_client_is_none_when_the_judge_cannot_be_built(sdk, monkeypatch, caplog)
     assert jev_switch.client("tailor") is None
     assert "JevUnavailable" in caplog.text
     assert "detail that stays out of the log" not in caplog.text
+
+
+class _Unreachable:
+    """A judge whose every request drops its connection: a transient failure,
+    which `jev.Guarded` tries again after each of its waits."""
+
+    def __init__(self, *a, **kw):
+        pass
+
+    def judge(self, state, questions):
+        raise ConnectionError("the service did not answer")
+
+
+@pytest.mark.parametrize("area, quick", [
+    ("scoring", True), ("tailor", True), ("apply", False), ("difficulty", False),
+])
+def test_the_judges_with_an_llm_fallback_retry_on_the_quick_waits(sdk, monkeypatch,
+                                                                    area, quick):
+    """Fix round 2: scoring and the tailor fall back to their LLM path, so
+    their judge's breaker opens after the quick waits (`QUICK_RETRY_DELAYS_S`,
+    a few seconds). Auto-apply has no fallback and keeps the run's waits
+    (`RETRY_DELAYS_S`, about a minute). The sleep is a recorder, so nothing
+    waits for real."""
+    monkeypatch.setattr(jev, "TypeSafeJev", _Unreachable)
+    monkeypatch.setattr(jev, "get", lambda mode="": _Unreachable())
+    monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key")
+    judge = jev_switch.client(area)
+    slept = []
+    judge.sleep = slept.append
+    request = ({"page": "a form"}, {"q": {"type": "boolean", "instructions": "Is it?"}})
+    with pytest.raises(jev.JudgeOutage):
+        judge.judge(*request)
+    waits = list(jev.QUICK_RETRY_DELAYS_S if quick else jev.RETRY_DELAYS_S)
+    assert slept == waits
+    assert judge.down == "ConnectionError"          # the breaker is open
+    with pytest.raises(jev.JudgeOutage):
+        judge.judge(*request)                       # at once, with no wait
+    assert slept == waits
+    assert sum(jev.QUICK_RETRY_DELAYS_S) < 5 < sum(jev.RETRY_DELAYS_S)

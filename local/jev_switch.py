@@ -30,7 +30,8 @@ drain's refusal of a test judge first (`FIXTURE_ONLY`, cycle 16), then
 drain it launches. `key_saved()` is the saved-key probe the dashboard passes
 both. `client(area)` returns a `jev.Guarded` judge, or None when the area is
 off or the judge cannot be built; a caller outside auto-apply keeps its LLM
-path on None.
+path on None, and its judge retries briefly (`jev.QUICK_RETRY_DELAYS_S`), so
+an outage reaches that path in seconds.
 
 The switches are read with `is not False`, the spelling
 `resume_tailor/config.py` uses for every default-on toggle, so a stray
@@ -228,19 +229,20 @@ def start_blocked(*, config: Mapping[str, Any] | None = None,
 
 def client(area: str) -> Any:
     """The judge for `area`, or None when Jev is off for it or the judge cannot
-    be built. Scoring and the tailor get a guarded TypeSafe judge; apply and
-    the difficulty check get the auto-apply mode's judge (`jev.get`), guarded
-    the same way. A build failure is logged by its type only, since its message
-    can carry request detail. An unknown area raises ValueError (`_check`)."""
+    be built. Scoring and the tailor get a guarded TypeSafe judge that retries
+    briefly (`jev.QUICK_RETRY_DELAYS_S`): their callers fall back to their LLM
+    path, so an outage costs them seconds. Apply and the difficulty check get
+    the auto-apply mode's judge (`jev.get`) with the run's retries
+    (`jev.RETRY_DELAYS_S`), since auto-apply has no fallback. A build failure
+    is logged by its type only, since its message can carry request detail.
+    An unknown area raises ValueError (`_check`)."""
     cfg = _config()
     if _check(area, cfg, None)[0]:
         return None
     try:
         if area in _MODE_AREAS:
-            inner = jev.get(apply_mode(config=cfg))
-        else:
-            inner = jev.TypeSafeJev()
-        return jev.Guarded(inner)
+            return jev.Guarded(jev.get(apply_mode(config=cfg)))
+        return jev.Guarded(jev.TypeSafeJev(), delays=jev.QUICK_RETRY_DELAYS_S)
     except Exception as e:      # noqa: BLE001  (None keeps the caller on its own path)
         log.warning("jev_switch: the %s judge could not be built (%s)", area,
                     type(e).__name__)

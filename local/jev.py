@@ -164,9 +164,11 @@ def request_fits(state: Any, questions: Mapping[str, Any]) -> bool:
 
 # --- the outage guard (RES-02) ------------------------------------------------------
 
-# The only retries of a judge request the service could not answer (the SDK's
-# own are off, `TypeSafeJev`): about a minute over three more attempts.
+# The retries of a judge request the service could not answer (the SDK's own
+# are off, `TypeSafeJev`): about a minute over three more attempts.
 RETRY_DELAYS_S = (5.0, 15.0, 40.0)
+# scoring and the tailor have an LLM fallback: their judges retry briefly (`jev_switch.client`)
+QUICK_RETRY_DELAYS_S = (1.0, 3.0)
 RETRY_AFTER_CAP_S = 60.0     # a longer Retry-After reads as the judge being down
 _BUSY_STATUS = frozenset((408, 409, 425, 429))
 _OVERLOADED_STATUS = frozenset((503, 529))      # the service, whoever asks

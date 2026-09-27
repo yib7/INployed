@@ -1,13 +1,12 @@
-"""SP10: the toolkit-agnostic manual-add pipeline (parse -> score -> tailor -> append).
+"""SP10/SP5: the toolkit-agnostic manual-add pipeline (parse -> tailor -> append).
 
-The scorer's Gemini client and the résumé tailor are MOCKED exactly the way the
-existing suite mocks them (FakePool mirrors test_score_jobs.py; tailor_fn is a
-stand-in), so no real API key is ever needed and no money is spent.
+The user already chose this job (SP5/MA-1), so there is no scoring step at all;
+`test_add_manual_job_never_calls_scorer` pins that. The résumé tailor is MOCKED
+exactly the way the existing suite mocks it (tailor_fn is a stand-in), so no
+real API key is ever needed and no money is spent.
 """
-import json
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pandas as pd
 
@@ -27,34 +26,6 @@ _JD = (
     "You will analyze data, build reports, and communicate findings to stakeholders. "
     "No prior full-time experience required; entry-level welcome.\n"
 ) * 3
-
-
-def _resp(text):
-    return SimpleNamespace(
-        text=text,
-        usage_metadata=SimpleNamespace(prompt_token_count=1, candidates_token_count=1),
-    )
-
-
-class FakePool:
-    """Mirrors test_score_jobs.FakePool — a mocked Gemini client (no network)."""
-
-    def __init__(self, score=5):
-        self.score = score
-        self.calls = []
-
-    async def generate(self, *, model, contents, config):
-        # `model` is the stage's ranked chain, as KeyPool.generate takes it.
-        model = model[0] if isinstance(model, (list, tuple)) else model
-        self.calls.append((model, contents))
-        if model == sj.STAGE1_MODEL:
-            return _resp(json.dumps({"score": self.score, "reason": "great fit"}))
-        return _resp(json.dumps(
-            {"deep_score": 8, "strengths": ["python", "sql"], "gaps": ["go"],
-             "recommendation": "apply"}))
-
-    def stats(self):
-        return {"free_calls": len(self.calls), "vertex_calls": 0}
 
 
 def _fake_tailor_factory(tmp_path):
@@ -104,32 +75,46 @@ def test_manual_id_is_stable_and_dedup_friendly():
     assert a != c             # different URL -> different id
 
 
-# ── score_record: drives the REAL two-stage pipeline with a mocked pool ───────
+# ── MA-1: no scoring step at all -- save and tailor at once ───────────────────
 
-def test_score_record_uses_two_stage_pipeline(monkeypatch):
-    rec = manual_add.build_job_record(jd_text=_JD)
-    pool = FakePool(score=5)
-    out = manual_add.score_record(rec, pool=pool, resume="dummy resume")
-    assert out["score"] == 5
-    assert out["recommendation"] == "apply"     # stage-2 ran (score >= threshold)
-    assert out["deep_score"] == 8
-    # both stages of the real scorer were exercised through the mocked pool
-    models = {m for m, _ in pool.calls}
-    assert sj.STAGE1_MODEL in models and sj.STAGE2_MODEL in models
+def test_add_manual_job_never_calls_scorer(monkeypatch, tmp_path):
+    """The user already chose this job: add_manual_job must never touch the
+    scorer, in any form (this is the RED/GREEN pin for SP5/MA-1)."""
+    master = tmp_path / "linkedin_jobs_master.csv"
+    fake_tailor, _ = _fake_tailor_factory(tmp_path)
+
+    def boom(*a, **k):
+        raise AssertionError("add_manual_job must never call the scorer")
+
+    monkeypatch.setattr(sj, "run_scoring", boom)
+    monkeypatch.setattr(sj, "make_pool", boom)
+    res = manual_add.add_manual_job(
+        jd_text=_JD, url="https://x/1", tailor_fn=fake_tailor, master_csv=master)
+    assert res["appended"] is True
+    assert "score" not in res["record"]
 
 
-# ── end-to-end pasted-JD path (scorer + tailor mocked) ────────────────────────
+def test_add_manual_job_signature_drops_scoring_params():
+    import inspect
+    params = set(inspect.signature(manual_add.add_manual_job).parameters)
+    assert not params & {"pool", "pool_factory", "resume", "do_tailor"}
+
+
+def test_score_record_was_removed():
+    assert not hasattr(manual_add, "score_record")
+
+
+# ── end-to-end pasted-JD path (tailor mocked, no scoring) ─────────────────────
 
 def test_add_manual_job_pasted_jd_end_to_end(tmp_path):
     master = tmp_path / "linkedin_jobs_master.csv"
     fake_tailor, seen = _fake_tailor_factory(tmp_path)
     res = manual_add.add_manual_job(
-        jd_text=_JD, url="https://x/1", pool=FakePool(), resume="r",
-        tailor_fn=fake_tailor, master_csv=master,
+        jd_text=_JD, url="https://x/1", tailor_fn=fake_tailor, master_csv=master,
         tailor_opts={"cover_letter": False, "ats_report": True})
 
     rec = res["record"]
-    assert rec["source"] == "manual" and rec["score"] == 5
+    assert rec["source"] == "manual"
     assert res["resume_dir"] is not None and res["appended"] is True
     # the tailor was handed the manual record (the SAME engine scraped jobs use)
     assert seen["job"]["job_posting_id"] == rec["job_posting_id"]
@@ -139,15 +124,13 @@ def test_add_manual_job_pasted_jd_end_to_end(tmp_path):
     assert len(m) == 1
     row = m.iloc[0]
     assert row["source"] == "manual"
-    assert str(row["score"]) == "5"
     assert "data analyst" in str(row["job_description_formatted"]).lower()
 
 
 def test_add_manual_job_dedupes_on_readd(tmp_path):
     master = tmp_path / "linkedin_jobs_master.csv"
     fake_tailor, _ = _fake_tailor_factory(tmp_path)
-    kw = dict(jd_text=_JD, url="https://x/1", pool=FakePool(), resume="r",
-              tailor_fn=fake_tailor, master_csv=master)
+    kw = dict(jd_text=_JD, url="https://x/1", tailor_fn=fake_tailor, master_csv=master)
     first = manual_add.add_manual_job(**kw)
     second = manual_add.add_manual_job(**kw)
     assert first["appended"] is True
@@ -155,38 +138,78 @@ def test_add_manual_job_dedupes_on_readd(tmp_path):
     assert len(pd.read_csv(master)) == 1
 
 
-def test_add_manual_job_just_score_skips_tailor(tmp_path):
-    """do_tailor=False scores + appends but never calls the tailor (no cover letter)."""
-    master = tmp_path / "linkedin_jobs_master.csv"
-    called = []
-
-    def should_not_run(job, **k):
-        called.append(True)
-        return tmp_path
-
-    res = manual_add.add_manual_job(
-        jd_text=_JD, url="https://x/1", do_tailor=False, pool=FakePool(),
-        resume="r", tailor_fn=should_not_run, master_csv=master)
-    assert called == []                         # tailoring skipped entirely
-    assert res["resume_dir"] is None
-    assert res["appended"] is True
-    assert res["record"]["score"] == 5          # still scored against the résumé
-    assert pd.read_csv(master).iloc[0]["source"] == "manual"
-
-
 def test_add_manual_job_survives_tailor_failure(tmp_path):
-    """A tailor failure must not lose the job — it's still scored + appended."""
+    """A tailor failure must not lose the job — it's still saved (MA-4)."""
     master = tmp_path / "linkedin_jobs_master.csv"
 
     def boom_tailor(job, **k):
         raise RuntimeError("pdflatex missing")
 
     res = manual_add.add_manual_job(
-        jd_text=_JD, pool=FakePool(), resume="r",
-        tailor_fn=boom_tailor, master_csv=master)
+        jd_text=_JD, tailor_fn=boom_tailor, master_csv=master)
     assert res["resume_dir"] is None       # tailoring failed...
-    assert res["appended"] is True          # ...but the scored job was still added
+    assert res["appended"] is True          # ...but the job was still added
     assert pd.read_csv(master).iloc[0]["source"] == "manual"
+
+
+# ── MA-2: duplicate detection before any spend, and "Tailor again" ────────────
+
+def test_find_duplicate_matches_from_dataframe():
+    jid = manual_add.manual_job_id(_JD, "https://x/1")
+    df = pd.DataFrame([{"job_posting_id": jid, "job_title": "Data Analyst",
+                        "company_name": "Acme Corp", "extracted_date": "2026-09-01"}])
+    dup = manual_add.find_duplicate(_JD, "https://x/1", df=df)
+    assert dup is not None
+    assert dup["job_title"] == "Data Analyst" and dup["company_name"] == "Acme Corp"
+
+
+def test_find_duplicate_matches_from_master_csv_when_not_in_dataframe(tmp_path):
+    master = tmp_path / "linkedin_jobs_master.csv"
+    _seed(master, manual_add.manual_job_id(_JD, "https://x/1"),
+          job_title="Data Analyst", company_name="Acme Corp")
+    dup = manual_add.find_duplicate(_JD, "https://x/1", df=None, master_csv=master)
+    assert dup is not None and dup["job_title"] == "Data Analyst"
+
+
+def test_find_duplicate_returns_none_for_new_job(tmp_path):
+    master = tmp_path / "linkedin_jobs_master.csv"
+    df = pd.DataFrame([{"job_posting_id": "manual-other", "job_title": "X"}])
+    assert manual_add.find_duplicate(_JD, "https://x/1", df=df, master_csv=master) is None
+
+
+def test_duplicate_message_includes_date_title_company():
+    msg = manual_add.duplicate_message(
+        {"job_title": "Data Analyst", "company_name": "Acme Corp",
+         "extracted_date": "2026-09-01"})
+    assert msg == "Already added on 2026-09-01 as Data Analyst at Acme Corp."
+
+
+def test_duplicate_message_omits_date_when_missing():
+    msg = manual_add.duplicate_message(
+        {"job_title": "Data Analyst", "company_name": "Acme Corp"})
+    assert msg == "Already added as Data Analyst at Acme Corp."
+    assert "on " not in msg
+
+
+def test_retailor_existing_reuses_existing_row_never_appends(tmp_path):
+    fake_tailor, seen = _fake_tailor_factory(tmp_path)
+    record = {"job_posting_id": "manual-abc", "job_title": "Data Analyst",
+             "company_name": "Acme Corp", "job_description_formatted": _JD}
+    res = manual_add.retailor_existing(record, tailor_fn=fake_tailor)
+    assert res["appended"] is False
+    assert res["resume_dir"] is not None
+    assert seen["job"]["job_posting_id"] == "manual-abc"
+
+
+def test_retailor_existing_survives_tailor_failure():
+    def boom_tailor(job, **k):
+        raise RuntimeError("pdflatex missing")
+
+    record = {"job_posting_id": "manual-abc", "job_title": "T", "company_name": "C"}
+    res = manual_add.retailor_existing(record, tailor_fn=boom_tailor)
+    assert res["appended"] is False
+    assert res["resume_dir"] is None
+    assert res["record"]["job_posting_id"] == "manual-abc"     # row identity preserved
 
 
 # ── URL path: fetch mocked, and the pasted-JD fallback when fetch fails ───────
@@ -198,8 +221,7 @@ def test_url_path_uses_fetched_text_when_no_paste(tmp_path):
                "Build data pipelines in Python and SQL for an entry-level analyst role. "
                "Communicate insights to stakeholders. No experience required.\n") * 3
     res = manual_add.add_manual_job(
-        url="https://widgetco/jobs/9", pool=FakePool(), resume="r",
-        tailor_fn=fake_tailor, master_csv=master,
+        url="https://widgetco/jobs/9", tailor_fn=fake_tailor, master_csv=master,
         fetch_fn=lambda _u: fetched)            # network mocked
     rec = res["record"]
     assert rec["source"] == "manual"
@@ -212,7 +234,7 @@ def test_url_path_falls_back_to_requiring_paste_when_fetch_fails(tmp_path):
     master = tmp_path / "linkedin_jobs_master.csv"
     with pytest.raises(ValueError):           # no paste + empty fetch -> clear error
         manual_add.add_manual_job(
-            url="https://blocked/jobs/9", pool=FakePool(), resume="r",
+            url="https://blocked/jobs/9",
             tailor_fn=lambda *a, **k: tmp_path, master_csv=master,
             fetch_fn=lambda _u: "")           # site blocked the free GET
 

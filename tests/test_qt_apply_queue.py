@@ -19,7 +19,8 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pandas as pd
-from PySide6 import QtCore, QtWidgets
+import pytest
+from PySide6 import QtCore, QtGui, QtWidgets
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
@@ -1321,3 +1322,281 @@ def test_status_chips_keep_their_labels_on_a_narrow_window(qtbot, tmp_path):
     finally:
         theme.set_scale(app, 1.0)
         p.hide()
+
+
+# --- SP6: the difficulty check (DF-4, DF-5, DF-6) -----------------------------------------
+
+def _difficulty(score=7, *, days_old=0, questions=None, reasons=None):
+    import datetime as _dt
+    from apply_assess import band_for
+    checked = (_dt.datetime.now() - _dt.timedelta(days=days_old)).isoformat(timespec="seconds")
+    return {"score": score, "band": band_for(score), "checked_at": checked, "system": "lever",
+            "reasons": reasons or ["Application system: Lever (base 2)"],
+            "questions": questions or [], "jev_usd": 0.0}
+
+
+_QUESTION = {"label": "Which public dataset do you know best?", "help": "One line is plenty",
+             "options": [], "required": True, "type": "text"}
+_CHOICE = {"label": "Preferred office", "help": "", "options": ["Austin", "Remote"],
+           "required": True, "type": "choice"}
+_UNSET = object()
+
+
+def _checked(qfile, jid="1", difficulty=_UNSET):
+    apply_queue.enqueue(apply_queue.new_entry(jid, company="Acme", title="Analyst",
+                                              apply_url=f"https://x/{jid}"), path=qfile)
+    if difficulty is not None:
+        apply_queue.set_difficulty(jid, _difficulty() if difficulty is _UNSET else difficulty,
+                                   path=qfile)
+
+
+def _row_of(p, jid):
+    return next(r for r in range(p.table.rowCount())
+                if p.table.item(r, 0).data(QtCore.Qt.ItemDataRole.UserRole) == jid)
+
+
+def _dpanel(qtbot, qfile, **kw):
+    for name, value in (("difficulty_blocked", lambda: ""), ("difficulty_hidden", lambda: False),
+                        ("profile_busy", lambda: False)):
+        kw.setdefault(name, value)
+    return _panel(qtbot, qfile, **kw)
+
+
+def test_the_difficulty_column_sits_before_updated():
+    assert aqp.COLUMNS.index("Difficulty") == aqp.COLUMNS.index("Missing") + 1
+    assert aqp.COLUMN_IDS[aqp.COLUMNS.index("Difficulty")] == "difficulty"
+    assert aqp.COLUMNS[-1] == "Note"             # the stretch column stays last
+    assert len(aqp.COLUMNS) == len(aqp.COLUMN_IDS)
+
+
+@pytest.mark.parametrize("score, family", [(2, "success"), (5, "warning"), (9, "danger")])
+def test_the_difficulty_cell_shows_the_score_coloured_by_band(qtbot, tmp_path, score, family):
+    from qt.delegates import BAND_ROLE
+    qfile = _qfile(tmp_path)
+    _checked(qfile, difficulty=_difficulty(score))
+    p = _dpanel(qtbot, qfile)
+    item = p.table.item(0, aqp.COLUMNS.index("Difficulty"))
+    assert item.text() == f"{score}/10"
+    assert item.data(BAND_ROLE) == family
+    assert not p.table.grab().isNull()           # the pill paints
+
+
+def test_an_unchecked_job_shows_no_difficulty(qtbot, tmp_path):
+    qfile = _qfile(tmp_path)
+    _checked(qfile, difficulty=None)
+    p = _dpanel(qtbot, qfile)
+    assert p.table.item(0, aqp.COLUMNS.index("Difficulty")).text() == ""
+
+
+def test_the_difficulty_tooltip_lists_the_reasons_and_the_exact_questions(qtbot, tmp_path):
+    qfile = _qfile(tmp_path)
+    _checked(qfile, difficulty=_difficulty(
+        5, questions=[_QUESTION, _CHOICE],
+        reasons=["Application system: Lever (base 2)",
+                 "2 required questions your answers cannot fill (+3)"]))
+    p = _dpanel(qtbot, qfile)
+    tip = p.table.item(0, aqp.COLUMNS.index("Difficulty")).toolTip()
+    for part in ("5/10", "May need an answer or two", "Application system: Lever (base 2)",
+                 "2 required questions your answers cannot fill (+3)",
+                 "Which public dataset do you know best?", "One line is plenty",
+                 "Preferred office", "Austin, Remote"):
+        assert part in tip, part
+
+
+def test_the_difficulty_tooltip_escapes_the_pages_words(qtbot, tmp_path):
+    qfile = _qfile(tmp_path)
+    odd = dict(_QUESTION, label="Salary <b>range</b> & notes")
+    _checked(qfile, difficulty=_difficulty(5, questions=[odd]))
+    p = _dpanel(qtbot, qfile)
+    tip = p.table.item(0, aqp.COLUMNS.index("Difficulty")).toolTip()
+    assert "Salary &lt;b&gt;range&lt;/b&gt; &amp; notes" in tip
+
+
+def test_a_result_older_than_seven_days_shows_its_age(qtbot, tmp_path):
+    qfile = _qfile(tmp_path)
+    _checked(qfile, "1", difficulty=_difficulty(3, days_old=10))
+    _checked(qfile, "2", difficulty=_difficulty(3, days_old=6))
+    p = _dpanel(qtbot, qfile)
+    col = aqp.COLUMNS.index("Difficulty")
+    assert p.table.item(_row_of(p, "1"), col).text() == "3/10 (10 days old)"
+    assert "10 days old" in p.table.item(_row_of(p, "1"), col).toolTip()
+    assert p.table.item(_row_of(p, "2"), col).text() == "3/10"
+
+
+def test_the_check_is_hidden_while_its_switch_is_off(qtbot, tmp_path):
+    hidden = [True]
+    p = _dpanel(qtbot, _qfile(tmp_path), difficulty_hidden=lambda: hidden[0])
+    assert p.check_difficulty_btn.isHidden() and p.recheck_btn.isHidden()
+    hidden[0] = False
+    p.refresh_jev_state()
+    assert not p.check_difficulty_btn.isHidden() and not p.recheck_btn.isHidden()
+
+
+def test_the_check_is_off_with_the_reason_while_jev_cannot_run(qtbot, tmp_path):
+    why = ["Auto-apply runs on Jev. Install typesafe-sdk (pip install -r requirements.txt)."]
+    p = _dpanel(qtbot, _qfile(tmp_path), difficulty_blocked=lambda: why[0])
+    assert not p.check_difficulty_btn.isHidden()
+    assert not p.check_difficulty_btn.isEnabled()
+    assert p.check_difficulty_btn.toolTip() == why[0]
+    why[0] = ""
+    p.showEvent(QtGui.QShowEvent())            # the gate is read again when the tab shows
+    assert p.check_difficulty_btn.isEnabled()
+    assert p.check_difficulty_btn.toolTip() == p._check_tip
+
+
+def test_the_check_is_off_while_a_browser_holds_the_profile(qtbot, tmp_path):
+    busy = [True]
+    p = _dpanel(qtbot, _qfile(tmp_path), profile_busy=lambda: busy[0])
+    assert not p.check_difficulty_btn.isEnabled()
+    assert p.check_difficulty_btn.toolTip() == aqp.apply_assess.PROFILE_BUSY
+    busy[0] = False
+    p.refresh_jev_state()
+    assert p.check_difficulty_btn.isEnabled()
+
+
+def test_the_check_runs_the_selected_job(qtbot, tmp_path):
+    qfile = _qfile(tmp_path)
+    _checked(qfile, "1", difficulty=None)
+    _checked(qfile, "2", difficulty=None)
+    calls = []
+    p = _dpanel(qtbot, qfile,
+                on_check_difficulty=lambda ids, recheck: calls.append((ids, recheck)))
+    p.table.selectRow(_row_of(p, "2"))
+    p.check_difficulty_btn.click()
+    assert calls == [(["2"], False)]
+
+
+def test_the_check_with_no_selection_asks_before_checking_every_queued_job(qtbot, tmp_path,
+                                                                           monkeypatch):
+    qfile = _qfile(tmp_path)
+    _checked(qfile, "1", difficulty=None)
+    _checked(qfile, "2", difficulty=None)
+    calls, asked = [], []
+    p = _dpanel(qtbot, qfile,
+                on_check_difficulty=lambda ids, recheck: calls.append((ids, recheck)))
+    answer = [False]
+    monkeypatch.setattr(p, "_confirm_check", lambda n: asked.append(n) or answer[0])
+    p.table.clearSelection()
+    p.check_difficulty_btn.click()
+    assert asked == [2] and calls == []
+    answer[0] = True
+    p.check_difficulty_btn.click()
+    assert calls == [([], False)]
+
+
+def test_the_check_reads_the_gate_again_at_the_click(qtbot, tmp_path):
+    qfile = _qfile(tmp_path)
+    _checked(qfile, "1", difficulty=None)
+    busy, calls = [False], []
+    p = _dpanel(qtbot, qfile, profile_busy=lambda: busy[0],
+                on_check_difficulty=lambda ids, recheck: calls.append(ids))
+    p.table.selectRow(0)
+    busy[0] = True                              # a drain started since the last refresh
+    p._check_difficulty()
+    assert calls == [] and p.status_label.text() == aqp.apply_assess.PROFILE_BUSY
+
+
+def test_check_again_needs_a_checked_job_and_skips_the_profile(qtbot, tmp_path):
+    qfile = _qfile(tmp_path)
+    _checked(qfile, "1")
+    _checked(qfile, "2", difficulty=None)
+    calls = []
+    p = _dpanel(qtbot, qfile, profile_busy=lambda: True,
+                on_check_difficulty=lambda ids, recheck: calls.append((ids, recheck)))
+    p.table.selectRow(_row_of(p, "2"))
+    assert not p.recheck_btn.isEnabled()
+    p.table.selectRow(_row_of(p, "1"))
+    assert p.recheck_btn.isEnabled()            # no browser: a held profile is no bar
+    p.recheck_btn.click()
+    assert calls == [(["1"], True)]
+
+
+def test_check_again_is_off_with_the_reason_while_jev_cannot_run(qtbot, tmp_path):
+    qfile = _qfile(tmp_path)
+    _checked(qfile, "1")
+    p = _dpanel(qtbot, qfile, difficulty_blocked=lambda: "Jev is off")
+    p.table.selectRow(0)
+    assert not p.recheck_btn.isEnabled() and p.recheck_btn.toolTip() == "Jev is off"
+
+
+def test_pre_answer_opens_add_answer_prefilled(qtbot, tmp_path):
+    qfile = _qfile(tmp_path)
+    _checked(qfile, "1", difficulty=_difficulty(5, questions=[_QUESTION]))
+    _checked(qfile, "2", difficulty=_difficulty(2))
+    opened = []
+    p = _dpanel(qtbot, qfile, on_pre_answer=opened.append)
+    p.table.selectRow(_row_of(p, "2"))
+    assert not p.pre_answer_btn.isEnabled()
+    p.table.selectRow(_row_of(p, "1"))
+    assert p.pre_answer_btn.isEnabled()
+    p.pre_answer_btn.click()
+    assert opened == [{"question": _QUESTION["label"], "help": "One line is plenty",
+                       "type": "text", "options": []}]
+
+
+def test_pre_answer_with_several_questions_offers_each(qtbot, tmp_path):
+    qfile = _qfile(tmp_path)
+    _checked(qfile, "1", difficulty=_difficulty(6, questions=[_QUESTION, _CHOICE]))
+    opened = []
+    p = _dpanel(qtbot, qfile, on_pre_answer=opened.append)
+    p.table.selectRow(0)
+    menu = p._pre_answer_menu()
+    assert [a.text() for a in menu.actions()] == [_QUESTION["label"], "Preferred office"]
+    menu.actions()[1].trigger()
+    assert opened == [{"question": "Preferred office", "help": "", "type": "choice",
+                       "options": ["Austin", "Remote"]}]
+
+
+def test_the_check_command_runs_apply_assess_in_the_repo():
+    root = Path("C:/Users/o'brien/[repo]")
+    literal = str(root).replace("'", "''")
+    assert aqp._assess_command(root, ["1", "2"], recheck=False) == (
+        f"Set-Location -LiteralPath '{literal}'; python local/apply_assess.py '1' '2'")
+    assert aqp._assess_command(root, [], recheck=False).endswith(
+        "python local/apply_assess.py --all")
+    assert aqp._assess_command(root, ["1"], recheck=True).endswith(
+        "python local/apply_assess.py --recheck '1'")
+    assert aqp._assess_command(root, ["it's"], recheck=False).endswith("'it''s'")
+
+
+def test_the_default_check_spawns_its_own_console(monkeypatch):
+    import base64
+    spawned = []
+    monkeypatch.setattr(aqp, "_spawn_console", spawned.append)
+    aqp._spawn_check(["7"], True)
+    [argv] = spawned
+    assert argv[:3] == ["powershell", "-NoExit", "-EncodedCommand"]
+    assert base64.b64decode(argv[3]).decode("utf-16-le") == \
+        aqp._assess_command(aqp.REPO_ROOT, ["7"], recheck=True)
+
+
+def test_the_default_gate_is_the_checks_own(monkeypatch):
+    seen = []
+    monkeypatch.setattr(jev_switch, "key_saved", lambda: True)
+    monkeypatch.setattr(aqp.apply_assess, "refusal", lambda **kw: seen.append(kw) or "no")
+    assert aqp._default_difficulty_blocked() == "no"
+    assert seen == [{"saved_key": True}]
+
+
+def test_the_default_hiding_follows_the_switches():
+    path = jev_switch.config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"jev_enabled": true, "jev_difficulty": false}', encoding="utf-8")
+    assert aqp._default_difficulty_hidden() is True
+    path.write_text('{"jev_enabled": false, "jev_difficulty": true}', encoding="utf-8")
+    assert aqp._default_difficulty_hidden() is True
+    path.write_text('{"jev_enabled": true, "jev_difficulty": true}', encoding="utf-8")
+    assert aqp._default_difficulty_hidden() is False
+
+
+def test_pre_answer_in_the_window_opens_add_answer_on_the_answers_tab(qtbot, monkeypatch,
+                                                                      tmp_path):
+    w = _win(qtbot, monkeypatch, tmp_path)
+    opened = []
+    monkeypatch.setattr(w.answers_tab, "add_answer",
+                        lambda prefill=None: opened.append(prefill))
+    prefill = {"question": "Preferred office", "help": "", "type": "choice",
+               "options": ["Austin", "Remote"]}
+    w.apply_queue_panel._on_pre_answer(prefill)
+    assert w.tabs.tabText(w.tabs.currentIndex()) == "Apply Answers"
+    assert opened == [prefill]

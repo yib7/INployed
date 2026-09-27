@@ -396,6 +396,12 @@ class MainWindow(QtWidgets.QMainWindow):
             title.setText(self.EMPTY_FIRST_RUN[0])
             msg.setText(self.EMPTY_FIRST_RUN[1])
 
+    def _pre_answer(self, prefill: dict) -> None:
+        """The Auto-apply tab's Pre-answer (DF-4, PR-9): Add answer on the
+        Apply Answers tab, prefilled with the question the check found."""
+        self._show_tab("Apply Answers")
+        self.answers_tab.add_answer(prefill)
+
     def _show_tab(self, title: str) -> None:
         page = self._tab_widgets.get(title)
         if page is not None:
@@ -585,7 +591,8 @@ class MainWindow(QtWidgets.QMainWindow):
             on_set_password=self._set_ats_password,
             on_mark_applied=self._apply_queue_mark_applied,
             on_mark_seen=self._apply_queue_mark_seen,
-            on_answer_now=lambda: self._show_tab("Apply Answers"))
+            on_answer_now=lambda: self._show_tab("Apply Answers"),
+            on_pre_answer=self._pre_answer)
         self._tab_widgets: dict[str, QtWidgets.QWidget] = {}
         pages = {"High Score (Unseen)": self.high_tab, "All Jobs": self.all_tab,
                  "Tracker": self.tracker_tab, "Auto-apply": self.apply_queue_panel,

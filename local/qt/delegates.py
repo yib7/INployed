@@ -32,6 +32,9 @@ from qt import theme
 
 # Paint-time row tag. jobs_model.SORT_ROLE is UserRole + 1.
 TAG_ROLE = QtCore.Qt.ItemDataRole.UserRole + 2
+# The apply queue's Difficulty cell: the theme family its band is painted in
+# (`apply_assess.band_family`).
+BAND_ROLE = QtCore.Qt.ItemDataRole.UserRole + 3
 
 # Apply-queue statuses -> semantic families (the queue table's TAG_ROLE carries
 # the RAW status string, not a jobs-model row tag).
@@ -205,6 +208,11 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
                                   str(index.data(TAG_ROLE) or ""), muted)
         elif cid == "status":
             self._paint_status_pill(painter, rect, text, font, s)
+        elif cid == "difficulty":
+            if text:
+                fam = theme.SEMANTICS.get(str(index.data(BAND_ROLE) or ""),
+                                          theme.SEMANTICS["neutral"])
+                self._paint_pill(painter, rect, text, font, s, fam)
         elif cid == "follow_up":
             self._paint_follow_up(painter, rect, text, font, muted)
         elif cid == "url":

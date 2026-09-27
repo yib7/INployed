@@ -9,6 +9,15 @@ exact PowerShell line that starts the drain) and "Start auto-apply run" (off,
 with the reason beside it, while the drain it launches would refuse to start:
 `refresh_jev_state`).
 
+The difficulty check (cycle 19, DF-4 to DF-6): the Difficulty column shows each
+job's 1-10 score as a pill coloured by its band, with the reasons and the exact
+questions in its tooltip and the age of a result older than a week. "Check
+difficulty" runs `apply_assess.py` in its own console (hidden while the check
+is switched off, off with the reason while Jev cannot run or a browser holds
+the auto-apply profile), "Check again with my answers" screens the saved page
+again with no browser, and "Pre-answer" opens Add answer prefilled with one of
+the questions.
+
 Freshness: reads are lock-free (`apply_queue.load`, never quarantine=True — the
 panel must never rename a file a locked writer owns). A QFileSystemWatcher
 watches the queue file AND its directory, re-armed after every event because
@@ -34,6 +43,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from PySide6 import QtCore, QtWidgets
 
+import apply_assess
 import apply_queue
 import ats_accounts
 import errmsg
@@ -41,7 +51,7 @@ import jev_switch
 import osopen
 from qt import theme
 from qt.chrome import ChipBar, Pill
-from qt.delegates import STATUS_LABELS, STATUS_TAGS, TAG_ROLE, JobRowDelegate
+from qt.delegates import BAND_ROLE, STATUS_LABELS, STATUS_TAGS, TAG_ROLE, JobRowDelegate
 from qt.widgets import ElidedLabel
 
 # The repo root (this file lives in <root>/local/qt/): the console commands
@@ -113,6 +123,23 @@ def _spawn_console(argv: list[str]) -> None:
     subprocess.Popen(argv, creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
 
 
+def _assess_command(root: Path, job_ids: list[str], *, recheck: bool) -> str:
+    """The PowerShell line that runs the difficulty check from `root`: the
+    named jobs, or every queued job (`--all`) when none is named; `recheck`
+    screens the saved pages again. Each id is a single-quoted literal, the
+    root as in `_console_command`."""
+    literal = str(root).replace("'", "''")
+    args = ["--recheck"] if recheck else []
+    args += ["'" + str(jid).replace("'", "''") + "'" for jid in job_ids] or ["--all"]
+    return (f"Set-Location -LiteralPath '{literal}'; python local/apply_assess.py "
+            + " ".join(args))
+
+
+def _spawn_check(job_ids: list[str], recheck: bool) -> None:
+    """Default on_check_difficulty: `apply_assess.py` in a new console."""
+    _spawn_console(_console_argv(_assess_command(REPO_ROOT, job_ids, recheck=recheck)))
+
+
 def _spawn_kickoff() -> None:
     """Default on_start_run: the drain in a new console."""
     _spawn_console(_kickoff_argv())
@@ -157,10 +184,13 @@ class _ShrinkableCaption(ElidedLabel):
         return QtCore.QSize(0, super().minimumSizeHint().height())
 
 
-COLUMNS = ("Company", "Title", "Status", "Attempts", "Missing", "Updated", "Note")
+COLUMNS = ("Company", "Title", "Status", "Attempts", "Missing", "Difficulty", "Updated",
+           "Note")
 # Column ids the row delegate keys its renderers on (status pill + dot,
-# right-aligned mono counts, mono muted timestamp), 1:1 with COLUMNS.
-COLUMN_IDS = ("company", "title", "status", "attempts", "missing", "updated", "note")
+# right-aligned mono counts, the difficulty pill, mono muted timestamp), 1:1
+# with COLUMNS.
+COLUMN_IDS = ("company", "title", "status", "attempts", "missing", "difficulty", "updated",
+              "note")
 
 _DEBOUNCE_MS = 500     # coalesce a burst of fs events into one refresh
 _POLL_MS = 5000        # mtime-poll fallback when no fs events arrive
@@ -181,6 +211,69 @@ def _default_jev_blocked() -> str:
     (`jev_switch.key_saved`): the drain's console loads `.env` itself, so the
     key reaches it before the dashboard restarts."""
     return jev_switch.start_blocked(saved_key=jev_switch.key_saved())
+
+
+def _default_difficulty_blocked() -> str:
+    """Panel seam for Check difficulty: why `apply_assess.py` would refuse,
+    in its own words, or "" when it would run (`apply_assess.refusal`: a test
+    judge first, then the Jev gate for the check). A key saved in Settings
+    counts, as for Start: the check's console loads `.env` itself."""
+    return apply_assess.refusal(saved_key=jev_switch.key_saved())
+
+
+def _default_difficulty_hidden() -> bool:
+    """Panel seam: is the check switched off in Settings (the Jev master
+    switch or its own)? The buttons hide then."""
+    return jev_switch.switched_off("difficulty")
+
+
+def _default_profile_busy() -> bool:
+    """Panel seam: does a running browser hold the auto-apply profile?"""
+    return apply_assess.profile_busy()
+
+
+def _difficulty_text(d: Dict[str, Any]) -> str:
+    """The Difficulty cell: "N/10", with the age of a result older than a
+    week; "" for a job the check has not read."""
+    if not isinstance(d, dict) or not d.get("score"):
+        return ""
+    age = apply_assess.age_text(str(d.get("checked_at") or ""))
+    return f"{d['score']}/10" + (f" ({age})" if age else "")
+
+
+def _difficulty_tip(d: Dict[str, Any]) -> str:
+    """The Difficulty cell's tooltip: the score and band, when it was read,
+    the reasons and the exact questions the answers cannot fill. The page's
+    words are escaped into the markup."""
+    if not isinstance(d, dict) or not d.get("score"):
+        return ""
+    esc = html.escape
+    age = apply_assess.age_text(str(d.get("checked_at") or ""))
+    lines = [f"<b>{esc(str(d['score']))}/10: {esc(str(d.get('band') or ''))}</b>",
+             esc(f"Checked {d.get('checked_at') or '?'}" + (f", {age}" if age else ""))]
+    reasons = [str(r) for r in d.get("reasons") or []]
+    if reasons:
+        lines.append("Why:")
+        lines += [f"&nbsp;&bull;&nbsp;{esc(r)}" for r in reasons]
+    questions = [q for q in d.get("questions") or [] if isinstance(q, dict)]
+    if questions:
+        lines.append("Questions your answers cannot fill:")
+        for q in questions:
+            extra = [str(q.get("help") or "")]
+            options = [str(o) for o in q.get("options") or []]
+            if options:
+                extra.append("options: " + ", ".join(options))
+            shown = "; ".join(x for x in extra if x)
+            lines.append(f"&nbsp;&bull;&nbsp;{esc(str(q.get('label') or ''))}"
+                         + (f" ({esc(shown)})" if shown else ""))
+    return "<qt>" + "<br>".join(lines) + "</qt>"
+
+
+def _prefill(q: Dict[str, Any]) -> Dict[str, Any]:
+    """Add answer's prefill (PR-9) for one of the check's questions."""
+    return {"question": str(q.get("label") or ""), "help": str(q.get("help") or ""),
+            "type": str(q.get("type") or ""),
+            "options": [str(o) for o in q.get("options") or []]}
 
 
 def _run_inline(fn: Callable[[], Any],
@@ -382,6 +475,11 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                  on_mark_seen: Callable[[Dict[str, Any]], None] | None = None,
                  on_answer_now: Callable[[], None] | None = None,
                  jev_blocked: Callable[[], str] | None = None,
+                 on_check_difficulty: Callable[[List[str], bool], None] | None = None,
+                 on_pre_answer: Callable[[Dict[str, Any]], None] | None = None,
+                 difficulty_blocked: Callable[[], str] | None = None,
+                 difficulty_hidden: Callable[[], bool] | None = None,
+                 profile_busy: Callable[[], bool] | None = None,
                  parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self._queue_override = Path(queue_path) if queue_path else None
@@ -398,6 +496,14 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self._on_answer_now = on_answer_now or (lambda: None)
         # Late-bound like password_exists: why a run cannot start ("" when it can).
         self._jev_blocked = jev_blocked or (lambda: _default_jev_blocked())
+        # The difficulty check (DF-4 to DF-6): its console (job ids, recheck),
+        # Add answer prefilled (the main window opens the Apply Answers tab),
+        # and its gates, late-bound like the others.
+        self._on_check_difficulty = on_check_difficulty or _spawn_check
+        self._on_pre_answer = on_pre_answer or (lambda _p: None)
+        self._difficulty_blocked = difficulty_blocked or (lambda: _default_difficulty_blocked())
+        self._difficulty_hidden = difficulty_hidden or (lambda: _default_difficulty_hidden())
+        self._profile_busy = profile_busy or (lambda: _default_profile_busy())
         self._jobs: List[Dict[str, Any]] = []
         self._mtime_sig: tuple | None = None
         self._build()
@@ -547,7 +653,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         # Widths are @100% and scale with the live interface size, the same way
         # JobsTab._set_column_widths does.
         scale = theme._current_scale
-        for i, w in enumerate((150, 220, 150, 90, 80, 150, 200)):
+        for i, w in enumerate((150, 220, 150, 90, 80, 110, 150, 200)):
             self.table.setColumnWidth(i, round(w * scale))
         # ...except the two count columns, which size themselves. A header
         # section is the one piece of table text Qt clips instead of eliding, so
@@ -605,6 +711,27 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                                  "Delete the selected entry from the queue",
                                  tier="destructive")
         btns.addStretch(1)
+        # The difficulty check (DF-4 to DF-6). The tips are kept for
+        # refresh_difficulty_state, which shows a reason in their place.
+        self._check_tip = (
+            "Score how hard the selected job (or, with none selected, every queued "
+            "job) is to auto-apply, 1 to 10, in a NEW terminal window. It opens each "
+            "posting in the auto-apply browser, follows its Apply button and reads "
+            "the first application page: it types nothing, signs in nowhere and "
+            "submits nothing. About 2 to 4 Jev requests per job.")
+        self._recheck_tip = (
+            "Score the selected job again from its saved page with the answers you "
+            "have now (after Pre-answer, say). No browser; a Jev request or two.")
+        self._pre_answer_tip = (
+            "Save an answer to one of the questions the check found your answers "
+            "cannot fill: opens Add answer on the Apply Answers tab with the "
+            "question filled in.")
+        self.check_difficulty_btn = button("Check difficulty", self._check_difficulty,
+                                           self._check_tip, tier="tertiary")
+        self.recheck_btn = button("Check again with my answers", self._recheck_difficulty,
+                                  self._recheck_tip, tier="tertiary")
+        self.pre_answer_btn = button("Pre-answer", self._pre_answer, self._pre_answer_tip,
+                                     tier="tertiary")
         v.addLayout(btns)
 
         self.status_label = QtWidgets.QLabel("")
@@ -687,12 +814,14 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             for r, e in enumerate(self._jobs):
                 arts = e.get("artifacts") or {}
                 missing = e.get("missing_answers") or []
+                difficulty = e.get("difficulty") or {}
                 cells = (
                     str(e.get("company", "")),
                     str(e.get("title", "")),
                     str(e.get("status", "")),
                     str(e.get("attempts", 0)),
                     str(len(missing) if isinstance(missing, list) else missing),
+                    _difficulty_text(difficulty),
                     str(e.get("updated_at", "")),
                     str(e.get("notes", "")),
                 )
@@ -707,6 +836,10 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                         item.setData(QtCore.Qt.ItemDataRole.UserRole,
                                      str(e.get("job_posting_id", "")))
                         item.setToolTip(str(arts.get("folder", "")))
+                    elif COLUMN_IDS[c] == "difficulty" and text:
+                        item.setData(BAND_ROLE, apply_assess.band_family(
+                            difficulty.get("score")))
+                        item.setToolTip(_difficulty_tip(difficulty))
                     table.setItem(r, c, item)
                 if selected and str(e.get("job_posting_id", "")) == selected:
                     reselect = r
@@ -788,7 +921,48 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self.start_run_btn.setToolTip(reason or self._start_tip)
         self.jev_label.setText(reason)
         self.jev_notice.setVisible(bool(reason))
+        self.refresh_difficulty_state()
         return reason
+
+    def _difficulty_gate(self) -> tuple[bool, str, bool]:
+        """(hidden, why the check cannot run, a browser holds the profile),
+        each read from its seam; a seam that raises reads as no bar (the
+        check asks again as it starts)."""
+        try:
+            hidden = bool(self._difficulty_hidden())
+        except Exception:  # noqa: BLE001 - never break the panel
+            hidden = False
+        try:
+            reason = "" if hidden else str(self._difficulty_blocked() or "")
+        except Exception:  # noqa: BLE001
+            reason = ""
+        try:
+            busy = False if hidden else bool(self._profile_busy())
+        except Exception:  # noqa: BLE001
+            busy = False
+        return hidden, reason, busy
+
+    def refresh_difficulty_state(self) -> tuple[str, bool]:
+        """The difficulty buttons (DF-6): Check difficulty and Check again
+        hide while the check is switched off; while Jev cannot run they are
+        off with the check's reason as their tooltip, and Check difficulty is
+        off while a browser holds the auto-apply profile too (Check again
+        opens no browser). Check again wants a selected job the check has
+        read, Pre-answer one with questions. Read with the Jev gate
+        (`refresh_jev_state`) and on each selection. Returns (the reason,
+        busy)."""
+        hidden, reason, busy = self._difficulty_gate()
+        self.check_difficulty_btn.setVisible(not hidden)
+        self.recheck_btn.setVisible(not hidden)
+        self.check_difficulty_btn.setEnabled(not reason and not busy)
+        self.check_difficulty_btn.setToolTip(
+            reason or (apply_assess.PROFILE_BUSY if busy else self._check_tip))
+        d = (self._selected_entry() or {}).get("difficulty") or {}
+        checked = isinstance(d, dict) and bool(d.get("score"))
+        self.recheck_btn.setEnabled(not reason and checked)
+        self.recheck_btn.setToolTip(reason or self._recheck_tip)
+        self.pre_answer_btn.setEnabled(bool(self._questions()))
+        return reason, busy
 
     # ---- selection / details --------------------------------------------------------
 
@@ -811,6 +985,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
 
     def _update_details(self) -> None:
         self.details.set_entry(self._selected_entry())
+        self.refresh_difficulty_state()
 
     # ---- actions (all mutations ride submit_write) -----------------------------------
 
@@ -929,6 +1104,75 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         box.setDefaultButton(start_btn)
         box.exec()
         return box.clickedButton() is start_btn
+
+    def _questions(self) -> List[Dict[str, Any]]:
+        """The selected job's questions the check found unanswered."""
+        d = (self._selected_entry() or {}).get("difficulty") or {}
+        if not isinstance(d, dict):
+            return []
+        return [q for q in d.get("questions") or [] if isinstance(q, dict) and q.get("label")]
+
+    def _confirm_check(self, n: int) -> bool:
+        """Ask before checking every queued job; tests monkeypatch this."""
+        answer = QtWidgets.QMessageBox.question(
+            self, "Check difficulty",
+            f"Check how hard each of the {n} queued job(s) is to auto-apply? A new "
+            f"terminal opens the auto-apply browser and reads each job's first "
+            f"application page: about 2 to 4 Jev requests per job.")
+        return answer == QtWidgets.QMessageBox.StandardButton.Yes
+
+    def _check_difficulty(self) -> None:
+        """Check the selected job, or every queued job after a confirm. The
+        gate is read again first: a run may have taken the profile since."""
+        reason, busy = self.refresh_difficulty_state()
+        if reason or busy:
+            self._set_note(reason or apply_assess.PROFILE_BUSY)
+            return
+        jid = self._selected_job_id()
+        if jid:
+            self._on_check_difficulty([jid], False)
+            self._set_note("Checking the selected job's difficulty in a new terminal.")
+            return
+        queued = self._queued_count()
+        if queued == 0:
+            self._set_note("Select a job, or queue jobs to check.")
+            return
+        if not self._confirm_check(queued):
+            return
+        self._on_check_difficulty([], False)
+        self._set_note(f"Checking {queued} queued job(s) in a new terminal.")
+
+    def _recheck_difficulty(self) -> None:
+        """Screen the selected job's saved page again (no browser)."""
+        reason, _busy = self.refresh_difficulty_state()
+        jid = self._selected_job_id()
+        if reason or not jid:
+            self._set_note(reason or "Select a job the check has read.")
+            return
+        self._on_check_difficulty([jid], True)
+        self._set_note("Checking the selected job again with your answers in a new terminal.")
+
+    def _pre_answer_menu(self) -> QtWidgets.QMenu:
+        """One entry per question of the selected job, each opening Add
+        answer prefilled with it."""
+        menu = QtWidgets.QMenu(self)
+        for q in self._questions():
+            action = menu.addAction(str(q.get("label") or ""))
+            action.triggered.connect(lambda _c=False, q=q: self._on_pre_answer(_prefill(q)))
+        return menu
+
+    def _pre_answer(self) -> None:
+        """Add answer prefilled with the selected job's question, or a menu
+        of them when there are several."""
+        questions = self._questions()
+        if not questions:
+            self._set_note("The selected job has no question to pre-answer.")
+            return
+        if len(questions) == 1:
+            self._on_pre_answer(_prefill(questions[0]))
+            return
+        menu = self._pre_answer_menu()
+        menu.exec(self.pre_answer_btn.mapToGlobal(self.pre_answer_btn.rect().bottomLeft()))
 
     def _copy_kickoff(self) -> None:
         QtWidgets.QApplication.clipboard().setText(KICKOFF_COMMAND)

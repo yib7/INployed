@@ -1035,10 +1035,17 @@ class SettingsForm(QtWidgets.QWidget):
             choices = [str(c) for c in f.choices]
             combo = QtWidgets.QComboBox()
             combo.addItems(choices)
-            self._set_combo(combo, value, choices, f.default)
-            self._getters[f.key] = combo.currentText
+            if f.blank_label:
+                combo.addItem(f.blank_label)      # the row after the choices is the blank
+            self._set_combo(combo, value, choices, f.default, blank_label=f.blank_label)
+            # Read by row: the blank entry's row gives "", and an unknown value's
+            # extra row gives its text even when that text matches the label.
+            self._getters[f.key] = (
+                (lambda c=combo, n=len(choices): "" if c.currentIndex() == n else c.currentText())
+                if f.blank_label else combo.currentText)
             self._setters[f.key] = (
-                lambda v, c=combo, ch=choices, d=f.default: self._set_combo(c, v, ch, d))
+                lambda v, c=combo, ch=choices, d=f.default, b=f.blank_label:
+                self._set_combo(c, v, ch, d, blank_label=b))
             self._widgets[f.key] = combo
             return combo
         if f.type == "editable_choice":
@@ -1080,10 +1087,10 @@ class SettingsForm(QtWidgets.QWidget):
         return edit
 
     @staticmethod
-    def _match_choice(choices, value, default) -> str:
+    def _match_choice(choices, value, default, *, keep_blank: bool = False) -> str:
         """`value` as the choice it names: the exact entry, else `default` for a
-        blank, else the entry it matches ignoring case and surrounding spaces,
-        else the stripped text.
+        blank ("" with `keep_blank`), else the entry it matches ignoring case and
+        surrounding spaces, else the stripped text.
 
         Cycle 19's ST-7. The old setter fell back to index 0, so a hand-edited
         `"gemini_auth": "Api_Key"` opened as vertex billing and the next Save
@@ -1092,42 +1099,53 @@ class SettingsForm(QtWidgets.QWidget):
         Save names it (`settings.field_problem`) until the user picks one.
 
         A blank (a hand-written `KEY=` line, a JSON "" or null) reads as the
-        field's default, the way the code that reads these settings treats a
-        blank: shown as typed, it was an option `field_problem` refuses, so
-        every Save failed on a value the user never chose (SP1 review C)."""
+        field's default (SP1 review C): shown as typed, it was an option
+        `field_problem` refuses, so every Save failed on a value the user never
+        chose. The code that reads these settings mostly agrees: the tailor, the
+        scorer's provider, the Jev judge and the snapshot pruner all take a blank
+        as the default. The scraper hands a blank search filter to Bright Data
+        as it is, so a Save puts the default in its place. A field whose help
+        gives a blank a meaning of its own declares `Field.blank_label`
+        (SP1 follow-up 2), and its callers pass `keep_blank`, so the blank comes
+        back blank: the dropdown shows it on the labelled entry and Save writes
+        it back unchanged."""
         text = "" if value is None else str(value)
         if text in choices:
             return text
         folded = text.strip().casefold()
         if not folded:
-            return str(default)
+            return "" if keep_blank else str(default)
         for choice in choices:
             if choice.casefold() == folded:
                 return choice
         return text.strip()
 
     @classmethod
-    def _set_combo(cls, combo: QtWidgets.QComboBox, value, choices, default) -> None:
+    def _set_combo(cls, combo: QtWidgets.QComboBox, value, choices, default, *,
+                   blank_label: str = "") -> None:
         """Select `value` in a fixed-choice dropdown (`_match_choice`).
 
         `choices` are the listed entries, which fill the dropdown's first rows.
-        A value that matches none of them takes ONE extra row after them, reused
-        by the next unknown value and dropped once the dropdown holds a listed
-        value again, so Revert or Restore defaults leaves only the options the
-        setting accepts. The listed entry is selected before the extra row goes,
-        so the dropdown never passes through a value nobody set."""
+        With a `blank_label` the caller has put that entry in the next row, and
+        it stands for a blank value. A value that matches none of them takes ONE
+        extra row after them, reused by the next unknown value and dropped once
+        the dropdown holds a listed value again, so Revert or Restore defaults
+        leaves only the options the setting accepts. The listed entry is selected
+        before the extra row goes, so the dropdown never passes through a value
+        nobody set."""
         choices = [str(c) for c in choices]
-        base = len(choices)
-        text = cls._match_choice(choices, value, default)
-        if text in choices:
-            combo.setCurrentIndex(choices.index(text))
+        rows = choices + ([""] if blank_label else [])     # the value each fixed row holds
+        base = len(rows)
+        text = cls._match_choice(choices, value, default, keep_blank=bool(blank_label))
+        if text in rows:
+            combo.setCurrentIndex(rows.index(text))
         elif combo.count() > base:
             combo.setItemText(base, text)
             combo.setCurrentIndex(base)
         else:
             combo.addItem(text)
             combo.setCurrentIndex(base)
-        keep = base if text in choices else base + 1
+        keep = base if text in rows else base + 1
         while combo.count() > keep:
             combo.removeItem(combo.count() - 1)
 
@@ -1627,12 +1645,14 @@ class SettingsForm(QtWidgets.QWidget):
         their own branches), and a secret because .env values are already text.
         A fixed choice goes through `_match_choice`, the reading `_set_combo`
         gives the dropdown: a stored "Api_Key" opens clean as api_key, and a
-        blank one clean as the default.
+        blank one clean as the default, or as the blank entry of a field with a
+        `blank_label`.
         """
         if f.secret or f.type in ("multichoice", "list"):
             return raw
         if f.type == "choice":
-            return cls._match_choice([str(c) for c in f.choices], raw, f.default)
+            return cls._match_choice([str(c) for c in f.choices], raw, f.default,
+                                     keep_blank=bool(f.blank_label))
         return cls._coerce(f, raw)[0]
 
     @classmethod

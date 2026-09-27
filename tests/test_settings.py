@@ -1610,8 +1610,9 @@ def test_a_blank_choice_names_the_fix_in_plain_words():
 def test_every_choice_default_is_one_of_its_choices():
     """Restore defaults and each field's reset button write a choice field's
     default, and the Settings tab opens a blank stored choice on its default
-    (SP1 review C). Save refuses a choice outside the listed ones, so each of
-    these holds only while the default is listed."""
+    (SP1 review C) unless the field lists a blank entry. Save refuses a choice
+    outside the listed ones, so each of these holds only while the default is
+    listed."""
     fields = [f for f in settings.SETTINGS_SCHEMA if f.type == "choice"]
     assert len(fields) >= 12
     for f in fields:
@@ -1627,3 +1628,27 @@ def test_every_multichoice_default_is_among_its_choices():
     for f in fields:
         assert set(f.default) <= set(f.choices), f.key
         assert settings.field_problem(f, list(f.default)) is None, f.key
+
+
+def test_a_blank_entry_is_declared_only_on_a_choice_field_and_names_no_choice():
+    """`Field.blank_label` gives a blank its own dropdown entry (SP1 follow-up
+    2). The Google Cloud location is the one field whose help gives a blank a
+    meaning of its own, and the label differs from every listed choice so the
+    dropdown can tell the two apart."""
+    declared = [f for f in settings.SETTINGS_SCHEMA if f.blank_label]
+    assert [f.key for f in declared] == ["GOOGLE_CLOUD_LOCATION"]
+    for f in declared:
+        assert f.type == "choice", f.key
+        assert f.blank_label.strip() and f.blank_label not in f.choices, f.key
+
+
+def test_a_blank_location_is_valid_and_other_blank_choices_still_ask_for_a_pick():
+    """Save accepts the blank a `blank_label` field lists. Spaces, an unlisted
+    region and a blank on any other choice field keep their notes."""
+    assert settings.validate({"GOOGLE_CLOUD_LOCATION": ""}) == {}
+    assert settings.validate({"GOOGLE_CLOUD_LOCATION": "   "}) == {
+        "GOOGLE_CLOUD_LOCATION": "Pick one of the listed options."}
+    assert settings.validate({"GOOGLE_CLOUD_LOCATION": "mars-1"}) == {
+        "GOOGLE_CLOUD_LOCATION": "Not allowed: mars-1."}
+    assert settings.validate({"RESUME_TAILOR_MODEL_MODE": ""}) == {
+        "RESUME_TAILOR_MODEL_MODE": "Pick one of the listed options."}

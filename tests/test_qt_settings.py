@@ -1,5 +1,6 @@
 """SP6: the Qt settings form — widget-by-type, secret masking, save/revert, VM toggle."""
 import json
+import re
 from datetime import datetime
 
 import envfile
@@ -2946,3 +2947,177 @@ def test_a_choice_stored_in_another_case_reads_as_its_match(qtbot, tmp_path, mon
     _no_modals(monkeypatch)
     assert form.save() is True
     assert json.loads(targets["config"].read_text("utf-8"))["gemini_auth"] == "api_key"
+
+
+_LOCATION = "GOOGLE_CLOUD_LOCATION"
+
+
+def _field(key):
+    return next(f for f in settings.SETTINGS_SCHEMA if f.key == key)
+
+
+def test_a_blank_location_survives_a_save_of_another_change(qtbot, tmp_path, monkeypatch):
+    """SP1 follow-up 2 (Minor 1). Left blank, the tailor runs in 'global' and
+    the scorer in 'us-central1' (the field's help), and review C's read of a
+    blank as the default wrote 'global' over it on the next Save with no word
+    in the summary. The blank opens on its labelled entry, and a Save of an
+    unrelated change leaves .env byte for byte as it was."""
+    modals = _no_modals(monkeypatch)
+    env = _targets(tmp_path)["env"]
+    first = _form(tmp_path)
+    qtbot.addWidget(first)
+    assert first.save() is True                           # every key written once
+    full = env.read_bytes()
+    assert full.count(b"GOOGLE_CLOUD_LOCATION=global") == 1
+    blank = full.replace(b"GOOGLE_CLOUD_LOCATION=global", b"GOOGLE_CLOUD_LOCATION=")
+    env.write_bytes(blank)
+
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert form._getters[_LOCATION]() == ""
+    assert form._widgets[_LOCATION].currentText() == _field(_LOCATION).blank_label
+    assert _LOCATION not in form._dirty
+    form._setters["resume_tone"]("concise")
+    modals.clear()
+    assert form.save() is True
+    assert env.read_bytes() == blank
+    body = "\n".join(str(a) for _n, a in modals)
+    assert "Cover-letter tone: professional -> concise" in body
+    assert "Google Cloud location" not in body
+    assert form._getters[_LOCATION]() == "" and _LOCATION not in form._dirty
+
+
+@pytest.mark.parametrize("pick", ["global", "us-east1"])
+def test_picking_a_location_over_a_blank_writes_it_and_the_summary_names_it(
+        qtbot, tmp_path, monkeypatch, pick):
+    """A picked region replaces the blank and the Save summary names the change.
+    That includes 'global', the default: while a blank read as the default, the
+    Save that wrote it announced no change at all."""
+    env = _targets(tmp_path)["env"]
+    env.write_text("GOOGLE_CLOUD_LOCATION=\n", encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    combo = form._widgets[_LOCATION]
+    assert form._getters[_LOCATION]() == ""
+    assert combo.currentText() == _field(_LOCATION).blank_label
+    combo.setCurrentText(pick)
+    assert form._getters[_LOCATION]() == pick and _LOCATION in form._dirty
+    modals = _no_modals(monkeypatch)
+    assert form.save() is True
+    assert envfile.read(env)[_LOCATION] == pick
+    body = "\n".join(str(a) for _n, a in modals)
+    assert f"Google Cloud location: (blank) -> {pick}" in body
+    assert "Restart the dashboard for this to take effect: Google Cloud location." in body
+    assert combo.currentText() == pick and _LOCATION not in form._dirty
+
+
+def test_restore_defaults_and_revert_move_between_the_blank_and_the_default(qtbot, tmp_path):
+    """Restore defaults picks 'global' over a stored blank, and Revert brings the
+    blank entry back; the entry stays in the dropdown throughout."""
+    _targets(tmp_path)["env"].write_text("GOOGLE_CLOUD_LOCATION=\n", encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    combo = form._widgets[_LOCATION]
+    form.restore_defaults()
+    assert combo.currentText() == "global" and _LOCATION in form._dirty
+    form.revert()
+    assert form._getters[_LOCATION]() == "" and _LOCATION not in form._dirty
+    assert combo.currentText() == _field(_LOCATION).blank_label
+    assert combo.count() == len(_field(_LOCATION).choices) + 1
+
+
+def test_the_review_c_blanks_still_open_on_their_defaults_beside_a_blank_location(
+        qtbot, tmp_path, monkeypatch):
+    """Only a field with a blank entry keeps a blank. A blank
+    `RESUME_TAILOR_MODEL_MODE=` line and a blank `"gemini_auth": ""` still
+    open on their defaults and a Save writes the defaults (review C), while
+    the location in the same .env stays blank."""
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    targets = _targets(tmp_path)
+    targets["env"].write_text("RESUME_TAILOR_MODEL_MODE=\nGOOGLE_CLOUD_LOCATION=\n",
+                              encoding="utf-8")
+    targets["config"].write_text(json.dumps({"gemini_auth": ""}), encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert form._getters[_LOCATION]() == ""
+    for key in ("RESUME_TAILOR_MODEL_MODE", "gemini_auth"):
+        combo = form._widgets[key]
+        assert combo.currentText() == by_key[key].default, key
+        assert combo.count() == len(by_key[key].choices), key
+        assert key not in form._dirty, key
+    _no_modals(monkeypatch)
+    assert form.save() is True
+    stored = envfile.read(targets["env"])
+    assert stored["RESUME_TAILOR_MODEL_MODE"] == by_key["RESUME_TAILOR_MODEL_MODE"].default
+    assert stored[_LOCATION] == ""
+    assert json.loads(targets["config"].read_text("utf-8"))["gemini_auth"] == \
+        by_key["gemini_auth"].default
+
+
+# The fields whose help gives a blank a meaning of its own (the follow-up 2 scan).
+# The location is the one fixed choice among them; the rest are free text.
+_BLANK_MEANS_SOMETHING = (
+    "GEMINI_API_KEYS", "RESUME_TAILOR_GEMINI_API_KEY", "GOOGLE_CLOUD_PROJECT",
+    "GOOGLE_CLOUD_LOCATION", "RESUME_TAILOR_OUTPUT", "LINKEDIN_CHROME_ACCOUNT",
+    "RESUME_TAILOR_MODEL_ALL", "RESUME_TAILOR_CLAUDE_MODEL_ALL", "VM_INSTANCE")
+
+
+def test_every_field_whose_help_gives_a_blank_a_meaning_keeps_it_through_a_save(
+        qtbot, tmp_path, monkeypatch):
+    """Each field whose help says what a blank does opens blank from a blank
+    .env line, and a Save writes that line back blank. A help text that starts
+    to mention a blank joins the list here (auto_apply_generate's "stays blank"
+    is about the answers it drafts)."""
+    mentions = {f.key for f in settings.SETTINGS_SCHEMA
+                if re.search(r"\bblank\b", f.help, re.IGNORECASE)}
+    assert mentions - {"auto_apply_generate"} == set(_BLANK_MEANS_SOMETHING)
+    env = _targets(tmp_path)["env"]
+    env.write_text("".join(f"{key}=\n" for key in _BLANK_MEANS_SOMETHING), encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    for key in _BLANK_MEANS_SOMETHING:
+        assert form._field_value(_field(key)) == ("", None), key
+    _no_modals(monkeypatch)
+    assert form.save() is True
+    lines = env.read_text(encoding="utf-8").splitlines()
+    assert lines[:len(_BLANK_MEANS_SOMETHING)] == [f"{key}=" for key in _BLANK_MEANS_SOMETHING]
+
+
+def test_the_labels_own_words_in_the_file_are_an_unknown_location(qtbot, tmp_path,
+                                                                   monkeypatch):
+    """The dropdown reads its blank entry by row, so a file holding the label's
+    words opens on the extra row and Save names them like any unknown region.
+    Read by text, they would pass as a blank and Save would write one."""
+    label = _field(_LOCATION).blank_label
+    _targets(tmp_path)["env"].write_text(f"GOOGLE_CLOUD_LOCATION={label}\n", encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert form._getters[_LOCATION]() == label
+    modals = _no_modals(monkeypatch)
+    assert form.save() is False
+    assert form._errors == {_LOCATION: f"Not allowed: {label}."}
+    assert modals == []
+
+
+def test_set_combo_keeps_a_blank_on_its_labelled_entry(qtbot):
+    """Follow-up 2 at the unit. With a `blank_label` the entry after the choices
+    stands for a blank, an unknown value takes the one extra row after it, and a
+    blank or a listed value takes that row away again. The label's own text in
+    the file is an unknown value, which Save names."""
+    choices = ("global", "us-central1")
+    label = "(blank: see help)"
+    combo = QtWidgets.QComboBox()
+    qtbot.addWidget(combo)
+    combo.addItems([*choices, label])
+    for blank in ("", "   ", None):
+        SettingsForm._set_combo(combo, "global", choices, "global", blank_label=label)
+        SettingsForm._set_combo(combo, blank, choices, "global", blank_label=label)
+        assert (combo.currentIndex(), combo.count()) == (2, 3), repr(blank)
+    SettingsForm._set_combo(combo, "mars-1", choices, "global", blank_label=label)
+    assert (combo.currentIndex(), combo.currentText(), combo.count()) == (3, "mars-1", 4)
+    SettingsForm._set_combo(combo, label, choices, "global", blank_label=label)
+    assert (combo.currentIndex(), combo.count()) == (3, 4)
+    SettingsForm._set_combo(combo, "", choices, "global", blank_label=label)
+    assert (combo.currentIndex(), combo.count()) == (2, 3)
+    SettingsForm._set_combo(combo, "US-Central1", choices, "global", blank_label=label)
+    assert (combo.currentText(), combo.count()) == ("us-central1", 3)

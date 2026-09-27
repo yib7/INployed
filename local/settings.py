@@ -126,6 +126,13 @@ class Field:
     # restart anyway — and the flag is per-Field, not per-value, so the honest
     # choice is the one that cannot leave someone staring at a stale model id.
     restart: bool = False
+    # For a `choice` field whose readers give a blank a meaning of its own: the
+    # dropdown entry that stands for the blank. The Settings tab lists it after
+    # the choices, opens a stored blank on it and writes it back blank, and
+    # `field_problem` accepts the blank. Left empty, a stored blank opens on the
+    # default (settings_tab._match_choice). Pinned by
+    # test_a_blank_entry_is_declared_only_on_a_choice_field_and_names_no_choice.
+    blank_label: str = ""
 
 
 # Targets whose backing file is a .env (key=value), not JSON. Their Field.key is
@@ -649,7 +656,8 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Vertex AI region. 'global' works for most users. Left blank, the résumé "
                "tailor falls back to 'global' but the job scorer falls back to "
                "'us-central1'; set this explicitly to keep the two in sync.",
-          choices=("global", "us-central1", "us-east1", "us-west1", "europe-west1")),
+          choices=("global", "us-central1", "us-east1", "us-west1", "europe-west1"),
+          blank_label="(blank: tailor uses global, scorer us-central1)"),
     Field("RESUME_TAILOR_CANDIDATE", "Your name (resume filenames)", "str", "Your_Name",
           "Connection & paths", "env", restart=True,
           help="Used in generated resume filenames; write it with underscores, no spaces."),
@@ -1091,9 +1099,10 @@ def field_problem(f: Field, value: Any) -> str | None:
     """
     if not _coerce_ok(f, value):
         return f"Expected {f.type}, got {type(value).__name__}."
-    if f.type == "choice" and value not in f.choices:
+    if f.type == "choice" and value not in f.choices and not (f.blank_label and value == ""):
         # The Settings tab keeps an unknown stored choice on screen as typed, and a
-        # blank one would read "Not allowed: ." under its dropdown.
+        # blank one would read "Not allowed: ." under its dropdown. A field with a
+        # `blank_label` lists the blank itself, so only there is "" a choice.
         return f"Not allowed: {value}." if value.strip() else "Pick one of the listed options."
     # An .env value is one physical KEY=VALUE line and envfile.read parses line by
     # line, so a newline does not round-trip: it writes a second line the reader

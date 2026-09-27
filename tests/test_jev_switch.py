@@ -63,6 +63,17 @@ def test_the_master_switch_off_turns_every_area_off_in_every_mode(sdk, mode):
             assert _why(area, cfg, env) == "Jev is switched off in Settings", area
 
 
+def test_master_on_is_the_master_switch_alone():
+    """For the setup checks, which list every missing piece at once (JS-5): off
+    only for False, so a stray value reads as the Settings checkbox shows it."""
+    assert jev_switch.master_on(config={}) is True
+    assert jev_switch.master_on(config={"jev_enabled": "no"}) is True
+    assert jev_switch.master_on(config={"jev_enabled": True, "jev_scoring": False}) is True
+    assert jev_switch.master_on(config={"jev_enabled": False}) is False
+    jev_switch.config_path().write_text(json.dumps({"jev_enabled": False}), encoding="utf-8")
+    assert jev_switch.master_on() is False
+
+
 @pytest.mark.parametrize("area,key,words", [
     ("scoring", "jev_scoring", "scoring"),
     ("tailor", "jev_tailor", "tailoring"),

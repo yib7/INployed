@@ -1273,7 +1273,8 @@ def test_a_settings_save_refreshes_the_test_answers_button(qtbot, tmp_path, monk
     for name in ("load_min_score", "load_repost_window_days", "load_followup_days"):
         monkeypatch.setattr(mw, name, lambda: 0)
     window = SimpleNamespace(answers_tab=ed, reload_data_async=lambda: None,
-                             resume_data_tab=SimpleNamespace(refresh_push_state=lambda: None))
+                             resume_data_tab=SimpleNamespace(refresh_push_state=lambda: None),
+                             apply_queue_panel=SimpleNamespace(refresh_jev_state=lambda: None))
     mw.MainWindow._on_settings_saved(window)
     assert ed.test_answers_btn.isEnabled() is True
 

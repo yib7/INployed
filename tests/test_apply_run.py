@@ -24,6 +24,7 @@ import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
 import ats_accounts  # noqa: E402
 import jev  # noqa: E402
+import jev_switch  # noqa: E402
 import apply_harness as h  # noqa: E402
 import jev_harness  # noqa: E402
 from answer_bank import standard_bank, unconfirmed  # noqa: E402
@@ -2482,10 +2483,15 @@ def test_hold_ends_when_a_real_page_closes_on_its_own(_browser):
 @pytest.fixture
 def hermetic_cli(monkeypatch):
     """The CLI never reads the developer's .env or config: `_load_env` is a
-    no-op and `load_settings` returns the defaults (a test may override)."""
+    no-op and `load_settings` returns the defaults (a test may override). The
+    drain's Jev gate (JS-5) finds a key in the environment and the SDK, so a
+    test gets past it to the judge it patches; the switch reads the sandbox's
+    config file, where it is on."""
     import settings
     monkeypatch.setattr(apply_run, "_load_env", lambda: None)
     monkeypatch.setattr(apply_run, "load_settings", lambda: dict(apply_run.DEFAULT_SETTINGS))
+    monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key")
+    monkeypatch.setattr(jev_switch, "sdk_installed", lambda: True)
 
     def _never(*a, **kw):
         raise AssertionError("the real settings store was read")
@@ -2621,6 +2627,26 @@ def test_doctor_reads_the_key_from_the_saved_settings_too(tmp_path, capsys, monk
     assert capsys.readouterr().out.startswith("ok       TypeSafe API key")
 
 
+def test_doctor_names_the_jev_switch_and_fails_while_it_is_off(tmp_path, capsys, monkeypatch):
+    """JS-5: the drain refuses while Jev is switched off, so the doctor says so
+    and exits 2 with every other row in place."""
+    import settings
+    import setup_check
+    monkeypatch.setattr(setup_check, "module_found", lambda name: True)
+    monkeypatch.setattr(setup_check, "chromium_installed", lambda: True)
+    monkeypatch.setattr(settings, "secret_status", lambda: {"TYPESAFE_API_KEY": True})
+    monkeypatch.setattr(settings, "load", lambda: {"auto_apply_jev_mode": "typesafe"})
+    assert apply_run.doctor(tmp_path / "profile") == 0
+    assert "Jev switch: on\n" in capsys.readouterr().out
+    monkeypatch.setattr(settings, "load", lambda: {"auto_apply_jev_mode": "typesafe",
+                                                   "jev_enabled": False})
+    assert apply_run.doctor(tmp_path / "profile") == 2
+    out = capsys.readouterr().out
+    assert "Jev switch: off (Settings > Jev)\n" in out
+    assert "  Auto-apply runs on Jev. Turn Jev on in Settings > Jev.\n" in out
+    assert "MISSING" not in out
+
+
 def test_main_settings_come_from_the_loader_and_flags_override(hermetic_cli, monkeypatch,
                                                                 capsys):
     monkeypatch.setattr(apply_run, "load_settings",
@@ -2652,6 +2678,88 @@ def test_the_drain_defaults_match_the_settings_schema():
     assert apply_run.DEFAULT_SETTINGS["auto_apply_pause_minutes"] == 10
     for key, default in apply_run.DEFAULT_SETTINGS.items():
         assert schema[key] == default, key
+
+
+# --- JS-5: the drain refuses while Jev cannot run, before a judge, a claim or a browser --
+
+_JEV_OFF = "Auto-apply runs on Jev. Turn Jev on in Settings > Jev."
+
+
+def _past_the_jev_gate_fails(monkeypatch):
+    """The drain's first steps after the Jev gate, each one failing the test."""
+    def _never(*a, **kw):
+        raise AssertionError("the drain went past the Jev gate")
+    monkeypatch.setattr(apply_run.jev, "get", _never)
+    monkeypatch.setattr(apply_run, "Runner", _never)
+    monkeypatch.setattr(apply_run.apply_queue, "claim", _never)
+
+
+@pytest.mark.parametrize("verb", [["drain"], ["one", "42"]])
+def test_the_drain_refuses_while_jev_is_switched_off(hermetic_cli, monkeypatch, capsys, verb):
+    """The master switch off stops `drain` and `one` with exit 2 and the
+    sentence the Auto-apply panel's Start button shows, word for word."""
+    jev_switch.config_path().write_text(json.dumps({"jev_enabled": False}), encoding="utf-8")
+    _past_the_jev_gate_fails(monkeypatch)
+    assert apply_run.main([*verb, "--jev", "typesafe"]) == 2
+    assert capsys.readouterr().err.strip() == _JEV_OFF
+    assert jev_switch.apply_blocked() == _JEV_OFF       # the panel's words
+
+
+@pytest.mark.parametrize("missing, fix", [
+    ("key", "Add the TypeSafe API key in Settings > Jev."),
+    ("sdk", "Install typesafe-sdk (pip install -r requirements.txt)."),
+])
+def test_the_drain_names_a_missing_key_or_sdk_in_the_panels_words(
+        hermetic_cli, monkeypatch, capsys, missing, fix):
+    if missing == "key":
+        monkeypatch.delenv("TYPESAFE_API_KEY")
+    else:
+        monkeypatch.setattr(jev_switch, "sdk_installed", lambda: False)
+    _past_the_jev_gate_fails(monkeypatch)
+    assert apply_run.main(["drain"]) == 2
+    assert capsys.readouterr().err.strip() == "Auto-apply runs on Jev. " + fix
+
+
+def test_the_drain_gate_asks_about_the_judge_the_drain_builds(hermetic_cli, monkeypatch, capsys):
+    """The drain builds the judge its --jev flag or the setting names, so a
+    shell's AUTO_APPLY_JEV_MODE=fake never lets a keyless live run past."""
+    monkeypatch.setenv("AUTO_APPLY_JEV_MODE", "fake")
+    monkeypatch.delenv("TYPESAFE_API_KEY")
+    _past_the_jev_gate_fails(monkeypatch)
+    assert apply_run.main(["drain"]) == 2
+    assert capsys.readouterr().err.strip() == (
+        "Auto-apply runs on Jev. Add the TypeSafe API key in Settings > Jev.")
+
+
+def test_the_drain_reads_the_key_its_own_env_file_loads(hermetic_cli, monkeypatch, capsys):
+    """The gate runs after `_load_env`: a key saved in Settings (the `.env` the
+    drain loads) counts before the dashboard that launched it restarts."""
+    monkeypatch.delenv("TYPESAFE_API_KEY")
+    monkeypatch.setattr(apply_run, "_load_env",
+                        lambda: monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key"))
+    monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev_harness.judge())
+
+    class R:
+        def __init__(self, **kw):
+            pass
+
+        def drain(self, cap):
+            return []
+    monkeypatch.setattr(apply_run, "Runner", R)
+    assert apply_run.main(["drain"]) == 0
+
+
+@pytest.mark.parametrize("mode", ["fake", "replay"])
+def test_a_test_judge_keeps_its_own_refusal_whatever_the_jev_switch_says(
+        hermetic_cli, monkeypatch, capsys, mode):
+    """The fake and replay judges are refused as fixture-only, in the words they
+    had before the Jev gate, with the switch off and no key too."""
+    jev_switch.config_path().write_text(json.dumps({"jev_enabled": False}), encoding="utf-8")
+    monkeypatch.delenv("TYPESAFE_API_KEY")
+    _past_the_jev_gate_fails(monkeypatch)
+    assert apply_run.main(["drain", "--jev", mode]) == 2
+    err = capsys.readouterr().err
+    assert "fixture-only" in err and "Settings > Jev" not in err
 
 
 # --- cycle 18: the store is the one source of the answers (FL-2, FL-4) ------------------

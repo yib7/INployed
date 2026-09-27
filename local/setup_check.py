@@ -28,6 +28,7 @@ import sys
 from collections.abc import Iterable
 from pathlib import Path
 
+import jev_switch
 import jobsdata
 import settings
 
@@ -117,16 +118,21 @@ def engine_problems() -> list[str]:
 # --- Auto-apply (cycle 16): the Jev judge and the Playwright browser -------------
 
 def auto_apply_warnings(has_key: bool, jev_mode: str, sdk_found: bool,
-                        playwright_found: bool, chromium_found: bool) -> list[str]:
+                        playwright_found: bool, chromium_found: bool,
+                        jev_enabled: bool = True) -> list[str]:
     """Warn when an auto-apply run would refuse to start. Pure, like the two
     truth tables above.
 
+    Jev switched off (Settings > Jev) stops a run in every mode, so its line
+    comes first, in the words the drain and the Auto-apply panel use (JS-5).
     The key and the SDK only matter in 'typesafe' mode: 'fake' is the test-only
     judge and needs neither. Playwright and Chromium are needed in every mode.
     A missing Playwright package folds the Chromium row into its own line,
     since `playwright install chromium` cannot run without it.
     """
     out: list[str] = []
+    if not jev_enabled:
+        out.append(jev_switch.blocked_sentence("switch"))
     if jev_mode == "typesafe":
         if not has_key:
             out.append("Auto-apply judge is 'typesafe' but no TypeSafe API key is saved. "
@@ -237,7 +243,8 @@ def chrome_installed(paths: Iterable[Path] | None = None) -> bool:
 
 
 def auto_apply_problems() -> list[str]:
-    """Key, SDK, Playwright and Chromium rows for the Jev-judged auto-apply run.
+    """Jev switch, key, SDK, Playwright and Chromium rows for the Jev-judged
+    auto-apply run.
 
     Best-effort like `engine_problems`: a failure to read settings returns [].
     The key counts as present from either the saved .env or the live
@@ -252,7 +259,8 @@ def auto_apply_problems() -> list[str]:
         chromium_found = playwright_found and (chrome_installed() or chromium_installed())
         return [f"[Auto-apply] {w}" for w in auto_apply_warnings(
             has_key, jev_mode, module_found("typesafe_sdk"),
-            playwright_found, chromium_found)]
+            playwright_found, chromium_found,
+            jev_enabled=jev_switch.master_on(config=stored))]
     except Exception:  # noqa: BLE001
         return []
 

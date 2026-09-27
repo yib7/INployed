@@ -195,6 +195,18 @@ def test_auto_apply_warnings_everything_missing_is_three_rows():
                    chromium_found=False)) == 3
 
 
+_JEV_OFF = "Auto-apply runs on Jev. Turn Jev on in Settings > Jev."
+
+
+def test_auto_apply_warnings_jev_switched_off_comes_first_in_every_mode():
+    """JS-5: the drain refuses while the master switch is off, the test judges
+    included. The rows after it still list what else a run needs."""
+    assert _aa(jev_enabled=False) == [_JEV_OFF]
+    assert _aa(jev_enabled=False, jev_mode="fake", has_key=False, sdk_found=False) == [_JEV_OFF]
+    out = _aa(jev_enabled=False, has_key=False)
+    assert len(out) == 2 and out[0] == _JEV_OFF and "console.typesafe.ai/keys" in out[1]
+
+
 # --- chromium_installed: playwright importable AND a chromium-* build dir ---------
 
 def test_chromium_installed_needs_playwright_and_a_build_dir(monkeypatch, tmp_path):
@@ -325,6 +337,12 @@ def test_auto_apply_problems_honours_fake_mode_from_settings(monkeypatch):
     _stub_auto_apply(monkeypatch, stored={"auto_apply_jev_mode": "fake"},
                      found=("playwright",))
     assert setup_check.auto_apply_problems() == []
+
+
+def test_auto_apply_problems_honours_the_jev_switch_from_settings(monkeypatch):
+    _stub_auto_apply(monkeypatch, stored={"jev_enabled": False},
+                     secrets={"TYPESAFE_API_KEY": True}, found=("typesafe_sdk", "playwright"))
+    assert setup_check.auto_apply_problems() == [f"[Auto-apply] {_JEV_OFF}"]
 
 
 def test_auto_apply_problems_is_silent_when_settings_cannot_be_read(monkeypatch):

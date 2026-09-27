@@ -25,6 +25,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
 import apply_queue  # noqa: E402
+import jev_switch  # noqa: E402
 from qt import apply_queue_panel as aqp  # noqa: E402
 from qt import main_window as mw  # noqa: E402
 from qt.apply_queue_panel import (  # noqa: E402
@@ -663,6 +664,10 @@ def test_set_ats_password_mismatch_blank_and_cancel_abort(qtbot, monkeypatch, tm
 
 
 def _panel(qtbot, qfile, **kw):
+    # The Jev gate (JS-5) would read the sandbox, where no key is set: a panel
+    # test gets a run that can start, and a gate test passes its own
+    # `jev_blocked` (None for the real one).
+    kw.setdefault("jev_blocked", lambda: "")
     p = ApplyQueuePanel(queue_path=qfile, **kw)
     qtbot.addWidget(p)
     return p
@@ -795,7 +800,7 @@ def test_panel_open_buttons_use_artifact_paths(qtbot, tmp_path, monkeypatch):
 def test_kickoff_and_login_commands_run_apply_run():
     """The Start button launches the code-owned Jev drain (`local/apply_run.py
     drain`); the sign-in button opens the persistent profile through its `login`
-    verb. No `claude` anywhere: the auto-apply skill is the manual fallback."""
+    verb. Neither command runs `claude`."""
     for cmd in (KICKOFF_COMMAND, LOGIN_COMMAND):
         prefix, verb = cmd.split("; ", 1)          # PowerShell chain (5.1-safe)
         # Single-quoted -LiteralPath: no `$` expansion, no backtick escapes, no
@@ -846,7 +851,7 @@ def test_panel_has_start_run_button(qtbot, tmp_path):
     assert "batch_cap" in tip or "batch cap" in tip
     assert "submits when" in tip
     assert "never submitted" not in tip and "nothing is ever submitted" not in tip
-    # The Claude-era variants are gone from the panel (the skill file stays).
+    # The Claude-era variants are gone from the panel.
     assert not hasattr(p, "kickoff_btn")
     assert not hasattr(p, "kickoff_scoped_btn")
     assert not hasattr(aqp, "KICKOFF_COMMAND_SCOPED")
@@ -948,6 +953,93 @@ def test_confirm_text_states_the_submit_gate(qtbot, tmp_path):
     assert "submits when" in text
     assert "never submitted" not in text and "nothing is ever submitted" not in text
     assert "auto_apply_submit" in text     # names the setting that turns the gate off
+
+
+# --- ApplyQueuePanel: Start follows the Jev switch (JS-5) ---------------------------
+
+_JEV_OFF = "Auto-apply runs on Jev. Turn Jev on in Settings > Jev."
+
+
+def test_start_is_off_with_the_reason_while_jev_cannot_run(qtbot, tmp_path):
+    """The sentence `apply_run.py drain` prints is Start's tooltip and the notice
+    under the buttons; a refresh reads the gate again and brings the run's own
+    tooltip back."""
+    reason = [_JEV_OFF]
+    p = _panel(qtbot, _qfile(tmp_path), jev_blocked=lambda: reason[0])
+    assert not p.start_run_btn.isEnabled()
+    assert p.start_run_btn.toolTip() == _JEV_OFF
+    assert p.jev_label.text() == _JEV_OFF and not p.jev_notice.isHidden()
+    reason[0] = ""
+    p.refresh()
+    assert p.start_run_btn.isEnabled()
+    assert "new terminal" in p.start_run_btn.toolTip().lower()
+    assert p.jev_notice.isHidden()
+
+
+def test_start_run_checks_jev_again_before_the_other_guards(qtbot, tmp_path, monkeypatch):
+    qfile = _qfile(tmp_path)
+    apply_queue.enqueue(apply_queue.new_entry("1", company="Acme", title="A"), path=qfile)
+    spy, confirms, reason = [], [], [""]
+    p = _panel(qtbot, qfile, on_start_run=lambda: spy.append(True),
+               password_exists=lambda: True, jev_blocked=lambda: reason[0])
+    monkeypatch.setattr(p, "_confirm_run", lambda n: confirms.append(n) or True)
+    assert p.start_run_btn.isEnabled()
+    reason[0] = _JEV_OFF                    # switched off since the last refresh
+    p._start_run()
+    assert spy == [] and confirms == []
+    assert p.status_label.text() == _JEV_OFF
+    assert not p.start_run_btn.isEnabled()
+
+
+def test_the_default_gate_is_jev_switch_with_a_saved_key_counted(monkeypatch):
+    """The drain's console loads `.env` itself, so a key saved in Settings opens
+    the gate before the dashboard restarts."""
+    import settings
+    monkeypatch.setattr(jev_switch, "sdk_installed", lambda: True)
+    monkeypatch.setattr(settings, "secret_status", lambda: {"TYPESAFE_API_KEY": False})
+    assert aqp._default_jev_blocked() == (
+        "Auto-apply runs on Jev. Add the TypeSafe API key in Settings > Jev.")
+    monkeypatch.setattr(settings, "secret_status", lambda: {"TYPESAFE_API_KEY": True})
+    assert aqp._default_jev_blocked() == ""
+    jev_switch.config_path().write_text('{"jev_enabled": false}', encoding="utf-8")
+    assert aqp._default_jev_blocked() == _JEV_OFF
+
+
+def test_a_test_judge_starts_a_run_with_no_key_or_sdk(qtbot, tmp_path, monkeypatch):
+    """The fake and replay judges (AUTO_APPLY_JEV_MODE) need neither, so the
+    suite runs keyless; the master switch still stops them."""
+    monkeypatch.setattr(jev_switch, "sdk_installed", lambda: False)
+    monkeypatch.setenv("AUTO_APPLY_JEV_MODE", "fake")
+    qfile = _qfile(tmp_path)
+    apply_queue.enqueue(apply_queue.new_entry("1", company="Acme", title="A"), path=qfile)
+    spy = []
+    p = _panel(qtbot, qfile, on_start_run=lambda: spy.append(True),
+               password_exists=lambda: True, jev_blocked=None)     # the real gate
+    monkeypatch.setattr(p, "_confirm_run", lambda n: True)
+    assert p.start_run_btn.isEnabled() and p.jev_notice.isHidden()
+    p.start_run_btn.click()
+    assert spy == [True]
+    jev_switch.config_path().write_text('{"jev_enabled": false}', encoding="utf-8")
+    p.refresh()
+    assert not p.start_run_btn.isEnabled()
+    assert p.start_run_btn.toolTip() == _JEV_OFF
+
+
+def test_a_settings_save_checks_the_jev_gate_again(qtbot, monkeypatch, tmp_path):
+    """Settings writes the switch to config.json and the save's refresh reads
+    it, so Start follows the switch without a restart."""
+    monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key")
+    monkeypatch.setattr(jev_switch, "sdk_installed", lambda: True)
+    w = _win(qtbot, monkeypatch, tmp_path)
+    monkeypatch.setattr(w, "reload_data_async", lambda: None)
+    start = w.apply_queue_panel.start_run_btn
+    assert start.isEnabled()
+    jev_switch.config_path().write_text('{"jev_enabled": false}', encoding="utf-8")
+    w._on_settings_saved()
+    assert not start.isEnabled() and start.toolTip() == _JEV_OFF
+    jev_switch.config_path().write_text('{"jev_enabled": true}', encoding="utf-8")
+    w._on_settings_saved()
+    assert start.isEnabled()
 
 
 def _decoded(argv):

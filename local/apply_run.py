@@ -6,7 +6,7 @@ write `apply_record.md`, finish the queue entry.
                                     [--jev fake|replay|typesafe] [--profile DIR]
     python local/apply_run.py one <job_id> [same flags]
     python local/apply_run.py login      sign in to LinkedIn and the inbox once
-    python local/apply_run.py doctor     key, SDK, Playwright, Chromium, profile
+    python local/apply_run.py doctor     Jev switch, key, SDK, Playwright, Chromium, profile
     python local/apply_run.py probe <url> [--follow-apply] [--judge] [--headed]
                                          read one page as the run would; changes nothing
 
@@ -118,6 +118,7 @@ import apply_trace  # noqa: E402
 import apply_verify  # noqa: E402
 import ats_accounts  # noqa: E402
 import jev  # noqa: E402
+import jev_switch  # noqa: E402
 from apply_judge import FillPlan, VerifyResult  # noqa: E402
 
 log = logging.getLogger("apply_run")
@@ -9478,8 +9479,10 @@ def doctor(profile_dir: Path | None = None, out=None) -> int:
         mode = str(stored.get("auto_apply_jev_mode") or "typesafe").strip().lower()
         has_key = bool(settings.secret_status().get("TYPESAFE_API_KEY")) or bool(
             os.environ.get(jev.KEY_ENV, "").strip())
+        jev_on = jev_switch.master_on(config=stored)
     except Exception:       # noqa: BLE001
         mode, has_key = "typesafe", bool(os.environ.get(jev.KEY_ENV, "").strip())
+        jev_on = jev_switch.master_on()
     sdk = setup_check.module_found("typesafe_sdk")
     playwright_found = setup_check.module_found("playwright")
     chrome = setup_check.chrome_installed()
@@ -9495,7 +9498,9 @@ def doctor(profile_dir: Path | None = None, out=None) -> int:
     print(f"{'ok     ' if profile.is_dir() else 'absent '}  browser profile: {profile}"
           + ("" if profile.is_dir() else " (created by the first run or `login`)"), file=out)
     print(f"judge mode: {mode}", file=out)
-    warnings = setup_check.auto_apply_warnings(has_key, mode, sdk, playwright_found, chromium)
+    print(f"Jev switch: {'on' if jev_on else 'off (Settings > Jev)'}", file=out)
+    warnings = setup_check.auto_apply_warnings(has_key, mode, sdk, playwright_found, chromium,
+                                               jev_enabled=jev_on)
     for w in warnings:
         print(f"  {w}", file=out)
     return 0 if not warnings else 2
@@ -9726,8 +9731,8 @@ def probe(url: str, *, follow_apply: bool = False, judge: Any = None, headed: bo
 
 def main(argv: list[str] | None = None) -> int:
     """Exit codes: 0 drained (or nothing queued), 1 unexpected error, 2 not
-    configured (no judge, the job id is not queued, or the Apply Answers file
-    is damaged: nothing is claimed then)."""
+    configured (Jev switched off or unusable, no judge, the job id is not
+    queued, or the Apply Answers file is damaged: nothing is claimed then)."""
     ap = argparse.ArgumentParser(prog="apply_run",
                                  description="Jev-judged auto-apply: drain the queue.")
     sub = ap.add_subparsers(dest="verb", required=True)
@@ -9795,6 +9800,13 @@ def main(argv: list[str] | None = None) -> int:
                   "production queue", file=sys.stderr)
             return 2
         _load_env()
+        # JS-5: auto-apply runs on Jev alone. Jev switched off, no key or no SDK
+        # stops the run here, after `.env` is read and before a judge, a claim or
+        # a browser, in the sentence the Auto-apply panel's Start button shows.
+        blocked = jev_switch.apply_blocked(mode=cfg["auto_apply_jev_mode"])
+        if blocked:
+            print(blocked, file=sys.stderr)
+            return 2
         try:
             judge = jev.get(cfg["auto_apply_jev_mode"])
         except (jev.JevUnavailable, ValueError) as e:

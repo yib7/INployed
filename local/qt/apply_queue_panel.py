@@ -5,7 +5,8 @@ truth shared with the drain CLI (local/apply_run.py); this panel only
 *displays* it and offers the few human controls around it: Re-queue / Remove /
 Clear finished, opening a job's artifacts, the master-password state, "Sign in
 to sites" (the one-time `apply_run.py login`), "Copy kickoff command" (the
-exact PowerShell line that starts the drain) and "Start auto-apply run".
+exact PowerShell line that starts the drain) and "Start auto-apply run" (off,
+with the reason beside it, while Jev cannot run: `refresh_jev_state`).
 
 Freshness: reads are lock-free (`apply_queue.load`, never quarantine=True — the
 panel must never rename a file a locked writer owns). A QFileSystemWatcher
@@ -35,6 +36,8 @@ from PySide6 import QtCore, QtWidgets
 import apply_queue
 import ats_accounts
 import errmsg
+import jev
+import jev_switch
 import osopen
 from qt import theme
 from qt.chrome import ChipBar, Pill
@@ -64,8 +67,8 @@ def _console_command(root: Path, verb: str) -> str:
 # queued job, drives a persistent Chromium profile through the application
 # with the Jev judge, and submits only when the confidence gate passes
 # (`auto_apply_submit` in Settings, `--no-submit` on the command line parks
-# every job at its review page instead). The auto-apply Claude skill is the
-# manual fallback and is no longer launched from here.
+# every job at its review page instead). It refuses to start while Jev cannot
+# run (switched off, no key, no SDK), and the Start button is off then too.
 KICKOFF_COMMAND = _console_command(REPO_ROOT, "drain")
 
 # The one-time sign-in: opens the same persistent profile, headed, at
@@ -166,6 +169,20 @@ def _default_password_exists() -> bool:
     """Panel seam for the master-password state (module-level so tests patch it
     without ever querying the real Windows Credential Manager)."""
     return ats_accounts.password_exists()
+
+
+def _default_jev_blocked() -> str:
+    """Panel seam for the Jev gate (JS-5): why a run cannot start, in the words
+    `jev_switch.apply_blocked` gives the Start button and `apply_run.py drain`
+    alike, or "" when it can. A key saved in Settings counts: the drain's
+    console loads `.env` itself, so the key reaches it before the dashboard
+    restarts."""
+    try:
+        import settings
+        saved = bool(settings.secret_status().get(jev.KEY_ENV))
+    except Exception:  # noqa: BLE001 - an unreadable settings file counts as no saved key
+        saved = False
+    return jev_switch.apply_blocked(saved_key=saved)
 
 
 def _run_inline(fn: Callable[[], Any],
@@ -366,6 +383,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                  on_mark_applied: Callable[[Dict[str, Any]], None] | None = None,
                  on_mark_seen: Callable[[Dict[str, Any]], None] | None = None,
                  on_answer_now: Callable[[], None] | None = None,
+                 jev_blocked: Callable[[], str] | None = None,
                  parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self._queue_override = Path(queue_path) if queue_path else None
@@ -380,6 +398,8 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         # "Answer now" on the missing-answers callout — the main window wires
         # this to switch to the Apply Answers tab.
         self._on_answer_now = on_answer_now or (lambda: None)
+        # Late-bound like password_exists: why a run cannot start ("" when it can).
+        self._jev_blocked = jev_blocked or (lambda: _default_jev_blocked())
         self._jobs: List[Dict[str, Any]] = []
         self._mtime_sig: tuple | None = None
         self._build()
@@ -481,7 +501,8 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         actions.addWidget(self.login_btn)
         self.start_run_btn = QtWidgets.QPushButton("Start auto-apply run")
         self.start_run_btn.setProperty("accent", True)
-        self.start_run_btn.setToolTip(
+        # Kept for refresh_jev_state, which shows the Jev reason in its place.
+        self._start_tip = (
             "Launch the auto-apply drain in a NEW terminal window: click once, "
             "walk away. It works through up to batch_cap queued jobs in its own "
             "browser profile, filling each form from your apply sheet with the "
@@ -489,9 +510,22 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             "verified with no CAPTCHA, payment or blocked question on the page; "
             "anything less parks at the review page for you. Turn 'Submit when "
             "verified' off in Settings to park every job.")
+        self.start_run_btn.setToolTip(self._start_tip)
         self.start_run_btn.clicked.connect(self._start_run)
         actions.addWidget(self.start_run_btn)
         v.addLayout(actions)
+
+        # Why Start is off while Jev cannot run (JS-5), in the drain's words;
+        # hidden while a run can start. Queueing goes on either way.
+        self.jev_notice = QtWidgets.QFrame()
+        self.jev_notice.setProperty("callout", "warning")
+        jn = QtWidgets.QHBoxLayout(self.jev_notice)
+        jn.setContentsMargins(12, 8, 12, 8)
+        self.jev_label = QtWidgets.QLabel("")
+        self.jev_label.setWordWrap(True)
+        jn.addWidget(self.jev_label, 1)
+        self.jev_notice.setVisible(False)
+        v.addWidget(self.jev_notice)
 
         self.table = QtWidgets.QTableWidget(0, len(COLUMNS))
         self.table.setHorizontalHeaderLabels(list(COLUMNS))
@@ -641,6 +675,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self._update_counts()
         self._update_details()
         self.refresh_password_state()
+        self.refresh_jev_state()
         self._rearm_watcher()
         self._mtime_sig = sig   # override _rearm_watcher's post-read snapshot
 
@@ -722,6 +757,21 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self.pw_pill.setText("SET" if exists else "NOT SET")
         self.pw_pill.set_family("success" if exists else "neutral")
         self.copy_pw_btn.setEnabled(exists)
+
+    def refresh_jev_state(self) -> str:
+        """Start is off, with the reason as its tooltip and in the notice under
+        the buttons, while an auto-apply run cannot start on Jev (JS-5). Read
+        on every refresh, after a Settings save (the main window calls this)
+        and at each Start click. Returns the reason, "" when a run can start."""
+        try:
+            reason = str(self._jev_blocked() or "")
+        except Exception:  # noqa: BLE001 - the drain checks again; never break the panel
+            reason = ""
+        self.start_run_btn.setEnabled(not reason)
+        self.start_run_btn.setToolTip(reason or self._start_tip)
+        self.jev_label.setText(reason)
+        self.jev_notice.setVisible(bool(reason))
+        return reason
 
     # ---- selection / details --------------------------------------------------------
 
@@ -873,9 +923,13 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                        "then close it.")
 
     def _start_run(self) -> None:
-        """Guards, in order: password set -> queue non-empty -> confirm.
-        Only a confirmed dialog calls the injected on_start_run (default:
-        _spawn_kickoff, a brand-new visible PowerShell console)."""
+        """Guards, in order: Jev can run -> password set -> queue non-empty ->
+        confirm. Only a confirmed dialog calls the injected on_start_run
+        (default: _spawn_kickoff, a brand-new visible PowerShell console)."""
+        reason = self.refresh_jev_state()   # the switch may have moved since
+        if reason:
+            self._set_note(reason)
+            return
         try:
             has_password = bool(self._password_exists())
         except Exception:  # noqa: BLE001 - a keyring hiccup must never crash the panel

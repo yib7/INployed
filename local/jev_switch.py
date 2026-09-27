@@ -90,8 +90,10 @@ def apply_mode(*, config: Mapping[str, Any] | None = None,
                env: Mapping[str, str] | None = None) -> str:
     """The auto-apply judge mode: `AUTO_APPLY_JEV_MODE` in the environment, else
     the Auto-apply judge setting, else "typesafe", stripped and lower-cased the
-    way `jev.get` reads it. The dashboard's Test my answers button and
-    `client("apply")` / `client("difficulty")` read the mode here."""
+    way `jev.get` reads it. The Auto-apply panel's Start button (through
+    `apply_blocked`) and `client("apply")` / `client("difficulty")` read the
+    mode here; `apply_run.py drain` passes its own (the --jev flag, else the
+    setting)."""
     env = os.environ if env is None else env
     raw = str(env.get(jev.MODE_ENV) or "").strip()
     if not raw:
@@ -108,6 +110,14 @@ def sdk_installed() -> bool:
         return False
 
 
+def master_on(*, config: Mapping[str, Any] | None = None) -> bool:
+    """Is the master switch `jev_enabled` on? `config` defaults to the config
+    file, read on every call. The setup checks read it alone: they list every
+    missing piece at once."""
+    cfg = _config() if config is None else config
+    return cfg.get(MASTER_KEY, True) is not False
+
+
 def _check(area: str, config: Mapping[str, Any] | None, env: Mapping[str, str] | None,
            *, mode: str | None = None, saved_key: bool = False) -> tuple[str, str]:
     """(kind, reason) of the first failing check, or ("", "") when Jev is on.
@@ -117,7 +127,7 @@ def _check(area: str, config: Mapping[str, Any] | None, env: Mapping[str, str] |
         raise ValueError(f"unknown Jev area {area!r}; expected one of {', '.join(AREAS)}")
     cfg = _config() if config is None else config
     env = os.environ if env is None else env
-    if cfg.get(MASTER_KEY, True) is False:
+    if not master_on(config=cfg):
         return "switch", REASON_SWITCH
     area_key = AREA_KEYS.get(area)
     if area_key is not None and cfg.get(area_key, True) is False:

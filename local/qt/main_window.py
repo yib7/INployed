@@ -3072,6 +3072,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.followup_days = load_followup_days()
         self.resume_data_tab.refresh_push_state()  # vm_enabled may have changed
         self.answers_tab.refresh_test_answers_state()  # the judge mode or key may have changed
+        self.apply_queue_panel.refresh_jev_state()  # Start follows the Jev switch (JS-5)
         self.reload_data_async()
 
     # ---- engine env ----------------------------------------------------------

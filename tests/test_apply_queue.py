@@ -667,7 +667,7 @@ def test_requeue_refresh_hook_failure_is_tolerated(tmp_path, monkeypatch):
     assert "were not refreshed" in stored["notes"]
 
 
-# --- refresh-answers: a stale sheet the SKILL.md drain must refresh itself -------
+# --- refresh-answers: a stale sheet a by-hand drain must refresh itself ----------
 
 _NO_SIGNATURE_SHEET = """\
 ## Standard answers
@@ -989,7 +989,7 @@ def test_build_context_tolerates_garbage_batch_cap(tmp_path, monkeypatch):
 
 # --- CLI ---------------------------------------------------------------------------------
 
-def test_cli_enqueue_list_claim_finish_stats_roundtrip(tmp_path, capsys):
+def test_cli_enqueue_list_stats_roundtrip(tmp_path, capsys):
     q = str(_q(tmp_path))
     rc = apply_queue.main(["enqueue", "--queue", q, "--job-id", "9", "--company",
                            "Acme", "--title", "Engineer", "--url",
@@ -1000,34 +1000,32 @@ def test_cli_enqueue_list_claim_finish_stats_roundtrip(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "9" in out and "queued" in out and "Acme" in out
 
-    rc = apply_queue.main(["claim", "--queue", q, "--json", "--by", "agent-1"])
-    assert rc == 0
-    got = json.loads(capsys.readouterr().out)
+    # claim / add_missing / finish have no CLI verb (the runner and dashboard
+    # call them in-process); advance the entry directly before checking stats.
+    got = apply_queue.claim(claimed_by="agent-1", path=Path(q))
     assert got["job_posting_id"] == "9"
     assert got["status"] == "in_progress"
     assert got["claimed_by"] == "agent-1"
+    apply_queue.add_missing("9", "Salary?", suggestion="skip", path=Path(q))
+    apply_queue.finish("9", "ready_to_submit", tab_note="https://x | Review",
+                       path=Path(q))
 
-    rc = apply_queue.main(["add-missing", "--queue", q, "9",
-                           "--question", "Salary?", "--suggestion", "skip"])
-    assert rc == 0
-    rc = apply_queue.main(["finish", "--queue", q, "9", "--status",
-                           "ready_to_submit", "--tab-note", "https://x | Review"])
-    assert rc == 0
     rc = apply_queue.main(["stats", "--queue", q])
     assert rc == 0
     out = capsys.readouterr().out
     assert "ready_to_submit" in out and "1" in out
 
 
-def test_cli_update_requeue_remove(tmp_path, capsys):
+def test_cli_requeue_remove(tmp_path, capsys):
     q = str(_q(tmp_path))
     apply_queue.main(["enqueue", "--queue", q, "--job-id", "9"])
-    assert apply_queue.main(["update", "--queue", q, "9", "--notes", "n",
-                             "--ats-account-status", "created"]) == 0
+    # update / claim / finish have no CLI verb; advance the entry directly
+    # before exercising the CLI verbs a person still runs by hand.
+    apply_queue.update("9", notes="n", ats={"account_status": "created"}, path=Path(q))
     stored = apply_queue.load(Path(q))["jobs"][0]
     assert stored["notes"] == "n" and stored["ats"]["account_status"] == "created"
-    apply_queue.main(["claim", "--queue", q])
-    apply_queue.main(["finish", "--queue", q, "9", "--status", "failed"])
+    apply_queue.claim(path=Path(q))
+    apply_queue.finish("9", "failed", path=Path(q))
     assert apply_queue.main(["requeue", "--queue", q, "9"]) == 0
     assert apply_queue.load(Path(q))["jobs"][0]["status"] == "queued"
     assert apply_queue.main(["remove", "--queue", q, "9"]) == 0
@@ -1036,13 +1034,11 @@ def test_cli_update_requeue_remove(tmp_path, capsys):
 
 def test_cli_unknown_job_id_exits_2(tmp_path, capsys):
     q = str(_q(tmp_path))
-    assert apply_queue.main(["finish", "--queue", q, "nope", "--status", "failed"]) == 2
-    assert apply_queue.main(["update", "--queue", q, "nope", "--notes", "x"]) == 2
+    # finish has no CLI verb; an unknown id still raises from the function
+    # itself (update's own raise is pinned by test_update_unknown_job_raises).
+    with pytest.raises(apply_queue.UnknownJobError):
+        apply_queue.finish("nope", "failed", path=Path(q))
     assert apply_queue.main(["remove", "--queue", q, "nope"]) == 2
-
-
-def test_cli_claim_empty_queue_exits_4(tmp_path, capsys):
-    assert apply_queue.main(["claim", "--queue", str(_q(tmp_path))]) == 4
 
 
 def test_cli_lock_timeout_exits_3(tmp_path, capsys, monkeypatch):
@@ -1054,32 +1050,30 @@ def test_cli_lock_timeout_exits_3(tmp_path, capsys, monkeypatch):
     t.start()
     assert held.wait(timeout=5)
     try:
-        assert apply_queue.main(["update", "--queue", str(q), "1", "--notes", "x"]) == 3
+        assert apply_queue.main(["remove", "--queue", str(q), "1"]) == 3
     finally:
         release.set()
         t.join(timeout=5)
 
 
-def test_cli_claim_json_survives_cp1252_pipe(tmp_path, monkeypatch):
+def test_cli_enqueue_list_survive_cp1252_pipe(tmp_path, monkeypatch):
     # On this machine sys.stdout.encoding is cp1252 when stdout is a pipe —
     # exactly how the SP4 agent invokes every verb. Before the reconfigure fix,
-    # claim persisted the mutation then crashed with UnicodeEncodeError (exit 1,
-    # outside the 0/2/3/4 contract) and the agent never saw the entry it owns.
+    # a verb persisted its mutation then crashed with UnicodeEncodeError (exit
+    # 1, outside the 0/2/3 contract) and the agent never saw the entry it owns.
     q = _q(tmp_path)
     title = "✅ Data Engineer → NYC"        # ✅ … → : not in cp1252
-    apply_queue.enqueue(apply_queue.new_entry("9", company="Acme", title=title),
-                        path=q)
     out_buf, err_buf = io.BytesIO(), io.BytesIO()
     monkeypatch.setattr(sys, "stdout",
                         io.TextIOWrapper(out_buf, encoding="cp1252"))
     monkeypatch.setattr(sys, "stderr",
                         io.TextIOWrapper(err_buf, encoding="cp1252"))
-    rc = apply_queue.main(["claim", "--queue", str(q), "--json"])
+    rc = apply_queue.main(["enqueue", "--queue", str(q), "--job-id", "9",
+                           "--company", "Acme", "--title", title])
     sys.stdout.flush()
     assert rc == 0
-    got = json.loads(out_buf.getvalue().decode("utf-8"))
-    assert got["title"] == title
-    assert got["status"] == "in_progress"
+    out = out_buf.getvalue().decode("utf-8")
+    assert title in out
     # `list` prints the same title, and no longer crashes either
     assert apply_queue.main(["list", "--queue", str(q)]) == 0
     sys.stdout.flush()
@@ -1098,13 +1092,14 @@ def test_cli_unexpected_error_exits_1_one_line(tmp_path, monkeypatch, capsys):
     assert len(err.strip().splitlines()) == 1
 
 
-def test_cli_context_json_has_five_keys_no_password(tmp_path, capsys, monkeypatch):
+def test_build_context_keys_exclude_password(tmp_path, monkeypatch):
+    # build_context() has no CLI verb (the runner and dashboard call it
+    # in-process: apply_run.py, apply_queue_panel.py).
     from resume_tailor import assets
     monkeypatch.setattr(assets, "load_master",
                         lambda: {"basics": {"email": "cand@example.com"}})
     monkeypatch.setattr(apply_queue, "CONFIG_JSON", tmp_path / "missing.json")
-    assert apply_queue.main(["context", "--queue", str(_q(tmp_path)), "--json"]) == 0
-    ctx = json.loads(capsys.readouterr().out)
+    ctx = apply_queue.build_context(path=_q(tmp_path))
     assert set(ctx) == {"signup_email", "inbox_url", "inbox_map", "batch_cap",
                         "output_root", "queue_path"}
     assert "password" not in json.dumps(ctx).lower()

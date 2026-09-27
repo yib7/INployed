@@ -588,10 +588,10 @@ def requeue(job_id: str, *, refresh_answers: bool = False,
 def refresh_answers(job_id: str, path: Optional[Path] = None) -> bool:
     """Re-splice `job_id`'s apply.md Standard answers section and Address
     block from the current answer store (`apply_data.refresh_answer_sections`),
-    the same rendering the runner does before each job. For a manual drain
-    (`.claude/skills/auto-apply/SKILL.md`) that reads a claimed job's sheet
-    directly, calling this first keeps the sheet from ever handing a stale or
-    unconfirmed answer to that job.
+    the same rendering the runner does before each job. For a job the
+    candidate applies to by hand, reading its apply.md sheet directly, calling
+    this first keeps the sheet from ever handing a stale or unconfirmed
+    answer to that job.
 
     Raises `UnknownJobError` for an unknown id, and
     `apply_answers.AnswerStoreError` when the store is damaged (nothing is
@@ -751,10 +751,10 @@ def build_context(path: Optional[Path] = None) -> Dict[str, Any]:
 
 def _force_utf8_stdio() -> None:
     """Piped stdout/stderr on Windows default to cp1252, so any job title with
-    an emoji/arrow would UnicodeEncodeError mid-verb — AFTER a claim already
-    persisted its mutation, leaving the agent without the entry it now owns.
-    Reconfigure both streams to UTF-8 up front; errors="replace" so printing
-    can never raise, whatever the terminal."""
+    an emoji/arrow would UnicodeEncodeError mid-verb — AFTER a mutating verb
+    already persisted its change, leaving the agent without the entry it now
+    owns. Reconfigure both streams to UTF-8 up front; errors="replace" so
+    printing can never raise, whatever the terminal."""
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             try:
@@ -773,8 +773,8 @@ def _print_entry(e: Dict[str, Any], as_json: bool) -> None:
 
 def main(argv: Optional[List[str]] = None) -> int:
     """Exit codes: 0 ok · 1 unexpected error (one line on stderr) · 2 unknown
-    job id · 3 lock timeout · 4 claim on an empty queue. Every verb accepts
-    --queue PATH to override the default.
+    job id · 3 lock timeout. Every verb accepts --queue PATH to override the
+    default.
 
     `refresh-answers` has its own two exit codes, layered onto the same
     numbers: 2 when the answer store is damaged (the spec's message, an
@@ -795,32 +795,6 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     add("list", help="print every entry")
 
-    p = add("claim", help="claim the FIFO-oldest queued entry")
-    p.add_argument("--json", action="store_true", help="print the entry as JSON")
-    p.add_argument("--by", default="agent", help="claimed_by tag")
-
-    p = add("update", help="set notes / tab-note / ats fields on one entry")
-    p.add_argument("job_id")
-    p.add_argument("--notes")
-    p.add_argument("--tab-note", dest="tab_note")
-    p.add_argument("--claimed-by", dest="claimed_by")
-    p.add_argument("--ats-domain", dest="ats_domain")
-    p.add_argument("--ats-system", dest="ats_system", choices=ATS_SYSTEMS)
-    p.add_argument("--ats-account-status", dest="ats_account_status")
-
-    p = add("add-missing", help="record one unanswered form question")
-    p.add_argument("job_id")
-    p.add_argument("--question", required=True)
-    p.add_argument("--context", default="")
-    p.add_argument("--suggestion", default="")
-
-    p = add("finish", help="park an entry in a terminal status")
-    p.add_argument("job_id")
-    p.add_argument("--status", required=True, choices=sorted(TERMINAL))
-    p.add_argument("--tab-note", dest="tab_note", default="")
-    p.add_argument("--record", default="", help="application_record path")
-    p.add_argument("--notes", default=None)
-
     p = add("requeue", help="send an entry back to queued")
     p.add_argument("job_id")
     p.add_argument("--refresh-answers", action="store_true",
@@ -836,9 +810,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("job_id")
 
     add("stats", help="per-status counts")
-
-    p = add("context", help="batch-run context for the agent")
-    p.add_argument("--json", action="store_true")
 
     p = add("enqueue", help="add one entry (tests / manual use)")
     p.add_argument("--job-id", required=True, dest="job_id")
@@ -856,29 +827,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         if args.verb == "list":
             for e in load(qp)["jobs"]:
                 _print_entry(e, as_json=False)
-        elif args.verb == "claim":
-            got = claim(claimed_by=args.by, path=qp)
-            if got is None:
-                print("queue empty: nothing to claim", file=sys.stderr)
-                return 4
-            _print_entry(got, as_json=args.json)
-        elif args.verb == "update":
-            ats = {}
-            if args.ats_domain is not None:
-                ats["domain"] = args.ats_domain
-            if args.ats_system is not None:
-                ats["system"] = args.ats_system
-            if args.ats_account_status is not None:
-                ats["account_status"] = args.ats_account_status
-            update(args.job_id, path=qp, notes=args.notes,
-                   tab_note=args.tab_note, claimed_by=args.claimed_by,
-                   ats=ats or None)
-        elif args.verb == "add-missing":
-            add_missing(args.job_id, args.question, context=args.context,
-                        suggestion=args.suggestion, path=qp)
-        elif args.verb == "finish":
-            finish(args.job_id, args.status, tab_note=args.tab_note,
-                   record=args.record, notes=args.notes, path=qp)
         elif args.verb == "requeue":
             requeue(args.job_id, refresh_answers=args.refresh_answers, path=qp)
         elif args.verb == "refresh-answers":
@@ -900,13 +848,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         elif args.verb == "stats":
             for status, count in stats(path=qp).items():
                 print(f"{status:16} {count}")
-        elif args.verb == "context":
-            ctx = build_context(path=qp)
-            if args.json:
-                print(json.dumps(ctx, indent=2, ensure_ascii=False))
-            else:
-                for k, v in ctx.items():
-                    print(f"{k:14} {v}")
         elif args.verb == "enqueue":
             entry = new_entry(args.job_id, company=args.company,
                               title=args.title, apply_url=args.url,

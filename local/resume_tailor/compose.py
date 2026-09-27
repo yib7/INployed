@@ -497,8 +497,17 @@ Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<one bullet>"}}, ..
     return result
 
 
+# TL-4's addition to the reground prompt, sent only when a bullet carries a finding.
+REGROUND_FINDING_RULE = (
+    "A bullet whose item carries a 'finding' failed a faithfulness check for the reason "
+    "that finding names, and its 'banned_tokens' list may be empty. Rewrite that bullet so "
+    "it says only what its atoms say: no bigger role, scope or result than they state, and "
+    "no tool, number, outcome or scope they leave out.\n")
+
+
 def reground(jd: str, job_title: str, sel: Dict[str, Any],
-             dropped: Dict[str, List[str]]) -> Dict[str, str]:
+             dropped: Dict[str, List[str]],
+             findings: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     """One bounded re-ask for bullets the PROLOGUE grounding gate had to DELETE.
 
     That gate is the only fallback-less one — it runs on rephrase's first output, so a
@@ -514,9 +523,16 @@ def reground(jd: str, job_title: str, sel: Dict[str, Any],
     So: one batched re-ask over every dropped group, naming the tokens that must not come
     back. It invents nothing — the atoms are the ones rephrase already had, and the ask is
     narrower. The CALLER re-runs the gate over whatever returns, so a re-ask that fails
-    again simply stays dropped. Advisory, never fatal: {} on any failure."""
+    again simply stays dropped. Advisory, never fatal: {} on any failure.
+
+    TL-4 (the Jev faithfulness check, `run._check_faithfulness`) sends a bullet it flags
+    through this same call, at any stage, with no banned tokens and its finding in
+    `findings`. A finding rides in its bullet's item, and REGROUND_FINDING_RULE explains
+    it once in the system prompt. With no finding the prompt is the one above, word for
+    word."""
     gm = group_map(sel)
     targets = bullet_line_targets(sel)
+    findings = findings or {}
     payload = []
     for gk, tokens in dropped.items():
         if gk not in gm:
@@ -528,10 +544,14 @@ def reground(jd: str, job_title: str, sel: Dict[str, Any],
         }
         if gk in targets:
             item["length_target"] = _length_hint(targets[gk])
+        if findings.get(gk):
+            item["finding"] = findings[gk]
         payload.append(item)
     if not payload:
         return {}
 
+    finding_rule = (REGROUND_FINDING_RULE if any("finding" in item for item in payload)
+                    else "")
     system = (
         "You repair resume bullets that failed a grounding check. Each bullet you are "
         "given was written from its own fact-atoms and then rejected, because it used a "
@@ -539,7 +559,8 @@ def reground(jd: str, job_title: str, sel: Dict[str, Any],
         "what the atoms say, WITHOUT any term in its 'banned_tokens' list and without "
         "reaching for a different unsupported term to replace it. Do not substitute a "
         "synonym for a banned token unless that synonym is itself written in the atoms; "
-        "say the thing plainly in the atoms' own words instead.\n" + _PRINCIPLE + "\n"
+        "say the thing plainly in the atoms' own words instead.\n" + finding_rule
+        + _PRINCIPLE + "\n"
         "These are usually a block's OPENING bullet: the line that tells a reader what "
         "the job or project IS before the detail bullets can mean anything. Keep that "
         "job, and lead with what the thing is and what it does, using only grounded "

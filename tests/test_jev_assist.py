@@ -471,10 +471,11 @@ def test_lead_group_asks_every_project_in_one_request(master):
 
 # ── the wording ──────────────────────────────────────────────────────────────
 def test_every_judge_question_is_free_of_the_banned_phrasing():
-    """The questions follow the rules the prompts do: no em dash and no contrast
-    framing ('X, not Y', 'rather than'), nor any other `_STYLE_BANS` shape."""
+    """The questions follow the rules the prompts do: `compose.style_violations`
+    finds none of its `_STYLE_BANS` shapes in them, and they carry no em dash
+    (U+2014) and no clause that opens with a comma and "never"."""
     texts = [jev_assist.SKILL_QUESTION, jev_assist.ATOM_QUESTION, jev_assist.LEAD_QUESTION,
              jev_assist.FOCUS_QUESTION, *jev_assist.SKILL_FOCUS.values()]
     for text in texts:
         assert compose.style_violations(text) == [], text
-        assert "—" not in text and not re.search(r",\s*never\s", text), text
+        assert "\u2014" not in text and not re.search(r",\s*never\s", text), text

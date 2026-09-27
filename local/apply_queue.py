@@ -64,6 +64,10 @@ TERMINAL = frozenset(("ready_to_submit", "submitted", "needs_human", "failed"))
 ARTIFACT_KEYS = ("folder", "resume_pdf", "cover_letter_pdf",
                  "apply_md", "application_record")
 ATS_KEYS = ("domain", "system", "account_status")
+# The difficulty check's result on an entry (`set_difficulty`, DF-4); {} until
+# `local/apply_assess.py` has checked the job.
+DIFFICULTY_KEYS = ("score", "band", "checked_at", "system", "reasons", "questions",
+                   "jev_usd")
 
 # Sidecar-lock tuning. Module-level (not baked into signatures) so tests can
 # monkeypatch LOCK_TIMEOUT down instead of waiting out the real 5 s.
@@ -218,6 +222,8 @@ def _normalize(e: Dict[str, Any]) -> Dict[str, Any]:
         e["ats"].setdefault(k, base["ats"][k])
     if not isinstance(e.get("missing_answers"), list):
         e["missing_answers"] = []
+    if not isinstance(e.get("difficulty"), dict):
+        e["difficulty"] = {}
     return e
 
 
@@ -307,6 +313,7 @@ def new_entry(job_posting_id: str, *, company: str = "", title: str = "",
         "artifacts": {k: "" for k in ARTIFACT_KEYS},
         "ats": {"domain": ats["domain"], "system": ats["system"],
                 "account_status": ""},
+        "difficulty": {},
         "queued_at": now if status == "queued" else "",
         "started_at": "",
         "finished_at": "",
@@ -442,6 +449,20 @@ def add_missing(job_id: str, question: str, context: str = "",
         e["missing_answers"].append({"question": str(question),
                                      "context": str(context or ""),
                                      "suggestion": str(suggestion or "")})
+        e["updated_at"] = _now()
+        _save(data, path)
+        return dict(e)
+
+
+def set_difficulty(job_id: str, difficulty: Dict[str, Any],
+                   path: Optional[Path] = None) -> Dict[str, Any]:
+    """Store the difficulty check's result on the entry (DF-4), replacing the
+    last one: the DIFFICULTY_KEYS of `difficulty`, anything else dropped. The
+    status and the run's fields are left alone, and a requeue keeps it."""
+    with locked(path):
+        data = load(path, quarantine=True)   # under locked(): may rename aside
+        e = _find(data, job_id)
+        e["difficulty"] = {k: difficulty[k] for k in DIFFICULTY_KEYS if k in difficulty}
         e["updated_at"] = _now()
         _save(data, path)
         return dict(e)

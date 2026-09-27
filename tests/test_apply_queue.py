@@ -151,12 +151,13 @@ def test_new_entry_carries_all_fields(tmp_path):
     e = _entry("77", is_easy_apply=True, batch_id="b1")
     for key in ("job_posting_id", "company", "title", "apply_url", "is_easy_apply",
                 "batch_id", "status", "attempts", "claimed_by", "notes", "tab_note",
-                "missing_answers", "artifacts", "ats",
+                "missing_answers", "artifacts", "ats", "difficulty",
                 "queued_at", "started_at", "finished_at", "updated_at"):
         assert key in e, key
     assert e["status"] == "queued"
     assert e["attempts"] == 0
     assert e["missing_answers"] == []
+    assert e["difficulty"] == {}          # DF-4: no check has run yet
     for k in ("folder", "resume_pdf", "cover_letter_pdf",
               "apply_md", "application_record"):
         assert k in e["artifacts"], k
@@ -489,6 +490,73 @@ def test_stats_counts_submitted(tmp_path):
     s = apply_queue.stats(path=q)
     assert s["submitted"] == 1
     assert s["ready_to_submit"] == 0
+
+
+# --- DF-4: the difficulty check's result ---------------------------------------------
+
+_DIFFICULTY = {"score": 5, "band": "May need an answer or two",
+               "checked_at": "2026-09-27T10:00:00", "system": "workday",
+               "reasons": ["Application system: Workday (base 6)"],
+               "questions": [{"label": "Desired salary", "help": "", "options": [],
+                              "required": True, "type": "text"}],
+               "jev_usd": 0.0009}
+
+
+def test_set_difficulty_stores_the_result_and_leaves_the_run_fields(tmp_path):
+    q = _q(tmp_path)
+    apply_queue.enqueue(_entry("1"), path=q)
+    apply_queue.set_difficulty("1", _DIFFICULTY, path=q)
+    got = apply_queue.load(q)["jobs"][0]
+    assert got["difficulty"] == _DIFFICULTY
+    assert got["status"] == "queued"
+    assert got["attempts"] == 0
+    assert got["missing_answers"] == []
+
+
+def test_set_difficulty_keeps_only_the_result_keys(tmp_path):
+    q = _q(tmp_path)
+    apply_queue.enqueue(_entry("1"), path=q)
+    got = apply_queue.set_difficulty("1", {**_DIFFICULTY, "page": "<html>"}, path=q)
+    assert set(got["difficulty"]) == set(apply_queue.DIFFICULTY_KEYS)
+    assert apply_queue.DIFFICULTY_KEYS == ("score", "band", "checked_at", "system",
+                                           "reasons", "questions", "jev_usd")
+
+
+def test_set_difficulty_replaces_the_last_result(tmp_path):
+    q = _q(tmp_path)
+    apply_queue.enqueue(_entry("1"), path=q)
+    apply_queue.set_difficulty("1", _DIFFICULTY, path=q)
+    apply_queue.set_difficulty("1", {**_DIFFICULTY, "score": 2, "band": "Queue it",
+                                     "questions": []}, path=q)
+    got = apply_queue.load(q)["jobs"][0]["difficulty"]
+    assert (got["score"], got["band"], got["questions"]) == (2, "Queue it", [])
+
+
+def test_set_difficulty_unknown_job_raises(tmp_path):
+    with pytest.raises(apply_queue.UnknownJobError):
+        apply_queue.set_difficulty("nope", _DIFFICULTY, path=_q(tmp_path))
+
+
+def test_a_hand_edited_entry_reads_an_empty_difficulty(tmp_path):
+    q = _q(tmp_path)
+    q.write_text(json.dumps({"version": 1, "jobs": [
+        {"job_posting_id": "h1", "status": "queued", "difficulty": "garbage"}]}),
+        encoding="utf-8")
+    got = apply_queue.update("h1", notes="x", path=q)
+    assert got["difficulty"] == {}
+    got = apply_queue.set_difficulty("h1", _DIFFICULTY, path=q)
+    assert got["difficulty"]["score"] == 5
+
+
+def test_a_requeue_keeps_the_difficulty(tmp_path):
+    """The posting did not change, so its check still holds."""
+    q = _q(tmp_path)
+    apply_queue.enqueue(_entry("1"), path=q)
+    apply_queue.set_difficulty("1", _DIFFICULTY, path=q)
+    apply_queue.claim(path=q)
+    apply_queue.finish("1", "needs_human", path=q)
+    got = apply_queue.requeue("1", path=q)
+    assert got["difficulty"] == _DIFFICULTY
 
 
 # --- requeue ---------------------------------------------------------------------

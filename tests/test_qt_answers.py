@@ -621,6 +621,169 @@ def test_adding_an_answer_appends_a_confirmed_row(qtbot, tmp_path):
     assert row["confirmed_cb"].isChecked() is True
 
 
+# --- PR-9: Add answer prefilled from a form's question ------------------------------
+
+_CDL = {"question": "Do you hold a CDL? (If not, please explain.)",
+        "help": "Commercial driver license", "type": "yes_no", "options": ["Yes", "No"]}
+
+
+def _prefilled(qtbot, tmp_path, prefill, entries=()):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, list(entries))
+    ed = _editor(qtbot, store)
+    dlg = AddAnswerDialog(ed.collect(), prefill=prefill)
+    qtbot.addWidget(dlg)
+    return dlg
+
+
+def test_prefill_puts_the_saved_question_and_its_type_in_the_dialog(qtbot, tmp_path):
+    dlg = _prefilled(qtbot, tmp_path, _CDL)
+    assert dlg.question_edit.text() == "Do you hold a CDL? Commercial driver license"
+    assert dlg.type_combo.currentText() == "Yes/No"
+    assert isinstance(dlg.answer_widget, QtWidgets.QComboBox)
+    assert dlg.answer_widget.currentText() == "Not set"
+    assert dlg.ok_button.isEnabled() is True
+
+
+def test_a_prefilled_answer_passes_the_own_question_gate_next_time(qtbot, tmp_path):
+    """PR-6: the saved question is the label plus its help, so the run's
+    own-question gate matches the same field word for word."""
+    import apply_facts
+    dlg = _prefilled(qtbot, tmp_path, _CDL)
+    dlg.answer_widget.setCurrentText("No")
+    entry = dlg.result_entry()
+    assert (entry["type"], entry["answer"], entry["confirmed"]) == ("yes_no", "No", True)
+    assert apply_facts.same_question(_CDL["question"], _CDL["help"], entry["question"]) is True
+
+
+def test_prefill_of_a_number_box_is_a_number_answer(qtbot, tmp_path):
+    dlg = _prefilled(qtbot, tmp_path, {"question": "Years of Kafka", "help": "",
+                                        "type": "number", "options": []})
+    assert dlg.type_combo.currentText() == "Number"
+    assert isinstance(dlg.answer_widget, QtWidgets.QLineEdit)
+    assert dlg.answer_widget.validator() is not None
+
+
+def test_prefill_of_a_choice_saves_text_picked_from_the_forms_options(qtbot, tmp_path):
+    """A custom answer holds text, yes / no or a number, so a choice becomes
+    text with the live options offered in an editable box."""
+    options = ["LinkedIn", "Referral", "Company website"]
+    dlg = _prefilled(qtbot, tmp_path, {"question": "How did you hear about us?", "help": "",
+                                        "type": "choice", "options": options})
+    assert dlg.type_combo.currentText() == "Text"
+    box = dlg.answer_widget
+    assert isinstance(box, QtWidgets.QComboBox) and box.isEditable()
+    assert [box.itemText(i) for i in range(box.count())] == options
+    assert box.currentText() == ""
+    box.setCurrentIndex(1)
+    entry = dlg.result_entry()
+    assert (entry["type"], entry["answer"]) == ("text", "Referral")
+    assert "Saved as text" in dlg.hint_label.text()
+
+
+def test_prefill_without_a_type_reads_the_options(qtbot, tmp_path):
+    dlg = _prefilled(qtbot, tmp_path, {"question": "Can you travel?", "options": ["Yes", "No"]})
+    assert dlg.type_combo.currentText() == "Yes/No"
+
+
+def test_the_hint_shows_the_forms_help_and_options(qtbot, tmp_path):
+    dlg = _prefilled(qtbot, tmp_path, _CDL)
+    assert dlg.hint_label.isHidden() is False
+    assert dlg.hint_label.text() == ("The form's help text: Commercial driver license\n"
+                                     "The form's options: Yes; No")
+
+
+def test_the_hint_is_hidden_without_a_prefill(qtbot, tmp_path):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [])
+    ed = _editor(qtbot, store)
+    dlg = AddAnswerDialog(ed.collect())
+    qtbot.addWidget(dlg)
+    assert dlg.hint_label.isHidden() is True
+    assert dlg.question_edit.text() == ""
+
+
+def test_a_prefilled_question_meets_the_same_refusals(qtbot, tmp_path):
+    dlg = _prefilled(qtbot, tmp_path,
+                     {"question": "Are you legally authorized to work in the US?", "help": "",
+                      "type": "yes_no", "options": ["Yes", "No"]},
+                     entries=apply_answers.with_missing_builtins([]))
+    assert dlg.ok_button.isEnabled() is False
+    assert dlg.message_label.text().startswith("The built-in answer")
+    taken = [_custom("cdl", "Do you hold a CDL? Commercial driver license", "yes_no", "Yes",
+                     confirmed=True)]
+    dlg = _prefilled(qtbot, tmp_path, _CDL, entries=taken)
+    assert dlg.ok_button.isEnabled() is False
+    assert dlg.message_label.text() == ("Your custom answer 'Do you hold a CDL? Commercial "
+                                        "driver license' already has this question.")
+
+
+def _accepting(monkeypatch, answer="Yes", seen=None):
+    """AddAnswerDialog.exec, patched: records the dialog, sets an answer, OK."""
+    def fake_exec(dlg):
+        if seen is not None:
+            seen.append(dlg)
+        if isinstance(dlg.answer_widget, QtWidgets.QComboBox):
+            dlg.answer_widget.setCurrentText(answer)
+        else:
+            dlg.answer_widget.setText(answer)
+        return QtWidgets.QDialog.DialogCode.Accepted
+    monkeypatch.setattr(AddAnswerDialog, "exec", fake_exec)
+
+
+def test_add_answer_with_a_prefill_appends_an_unsaved_row_and_says_to_save(qtbot, tmp_path,
+                                                                          monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [])
+    before = store.read_bytes()
+    ed = _editor(qtbot, store)
+    seen = []
+    _accepting(monkeypatch, "Yes", seen)
+    assert ed.add_answer(_CDL) is True
+    assert seen[0].question_edit.text() == "Do you hold a CDL? Commercial driver license"
+    row = next(r for r in ed.rows if r["entry"]["question"] ==
+               "Do you hold a CDL? Commercial driver license")
+    assert row["confirmed_cb"].isChecked() is True
+    assert store.read_bytes() == before
+    assert "Save changes" in ed.status.text()
+
+
+def test_add_answer_cancelled_adds_nothing(qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [])
+    ed = _editor(qtbot, store)
+    count = len(ed.rows)
+    monkeypatch.setattr(AddAnswerDialog, "exec",
+                        lambda dlg: QtWidgets.QDialog.DialogCode.Rejected)
+    assert ed.add_answer(_CDL) is False
+    assert len(ed.rows) == count
+
+
+def test_add_answer_on_a_damaged_store_opens_nothing(qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    store.write_text("{not json", encoding="utf-8")
+    ed = _editor(qtbot, store)
+    opened = []
+    monkeypatch.setattr(AddAnswerDialog, "exec", lambda dlg: opened.append(dlg) or 1)
+    assert ed.add_answer(_CDL) is False
+    assert opened == []
+    assert ed.status.text() == ed.load_error
+
+
+def test_the_add_answer_button_opens_the_same_dialog_empty(qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [])
+    ed = _editor(qtbot, store)
+    seen = []
+
+    def fake_exec(dlg):
+        seen.append(dlg)
+        return QtWidgets.QDialog.DialogCode.Rejected
+    monkeypatch.setattr(AddAnswerDialog, "exec", fake_exec)
+    ed.add_btn.click()
+    assert seen and seen[0].question_edit.text() == ""
+
+
 # --- ED-5: Delete ----------------------------------------------------------------------
 
 def test_builtin_rows_have_no_delete_button(qtbot, tmp_path):

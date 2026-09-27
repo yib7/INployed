@@ -12,7 +12,9 @@ state. Changing an answer confirms its row; the top line counts unset and
 unconfirmed answers, and those rows carry the theme's warning highlight.
 "Add answer" opens `AddAnswerDialog`, whose OK stays disabled while the
 candidate is a question the run fills from a built-in (`builtin_answering`)
-or another custom answer's question, or fails `validate`. Save runs the same
+or another custom answer's question, or fails `validate`; `add_answer(prefill)`
+opens it prefilled with a form's question (PR-9), for the Auto-apply tab's
+Pre-answer and a parked question's Answer now. Save runs the same
 checks (blocking on problems) and shows `warnings` after a clean write. A
 damaged store shows its error, keeps its file as it is (no defaults drawn or
 saved over it), and offers "Restore backup" only when a good `.bak` sits next to it; the restore
@@ -229,16 +231,49 @@ class AddAnswerDialog(QtWidgets.QDialog):
     `apply_answers.validate` run against the existing answers; the reason
     shows under the fields. A narrower question the run hands to a custom
     answer (another country, a city, a visa type) is accepted.
+
+    `prefill` (PR-9: the difficulty check's Pre-answer and a parked question's
+    Answer now) holds a form's question: "question" (its label), "help",
+    "type" and "options". The question box gets `apply_facts.saved_question`
+    (the label plus its help, so the run's own-question gate matches the same
+    field next time) and the type its widget's (`apply_facts.answer_type` when
+    none is given). A custom answer holds text, yes / no or a number, so a
+    "choice" is saved as text picked from the form's options in an editable
+    box. A muted hint shows the form's help and options. The refusals above
+    apply to a prefilled question as they do to a typed one.
     """
 
-    def __init__(self, existing_answers: list[dict], parent=None) -> None:
+    def __init__(self, existing_answers: list[dict], parent=None, *,
+                 prefill: dict | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Add answer")
         self._existing = list(existing_answers)
         self.answer_widget: QtWidgets.QWidget | None = None
+        prefill = dict(prefill or {})
+        self._options = [str(o) for o in prefill.get("options") or [] if str(o).strip()]
         self._build()
         self._rebuild_answer_widget()
+        if prefill:
+            self._apply_prefill(prefill)
         self._recompute()
+
+    def _apply_prefill(self, prefill: dict) -> None:
+        help_text = str(prefill.get("help") or "").strip()
+        wanted = str(prefill.get("type") or "").strip() or \
+            apply_facts.answer_type("text", self._options)
+        etype = wanted if wanted in _TYPE_LABELS else "text"
+        self.type_combo.setCurrentText(_TYPE_LABELS[etype])
+        self.question_edit.setText(
+            apply_facts.saved_question(str(prefill.get("question") or ""), help_text))
+        lines = []
+        if help_text:
+            lines.append("The form's help text: %s" % help_text)
+        if self._options:
+            lines.append("The form's options: %s" % "; ".join(self._options))
+        if wanted == "choice":
+            lines.append("Saved as text: pick the option the run should choose.")
+        self.hint_label.setText("\n".join(lines))
+        self.hint_label.setVisible(bool(lines))
 
     def _build(self) -> None:
         v = QtWidgets.QVBoxLayout(self)
@@ -260,6 +295,12 @@ class AddAnswerDialog(QtWidgets.QDialog):
         self.note_edit.textChanged.connect(self._recompute)
         form.addRow("Note:", self.note_edit)
         v.addLayout(form)
+
+        self.hint_label = QtWidgets.QLabel("")
+        self.hint_label.setWordWrap(True)
+        self.hint_label.setProperty("muted", True)
+        self.hint_label.setVisible(False)
+        v.addWidget(self.hint_label)
 
         self.message_label = QtWidgets.QLabel("")
         self.message_label.setWordWrap(True)
@@ -297,6 +338,14 @@ class AddAnswerDialog(QtWidgets.QDialog):
             widget = QtWidgets.QLineEdit()
             widget.setValidator(_number_validator(widget))
             widget.textChanged.connect(self._recompute)
+        elif self._options:
+            # a prefilled choice (PR-9): the form's options to pick from, or type
+            widget = QtWidgets.QComboBox()
+            widget.setEditable(True)
+            widget.addItems(self._options)
+            widget.setCurrentIndex(-1)
+            widget.setEditText("")
+            widget.currentTextChanged.connect(self._recompute)
         else:
             widget = QtWidgets.QLineEdit()
             widget.textChanged.connect(self._recompute)
@@ -306,8 +355,8 @@ class AddAnswerDialog(QtWidgets.QDialog):
 
     def _answer_text(self) -> str:
         if isinstance(self.answer_widget, QtWidgets.QComboBox):
-            text = self.answer_widget.currentText()
-            return "" if text == "Not set" else text
+            text = self.answer_widget.currentText().strip()
+            return "" if text == "Not set" and not self.answer_widget.isEditable() else text
         return self.answer_widget.text().strip()
 
     def result_entry(self) -> dict:
@@ -769,10 +818,25 @@ class AnswersEditor(QtWidgets.QWidget):
             self.status.setText("Confirmed every answer that is set.")
 
     def _add_answer_clicked(self) -> None:
-        dialog = AddAnswerDialog(self.collect(), parent=self)
-        if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
-            self._append_row(dialog.result_entry())
-            self._refresh_counts()
+        self.add_answer()
+
+    def add_answer(self, prefill: dict | None = None) -> bool:
+        """Open Add answer, prefilled from a form's question when `prefill` is
+        given (PR-9, `AddAnswerDialog`), and append the new row unsaved: the
+        status line asks for Save changes. True when a row was added; False
+        when the dialog was cancelled or the store is damaged (nothing opens
+        then, and the status line shows the damage)."""
+        if self.load_error:
+            self.status.setText(self.load_error)
+            return False
+        dialog = AddAnswerDialog(self.collect(), parent=self, prefill=prefill)
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return False
+        entry = dialog.result_entry()
+        self._append_row(entry)
+        self._refresh_counts()
+        self.status.setText("Added '%s'. Click Save changes to keep it." % entry["question"])
+        return True
 
     def _delete_clicked(self, row: dict) -> None:
         question = row["entry"].get("question", "") or row["id"]

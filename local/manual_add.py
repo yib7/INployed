@@ -86,6 +86,18 @@ def _guess_title_company(jd_text: str) -> tuple[str, str]:
     return title, company
 
 
+def _pasted_description(jd_text: str = "", fetched_text: str = "") -> str:
+    """The exact value `build_job_record` stores in `job_description_formatted`:
+    the pasted text trimmed only at the ends (embedded newlines intact), or the
+    fetched page text when nothing was pasted. Only `job_summary` gets the
+    fuller `_strip_html` whitespace-collapse -- `job_description_formatted`
+    does not. Pulled out so a second caller (retailor_existing's prune-blanked
+    backfill) can reuse the identical expression instead of a copy that can
+    drift from this one, which is exactly how that backfill first shipped
+    wrong (it used `_strip_html`, flattening every pasted paragraph)."""
+    return (jd_text or "").strip() or (fetched_text or "").strip()
+
+
 def build_job_record(
     *,
     jd_text: str = "",
@@ -102,7 +114,7 @@ def build_job_record(
     the tailor (company_name / job_title / url) read, plus source="manual" and a
     deterministic job_posting_id. Raises ValueError when there is no usable JD.
     """
-    description = (jd_text or "").strip() or (fetched_text or "").strip()
+    description = _pasted_description(jd_text, fetched_text)
     plain = _strip_html(description)
     if len(plain) < 40:
         raise ValueError(
@@ -395,15 +407,18 @@ def retailor_existing(
     duplicate re-added after that point can carry only the 1000-char
     job_summary even though the user just pasted the full text again. When
     the stored record's job_description_formatted is blank, this fills it
-    from jd_text (stripped the same way build_job_record does) for THIS
-    tailor run only: `record` is copied up front, so neither the caller's
-    dict nor (in turn) the master row it came from is ever rewritten. A
-    present, non-blank stored description always wins over a re-paste.
+    with `_pasted_description(jd_text)` -- the SAME expression a fresh add
+    stores in that field (trimmed only at the ends, embedded newlines intact;
+    NOT `_strip_html`, which is for job_summary only and would flatten a
+    multi-paragraph paste onto one line) -- for THIS tailor run only: `record`
+    is copied up front, so neither the caller's dict nor (in turn) the master
+    row it came from is ever rewritten. A present, non-blank stored
+    description always wins over a re-paste.
     """
     log = on_status or (lambda _m: None)
     record = dict(record)
     if jd_text.strip() and not str(record.get("job_description_formatted") or "").strip():
-        record["job_description_formatted"] = _strip_html(jd_text)
+        record["job_description_formatted"] = _pasted_description(jd_text)
     resume_dir = _run_tailor(record, tailor_opts or {}, tailor_fn, log)
     if resume_dir:
         record["resume"] = str(resume_dir)

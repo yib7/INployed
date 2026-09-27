@@ -13,7 +13,7 @@ goes for the helpers defined here (`_block_of`, `_block_atoms`, `_required_block
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Mapping, Optional
 
 from . import assets, config, layout
 from .common import _PRINCIPLE, _gkey, fence_jd
@@ -33,9 +33,11 @@ def _first_atom(section: str, name: str) -> List[str]:
     return []
 
 
-def _catalog() -> str:
-    """Compact id/what/angles catalog of every atom, grouped by block, for select()."""
-    bl = assets.blocks()
+def _catalog(shortlist: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> str:
+    """Compact id/what/angles catalog of every atom, grouped by block, for select().
+    Given the TL-2 `shortlist` (`_shortlist`), it lists only those blocks and atoms,
+    in that order."""
+    bl = assets.blocks() if shortlist is None else shortlist
     idx = assets.atoms_by_id()
     lines: List[str] = []
     for section in ("experience", "projects", "leadership"):
@@ -100,7 +102,18 @@ def _experience_guidance() -> str:
     return "\n".join(lines)
 
 
-def _project_guidance() -> str:
+def _project_group_count(name: str) -> int:
+    """The bullet groups select() aims a project at: its custom layout's count
+    (`config.project_targets`), else the largest tier (`config.project_bullet_tiers`),
+    else the global `PROJECT_BULLETS_MAX`. `_project_guidance` says why."""
+    targets = config.project_targets(name)
+    if targets:
+        return len(targets)
+    tiers = config.project_bullet_tiers()
+    return max(tiers) if tiers else config.PROJECT_BULLETS_MAX
+
+
+def _project_guidance(names: Optional[List[str]] = None) -> str:
     """Per-project selection guidance for select(), generated from the config so it
     honors each project's configured bullet count instead of defaulting weaker projects
     to one group. A project with a custom layout (`config.project_targets`) uses that
@@ -109,24 +122,71 @@ def _project_guidance() -> str:
     strength ranking exists, so we can't assign a per-project rank yet; aiming high makes
     the model surface enough relevant atoms for whatever lands in the top slot, and
     `_cap_projects` trims each project to its actual rank's tier count downstream. With no
-    tiers, an unconfigured project uses the global `PROJECT_BULLETS_MAX`."""
-    tiers = config.project_bullet_tiers()
-    tier_max = max(tiers) if tiers else None
-    lines: List[str] = []
-    for b in assets.blocks().get("projects", []):
-        name = b["name"]
-        targets = config.project_targets(name)
-        if targets:
-            n = len(targets)
-        elif tier_max is not None:
-            n = tier_max
-        else:
-            n = config.PROJECT_BULLETS_MAX
-        lines.append(f"  - {name}: aim for {n} bullet group(s), densest / most JD-relevant first.")
-    if tier_max is not None:
+    tiers, an unconfigured project uses the global `PROJECT_BULLETS_MAX`.
+
+    `names` lists the projects to guide, in order; left None it is every project in the
+    master, in file order. The TL-2 shortlist passes its own ranked projects."""
+    if names is None:
+        names = [b["name"] for b in assets.blocks().get("projects", [])]
+    lines: List[str] = [
+        f"  - {name}: aim for {_project_group_count(name)} bullet group(s), densest / "
+        "most JD-relevant first." for name in names]
+    if config.project_bullet_tiers():
         lines.append("  - Final bullet counts taper by project strength: the strongest "
                      "project(s) keep the most groups, weaker ones fewer.")
     return "\n".join(lines)
+
+
+# ── TL-2: the Jev shortlist (cycle 19) ───────────────────────────────────────
+# With Jev on, `jev_assist.atom_relevance` rates every atom against the job and
+# select() sees a trimmed catalog in relevance order: fewer tokens, sharper focus.
+# Jev only orders; the counts below are code.
+SHORTLIST_SPARE_PROJECTS = 2       # projects kept past config.projects_max()
+
+
+def _shortlist_keep(section: str, name: str) -> int:
+    """How many of a block's atoms the shortlist keeps: twice its bullet count plus
+    two, and at least one atom per printed line its layout asks for, so a block of
+    long bullets keeps enough atoms to fuse."""
+    if section == "projects":
+        targets = config.project_targets(name)
+        n = _project_group_count(name)
+        lines = sum(targets) if targets else n * config.PROJECT_BULLET_LINES
+    else:
+        targets = config.block_targets(name)
+        n, lines = len(targets), sum(targets)
+    return max(2 * n + 2, lines)
+
+
+def _shortlist(relevance: Mapping[str, float]) -> Dict[str, List[Dict[str, Any]]]:
+    """The blocks select() sees when Jev rated every atom, shaped as
+    `assets.blocks()` is.
+
+    `relevance` maps an atom id to Jev's P(the atom shows experience the job asks
+    for); an atom it leaves out reads as 0.0. Each block keeps its `_shortlist_keep`
+    most probable atoms, most probable first, a tie keeping file order; a block with
+    fewer keeps every atom. Every experience and leadership block stays, so the
+    yaml's `tailor.required` blocks always do. Projects rank by their kept atoms'
+    probabilities, best first (a tie keeps file order), and the top
+    `config.projects_max()` plus SHORTLIST_SPARE_PROJECTS stay, in rank order."""
+    def prob(aid: str) -> float:
+        return float(relevance.get(aid, 0.0))
+
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for section in ("experience", "projects", "leadership"):
+        out[section] = [
+            {**b, "atoms": sorted(b["atoms"], key=lambda a: -prob(a))[
+                :_shortlist_keep(section, b["name"])]}
+            for b in assets.blocks().get(section, [])]
+    depth = max((len(b["atoms"]) for b in out["projects"]), default=0)
+
+    def strength(block: Dict[str, Any]) -> List[float]:
+        probs = [prob(a) for a in block["atoms"]]
+        return [-p for p in probs + [0.0] * (depth - len(probs))]
+
+    ranked = sorted(out["projects"], key=strength)
+    out["projects"] = ranked[:config.projects_max() + SHORTLIST_SPARE_PROJECTS]
+    return out
 
 
 def _check_required_blocks() -> None:
@@ -137,9 +197,20 @@ def _check_required_blocks() -> None:
 
 
 # ── Stage 1: select ──────────────────────────────────────────────────────────
-def select(jd: str, job_title: str, company: str) -> Dict[str, Any]:
+def select(jd: str, job_title: str, company: str, *,
+           atom_relevance: Optional[Mapping[str, float]] = None,
+           skill_pick: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    """Stage 1: the model picks the blocks, the bullet groups and the skills; code
+    makes the answer safe (`_normalize_selection`).
+
+    With Jev on, `run.tailor()` passes what Jev answered. `atom_relevance` (TL-2,
+    `jev_assist.atom_relevance`) trims the catalog the model sees to `_shortlist`'s
+    blocks, in relevance order. `skill_pick` (TL-1, `jev_assist.skills_pick`)
+    supplies the skills lines and the skill focus, so the prompt asks the model for
+    neither. Left None, each part of the request is today's."""
     _check_required_blocks()
-    system = (
+    shortlist = _shortlist(atom_relevance) if atom_relevance else None
+    head = (
         "You are tailoring a one-page resume for an early-career data/SWE candidate. "
         "This step is PURE SELECTION: you write no prose. Choose which experiences, "
         "projects, and leadership entries best match the job, and group their atoms (by "
@@ -147,6 +218,8 @@ def select(jd: str, job_title: str, company: str) -> Dict[str, Any]:
         "atoms only when they describe the SAME achievement and read naturally as a single "
         "dense line (e.g. an accuracy gain + the cost cut). Prefer single-atom groups "
         "unless fusing clearly improves density. Bias toward the most JD-relevant evidence. "
+    )
+    skills_part = (
         "In the SAME pass, also select the candidate's technical skills into exactly four "
         "lines (Languages / Frameworks / Developer Tools / Libraries): only skills present in "
         "each line's pool. RANK each line's pool by relevance to THIS job and return the BEST "
@@ -157,15 +230,19 @@ def select(jd: str, job_title: str, company: str) -> Dict[str, Any]:
         "Do NOT pad with weak/unrelated filler just to reach the count. A few sharp, relevant "
         "skills beat a long list. Preserve any '(conceptual)' / '(from scratch)' qualifiers "
         "verbatim. You MAY merge closely-related API entries into one compact token (e.g. "
-        "'Gemini/OpenAI/Claude API'). ALSO rank the candidate's concepts/methodologies (the "
+        "'Gemini/OpenAI/Claude API'). "
+    )
+    methods_part = (
+        "ALSO rank the candidate's concepts/methodologies (the "
         "METHODS POOL) by relevance to this job, most-relevant first, copying items verbatim "
         "from that pool (selection only; invention is forbidden) for the 'methods' output.\n"
-        + _PRINCIPLE
     )
+    system = head + ("" if skill_pick else skills_part) + methods_part + _PRINCIPLE
     pools = _skill_pools()
     methods_pool = _methods_pool()
     exp_guidance = _experience_guidance()
-    proj_guidance = _project_guidance()
+    proj_guidance = _project_guidance(
+        None if shortlist is None else [b["name"] for b in shortlist["projects"]])
     lead_lines = layout.LEADERSHIP_ENTRY_LINES
     lead_guidance = (
         f"Each entry = EXACTLY {lead_lines} printed line(s), normally as "
@@ -173,20 +250,27 @@ def select(jd: str, job_title: str, company: str) -> Dict[str, Any]:
         if lead_lines else
         "Choose the number of groups per entry that best fits."
     )
-    # Static blocks first (catalog/pools/guidance/schema are identical every run),
-    # the per-job JOB/JD last — so Gemini's implicit prefix cache can discount the
-    # large static prefix across back-to-back tailor runs. JSON mode fixes the
-    # output shape regardless of where the schema sits.
-    user = f"""ATOM CATALOG (choose atom ids from here only; an atom belongs to the block it is listed under):
-{_catalog()}
-
-SKILL POOLS (for the "skills" output only). Pick each line's items only from its pool, ranked most-relevant-first; aim ~7 Languages, ~7 Frameworks, ~10 Developer Tools, ~10 Libraries, or all of a smaller pool. JD matches first, then complementary skills; don't pad to hit the count:
+    # The skills part of the request, dropped whole when Jev picked the skills (TL-1).
+    skill_pools = f"""SKILL POOLS (for the "skills" output only). Pick each line's items only from its pool, ranked most-relevant-first; aim ~7 Languages, ~7 Frameworks, ~10 Developer Tools, ~10 Libraries, or all of a smaller pool. JD matches first, then complementary skills; don't pad to hit the count:
 Languages: {json.dumps(pools["Languages"], ensure_ascii=False)}
 Frameworks: {json.dumps(pools["Frameworks"], ensure_ascii=False)}
 Developer Tools: {json.dumps(pools["Developer Tools"], ensure_ascii=False)}
 Libraries: {json.dumps(pools["Libraries"], ensure_ascii=False)}
 
-METHODS POOL (for the "methods" output only, the candidate's concepts/methodologies; RANK by relevance to THIS job, most-relevant FIRST, and return ~8-10. SELECTION ONLY: copy items VERBATIM from this pool; invention is forbidden. These become the résumé's concepts line; lead with the concepts this role centers on (e.g. data analysis, ETL, A/B testing, modeling)):
+"""
+    skills_schema = """  "skill_focus": "one of: ml_research | backend_platform | data_analytics | general",
+  "skills": {"Languages": "Python, SQL, R", "Frameworks": "...", "Developer Tools": "...", "Libraries": "..."},
+"""
+    if skill_pick:
+        skill_pools = skills_schema = ""
+    # Static blocks first (catalog/pools/guidance/schema are identical every run),
+    # the per-job JOB/JD last — so Gemini's implicit prefix cache can discount the
+    # large static prefix across back-to-back tailor runs. JSON mode fixes the
+    # output shape regardless of where the schema sits.
+    user = f"""ATOM CATALOG (choose atom ids from here only; an atom belongs to the block it is listed under):
+{_catalog(shortlist)}
+
+{skill_pools}METHODS POOL (for the "methods" output only, the candidate's concepts/methodologies; RANK by relevance to THIS job, most-relevant FIRST, and return ~8-10. SELECTION ONLY: copy items VERBATIM from this pool; invention is forbidden. These become the résumé's concepts line; lead with the concepts this role centers on (e.g. data analysis, ETL, A/B testing, modeling)):
 {json.dumps(methods_pool, ensure_ascii=False)}
 
 Selection guidance. The resume template has FIXED sections; fill them to one full page (~14-18 bullets):
@@ -205,9 +289,7 @@ Return ONLY JSON (use the real block names + atom ids from the catalog; groups i
   ],
   "projects":   [{{"name": "<project name>", "groups": [["<atom_id>"], ["<atom_id>", "<atom_id>"]]}}],
   "leadership": [{{"name": "<leadership org>", "groups": [["<atom_id>"]]}}],
-  "skill_focus": "one of: ml_research | backend_platform | data_analytics | general",
-  "skills": {{"Languages": "Python, SQL, R", "Frameworks": "...", "Developer Tools": "...", "Libraries": "..."}},
-  "methods": ["<concept from the METHODS POOL>", "<next most relevant>", "..."],
+{skills_schema}  "methods": ["<concept from the METHODS POOL>", "<next most relevant>", "..."],
   "rationale": "1-2 sentences (incl. why projects are ordered as they are)"
 }}
 
@@ -216,7 +298,14 @@ JOB: {job_title} at {company}
 
 {fence_jd(jd, 7000, "relevance ranking and selection")}"""
     out = call(system, user, config.TIER_FLASH, json_out=True, temperature=0.1)
-    return _normalize_selection(as_dict(out, "experience"))
+    sel = _normalize_selection(as_dict(out, "experience"))
+    if skill_pick:
+        # TL-1: each line is its pool in Jev's probability order; compress_skills
+        # cuts it to the line's count and printed width.
+        sel["skills"] = {label: ", ".join(ranked)
+                         for label, ranked in skill_pick["lines"].items() if ranked}
+        sel["skill_focus"] = skill_pick["skill_focus"]
+    return sel
 
 
 def _normalize_selection(sel: Dict[str, Any]) -> Dict[str, Any]:
@@ -358,7 +447,7 @@ def _resize_to_count(entry: Dict[str, Any], section: str, name: str, n: int,
     the largest fused group (its last atom becomes the next bullet, in place)
     until the count is met or every group is a single atom. Without the split a
     block whose atoms select fused two-to-a-bullet shipped short of its
-    configured count (Octus, 3 atoms, 3 targets, rendered 2 on 2026-09-20).
+    configured count (an entry with 3 atoms and 3 targets rendered 2 on 2026-09-20).
     With singles=True every bullet is one atom (splitting any fused group),
     matching the leadership "one tight bullet per atom" plan."""
     avail = _block_atoms(section, name)

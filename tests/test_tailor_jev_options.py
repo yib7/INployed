@@ -30,7 +30,8 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
 import jev  # noqa: E402
-from resume_tailor import assets, compose, config, coverletter, jev_assist, verify  # noqa: E402
+from resume_tailor import (assets, ats, compose, config, coverletter, jev_assist,  # noqa: E402
+                           verify)
 from resume_tailor import run as rt_run  # noqa: E402
 from resume_tailor.llm import LLMError  # noqa: E402
 
@@ -434,3 +435,89 @@ def test_the_standalone_letter_builds_a_judge_only_with_the_option(tmp_path, mon
     assert ("judge" in got) == (option == "1")
     assert areas == (["tailor"] if option == "1" else [])
     assert any(line.startswith("jev letter check:") for line in logs) == (option == "1")
+
+
+# ── TL-9: the ATS meaning line ────────────────────────────────────────────────
+_KEYWORDS = ["python", "dashboards", "etl", "kubernetes"]
+_PAGE = "Built Python services and sales dashboarding views. Loaded warehouse data nightly."
+
+
+@pytest.fixture()
+def ats_page(monkeypatch, tmp_path):
+    """write_report over a fixed keyword list and page text: literally, the page
+    holds "python" alone ("dashboarding" is no word match for "dashboards")."""
+    monkeypatch.setattr(ats, "extract_keywords", lambda jd: list(_KEYWORDS))
+    monkeypatch.setattr(ats, "_pdf_text", lambda pdf: _PAGE)
+    pdf = tmp_path / "resume.pdf"
+
+    def write(**kw):
+        frac = ats.write_report("jd", pdf, tmp_path, **kw)
+        return frac, (tmp_path / "ats_report.txt").read_text(encoding="utf-8")
+    return write
+
+
+def test_the_meaning_line_sits_beside_the_literal_one(ats_page):
+    asked = []
+
+    def meaning(keywords, text):
+        asked.append((list(keywords), text))
+        return ["python", "dashboards", "etl"]
+
+    frac, report = ats_page(meaning=meaning)
+    assert frac == 0.25                      # the literal fraction, as before
+    assert asked == [(_KEYWORDS, _PAGE)]
+    lines = report.split("\n")
+    at = lines.index("Coverage: 25%  (1 of 4 JD keywords found in the PDF)")
+    assert lines[at + 1] == ("Coverage by meaning (Jev): 75%  (3 of 4 JD keywords the "
+                             "resume shows in words or by a direct equivalent)")
+    shown = lines.index("SHOWN BY MEANING, MISSING BY WORD:")
+    assert lines[shown + 1:shown + 3] == ["  ~ dashboards", "  ~ etl"]
+
+
+@pytest.mark.parametrize("meaning", [None, lambda keywords, text: None],
+                         ids=["no meaning", "meaning failed"])
+def test_without_a_meaning_answer_the_report_is_todays(ats_page, tmp_path, meaning):
+    _frac, today = ats_page()
+    _frac, got = ats_page(meaning=meaning)
+    assert got == today
+    assert "by meaning" not in got.lower()
+
+
+def _ats_run(monkeypatch, tmp_path, option):
+    """The golden run with the ATS report on; write_report is captured, and it asks
+    the meaning check once when it is handed one."""
+    monkeypatch.setenv("RESUME_TAILOR_ATS_MEANING", option)
+    got = {}
+
+    def fake_report(jd, pdf, out_dir, **kw):
+        got.update(kw)
+        if "meaning" in kw:
+            got["shown"] = kw["meaning"](["python", "sql"], "Wrote Python and SQL.")
+        return 0.5
+
+    monkeypatch.setattr(ats, "write_report", fake_report)
+    tailor = rt_run.tailor
+    monkeypatch.setattr(rt_run, "tailor", lambda job, **kw: tailor(job, **{**kw,
+                                                                          "ats_report": True}))
+    tailor_jev._run_tailor(monkeypatch, tmp_path)
+    return got
+
+
+@pytest.mark.parametrize("option", ["1", "0"], ids=["option on", "option off"])
+def test_the_run_hands_the_report_a_meaning_check_only_with_the_option(
+        pinned_engine, stub_template_head, tmp_path, monkeypatch, option):
+    golden._install_stub(monkeypatch, tailor_jev._recording([], []))
+    tailor_jev._jev_on(monkeypatch, jev.FakeJev())
+    got = _ats_run(monkeypatch, tmp_path, option)
+    assert ("meaning" in got) == (option == "1")
+    report = tailor_jev._report(tmp_path)
+    assert ("jev ats meaning: 1 request" in report) == (option == "1")
+    if option == "1":
+        assert isinstance(got["shown"], list)
+
+
+def test_with_jev_off_the_report_gets_no_meaning_check(pinned_engine, stub_template_head,
+                                                       tmp_path, monkeypatch):
+    golden._install_stub(monkeypatch, tailor_jev._recording([], []))
+    tailor_jev._jev_off(monkeypatch)
+    assert "meaning" not in _ats_run(monkeypatch, tmp_path, "1")

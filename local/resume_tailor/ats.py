@@ -6,12 +6,16 @@ ATS-screened tech/analytics terms, plus repeated acronyms found in the JD.
 The report flags JD terms missing from the tailored PDF so the user can decide
 whether a missing term is true of them (select-and-rephrase rule:
 never add a skill just because the JD wants it).
+
+With the ATS meaning line on (TL-9, Settings, with Jev on) the caller hands
+write_report a `meaning` check, and the report gains a meaning-level coverage line
+beside the literal one. This module stays free of Jev: the check is the caller's.
 """
 from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import List, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple
 
 from . import assets
 
@@ -205,20 +209,45 @@ def _pdf_text(pdf_path: Path) -> str:
     return "\n".join((pg.extract_text() or "") for pg in reader.pages)
 
 
-def write_report(jd_text: str, pdf_path: Path, out_dir: Path) -> float:
-    """Write ats_report.txt next to the tailored PDF; return coverage fraction."""
+# What a TL-9 meaning check is: (keywords, the résumé's text) -> the keywords the
+# résumé shows in words or by a direct equivalent, or None when it could not run.
+MeaningFn = Callable[[Sequence[str], str], Optional[List[str]]]
+
+
+def write_report(jd_text: str, pdf_path: Path, out_dir: Path,
+                 meaning: Optional[MeaningFn] = None) -> float:
+    """Write ats_report.txt next to the tailored PDF; return coverage fraction.
+
+    With `meaning` (TL-9) the report adds a meaning-level coverage line under the
+    literal one and lists the keywords shown by meaning that no word matched. A
+    check that returns None leaves the report as it was; the fraction returned is
+    the literal one either way."""
     keywords = extract_keywords(jd_text)
-    frac, present, missing = coverage(keywords, _pdf_text(pdf_path))
+    text = _pdf_text(pdf_path)
+    frac, present, missing = coverage(keywords, text)
+    shown = meaning(keywords, text) if meaning is not None and keywords else None
+    by_meaning: List[str] = []
+    extra: List[str] = []
+    if shown is not None:
+        kept = set(shown)
+        by_meaning = [
+            f"Coverage by meaning (Jev): {len(kept & set(keywords)) / len(keywords):.0%}  "
+            f"({len(kept & set(keywords))} of {len(keywords)} JD keywords the resume shows "
+            "in words or by a direct equivalent)"]
+        extra = ["", "SHOWN BY MEANING, MISSING BY WORD:",
+                 *(f"  ~ {k}" for k in missing if k in kept)]
     lines = [
         "ATS keyword coverage report",
         f"Resume: {pdf_path.name}",
         f"Coverage: {frac:.0%}  ({len(present)} of {len(keywords)} JD keywords found in the PDF)",
+        *by_meaning,
         "",
         "PRESENT IN RESUME:",
         *(f"  + {k}" for k in present),
         "",
         "MISSING FROM RESUME:",
         *(f"  - {k}" for k in missing),
+        *extra,
         "",
         "Note: a missing term is only worth adding if it is genuinely true of the",
         "candidate (it must exist in master_experience.yaml); never keyword-stuff.",

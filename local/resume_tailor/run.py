@@ -1467,12 +1467,22 @@ def tailor(
 
         if ats_report:
             report.stage("ats report")
+            # TL-9: the meaning check only with the option on, handed in as a
+            # function so the report module stays free of Jev.
+            ats_kw: Dict[str, Any] = {}
+            if judge is not None and config.ats_meaning():
+                def meaning(keywords: Sequence[str], text: str) -> Optional[List[str]]:
+                    return jev_assist.keyword_meaning(keywords, text, judge=judge)
+                ats_kw["meaning"] = meaning
             try:
-                cov = ats.write_report(jd, out_dir / output.resume_filename(), out_dir)
+                cov = ats.write_report(jd, out_dir / output.resume_filename(), out_dir,
+                                       **ats_kw)
                 log(f"ATS keyword coverage: {cov:.0%} (details in ats_report.txt)")
             except Exception as exc:  # noqa: BLE001 - the report is advisory, never fatal
                 log(f"ATS check skipped ({exc})")
                 report.advisory(f"ATS check skipped ({exc})")
+            if ats_kw:
+                report.jev_step(jev_assist.STEP_ATS_MEANING)
 
         cover_body = ""      # the paste-ready letter apply.md embeds, when generated
         if cover_letter:

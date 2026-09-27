@@ -232,13 +232,26 @@ LETTER_CLAIMS_NOTE = (
     "not state; rewrite each one to say only what those sources state, or cut it):")
 
 _SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
+# A piece ending in one of these is an abbreviation, not a sentence: a single letter
+# ("B.S.", "e.g.", "J. Smith") or a title before a name.
+_ABBREVIATION_END_RE = re.compile(r"(?:\b[A-Za-z]|\b(?:Dr|Mr|Mrs|Ms|Jr|Sr|St|vs))\.$")
 
 
 def _letter_sentences(body: str) -> List[str]:
-    """The body's sentences in order, paragraph by paragraph."""
+    """The body's sentences in order, paragraph by paragraph. A break after an
+    abbreviation (`_ABBREVIATION_END_RE`) joins the two pieces back."""
     out: List[str] = []
     for para in re.split(r"\n\s*\n", body or ""):
-        out += [s.strip() for s in _SENTENCE_END_RE.split(para.strip()) if s.strip()]
+        pieces: List[str] = []
+        for s in _SENTENCE_END_RE.split(para.strip()):
+            s = s.strip()
+            if not s:
+                continue
+            if pieces and _ABBREVIATION_END_RE.search(pieces[-1]):
+                pieces[-1] += " " + s
+            else:
+                pieces.append(s)
+        out += pieces
     return out
 
 
@@ -371,6 +384,12 @@ Write the body now."""
     if bad or claims:
         body = _repair_ungrounded_body(job_title, company, body, bullets, bad, tone,
                                        background=background, claims=claims)
+        if claims:
+            # A repair TL-8 asked for rewrites sentences after the style gate ran, and
+            # nothing later strips an em dash (`to_latex` prints one), so the repaired
+            # body goes through the gate again.
+            body = enforce_body_style(job_title, company, body, bullets, tone=tone,
+                                      background=background)
         bad = verify.letter_unseen(body, allowed)
         if bad:
             raise LLMError(

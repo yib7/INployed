@@ -274,11 +274,12 @@ class LetterCalls:
 
     def __init__(self):
         self.calls = []
+        self.repaired = _REPAIRED
 
     def __call__(self, system, user, tier, **kw):
         role = "repair" if "You repair a cover-letter body" in system else "draft"
         self.calls.append((role, system, user))
-        return _REPAIRED if role == "repair" else _BODY
+        return self.repaired if role == "repair" else _BODY
 
     def roles(self):
         return [role for role, _s, _u in self.calls]
@@ -384,6 +385,51 @@ def test_a_repair_with_no_claim_is_todays_prompt(letter):
     letter.generate(judge=ClaimReader())
     assert letter.calls.repair_user() == today
     assert coverletter.LETTER_CLAIMS_NOTE not in today
+
+
+_DASHED = f"{_TRUE} {chr(0x2014)} more on that below.\n\nI would like to bring that work to Initech."
+
+
+@pytest.fixture()
+def style_gate(letter, monkeypatch):
+    """enforce_body_style as a spy that keeps each body it is handed and applies the
+    gate's em-dash backstop, with the repair writing an em dash."""
+    seen = []
+
+    def style(job_title, company, body, *a, **k):
+        seen.append(body)
+        return compose._strip_em_dashes(body)
+
+    monkeypatch.setattr(coverletter, "enforce_body_style", style)
+    letter.calls.repaired = _DASHED
+    return seen
+
+
+def test_a_repair_the_check_drove_goes_back_through_the_style_gate(letter, style_gate):
+    """The repair call writes new letter text after the style gate ran, so a repair
+    TL-8 asked for goes through the gate again, and its em dash never prints."""
+    body = letter.generate(judge=ClaimReader("led"))
+    assert style_gate == [_BODY, _DASHED]
+    assert body == compose._strip_em_dashes(_DASHED) and chr(0x2014) not in body
+
+
+@pytest.mark.parametrize("judge", [None, ClaimReader()], ids=["check off", "nothing flagged"])
+def test_a_repair_the_gate_alone_drove_is_todays(letter, style_gate, judge):
+    """The grounding gate alone asked for the repair: the style gate runs once, as it
+    did before TL-8."""
+    letter.unseen[_BODY] = ["Kubernetes"]
+    kw = {} if judge is None else {"judge": judge}
+    letter.generate(**kw)
+    assert style_gate == [_BODY]
+
+
+def test_the_letter_sentences_keep_an_abbreviation_whole():
+    body = ("I hold a B.S. in Statistics from UT. I built dashboards, e.g. a sales view "
+            "for J. Smith.\n\nDr. Lee ran the team! Mr. Park asked why?  It shipped.")
+    assert coverletter._letter_sentences(body) == [
+        "I hold a B.S. in Statistics from UT.",
+        "I built dashboards, e.g. a sales view for J. Smith.",
+        "Dr. Lee ran the team!", "Mr. Park asked why?", "It shipped."]
 
 
 def test_the_claims_note_is_free_of_the_banned_phrasing():

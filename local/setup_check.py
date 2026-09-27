@@ -74,6 +74,13 @@ def claude_cli_warnings(tailor_provider: str, scoring_provider: str,
     return out
 
 
+# Each line is tagged with the title the Settings tab shows over the section
+# that holds the setting it names (settings_tab.SECTION_DISPLAY renames Engine;
+# this module stays free of Qt, so the titles are spelled out here).
+TAILOR_TAG = "[Résumé tailor]"
+SCORING_TAG = "[Scoring]"
+
+
 def engine_problems() -> list[str]:
     """Credential and CLI warnings for the configured tailor + scoring providers.
 
@@ -102,14 +109,16 @@ def engine_problems() -> list[str]:
             has_pool = secrets.get("GEMINI_API_KEYS", False) or bool(
                 os.environ.get("GEMINI_API_KEYS", "").strip()
                 or os.environ.get("GEMINI_API_KEY", "").strip())
-            problems.extend(f"[Engine] {w}" for w in
+            problems.extend(f"{TAILOR_TAG} {w}" for w in
                             engine_credential_warnings(auth, project, has_key, has_pool))
         scoring_provider = str(
             os.environ.get("SCORE_PROVIDER")
             or stored.get("provider") or "gemini").strip().lower()
         cli_found = shutil.which("claude") is not None
-        problems.extend(f"[Engine] {w}" for w in claude_cli_warnings(
-            tailor_provider, scoring_provider, cli_found))
+        problems.extend(f"{TAILOR_TAG} {w}" for w in claude_cli_warnings(
+            tailor_provider, "", cli_found))
+        problems.extend(f"{SCORING_TAG} {w}" for w in claude_cli_warnings(
+            "", scoring_provider, cli_found))
         return problems
     except Exception:  # noqa: BLE001
         return []

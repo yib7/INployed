@@ -82,8 +82,31 @@ def test_engine_problems_flags_vertex_without_a_project(monkeypatch):
     _stub_config(monkeypatch, {"gemini_auth": "vertex"}, {})
     out = setup_check.engine_problems()
     assert len(out) == 1
-    assert out[0].startswith("[Engine] ")
+    assert out[0].startswith("[Résumé tailor] ")
     assert "Google Cloud project" in out[0]
+
+
+def _section_title(key):
+    """The title the Settings tab shows over `key`'s section."""
+    from qt.settings_tab import SECTION_DISPLAY
+    section = next(f.section for f in setup_check.settings.SETTINGS_SCHEMA if f.key == key)
+    return SECTION_DISPLAY.get(section, section)
+
+
+def test_engine_problems_name_the_section_each_fix_lives_in(monkeypatch):
+    """SP1 review E: the Settings tab titles the Engine section "Résumé
+    tailor", so an [Engine] line named a section the user cannot find. Each
+    line carries the title of the section holding the setting it names: the
+    tailor's billing and provider, and the scoring provider under Scoring."""
+    _stub_config(monkeypatch, {"gemini_auth": "api_key"}, {})
+    (line,) = setup_check.engine_problems()
+    assert line.startswith(f"[{_section_title('gemini_auth')}] Resume tailor engine ")
+    _stub_config(monkeypatch, {"tailor_provider": "claude"}, {"provider": "claude"})
+    tailor, scoring = setup_check.engine_problems()
+    assert tailor.startswith(f"[{_section_title('tailor_provider')}] Resume tailor provider ")
+    assert scoring.startswith(f"[{_section_title('provider')}] Scoring provider ")
+    assert _section_title("tailor_provider") == "Résumé tailor"
+    assert _section_title("provider") == "Scoring"
 
 
 def test_engine_problems_env_provider_beats_the_file(monkeypatch):

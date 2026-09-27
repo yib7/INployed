@@ -33,11 +33,13 @@ def _envelope(result, *, is_error=False, usage=None):
 # find_claude / is_rate_limit_message
 # --------------------------------------------------------------------------
 
+@pytest.mark.real_find_claude
 def test_find_claude_delegates_to_shutil_which(monkeypatch):
     monkeypatch.setattr(claude_cli.shutil, "which", lambda name: f"/bin/{name}")
     assert claude_cli.find_claude() == "/bin/claude"
 
 
+@pytest.mark.real_find_claude
 def test_find_claude_returns_none_when_missing(monkeypatch):
     monkeypatch.setattr(claude_cli.shutil, "which", lambda name: None)
     assert claude_cli.find_claude() is None

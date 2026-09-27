@@ -134,6 +134,15 @@ def reset_model_fallbacks() -> None:
         _WARNED.clear()
 
 
+def active_swaps() -> dict[str, str]:
+    """{refused model: fallback in use} for this process, as a copy.
+
+    The dashboard runs under pythonw, where the stderr warning goes nowhere, so
+    the tailor reads this to put the swap on its own warning channel."""
+    with _SWAP_LOCK:
+        return dict(_SWAPPED)
+
+
 def _swapped_model(model: str) -> str | None:
     with _SWAP_LOCK:
         return _SWAPPED.get(model)
@@ -196,6 +205,9 @@ class CLIResult:
     output_tokens: int
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+    # The model that answered: the requested one, or its MODEL_FALLBACKS entry
+    # after a swap. '' only from callers that build a CLIResult by hand.
+    model: str = ""
 
 
 def run_claude(
@@ -313,6 +325,7 @@ def _run_once(
         int(usage.get("output_tokens") or 0),
         int(usage.get("cache_read_input_tokens") or 0),
         int(usage.get("cache_creation_input_tokens") or 0),
+        model=model,
     )
 
 

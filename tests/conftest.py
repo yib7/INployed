@@ -288,19 +288,36 @@ def _hermetic_outbox_and_vm(tmp_path):
 
 
 @pytest.fixture(autouse=True)
-def _forget_claude_model_swaps():
-    """claude_cli remembers, per process, each model the installed CLI refused
-    and the fallback it swapped to (VL-5). A swap one test learns must not
-    decide which model the next test's fake CLI is asked for, so the memory is
-    cleared on both sides of every test. Only when the module is already loaded:
-    importing it here would put pipeline/ on the path for tests that never
-    asked for it."""
+def _hermetic_claude_cli(request):
+    """No test may start the real `claude` CLI, and no model swap may leak.
+
+    `claude_cli.find_claude` reads None for every test, so run_claude raises
+    not_found and cli_version returns None even on a machine with Claude Code
+    installed. A test that fakes the executable patches find_claude itself
+    (applied later, so it wins); a test of the real PATH lookup opts in with
+    `@pytest.mark.real_find_claude`.
+
+    claude_cli also remembers, per process, each model the installed CLI
+    refused and the fallback it swapped to, and run.py remembers which swaps it
+    has announced (VL-5). Both are cleared on each side of every test, so a swap
+    one test learns never decides the model the next test's fake CLI is asked
+    for or whether its warning shows. Same private-MonkeyPatch pattern as
+    _hermetic_apply_queue."""
+    import claude_cli
+
     def reset():
         mod = sys.modules.get("claude_cli")
         if mod is not None and hasattr(mod, "reset_model_fallbacks"):
             mod.reset_model_fallbacks()
+        run_mod = sys.modules.get("resume_tailor.run")
+        if run_mod is not None and hasattr(run_mod, "reset_model_swap_notices"):
+            run_mod.reset_model_swap_notices()
+
     reset()
-    yield
+    with pytest.MonkeyPatch.context() as mp:
+        if request.node.get_closest_marker("real_find_claude") is None:
+            mp.setattr(claude_cli, "find_claude", lambda: None)
+        yield
     reset()
 
 

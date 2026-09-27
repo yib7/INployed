@@ -412,6 +412,48 @@ def test_call_claude_cli_too_old_fails_fast_with_no_retry(monkeypatch, claude_en
     assert recorded == []               # no sleeps of any kind
 
 
+def test_usage_names_the_model_that_ran_after_a_swap(monkeypatch, claude_env):
+    """VL-5 fix round: a call claude_cli answered on the fallback is booked
+    under the fallback, never under the model the tailor asked for."""
+    def fake(system, user, model, *, json_out, tools, timeout_s):
+        return claude_cli.CLIResult("ok", 1, 2, 0, 0, model="claude-opus-5")
+
+    monkeypatch.setattr(llm, "_invoke_claude", fake)
+    llm._call_claude("sys", "user", "claude-opus-5-5")
+    assert llm.USAGE[-1]["model"] == "claude:claude-opus-5"
+
+
+def test_usage_falls_back_to_the_requested_model_when_the_result_names_none(
+        monkeypatch, claude_env):
+    fake, _seen = _invoke_claude_seq([])
+    monkeypatch.setattr(llm, "_invoke_claude", fake)
+    llm._call_claude("sys", "user", "claude-sonnet-5")
+    assert llm.USAGE[-1]["model"] == "claude:claude-sonnet-5"
+
+
+def test_claude_model_swaps_reads_the_transport_on_the_claude_lane(monkeypatch):
+    fake_module = types.SimpleNamespace(active_swaps=lambda: {"claude-opus-5-5": "claude-opus-5"})
+    monkeypatch.setattr(llm, "_claude_cli", lambda: fake_module)
+    monkeypatch.setattr(config, "tailor_provider", lambda: "claude")
+    assert llm.claude_model_swaps() == {"claude-opus-5-5": "claude-opus-5"}
+
+
+def test_claude_model_swaps_is_empty_off_the_claude_lane(monkeypatch):
+    def boom():
+        raise AssertionError("a gemini run must not load the claude transport")
+    monkeypatch.setattr(llm, "_claude_cli", boom)
+    monkeypatch.setattr(config, "tailor_provider", lambda: "gemini")
+    assert llm.claude_model_swaps() == {}
+
+
+def test_claude_model_swaps_is_empty_when_the_transport_cannot_load(monkeypatch):
+    def boom():
+        raise ImportError("no claude_cli")
+    monkeypatch.setattr(llm, "_claude_cli", boom)
+    monkeypatch.setattr(config, "tailor_provider", lambda: "claude")
+    assert llm.claude_model_swaps() == {}
+
+
 def test_cli_too_old_is_not_a_transient_for_the_answer_drafter():
     """apply_answergen.transient decides whether a draft gets its one retry.
     A too-old CLI answers the same way ten seconds later."""

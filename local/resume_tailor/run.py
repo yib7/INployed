@@ -15,6 +15,7 @@ import re
 import shutil
 import sys
 import tempfile
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -38,6 +39,10 @@ REPORT_NAME = "tailor_report.txt"
 KIND_GROUNDING = "grounding"
 KIND_PAGE_LIMIT = "page limit"
 KIND_ADVISORY = "advisory"
+# KIND_MODEL: the installed claude CLI refused the chosen Claude model, so the run
+# used claude_cli's fallback for it (VL-5). A warning the first time a process sees
+# the swap, a note on every later run (_report_model_swaps).
+KIND_MODEL = "model"
 
 # The NOTE taxonomy — same line shape ("<kind>: <message>"), one severity down.
 # A note records something the run could not fully deliver but that leaves a
@@ -125,6 +130,43 @@ class RunLog:
     @property
     def note_lines(self) -> List[str]:
         return [line for _kind, line in self.notes]
+
+
+# Swaps this process has already put on `on_warning`. Parallel batch jobs run
+# tailor() on worker threads, hence the lock.
+_SWAP_NOTICE_LOCK = threading.Lock()
+_SWAPS_ANNOUNCED: Set[str] = set()
+
+
+def reset_model_swap_notices() -> None:
+    """Forget which swaps were announced (for tests)."""
+    with _SWAP_NOTICE_LOCK:
+        _SWAPS_ANNOUNCED.clear()
+
+
+def _report_model_swaps(report: RunLog) -> None:
+    """Record each Claude model swap the transport made this process.
+
+    The dashboard runs under pythonw, where claude_cli's stderr warning goes
+    nowhere, so a user on an old CLI would get every résumé from the fallback
+    model and never hear of it. The first run that sees a swap warns (the
+    dashboard's batch summary shows it); every later run carries it as a note,
+    so one old CLI does not mark every job in the process degraded. A lookup
+    that fails records nothing: the résumé is already written."""
+    try:
+        swaps = llm.claude_model_swaps()
+    except Exception:  # noqa: BLE001
+        return
+    for model, ran in sorted(swaps.items()):
+        message = (f"the claude CLI is too old for {model}, so runs use {ran}. "
+                   f"Run `claude update` and restart the dashboard to use {model}.")
+        with _SWAP_NOTICE_LOCK:
+            first = model not in _SWAPS_ANNOUNCED
+            _SWAPS_ANNOUNCED.add(model)
+        if first:
+            report.warn(KIND_MODEL, message)
+        else:
+            report.note(KIND_MODEL, message)
 
 
 def _report_text(rep: RunLog, *, job: Dict[str, str], company: str, job_title: str,
@@ -1366,7 +1408,8 @@ def tailor(
     channel: it fires once per warning — a grounding-gate revert or drop, a résumé
     that shipped over `config.PAGE_LIMIT` pages, or any of the optional artifacts
     (ATS report, company research, cover letter body/compile/text, prep sheet,
-    apply.md) failing. Optional, defaulting to None, so no existing call site
+    apply.md) failing, and the first run in a process after the claude CLI refused
+    the chosen Claude model (`_report_model_swaps`). Optional, defaulting to None, so no existing call site
     changes; the same warnings are written to `tailor_report.txt` in the output
     folder either way, which is the copy that outlives a status bar.
 
@@ -1605,6 +1648,8 @@ def tailor(
             log(f"apply sheet skipped ({exc})")
             report.advisory(f"apply sheet skipped ({exc})")
 
+    # After every model call, so a swap the transport learned during this run counts.
+    _report_model_swaps(report)
     # The durable record, written last so it carries everything above it.
     _write_report(report, out_dir, job=job, company=company, job_title=job_title, log=log)
     if report.entries:

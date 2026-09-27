@@ -445,7 +445,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
 import claude_cli  # noqa: E402
 
 OLD_LINE = ("claude CLI 2.1.207 is older than claude-opus-5-5 needs (2.1.280); runs use "
-            "claude-opus-5 until you run `claude update`.")
+            "claude-opus-5 until you run `claude update` and restart the dashboard.")
 _CLAUDE_MODEL_ENV = (
     "RESUME_TAILOR_CLAUDE_MODEL_MODE", "RESUME_TAILOR_CLAUDE_MODEL_ALL",
     "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "RESUME_TAILOR_CLAUDE_MODEL_FLASH",
@@ -477,8 +477,8 @@ def _fake_cli(monkeypatch, version_out="2.1.207 (Claude Code)\n", *, on_path=Tru
         return type("P", (), {"returncode": 0, "stdout": version_out, "stderr": ""})()
 
     monkeypatch.setattr(claude_cli.subprocess, "run", fake_run)
-    monkeypatch.setattr(claude_cli.shutil, "which",
-                        lambda name: "C:/bin/claude.exe" if on_path else None)
+    monkeypatch.setattr(claude_cli, "find_claude",
+                        lambda: "C:/bin/claude.exe" if on_path else None)
     for var in _CLAUDE_MODEL_ENV:
         monkeypatch.delenv(var, raising=False)
     return calls

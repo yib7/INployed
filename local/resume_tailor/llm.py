@@ -646,6 +646,21 @@ def _claude_cli():
     return claude_cli
 
 
+def claude_model_swaps() -> dict:
+    """{requested model: model that runs instead} for each Claude model the
+    installed CLI refused this process (claude_cli.active_swaps, VL-5).
+
+    {} off the Claude lane, without loading the transport, and {} when the
+    transport cannot load: a lookup that fails has found no swap."""
+    if config.tailor_provider() != "claude":
+        return {}
+    try:
+        swaps = getattr(_claude_cli(), "active_swaps", None)
+        return dict(swaps()) if swaps is not None else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _invoke_claude(
     system: str,
     user: str,
@@ -706,8 +721,11 @@ def _call_claude(
                 system, user, model,
                 json_out=json_out, tools=tools, timeout_s=timeout_s,
             )
+            # The model that answered: after a VL-5 swap the CLI ran the fallback,
+            # and booking it under the requested model would misstate the run.
+            ran = getattr(res, "model", "") or model
             USAGE.append({
-                "model": f"claude:{model}",
+                "model": f"claude:{ran}",
                 "in": res.input_tokens,
                 "out": res.output_tokens,
                 "cache_read": res.cache_read_tokens,

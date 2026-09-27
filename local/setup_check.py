@@ -163,7 +163,8 @@ def claude_version_warnings(installed: tuple[int, ...] | None,
         fallback = cc.MODEL_FALLBACKS.get(model)
         then = f"runs use {fallback}" if fallback else "runs on it fail"
         out.append(f"claude CLI {_version_text(installed)} is older than {model} needs "
-                   f"({_version_text(need)}); {then} until you run `claude update`.")
+                   f"({_version_text(need)}); {then} until you run `claude update` "
+                   "and restart the dashboard.")
     return out
 
 

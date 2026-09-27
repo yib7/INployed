@@ -86,12 +86,13 @@ def test_is_cli_too_old_message_needs_both_halves(text):
     assert claude_cli.is_cli_too_old_message(text) is False
 
 
-def test_the_live_text_is_not_a_rate_limit_even_when_a_version_holds_429():
+def test_a_required_version_holding_429_still_maps_to_cli_too_old():
     """A future required version such as 2.1.429 carries "429", which the rate
     limit matcher counts. The too-old check runs first, so it still maps to
     cli_too_old."""
     text = TOO_OLD.replace("2.1.280", "2.1.429")
-    assert claude_cli.is_cli_too_old_message(text)
+    assert claude_cli.is_rate_limit_message(text)   # the trap is real
+    assert claude_cli._error_kind(text) == "cli_too_old"
 
 
 def test_model_fallbacks_names_the_opus_pair():
@@ -238,6 +239,25 @@ def test_racing_threads_warn_once(monkeypatch, fake_exe, capsys):
     assert models[-1] == OLD
 
 
+def test_the_result_names_the_model_that_ran(monkeypatch, fake_exe):
+    """llm.USAGE records CLIResult.model, so a call opus 5 answered is never
+    booked as opus 5.5."""
+    _old_cli(monkeypatch)
+    assert claude_cli.run_claude("sys", "user", NEW).model == OLD      # the swap call
+    assert claude_cli.run_claude("sys", "user", NEW).model == OLD      # the remembered swap
+    assert claude_cli.run_claude("sys", "user", "claude-sonnet-5").model == "claude-sonnet-5"
+
+
+def test_active_swaps_is_a_copy_of_the_remembered_swaps(monkeypatch, fake_exe):
+    _old_cli(monkeypatch)
+    assert claude_cli.active_swaps() == {}
+    claude_cli.run_claude("sys", "user", NEW)
+    swaps = claude_cli.active_swaps()
+    assert swaps == {NEW: OLD}
+    swaps.clear()                                   # a copy: the caller cannot erase it
+    assert claude_cli.active_swaps() == {NEW: OLD}
+
+
 def test_reset_forgets_the_swap(monkeypatch, fake_exe):
     models = _old_cli(monkeypatch)
     claude_cli.run_claude("sys", "user", NEW)
@@ -314,6 +334,20 @@ def test_cli_version_is_none_when_the_probe_fails(monkeypatch, fake_exe, exc):
         raise exc
     monkeypatch.setattr(claude_cli.subprocess, "run", boom)
     assert claude_cli.cli_version() is None
+
+
+def test_conftest_hides_the_real_cli_by_default(monkeypatch):
+    """No test can start the real `claude`: find_claude reads None unless a test
+    opts in, even when one is on PATH."""
+    monkeypatch.setattr(claude_cli.shutil, "which", lambda name: f"/bin/{name}")
+    assert claude_cli.find_claude() is None
+    assert claude_cli.cli_version() is None
+
+
+@pytest.mark.real_find_claude
+def test_a_test_can_opt_in_to_the_real_lookup(monkeypatch):
+    monkeypatch.setattr(claude_cli.shutil, "which", lambda name: f"/bin/{name}")
+    assert claude_cli.find_claude() == "/bin/claude"
 
 
 def test_min_cli_version_names_opus_5_5():

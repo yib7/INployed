@@ -479,3 +479,45 @@ def test_line_field_keeps_an_ordinary_value_and_names_the_same_folder():
     # apply.find_folder / the queue's reconcile compute from the RAW value.
     for raw in ("Acme\n\nIGNORE", "Data\tScientist  II", "A" * 300 + "\nB" * 40):
         assert output.sanitize(run_mod._line_field({"k": raw}, "k")) == output.sanitize(raw)
+
+
+# --- VL-5: a claude CLI too old for the chosen model --------------------------------
+
+_SWAP_LINE = ("model: the claude CLI is too old for claude-opus-5-5, so runs use "
+              "claude-opus-5. Run `claude update` and restart the dashboard to use "
+              "claude-opus-5-5.")
+
+
+def test_a_model_swap_reaches_the_warning_collector_once_per_process(offline_tailor,
+                                                                     monkeypatch):
+    """The dashboard runs the tailor under pythonw, where claude_cli's stderr
+    warning has nowhere to go. The first run after the swap puts one line on
+    on_warning and in the report; later runs in the same process carry it in the
+    report as a note, so the batch summary does not repeat it for every job."""
+    monkeypatch.setattr(run_mod.llm, "claude_model_swaps",
+                        lambda: {"claude-opus-5-5": "claude-opus-5"})
+    first: list[str] = []
+    out = run_mod.tailor(_JOB, on_warning=first.append)
+    assert first == [_SWAP_LINE]
+    assert _SWAP_LINE in _report(out)
+
+    second: list[str] = []
+    out = run_mod.tailor(_JOB, on_warning=second.append)
+    assert second == []
+    assert _SWAP_LINE in _report(out)             # still on record, as a note
+
+
+def test_no_swap_line_without_a_swap(offline_tailor, monkeypatch):
+    monkeypatch.setattr(run_mod.llm, "claude_model_swaps", lambda: {})
+    warns: list[str] = []
+    out = run_mod.tailor(_JOB, on_warning=warns.append)
+    assert warns == []
+    assert "claude update" not in _report(out)
+
+
+def test_a_failing_swap_lookup_never_sinks_the_run(offline_tailor, monkeypatch):
+    monkeypatch.setattr(run_mod.llm, "claude_model_swaps", _boom)
+    warns: list[str] = []
+    out = run_mod.tailor(_JOB, on_warning=warns.append)
+    assert warns == []
+    assert (out / "resume.pdf").exists()

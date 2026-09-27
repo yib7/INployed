@@ -1,4 +1,4 @@
-"""jev_assist: the tailor's Jev requests (TL-1 to TL-6).
+"""jev_assist: the tailor's Jev requests (TL-1 to TL-9).
 
 Each helper asks the judge one kind of question and hands Jev's answers back as
 data; its caller composes. The helpers run here against the key-free FakeJev,
@@ -216,9 +216,44 @@ def _sweep(judge):
     return jev_assist.sweep_flags([_plain(_CHESS)], judge=judge)
 
 
+# TL-7's groups: each bullet's drafts that passed the gate and TL-4.
+_DRAFTS = [{"gkey": "ac_sql", "drafts": [
+    "Wrote SQL reports on warehouse sales data.",
+    "Wrote weekly SQL reports on warehouse sales data for sales leaders."]}]
+
+
+def _best(judge):
+    return jev_assist.best_variant(_JD, _TITLE, _DRAFTS, judge=judge)
+
+
+# TL-8's input: the letter's sentences and its sources, the job left out.
+_SENTENCES = ["At Acme Data I wrote SQL reports on warehouse sales data.",
+              "I led the analytics team through a warehouse migration."]
+_SOURCES = {"resume bullets": ["Wrote SQL reports on warehouse sales data."],
+            "background": "Acme Data, Analyst Intern: wrote SQL reports on warehouse "
+                          "sales data; built a sales dashboard for regional managers.",
+            "own words": "", "basics": "Sam Rivera. Education: BS Statistics."}
+
+
+def _letter(judge):
+    return jev_assist.letter_unsupported(_SENTENCES, _SOURCES, judge=judge)
+
+
+# TL-9's input: the report's keywords and the résumé's text.
+_KEYWORDS = ["sql", "dashboards", "kubernetes"]
+_RESUME = "Wrote SQL reports on warehouse sales data. Built a sales dashboard."
+
+
+def _meaning(judge):
+    return jev_assist.keyword_meaning(_KEYWORDS, _RESUME, judge=judge)
+
+
 _HELPERS = [pytest.param(_skills, id="skills_pick"), pytest.param(_atoms, id="atom_relevance"),
             pytest.param(_lead, id="lead_group"), pytest.param(_faith, id="faithfulness"),
-            pytest.param(_verb, id="pick_verb"), pytest.param(_sweep, id="sweep_flags")]
+            pytest.param(_verb, id="pick_verb"), pytest.param(_sweep, id="sweep_flags"),
+            pytest.param(_best, id="best_variant"),
+            pytest.param(_letter, id="letter_unsupported"),
+            pytest.param(_meaning, id="keyword_meaning")]
 
 
 # ── off, default judge, failures ─────────────────────────────────────────────
@@ -238,7 +273,10 @@ def test_every_helper_is_none_and_asks_nothing_when_jev_is_off(master, monkeypat
     assert jev_assist.faithfulness([_CHESS]) is None
     assert jev_assist.pick_verb(_VERB_BULLET, _VERB_OPTIONS) is None
     assert jev_assist.sweep_flags([_plain(_CHESS)]) is None
-    assert areas == ["tailor"] * 6
+    assert jev_assist.best_variant(_JD, _TITLE, _DRAFTS) is None
+    assert jev_assist.letter_unsupported(_SENTENCES, _SOURCES) is None
+    assert jev_assist.keyword_meaning(_KEYWORDS, _RESUME) is None
+    assert areas == ["tailor"] * 9
 
 
 def test_the_suite_default_client_is_off(master):
@@ -298,7 +336,12 @@ _GATE_ALONE = "the deterministic gate alone"
     pytest.param(_faith, jev_assist.STEP_FAITHFULNESS, _GATE_ALONE, id="faithfulness"),
     pytest.param(_verb, jev_assist.STEP_VERB, _LLM_PATH, id="pick_verb"),
     # Without TL-5 the sweep calls the model for every item, as it did before.
-    pytest.param(_sweep, jev_assist.STEP_SWEEP_GATE, _LLM_PATH, id="sweep_flags")])
+    pytest.param(_sweep, jev_assist.STEP_SWEEP_GATE, _LLM_PATH, id="sweep_flags"),
+    # Without TL-7 the run keeps the rephrase's first draft; without TL-8 the letter
+    # has its deterministic gate; without TL-9 the report has its literal line.
+    pytest.param(_best, jev_assist.STEP_BEST_OF, _LLM_PATH, id="best_variant"),
+    pytest.param(_letter, jev_assist.STEP_LETTER, _LLM_PATH, id="letter_unsupported"),
+    pytest.param(_meaning, jev_assist.STEP_ATS_MEANING, _LLM_PATH, id="keyword_meaning")])
 def test_a_failure_is_named_by_its_class_only(master, helper, step, fallback, caplog):
     caplog.set_level(logging.WARNING, logger=jev_assist.log.name)
     helper(Failing())
@@ -347,9 +390,13 @@ def test_once_the_breaker_opens_every_later_helper_returns_none(master):
     assert jev_assist.faithfulness([_CHESS], judge=judge) is None
     assert jev_assist.pick_verb(_VERB_BULLET, _VERB_OPTIONS, judge=judge) is None
     assert jev_assist.sweep_flags([_plain(_CHESS)], judge=judge) is None
+    assert jev_assist.best_variant(_JD, _TITLE, _DRAFTS, judge=judge) is None
+    assert jev_assist.letter_unsupported(_SENTENCES, _SOURCES, judge=judge) is None
+    assert jev_assist.keyword_meaning(_KEYWORDS, _RESUME, judge=judge) is None
     assert down.calls == tries
     for step in (jev_assist.STEP_SKILLS, jev_assist.STEP_SHORTLIST, jev_assist.STEP_LEAD,
-                 jev_assist.STEP_VERB, jev_assist.STEP_SWEEP_GATE):
+                 jev_assist.STEP_VERB, jev_assist.STEP_SWEEP_GATE, jev_assist.STEP_BEST_OF,
+                 jev_assist.STEP_LETTER, jev_assist.STEP_ATS_MEANING):
         assert "fell back to the LLM path (JudgeOutage _Busy 503)" in jev_assist.usage_line(step)
     assert (f"fell back to {_GATE_ALONE} (JudgeOutage _Busy 503)"
             in jev_assist.usage_line(jev_assist.STEP_FAITHFULNESS))
@@ -813,6 +860,135 @@ def test_sweep_flags_with_no_bullets_asks_nothing(master):
     assert jev_assist.usage_line(jev_assist.STEP_SWEEP_GATE).endswith("; nothing to ask")
 
 
+# ── TL-7 best_variant ────────────────────────────────────────────────────────
+def test_best_variant_is_one_choice_per_bullet_over_its_numbered_drafts(master):
+    rec = Recording(jev.FakeJev())
+    got = jev_assist.best_variant(_JD, _TITLE, _DRAFTS, judge=rec)
+    (state, questions), = rec.requests
+    assert state == {"job": {"title": _TITLE, "description": _JD}}
+    assert questions == {"bullet_0": {
+        "type": "choice",
+        "instructions": "Which draft shows the most of what `job` asks for?",
+        "criteria": {"draft 1": _DRAFTS[0]["drafts"][0],
+                     "draft 2": _DRAFTS[0]["drafts"][1]}}}
+    # The fake reads words: draft 2 shares "weekly", "sales" and "leaders" with the job.
+    assert got == {"ac_sql": (2, 1.0)}
+
+
+def test_best_variant_hands_back_the_confidence(master):
+    judge = Scripted(choice="draft 1", confidence=0.3)
+    assert jev_assist.best_variant(_JD, _TITLE, _DRAFTS, judge=judge) == {"ac_sql": (1, 0.3)}
+
+
+def test_best_variant_leaves_out_a_bullet_with_one_draft(master):
+    rec = Recording(jev.FakeJev())
+    groups = _DRAFTS + [{"gkey": "cc_lead", "drafts": ["Led weekly training sessions."]}]
+    got = jev_assist.best_variant(_JD, _TITLE, groups, judge=rec)
+    assert list(got) == ["ac_sql"]
+    (_state, questions), = rec.requests
+    assert list(questions) == ["bullet_0"]
+
+
+def test_best_variant_with_nothing_to_choose_asks_nothing(master):
+    judge = Failing()
+    one = [{"gkey": "ac_sql", "drafts": ["Wrote SQL reports."]}]
+    assert jev_assist.best_variant(_JD, _TITLE, one, judge=judge) is None
+    assert judge.calls == 0
+    assert jev_assist.usage_line(jev_assist.STEP_BEST_OF).endswith("; nothing to ask")
+
+
+def test_many_bullets_too_big_to_fit_are_split_and_the_picks_line_up(master, monkeypatch):
+    groups = [{"gkey": f"g{k}", "drafts": [f"Wrote report {k} in SQL.",
+                                           f"Wrote weekly sales report {k} in SQL."]}
+              for k in range(40)]
+    whole = Recording(jev.FakeJev())
+    want = jev_assist.best_variant(_JD, _TITLE, groups, judge=whole)
+    (state, questions), = whole.requests
+    _longest, total = jev.request_size(state, questions)
+    monkeypatch.setattr(jev, "REQUEST_TOKENS_MAX", int(total * 0.6 / jev.SIZE_MARGIN))
+    split = Recording(jev.FakeJev())
+    got = jev_assist.best_variant(_JD, _TITLE, groups, judge=split)
+    assert len(split.requests) > 1
+    assert all(jev.request_fits(s, q) for s, q in split.requests)
+    assert got == want
+
+
+# ── TL-8 letter_unsupported ──────────────────────────────────────────────────
+def test_letter_unsupported_is_one_noul_per_sentence_against_the_sources(master):
+    rec = Recording(jev.FakeJev())
+    jev_assist.letter_unsupported(_SENTENCES, _SOURCES, judge=rec)
+    (state, questions), = rec.requests
+    assert state == {"sentences": _SENTENCES, "sources": _SOURCES}
+    assert questions == {f"claims_{i}": {
+        "type": "noul",
+        "instructions": f"Does `sentences[{i}]` claim something about the candidate that "
+                        "`sources` do not state?"} for i in range(2)}
+
+
+def test_letter_unsupported_never_carries_the_job(master):
+    rec = Recording(jev.FakeJev())
+    jev_assist.letter_unsupported(_SENTENCES, _SOURCES, judge=rec)
+    (state, _questions), = rec.requests
+    assert "job" not in state and _JD not in repr(state)
+
+
+@pytest.mark.parametrize("p, flagged", [(0.69, False), (0.7, True)])
+def test_letter_unsupported_flags_at_the_threshold(master, p, flagged):
+    def noul(state, text):
+        return p if "sentences[1]" in text else 0.0
+    got = jev_assist.letter_unsupported(_SENTENCES, _SOURCES, judge=Scripted(noul=noul))
+    assert got == ([_SENTENCES[1]] if flagged else [])
+
+
+def test_letter_unsupported_with_no_sentence_asks_nothing(master):
+    judge = Failing()
+    assert jev_assist.letter_unsupported(["", "  "], _SOURCES, judge=judge) is None
+    assert judge.calls == 0
+    assert jev_assist.usage_line(jev_assist.STEP_LETTER).endswith("; nothing to ask")
+
+
+def test_the_letter_threshold_is_the_reports():
+    assert jev_assist.LETTER_CLAIM_FLAG == 0.7
+
+
+# ── TL-9 keyword_meaning ─────────────────────────────────────────────────────
+def test_keyword_meaning_is_one_noul_per_keyword_against_the_resume(master):
+    rec = Recording(jev.FakeJev())
+    jev_assist.keyword_meaning(_KEYWORDS, _RESUME, judge=rec)
+    (state, questions), = rec.requests
+    assert state == {"resume": _RESUME, "keywords": _KEYWORDS}
+    assert questions == {f"keywords_{i}": {
+        "type": "noul",
+        "instructions": f"Does `resume` show `keywords[{i}]` or a direct equivalent?"}
+        for i in range(3)}
+
+
+@pytest.mark.parametrize("p, shown", [(0.49, False), (0.5, True)])
+def test_keyword_meaning_counts_at_the_threshold(master, p, shown):
+    def noul(state, text):
+        return p if "keywords[2]" in text else 1.0
+    got = jev_assist.keyword_meaning(_KEYWORDS, _RESUME, judge=Scripted(noul=noul))
+    assert got == (_KEYWORDS if shown else _KEYWORDS[:2])
+
+
+def test_keyword_meaning_cuts_the_resume_to_its_cap(master):
+    rec = Recording(jev.FakeJev())
+    jev_assist.keyword_meaning(_KEYWORDS, "x" * (jev_assist.JD_CHARS + 50), judge=rec)
+    (state, _questions), = rec.requests
+    assert len(state["resume"]) == jev_assist.JD_CHARS
+
+
+def test_keyword_meaning_with_no_keyword_asks_nothing(master):
+    judge = Failing()
+    assert jev_assist.keyword_meaning([], _RESUME, judge=judge) is None
+    assert judge.calls == 0
+    assert jev_assist.usage_line(jev_assist.STEP_ATS_MEANING).endswith("; nothing to ask")
+
+
+def test_the_meaning_threshold_is_the_reports():
+    assert jev_assist.KEYWORD_MEANING_MIN == 0.5
+
+
 # ── the wording ──────────────────────────────────────────────────────────────
 def test_every_judge_question_is_free_of_the_banned_phrasing():
     """The questions follow the rules the prompts do: `compose.style_violations`
@@ -824,7 +1000,8 @@ def test_every_judge_question_is_free_of_the_banned_phrasing():
              jev_assist.SUPPORTED_QUESTION, *jev_assist.SUPPORTED_OPTIONS.values(),
              jev_assist.INFLATES_QUESTION, jev_assist.ADDS_CLAIM_QUESTION,
              *jev_assist.FINDINGS.values(), jev_assist.PICK_VERB_QUESTION,
-             *jev_assist.SWEEP_QUESTIONS.values()]
+             *jev_assist.SWEEP_QUESTIONS.values(), jev_assist.BEST_DRAFT_QUESTION,
+             jev_assist.LETTER_CLAIM_QUESTION, jev_assist.KEYWORD_MEANING_QUESTION]
     for text in texts:
         assert compose.style_violations(text) == [], text
         assert "\u2014" not in text and not re.search(r",\s*never\s", text), text

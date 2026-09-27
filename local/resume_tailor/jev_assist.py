@@ -1,4 +1,4 @@
-"""The tailor's Jev requests (TL-1 to TL-6).
+"""The tailor's Jev requests (TL-1 to TL-9).
 
 Jev (`local/jev.py`) answers typed questions about a state and writes no text, so
 each helper here asks one kind of question and hands the answers back as data for
@@ -25,6 +25,17 @@ code to compose. The LLM still writes every bullet.
   pick_verb       TL-6  one choice per repeated opening verb, over the palette's
                         unused verbs: dedupe_leading_verbs swaps the bullet's first
                         word for a sure pick and keeps its reverb call otherwise.
+  best_variant    TL-7  one choice per bullet over its rephrase drafts that pass
+                        the grounding gate and TL-4 (Settings: best of three, off
+                        by default): the draft the run keeps.
+  letter_unsupported
+                  TL-8  one noul per cover-letter sentence against the letter's
+                        sources, never the job description (Settings: cover letter
+                        check, off by default): a flagged sentence goes to the
+                        letter's repair call.
+  keyword_meaning TL-9  one noul per ATS keyword against the résumé's text
+                        (Settings: ATS meaning line, off by default): the keywords
+                        the report's meaning-level coverage line counts.
 
 Every helper takes `judge=`. Left out, it is `jev_switch.client("tailor")`, which is
 None when Jev is off for the tailor. A helper returns None when Jev is off, when
@@ -68,6 +79,9 @@ STEP_LEAD = "lead"
 STEP_VERB = "verb"
 STEP_SWEEP_GATE = "sweep gate"
 STEP_FAITHFULNESS = "faithfulness"
+STEP_BEST_OF = "best of three"
+STEP_LETTER = "letter check"
+STEP_ATS_MEANING = "ats meaning"
 
 # What a step's note says its caller fell back to when the step fails.
 LLM_PATH = "the LLM path"
@@ -96,6 +110,13 @@ SWEEP_FLAG = 0.6
 # whatever its confidence: only a sure "verified" lets a bullet through.
 SUPPORTED_MIN_CONFIDENCE = 0.6
 FAITHFULNESS_FLAG = 0.7
+
+# TL-8: a letter sentence Jev reads at this P(yes) or more claims more than the
+# letter's sources state, and goes to the letter's repair call.
+LETTER_CLAIM_FLAG = 0.7
+
+# TL-9: a keyword Jev reads at this P(yes) or more counts in the meaning-level line.
+KEYWORD_MEANING_MIN = 0.5
 
 # The judge questions. A backticked path names a part of the request's state;
 # `{i}` is the item's index there.
@@ -135,6 +156,13 @@ SWEEP_QUESTIONS = {
     "hype words": "Does `bullets[{i}]` use hype words or self-praise?",
     "padded list of three": "Does `bullets[{i}]` pad a list out to three items?",
 }
+# TL-7, asked of each bullet's rephrase drafts, each draft as an option.
+BEST_DRAFT_QUESTION = "Which draft shows the most of what `job` asks for?"
+# TL-8, asked of each cover-letter sentence against the letter's sources.
+LETTER_CLAIM_QUESTION = ("Does `sentences[{i}]` claim something about the candidate that "
+                         "`sources` do not state?")
+# TL-9, asked of each ATS keyword against the résumé's text.
+KEYWORD_MEANING_QUESTION = "Does `resume` show `keywords[{i}]` or a direct equivalent?"
 # Each tell's question id in a request: `<id>_<i>` for the bullet at index i.
 _SWEEP_IDS = {"contrast framing": "contrast", "stacked adjectives": "stacked",
               "filler or vague impact": "filler", "hype words": "hype",
@@ -559,3 +587,109 @@ def pick_verb(bullet: str, options: Mapping[str, str], *, judge: Any = _DEFAULT
         answers = _send(STEP_VERB, j, state, question(n))
         return _choice_pick(answers.get("verb"), names[:n])
     return _run_step(STEP_VERB, judge, ask)
+
+
+def best_variant(jd: str, job_title: str, groups: Sequence[Mapping[str, Any]], *,
+                 judge: Any = _DEFAULT) -> Optional[Dict[str, Tuple[int, float]]]:
+    """TL-7: which of each bullet's drafts shows the most of what the job asks for.
+
+    `groups` is [{"gkey", "drafts": [text, ...]}], the drafts that passed the
+    grounding gate and TL-4, in the order the rephrase wrote them. One choice per
+    bullet over its numbered drafts (BEST_DRAFT_QUESTION), with the job as the
+    state, every bullet in one request (split only when it would not fit). Returns
+    {gkey: (draft number counting from 1, confidence)}. A bullet with one draft has
+    nothing to choose and is left out. The pick only chooses among texts the
+    rephrase wrote. None when Jev is off or fails, or no bullet has two drafts."""
+    def ask(j: Any) -> Dict[str, Tuple[int, float]]:
+        asked = [g for g in groups if len(g.get("drafts") or []) >= 2]
+        if not asked:
+            raise _NothingToAsk
+        job = _job_state(jd, job_title)
+
+        def request(lo: int, hi: int) -> Tuple[Dict[str, Any], Dict[str, dict]]:
+            questions = {
+                f"bullet_{k}": {
+                    "type": "choice", "instructions": BEST_DRAFT_QUESTION,
+                    "criteria": {f"draft {n}": str(text)
+                                 for n, text in enumerate(g["drafts"], start=1)}}
+                for k, g in enumerate(asked[lo:hi])}
+            return {"job": job}, questions
+
+        out: Dict[str, Tuple[int, float]] = {}
+        for lo, hi in _fit_spans(len(asked), request):
+            state, questions = request(lo, hi)
+            answers = _send(STEP_BEST_OF, j, state, questions)
+            for k, g in enumerate(asked[lo:hi]):
+                qid = f"bullet_{k}"
+                choice, conf = _choice_pick(answers.get(qid), list(questions[qid]["criteria"]))
+                out[str(g["gkey"])] = (int(choice.split()[-1]), conf)
+        return out
+    return _run_step(STEP_BEST_OF, judge, ask)
+
+
+def letter_unsupported(sentences: Sequence[str], sources: Mapping[str, Any], *,
+                       judge: Any = _DEFAULT) -> Optional[List[str]]:
+    """TL-8: the cover-letter sentences that claim more about the candidate than the
+    letter's sources state.
+
+    `sources` is what the letter may draw on about the candidate: the résumé
+    bullets, the candidate's notes behind them, their own words and their basics.
+    The job description and the company research are never sources. One noul per
+    sentence (LETTER_CLAIM_QUESTION) with the sources beside them, batched to fit
+    Jev's limits. Returns the sentences at LETTER_CLAIM_FLAG or more, in letter
+    order; [] when every sentence passes. The check names sentences; the letter's
+    repair call rewrites them. None when Jev is off or fails, or there is no
+    sentence."""
+    def ask(j: Any) -> List[str]:
+        items = [str(s) for s in sentences if str(s).strip()]
+        if not items:
+            raise _NothingToAsk
+        src = dict(sources)
+
+        def request(lo: int, hi: int) -> Tuple[Dict[str, Any], Dict[str, dict]]:
+            state = {"sentences": items[lo:hi], "sources": src}
+            questions = {f"claims_{i}": {"type": "noul",
+                                         "instructions": LETTER_CLAIM_QUESTION.format(i=i)}
+                         for i in range(hi - lo)}
+            return state, questions
+
+        flagged: List[str] = []
+        for lo, hi in _fit_spans(len(items), request):
+            state, questions = request(lo, hi)
+            answers = _send(STEP_LETTER, j, state, questions)
+            flagged += [s for i, s in enumerate(items[lo:hi])
+                        if _noul_prob(answers.get(f"claims_{i}")) >= LETTER_CLAIM_FLAG]
+        return flagged
+    return _run_step(STEP_LETTER, judge, ask)
+
+
+def keyword_meaning(keywords: Sequence[str], resume_text: str, *,
+                    judge: Any = _DEFAULT) -> Optional[List[str]]:
+    """TL-9: the ATS keywords the résumé shows, in words or by a direct equivalent.
+
+    One noul per keyword (KEYWORD_MEANING_QUESTION) with the résumé's text as the
+    state (cut to JD_CHARS), batched to fit Jev's limits. Returns the keywords at
+    KEYWORD_MEANING_MIN or more, in the order given; the ATS report counts them in
+    its meaning-level coverage line beside the literal one. None when Jev is off or
+    fails, or there is no keyword."""
+    def ask(j: Any) -> List[str]:
+        items = [str(k) for k in keywords if str(k).strip()]
+        if not items:
+            raise _NothingToAsk
+        resume = str(resume_text or "")[:JD_CHARS]
+
+        def request(lo: int, hi: int) -> Tuple[Dict[str, Any], Dict[str, dict]]:
+            state = {"resume": resume, "keywords": items[lo:hi]}
+            questions = {f"keywords_{i}": {"type": "noul",
+                                           "instructions": KEYWORD_MEANING_QUESTION.format(i=i)}
+                         for i in range(hi - lo)}
+            return state, questions
+
+        shown: List[str] = []
+        for lo, hi in _fit_spans(len(items), request):
+            state, questions = request(lo, hi)
+            answers = _send(STEP_ATS_MEANING, j, state, questions)
+            shown += [k for i, k in enumerate(items[lo:hi])
+                      if _noul_prob(answers.get(f"keywords_{i}")) >= KEYWORD_MEANING_MIN]
+        return shown
+    return _run_step(STEP_ATS_MEANING, judge, ask)

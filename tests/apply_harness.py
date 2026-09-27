@@ -757,6 +757,11 @@ class Flow:
     # the last recording (a round that records nothing adds flows too). A
     # replay leaves it out and names it; the next recording takes it in
     recorded: bool = True
+    # the real judge's end, (status, a regex the reason must match), when it
+    # reads what the fake cannot: the fake answers not_settled to every settle
+    # read, so a reworded question the saved answers settle parks under the
+    # fake and its noisy seeds and fills under the real judge
+    real_end: tuple[str, str] = ()
 
     def start_url(self, base: str) -> str:
         return self.start if "://" in self.start else f"{base}/forms/{self.start}"
@@ -771,9 +776,12 @@ class Flow:
             hosts.add(start)
         return hosts
 
-    def reached(self, status: str, reason: str, final: dict) -> bool:
-        """The run reached this flow's expected end."""
-        if status != self.status or not re.search(self.reason, reason or ""):
+    def reached(self, status: str, reason: str, final: dict, judge: str = "") -> bool:
+        """The run reached this flow's expected end: `real_end` under the
+        real judge when the flow names one."""
+        want, pattern = (self.real_end if judge == REAL and self.real_end
+                         else (self.status, self.reason))
+        if status != want or not re.search(pattern, reason or ""):
             return False
         if status == "submitted" and self.confirm and not final.get("confirmed"):
             return False
@@ -1040,16 +1048,20 @@ FLOWS: tuple[Flow, ...] = (
                 "relocation: it confirms authorization, sponsorship and relocation from the "
                 "typed answers"),
     # cycle 18 SP6c round 5: the same form, its relocation label naming a
-    # place ("the job location (New York)"). The plan cannot reach the job's
-    # location, so the gate reads it as another question than the stored
-    # relocation answer, and the run parks on it by the user's policy (a
-    # required question the data cannot answer)
+    # place ("the job location (New York)"). The gate holds the stored
+    # relocation answer back from a question worded another way, and the
+    # settle read asks Jev whether it answers this one. The fake leaves every
+    # settle read open, so the fake run parks on it; the real judge reads it
+    # with where the candidate lives (the home line, 2026-09-27) and picks
+    # the willing option, which the confirmation marker checks
     Flow("ashby_relocation_place", "ashby_relocation_place.html", True, "needs_human",
          r"^required field without an answer: Are you willing to relocate to the job location "
          r"\(New York\)\?$",
          confirm="body[data-auth=citizen][data-sponsor=no][data-relocate=willing] "
                  "#thanks:visible",
-         covers="the place-named relocation question parks and sends nothing"),
+         real_end=("submitted", _SUBMITTED),
+         covers="the place-named relocation question: the fake parks it and sends nothing, "
+                "the real judge settles it from the saved relocation answer"),
     Flow("greenhouse_react_select", "greenhouse_react_select.html", True, "submitted",
          _SUBMITTED, confirm="#thanks:visible",
          covers="react-select dropdowns (the pick shown in a sibling, a hidden required twin), "
@@ -2399,7 +2411,8 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
                       "before any page")
     traces = sorted((folder / "apply_trace").glob("attempt-*"))
     return RunResult(f.name, judge_name, out.status, out.reason,
-                     f.reached(out.status, out.reason, recorder.final), breaks, sends.count,
+                     f.reached(out.status, out.reason, recorder.final, judge_name), breaks,
+                     sends.count,
                      out.pages, seconds, str(traces[-1]) if traces else "",
                      policy_park(out.status, out.reason), list(recorder.actions),
                      len(recorder.judge_requests), missed,

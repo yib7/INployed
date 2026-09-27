@@ -563,6 +563,23 @@ def test_a_known_flow_is_reported_and_left_out_of_the_floors(monkeypatch):
     assert "known failing, SP3: greenhouse_embed" in h.summary(rows)
 
 
+def test_a_flow_with_a_real_end_is_read_by_the_judge_that_ran_it():
+    # the Contoso replica: the fake leaves the reworded relocation question
+    # open and parks; the real judge settles it and submits with the willing
+    # option, which the confirmation marker checks
+    f = next(f for f in h.FLOWS if f.name == "ashby_relocation_place")
+    park = ("needs_human", "required field without an answer: Are you willing to relocate "
+                           "to the job location (New York)?")
+    sent = ("submitted", "confirmation page")
+    assert f.reached(*park, {}, "fake") and f.reached(*park, {}, "noisy-1")
+    assert not f.reached(*sent, {"confirmed": True}, "fake")
+    assert f.reached(*sent, {"confirmed": True}, h.REAL)
+    assert not f.reached(*sent, {}, h.REAL)
+    assert not f.reached(*park, {}, h.REAL)
+    # every other flow ends the same under every judge
+    assert [g.name for g in h.FLOWS if g.real_end] == ["ashby_relocation_place"]
+
+
 # --- M10: the noisy distribution keeps its winner on top ---------------------------------------------
 
 def test_a_scaled_two_option_answer_keeps_its_winner_most_probable():

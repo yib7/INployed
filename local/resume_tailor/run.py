@@ -20,8 +20,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Sequence, Tuple
 
-from . import (apply_data, assets, ats, compose, config, coverletter, llm, measure,
-               output, research, sweep, verify)
+from . import (apply_data, assets, ats, compose, config, coverletter, jev_assist, llm,
+               measure, output, research, sweep, verify)
 from .compile import enforce_one_page, pdflatex_available
 
 StatusFn = Optional[Callable[[str], None]]
@@ -76,15 +76,24 @@ class RunLog:
 
     `notes` is the same record one severity down: written to the report, never
     streamed, so it cannot mark a run degraded.
+
+    `jev` holds one usage line per Jev step the run took (`jev_assist.usage_line`):
+    its requests, their estimated tokens and cost, and why it fell back to the LLM
+    path when it did. It stays empty when Jev is off for the tailor.
     """
     on_warning: WarnFn = None
     stages: List[str] = field(default_factory=list)
     entries: List[Tuple[str, str]] = field(default_factory=list)
     notes: List[Tuple[str, str]] = field(default_factory=list)
+    jev: List[str] = field(default_factory=list)
     pages: int = 0
 
     def stage(self, name: str) -> None:
         self.stages.append(name)
+
+    def jev_step(self, step: str) -> None:
+        """Record the usage line of Jev step `step` (a `jev_assist.STEP_*`)."""
+        self.jev.append(jev_assist.usage_line(step))
 
     def warn(self, kind: str, message: str) -> None:
         """Record a warning and hand it to the caller's collector.
@@ -122,7 +131,8 @@ def _report_text(rep: RunLog, *, job: Dict[str, str], company: str, job_title: s
                  out_dir: Path) -> str:
     """Render `tailor_report.txt`: the run's stages, its warnings, its notes, its
     page count. Notes sit directly under warnings, one severity down: same
-    `<kind>: <message>` line shape, but a note never made the run degraded."""
+    `<kind>: <message>` line shape, but a note never made the run degraded. A run
+    that used Jev ends with a `jev` section, one usage line per step."""
     def section(title: str, body: List[str], empty: str) -> List[str]:
         return ["", title, "-" * len(title)] + ([f"  {b}" for b in body] or [f"  {empty}"])
 
@@ -138,6 +148,8 @@ def _report_text(rep: RunLog, *, job: Dict[str, str], company: str, job_title: s
     lines += section(f"stages ({len(rep.stages)})", rep.stages, "none")
     lines += section(f"warnings ({len(rep.entries)})", rep.warnings, "none")
     lines += section(f"notes ({len(rep.notes)})", rep.note_lines, "none")
+    if rep.jev:
+        lines += section(f"jev ({len(rep.jev)})", rep.jev, "none")
     lines.append("")
     return "\n".join(lines)
 
@@ -978,6 +990,12 @@ def tailor(
     fill could not keep full once it was re-trimmed, or a prologue drop that reground
     recovered on its re-ask, is a NOTE instead: report only, never on `on_warning`, so
     it cannot mark the run degraded.
+
+    When Jev is on for the tailor (`jev_switch.client("tailor")`), one judge serves
+    the whole run: it rates the skills and the atoms before `select` (TL-1, TL-2) and
+    picks each project's lead bullet (TL-3). A step whose request fails keeps its LLM
+    path, and once the judge's breaker opens every later step does too. Each step's
+    usage line goes to `tailor_report.txt` and to the status log.
     """
     log = on_status or _noop
     report = RunLog(on_warning=on_warning)
@@ -985,6 +1003,9 @@ def tailor(
     # so concurrent jobs don't clear each other's token accounting (see DECISIONS).
     if reset_usage:
         llm.reset_usage()
+    # Jev's step counts are per thread, and a worker thread tailors one job after
+    # another, so every run clears its own.
+    jev_assist.reset_usage()
 
     company = _line_field(job, "company_name") or "Unknown Company"
     job_title = _line_field(job, "job_title") or "Role"
@@ -994,9 +1015,19 @@ def tailor(
     if len(jd) < 40:
         raise RuntimeError("Job description is empty/too short to tailor against.")
 
+    # The run's Jev judge, None when Jev is off for the tailor. Every Jev step gets
+    # this one, so an outage in one step moves the rest of the run to the LLM path.
+    judge = jev_assist.default_judge()
     log(f"selecting evidence for: {job_title} @ {company}")
     report.stage("select")
-    sel = compose.select(jd, job_title, company)
+    skill_pick = relevance = None
+    if judge is not None:
+        skill_pick = jev_assist.skills_pick(jd, job_title, judge=judge)
+        report.jev_step(jev_assist.STEP_SKILLS)
+        relevance = jev_assist.atom_relevance(jd, job_title, judge=judge)
+        report.jev_step(jev_assist.STEP_SHORTLIST)
+    sel = compose.select(jd, job_title, company, atom_relevance=relevance,
+                         skill_pick=skill_pick)
     if not sel.get("experience"):
         raise RuntimeError("Selection returned no experience; aborting (check the JD/model).")
 
@@ -1008,7 +1039,9 @@ def tailor(
     # per-position line budgets build on the corrected order. Projects only; never invents.
     if config.lead_overview_enabled():
         report.stage("lead overview")
-        compose.lead_with_overview(jd, job_title, sel)
+        compose.lead_with_overview(jd, job_title, sel, judge=judge)
+        if judge is not None:
+            report.jev_step(jev_assist.STEP_LEAD)
     # One cheap batched call: a cohesion brief per (non-verbatim) block so its bullets
     # read as one story instead of glued-together atoms.
     log("framing each block for cohesion…")
@@ -1153,6 +1186,8 @@ def tailor(
     if report.entries:
         log(f"finished with {len(report.entries)} warning(s); see {REPORT_NAME}")
     log(f"done -> {out_dir}")
+    for line in report.jev:
+        log(line)
     log("token usage: " + llm.usage_summary())
     return out_dir
 

@@ -10,7 +10,8 @@ A prompt change made on purpose re-records the file (set TAILOR_JEV_OFF_PROMPTS_
 for one run) and shows the diff in review; a change nobody meant fails here.
 
 The rest covers each Jev step where its answer lands (the shortlist and the skills
-in `select`, the lead in `lead_with_overview`).
+in `select`, the lead in `lead_with_overview`) and whole runs with Jev on, with Jev
+down from the start and with an outage mid-run.
 
 The runs reuse the golden module's pinned engine (`test_tailor_golden.pinned_engine`),
 so no model is ever reached: its stub raises on any prompt it does not know. Every
@@ -30,7 +31,7 @@ sys.path.insert(0, str(REPO / "local"))
 import jev  # noqa: E402
 import jev_switch  # noqa: E402
 from resume_tailor import (apply_data, assets, compose, config, jev_assist, measure,  # noqa: E402
-                           output, render, selection, skills)
+                           output, render, selection, skills, verify)
 from resume_tailor import run as rt_run  # noqa: E402
 from resume_tailor.compile import CompileResult  # noqa: E402
 
@@ -149,6 +150,10 @@ def test_jev_off_prompts_match_the_recording(pinned_engine, stub_template_head,
 
 
 # ── fake judges ──────────────────────────────────────────────────────────────
+def _no_sleep(_seconds):
+    pass
+
+
 class _Recording:
     """Wraps a judge and keeps every request it was sent."""
 
@@ -178,6 +183,37 @@ class _Pick:
 class _Failing:
     def judge(self, state, questions):
         raise RuntimeError("the request was rejected")
+
+
+class ServiceDown(Exception):
+    status = 503
+
+
+class _DownAfter:
+    """Answers its first `answers` requests like FakeJev, then the service is down."""
+
+    def __init__(self, answers=0):
+        self.answers = answers
+        self.calls = 0
+
+    def judge(self, state, questions):
+        self.calls += 1
+        if self.calls <= self.answers:
+            return jev.FakeJev().judge(state, questions)
+        raise ServiceDown("service unavailable")
+
+
+def _jev_on(monkeypatch, inner):
+    """Jev on for the tailor, with `inner` behind the run's guard; returns the list
+    of areas the client was asked for."""
+    areas = []
+
+    def client(area):
+        areas.append(area)
+        return jev.Guarded(inner, sleep=_no_sleep)
+
+    monkeypatch.setattr(jev_switch, "client", client)
+    return areas
 
 
 # ── a master wide enough to trim ─────────────────────────────────────────────
@@ -434,3 +470,120 @@ def test_with_no_project_to_order_the_lead_line_says_so(wide_master, monkeypatch
     assert sel["projects"][0]["groups"] == [["p1_1"]]
     assert jev_assist.usage_line(jev_assist.STEP_LEAD) == (
         "jev lead: 0 requests, 0 tokens (estimated), $0.000000; nothing to ask")
+
+
+# ── whole runs ───────────────────────────────────────────────────────────────
+# FakeJev rates every golden skill and atom alike (0.1), so each skills line is its
+# pool in the user's order and the shortlist is the whole catalog in file order.
+_JEV_SKILL_LINES = [
+    {"label": "Languages", "items": "Python, SQL, R, Java"},
+    {"label": "Frameworks", "items": "FastAPI, Flask, Django"},
+    {"label": "Developer Tools", "items": "Git, Docker, Postgres, Redis, dbt"},
+    {"label": "Libraries", "items": "pandas, NumPy, scikit-learn"},
+    {"label": "Methods", "items": "ETL, Experimentation, Data Modeling, Feature Engineering"},
+]
+
+
+def _report(tmp_path):
+    return (tmp_path / "out" / rt_run.REPORT_NAME).read_text(encoding="utf-8")
+
+
+def test_a_golden_run_with_jev_on_makes_fewer_llm_calls(pinned_engine, stub_template_head,
+                                                        tmp_path, monkeypatch):
+    """Jev answers the lead, so the ordering call goes; the bullets, the grounding
+    gate and the page are the golden's. The skills lines come from Jev and the pools,
+    with no fallback call (the golden stub raises on one)."""
+    rec = _Recording(jev.FakeJev())
+    areas = _jev_on(monkeypatch, rec)
+    gate = []
+    real_gate = verify.enforce_grounded
+
+    def _recording_gate(sel, bullets, *, fallback=None, log=None):
+        gate.append(fallback is None)
+        return real_gate(sel, bullets, fallback=fallback, log=log)
+
+    monkeypatch.setattr(verify, "enforce_grounded", _recording_gate)
+    captured = _run_tailor(monkeypatch, tmp_path)
+    assert pinned_engine == [s for s in golden._GOLDEN_STAGES if s != "lead_with_overview"]
+    assert len(pinned_engine) == len(golden._GOLDEN_STAGES) - 1
+    assert captured["bullets"] == golden._GOLDEN_BULLETS
+    assert gate == [True, False, False, False, False]
+    assert captured["skill_lines"] == _JEV_SKILL_LINES
+    assert areas == ["tailor"], "one judge per run, handed to every step"
+    assert len(rec.requests) == 3
+    report = _report(tmp_path)
+    assert "warnings (0)" in report and "jev (3)" in report
+    for step in ("skills", "shortlist", "lead"):
+        assert f"  jev {step}: 1 request, " in report
+    assert "fell back" not in report
+
+
+def test_jev_down_from_the_start_makes_exactly_the_jev_off_calls(
+        pinned_engine, stub_template_head, tmp_path, monkeypatch):
+    """The first step spends the retries and opens the breaker; the other two never
+    reach the service. Every call and pinned prompt is the Jev-off recording's."""
+    down = _DownAfter(answers=0)
+    _jev_on(monkeypatch, down)
+    got = _record_jev_off(monkeypatch, tmp_path)
+    assert got == json.loads(PROMPTS.read_text(encoding="utf-8"))
+    assert down.calls == len(jev.RETRY_DELAYS_S) + 1
+    report = _report(tmp_path)
+    assert report.count("fell back to the LLM path (JudgeOutage ServiceDown 503)") == 3
+
+
+def test_an_outage_mid_run_moves_the_rest_of_the_run_to_the_llm_path(
+        pinned_engine, stub_template_head, tmp_path, monkeypatch):
+    """Jev answers the skills and then goes down: the shortlist and the lead fall
+    back to today's path (the whole catalog, the ordering call), and the run ends
+    with the golden's bullets."""
+    stages: list = []
+    calls: list = []
+    golden._install_stub(monkeypatch, _recording(stages, calls))
+    _jev_on(monkeypatch, _DownAfter(answers=1))
+    captured = _run_tailor(monkeypatch, tmp_path)
+    assert stages == golden._GOLDEN_STAGES
+    assert captured["bullets"] == golden._GOLDEN_BULLETS
+    assert captured["skill_lines"] == _JEV_SKILL_LINES
+    select_user = calls[0]["user"]
+    assert "SKILL POOLS" not in select_user
+    assert _catalog_ids(select_user) == list(assets.atoms_by_id())
+    report = _report(tmp_path)
+    assert "  jev skills: 1 request, " in report
+    for step in ("shortlist", "lead"):
+        assert (f"  jev {step}: 0 requests, 0 tokens (estimated), $0.000000; fell back to "
+                "the LLM path (JudgeOutage ServiceDown 503)") in report
+
+
+def test_jev_off_leaves_the_report_and_the_status_log_as_they_were(
+        pinned_engine, stub_template_head, tmp_path, monkeypatch):
+    _jev_off(monkeypatch)
+    statuses: list = []
+    _run_tailor(monkeypatch, tmp_path, on_status=statuses.append)
+    report = _report(tmp_path).splitlines()
+    assert not any(line.startswith(("jev (", "  jev ")) for line in report)
+    assert not any(s.startswith("jev ") for s in statuses)
+
+
+def test_the_usage_lines_reach_the_status_log(pinned_engine, stub_template_head,
+                                              tmp_path, monkeypatch):
+    statuses: list = []
+    _jev_on(monkeypatch, jev.FakeJev())
+    _run_tailor(monkeypatch, tmp_path, on_status=statuses.append)
+    jev_lines = [s for s in statuses if s.startswith("jev ")]
+    assert jev_lines == [jev_assist.usage_line(step) for step in (
+        jev_assist.STEP_SKILLS, jev_assist.STEP_SHORTLIST, jev_assist.STEP_LEAD)]
+    assert [s.split(":")[0] for s in jev_lines] == ["jev skills", "jev shortlist", "jev lead"]
+    report = _report(tmp_path)
+    assert all(f"  {line}" in report for line in jev_lines)
+
+
+def test_each_run_counts_its_own_jev_requests(pinned_engine, stub_template_head,
+                                              tmp_path, monkeypatch):
+    """A dashboard worker thread tailors one job after another: each run's usage
+    lines count that run's requests alone."""
+    _jev_on(monkeypatch, jev.FakeJev())
+    _run_tailor(monkeypatch, tmp_path)
+    _run_tailor(monkeypatch, tmp_path)
+    report = _report(tmp_path)
+    for step in ("skills", "shortlist", "lead"):
+        assert f"  jev {step}: 1 request, " in report

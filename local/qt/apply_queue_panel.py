@@ -18,6 +18,14 @@ the auto-apply profile), "Check again with my answers" screens the saved page
 again with no browser, and "Pre-answer" opens Add answer prefilled with one of
 the questions.
 
+Park and resume (cycle 19, SP7): a run that pauses on a question it cannot
+answer writes a request into `apply_pause.pause_dir()`; the 5 s poll reads the
+folder and shows the oldest request in the "Waiting for you" card at the top
+(`qt.apply_pause_card.PauseCard`), and a new request flashes the taskbar
+(`QApplication.alert`). "Answer now" on a parked job's missing answers opens
+Add answer prefilled with the question (its help and options kept by the run),
+and once the answer is saved offers to Re-queue the job.
+
 Freshness: reads are lock-free (`apply_queue.load`, never quarantine=True — the
 panel must never rename a file a locked writer owns). A QFileSystemWatcher
 watches the queue file AND its directory, re-armed after every event because
@@ -44,6 +52,7 @@ from typing import Any, Callable, Dict, List, Optional
 from PySide6 import QtCore, QtWidgets
 
 import apply_assess
+import apply_pause
 import apply_queue
 import ats_accounts
 import errmsg
@@ -51,6 +60,7 @@ import jev_switch
 import osopen
 import profile_lock
 from qt import theme
+from qt.apply_pause_card import PauseCard
 from qt.chrome import ChipBar, Pill
 from qt.delegates import BAND_ROLE, STATUS_LABELS, STATUS_TAGS, TAG_ROLE, JobRowDelegate
 from qt.widgets import ElidedLabel
@@ -293,6 +303,28 @@ def _prefill(q: Dict[str, Any]) -> Dict[str, Any]:
             "options": [str(o) for o in q.get("options") or []]}
 
 
+def _missing_prefill(m: Dict[str, Any]) -> Dict[str, Any]:
+    """Add answer's prefill (PR-7) for one of a parked job's missing answers:
+    the question with the help, options and type the run kept."""
+    return {"question": str(m.get("question") or ""), "help": str(m.get("help") or ""),
+            "type": str(m.get("type") or ""),
+            "options": [str(o) for o in m.get("options") or []]}
+
+
+def _default_alert(widget: QtWidgets.QWidget) -> None:
+    """Flash the dashboard's taskbar button (a new pause request)."""
+    QtWidgets.QApplication.alert(widget.window(), 0)
+
+
+def _pending_requests() -> List[Dict[str, Any]]:
+    """The waiting pause requests, oldest first; [] when the folder does not
+    read (the panel never breaks on it)."""
+    try:
+        return apply_pause.pending_requests()
+    except Exception:  # noqa: BLE001 - a folder hiccup must never break the panel
+        return []
+
+
 def _run_inline(fn: Callable[[], Any],
                 on_done: Optional[Callable[[Any], None]] = None,
                 on_error: Optional[Callable[[BaseException], None]] = None) -> None:
@@ -382,8 +414,8 @@ class _DetailsPanel(QtWidgets.QFrame):
         wh.addWidget(self.callout_label, 1)
         self.answer_now_btn = QtWidgets.QPushButton("Answer now")
         self.answer_now_btn.setToolTip(
-            "Open the Apply Answers tab, save the missing answer(s) to the "
-            "answer bank, then Re-queue this job")
+            "Open Add answer on the Apply Answers tab with the missing question "
+            "filled in; once your answer is saved, Re-queue this job")
         self.answer_now_btn.clicked.connect(on_answer_now or (lambda: None))
         wh.addWidget(self.answer_now_btn, 0, QtCore.Qt.AlignmentFlag.AlignTop)
         cv.addWidget(self.callout)
@@ -490,13 +522,14 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                  on_login: Callable[[], None] | None = None,
                  on_mark_applied: Callable[[Dict[str, Any]], None] | None = None,
                  on_mark_seen: Callable[[Dict[str, Any]], None] | None = None,
-                 on_answer_now: Callable[[], None] | None = None,
+                 on_answer_now: Callable[[Optional[Dict[str, Any]]], Any] | None = None,
                  jev_blocked: Callable[[], str] | None = None,
                  on_check_difficulty: Callable[[List[str], bool], None] | None = None,
                  on_pre_answer: Callable[[Dict[str, Any]], None] | None = None,
                  difficulty_blocked: Callable[[], str] | None = None,
                  difficulty_hidden: Callable[[], bool] | None = None,
                  profile_busy: Callable[[], bool] | None = None,
+                 alert: Callable[[QtWidgets.QWidget], None] | None = None,
                  parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self._queue_override = Path(queue_path) if queue_path else None
@@ -508,9 +541,13 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self._on_login = on_login or _spawn_login
         self._on_mark_applied = on_mark_applied or (lambda _e: None)
         self._on_mark_seen = on_mark_seen or (lambda _e: None)
-        # "Answer now" on the missing-answers callout — the main window wires
-        # this to switch to the Apply Answers tab.
-        self._on_answer_now = on_answer_now or (lambda: None)
+        # "Answer now" on the missing-answers callout (PR-7): the main window
+        # opens Add answer on the Apply Answers tab with the prefill (None when
+        # the job kept no question) and returns True once the answer is saved.
+        self._on_answer_now = on_answer_now or (lambda _p: None)
+        # The taskbar flash for a new pause request (SP7); tests inject a spy.
+        self._alert = alert or _default_alert
+        self._pauses_seen: set[str] = set()
         # Late-bound like password_exists: why a run cannot start ("" when it can).
         self._jev_blocked = jev_blocked or (lambda: _default_jev_blocked())
         # The difficulty check (DF-4 to DF-6): its console (job ids, recheck),
@@ -527,6 +564,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self._build()
         self._setup_watcher()
         self.refresh()
+        self._check_pauses()
 
     # ---- paths -----------------------------------------------------------------
 
@@ -540,6 +578,11 @@ class ApplyQueuePanel(QtWidgets.QWidget):
     def _build(self) -> None:
         v = QtWidgets.QVBoxLayout(self)
         v.setContentsMargins(8, 8, 8, 8)
+
+        # SP7: a paused run's questions, above everything else on the tab.
+        self.pause_card = PauseCard()
+        self.pause_card.answered.connect(self._pause_answered)
+        v.addWidget(self.pause_card)
 
         # Header, two rows: what the queue is doing (chips + counts caption) over
         # what you can do about it (master password, Start). One row held these
@@ -691,7 +734,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
 
         # Structured details panel. It keeps a `toPlainText()` mirror of the composed
         # text because the tests assert against that flattened form.
-        self.details = _DetailsPanel(on_answer_now=lambda: self._on_answer_now())
+        self.details = _DetailsPanel(on_answer_now=lambda: self._answer_now())
         self.open_folder_btn = self.details.open_folder_btn
         self.open_record_btn = self.details.open_record_btn
         self.open_folder_btn.clicked.connect(self._open_folder)
@@ -802,11 +845,40 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         """Each poll tick: a queue change reloads the panel; otherwise a
         browser opening or closing on the auto-apply profile since the gates
         were last read (`_busy_now`) reads them again, so Start comes back
-        once a difficulty check's window closes."""
+        once a difficulty check's window closes. The pause folder is read on
+        every tick (`_check_pauses`)."""
+        self._check_pauses()
         if self._current_sig() != self._mtime_sig:
             self.refresh()
         elif self._busy_now() != self._gate_busy:
             self.refresh_jev_state()
+
+    def _check_pauses(self) -> None:
+        """The "Waiting for you" card follows the pause folder: the oldest
+        waiting request shows (the one on the card stays while it waits, so a
+        half-typed answer is kept), the card hides once none waits, and each
+        request seen for the first time flashes the taskbar."""
+        waiting = _pending_requests()
+        fresh = [r for r in waiting if str(r.get("pause_id") or r.get("job") or "")
+                 not in self._pauses_seen]
+        for r in fresh:
+            self._pauses_seen.add(str(r.get("pause_id") or r.get("job") or ""))
+        current = next((r for r in waiting if self.pause_card.shows(r)), None)
+        if current is None:
+            self.pause_card.set_request(waiting[0] if waiting else None)
+        self.pause_card.set_waiting_count(max(0, len(waiting) - 1))
+        if fresh:
+            try:
+                self._alert(self)
+            except Exception:  # noqa: BLE001 - a flash that fails is only a missed flash
+                pass
+
+    def _pause_answered(self, job_id: str, mode: str) -> None:
+        words = {"fill": "Your answers went to the run",
+                 "browser": "The run reads the page again",
+                 "park": "The job parks"}.get(mode, "Sent")
+        self._set_note(f"{words} (job {job_id}).")
+        self._check_pauses()
 
     def _busy_now(self) -> bool:
         """The profile seam, read safely: a seam that raises reads as free
@@ -1038,6 +1110,9 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         if not jid:
             self._set_note("Select a row to re-queue.")
             return
+        self._requeue_job(jid)
+
+    def _requeue_job(self, jid: str) -> None:
         qp = self._queue_file()
         self._submit_write(
             lambda: apply_queue.requeue(jid, refresh_answers=True, path=qp),
@@ -1214,6 +1289,52 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             return
         menu = self._pre_answer_menu()
         menu.exec(self.pre_answer_btn.mapToGlobal(self.pre_answer_btn.rect().bottomLeft()))
+
+    def _missing_questions(self) -> List[Dict[str, Any]]:
+        """The selected job's missing answers that name a question."""
+        return [m for m in (self._selected_entry() or {}).get("missing_answers") or []
+                if isinstance(m, dict) and str(m.get("question") or "").strip()]
+
+    def _answer_menu(self) -> QtWidgets.QMenu:
+        """One entry per missing question of the selected job."""
+        menu = QtWidgets.QMenu(self)
+        for m in self._missing_questions():
+            action = menu.addAction(str(m.get("question") or ""))
+            action.triggered.connect(
+                lambda _c=False, m=m: self._answer_with(_missing_prefill(m)))
+        return menu
+
+    def _answer_now(self) -> None:
+        """Answer now (PR-7): Add answer prefilled with the parked question, or
+        a menu of them when there are several; a job with none opens the
+        Apply Answers tab."""
+        questions = self._missing_questions()
+        if not questions:
+            self._on_answer_now(None)
+            return
+        if len(questions) == 1:
+            self._answer_with(_missing_prefill(questions[0]))
+            return
+        menu = self._answer_menu()
+        btn = self.details.answer_now_btn
+        menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+
+    def _answer_with(self, prefill: Dict[str, Any]) -> None:
+        e = self._selected_entry()
+        jid = str((e or {}).get("job_posting_id") or "")
+        saved = self._on_answer_now(prefill)
+        if saved is True and jid and self._confirm_requeue(e or {}):
+            self._requeue_job(jid)
+            self._set_note(f"Re-queued {(e or {}).get('company', '')}: the next run uses "
+                           f"your answer.")
+
+    def _confirm_requeue(self, e: Dict[str, Any]) -> bool:
+        """Ask to Re-queue once the answer is saved; tests monkeypatch this."""
+        answer = QtWidgets.QMessageBox.question(
+            self, "Re-queue",
+            f"Your answer is saved. Re-queue {e.get('company', 'this job')} so the next "
+            f"run applies with it?")
+        return answer == QtWidgets.QMessageBox.StandardButton.Yes
 
     def _copy_kickoff(self) -> None:
         QtWidgets.QApplication.clipboard().setText(KICKOFF_COMMAND)

@@ -829,7 +829,8 @@ def test_console_command_keeps_a_hostile_checkout_path_literal():
 
 
 def _actions_row(p):
-    return p.layout().itemAt(1).layout()
+    # item 0 is the "Waiting for you" card (cycle 19, SP7), then the two header rows
+    return p.layout().itemAt(2).layout()
 
 
 def test_panel_has_start_run_button(qtbot, tmp_path):
@@ -840,7 +841,7 @@ def test_panel_has_start_run_button(qtbot, tmp_path):
     # (master-password cluster, then the two small run buttons, then Start), so
     # that the chips keep their labels at 125% and 150% on a window narrower
     # than about 1600px.
-    chips_row, actions = p.layout().itemAt(0).layout(), _actions_row(p)
+    chips_row, actions = p.layout().itemAt(1).layout(), _actions_row(p)
     assert chips_row.itemAt(0).widget() is p.status_chips
     assert actions.itemAt(actions.count() - 1).widget() is p.start_run_btn
     row_buttons = [actions.itemAt(i).widget() for i in range(actions.count() - 1)
@@ -1755,3 +1756,258 @@ def test_the_poll_reads_the_profile_gate_again_when_a_browser_closes(qtbot, tmp_
     busy[0] = True
     p._poll_for_changes()
     assert not p.start_run_btn.isEnabled() and not p.check_difficulty_btn.isEnabled()
+
+
+# --- cycle 19 SP7: the "Waiting for you" card and Answer now ---------------------------------
+
+import apply_pause  # noqa: E402
+from qt import apply_pause_card as apc  # noqa: E402
+from resume_tailor import apply_answers  # noqa: E402
+
+_PAUSE_JOB = {"job_posting_id": "42", "company": "Fabrikam", "title": "Analytics Engineer"}
+
+
+def _q(key, label, widget, **kw):
+    q = {"key": str(key), "field_id": f"f{key}", "label": label, "help": "",
+         "placeholder": "", "type": "text", "field_type": "text", "widget": widget,
+         "options": [], "required": True, "sensitive": False}
+    q.update(kw)
+    return q
+
+
+_PAUSE_QUESTIONS = [
+    _q(1, "Preferred team", apply_pause.W_CHOICE, options=["Data", "Platform"], type="choice",
+       help="Pick the team you would join first"),
+    _q(2, "Preferred office", apply_pause.W_CHOICE, type="choice",
+       options=["Austin", "Boston", "Chicago", "Denver", "Remote"]),
+    _q(3, "I agree to be contacted by text message", apply_pause.W_YES_NO, type="yes_no",
+       field_type="checkbox"),
+    _q(4, "Number of conference talks given", apply_pause.W_NUMBER, type="number",
+       field_type="number"),
+    _q(5, "What is your favourite query language?", apply_pause.W_TEXT),
+    _q(6, "Date of birth", apply_pause.W_BROWSER, sensitive=True),
+]
+
+
+@pytest.fixture
+def pause_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setattr(apply_answers, "STORE_PATH", tmp_path / "apply_answers.json")
+    return tmp_path
+
+
+def _ask(questions=None, job=None, headless=False, pause_id="p1"):
+    return apply_pause.write_request(job or _PAUSE_JOB, "https://careers.example/apply",
+                                     "required field without an answer: Preferred team",
+                                     questions if questions is not None else _PAUSE_QUESTIONS,
+                                     headless=headless, pause_id=pause_id)
+
+
+def _card(qtbot, request=None):
+    card = apc.PauseCard()
+    qtbot.addWidget(card)
+    card.set_request(request or apply_pause.read_request(apply_pause.request_path("42")))
+    return card
+
+
+def _row_for(card, key):
+    return next(r for r in card.rows if r["question"]["key"] == str(key))
+
+
+def test_the_card_shows_each_question_in_its_real_widget(qtbot, pause_home):
+    _ask()
+    card = _card(qtbot)
+    assert not card.isHidden()
+    assert "Waiting for you" in card.title_label.text() and "Fabrikam" in card.title_label.text()
+    assert card.reason_label.text() == "required field without an answer: Preferred team"
+    kinds = {r["question"]["key"]: r["kind"] for r in card.rows}
+    assert kinds == {"1": "radio", "2": "combo", "3": "combo", "4": "line", "5": "line",
+                     "6": apply_pause.W_BROWSER}
+    assert [b.text() for b in _row_for(card, 1)["widget"].group.buttons()] == ["Data", "Platform"]
+    office = _row_for(card, 2)["widget"]
+    assert [office.itemText(i) for i in range(office.count())] == [
+        apc.NOTHING, "Austin", "Boston", "Chicago", "Denver", "Remote"]
+    yes_no = _row_for(card, 3)["widget"]
+    assert [yes_no.itemText(i) for i in range(yes_no.count())] == [apc.NOTHING, "Yes", "No"]
+    assert _row_for(card, 4)["widget"].validator() is not None
+    # the help shows under its question; a sensitive field only points at the browser
+    texts = [w.text() for w in card.findChildren(QtWidgets.QLabel)]
+    assert "Pick the team you would join first" in texts
+    assert apc.BROWSER_ONLY in texts
+    # a save box per question, off by default, none for the sensitive field
+    assert _row_for(card, 6)["save"] is None and _row_for(card, 6)["widget"] is None
+    for key in (1, 2, 3, 4, 5):
+        box = _row_for(card, key)["save"]
+        assert box.text() == apc.SAVE_LABEL and not box.isChecked() and box.isEnabled()
+    assert not card.browser_btn.isHidden()
+
+
+def test_the_save_box_is_off_with_the_reason_add_answer_would_refuse(qtbot, pause_home):
+    apply_answers.save([{"id": "preferred_team", "question": "Preferred team Pick the team you "
+                         "would join first", "type": "text", "answer": "Data", "note": "",
+                         "confirmed": True, "status": "active"}])
+    builtin = apply_answers.BUILTINS["work_authorized"].question
+    _ask(_PAUSE_QUESTIONS[:1] + [_q(7, builtin, apply_pause.W_YES_NO, type="yes_no")])
+    card = _card(qtbot)
+    dup, own = _row_for(card, 1)["save"], _row_for(card, 7)["save"]
+    assert not dup.isEnabled() and "already has this question" in dup.toolTip()
+    assert not own.isEnabled() and "built-in answer" in own.toolTip()
+
+
+def test_fill_and_continue_writes_the_answers_and_the_save_flags(qtbot, pause_home):
+    _ask()
+    card = _card(qtbot)
+    sent = []
+    card.answered.connect(lambda job, mode: sent.append((job, mode)))
+    card.set_value("1", "Platform")
+    card.set_value("2", "Remote")
+    card.set_value("3", "Yes")
+    _row_for(card, 4)["widget"].setText("37")
+    _row_for(card, 5)["widget"].setText("Datalog")
+    _row_for(card, 1)["save"].setChecked(True)
+    _row_for(card, 5)["save"].setChecked(True)
+    card.fill_btn.click()
+    assert sent == [("42", "fill")]
+    assert card.isHidden()
+    got = apply_pause.read_answer("42", "p1")
+    assert got["mode"] == "fill"
+    assert got["values"] == {"1": "Platform", "2": "Remote", "3": "Yes", "4": "37",
+                             "5": "Datalog"}
+    assert got["save"] == {"1": True, "5": True}
+    assert apply_pause.pending_requests() == []
+
+
+def test_a_number_box_takes_only_a_number(qtbot, pause_home):
+    _ask()
+    card = _card(qtbot)
+    box = _row_for(card, 4)["widget"]
+    qtbot.keyClicks(box, "3a7")
+    assert box.text() == "37"
+
+
+def test_park_it_and_the_browser_button_write_their_modes(qtbot, pause_home):
+    _ask()
+    card = _card(qtbot)
+    card.set_value("1", "Platform")
+    card.browser_btn.click()
+    assert apply_pause.read_answer("42", "p1") == {"mode": "browser", "values": {}, "save": {}}
+    _ask(pause_id="p2")
+    card = _card(qtbot)
+    card.park_btn.click()
+    assert apply_pause.read_answer("42", "p2")["mode"] == "park"
+
+
+def test_a_headless_run_hides_the_browser_button(qtbot, pause_home):
+    _ask(headless=True)
+    card = _card(qtbot)
+    assert card.browser_btn.isHidden()
+    assert not card.fill_btn.isHidden() and not card.park_btn.isHidden()
+    texts = [w.text() for w in card.findChildren(QtWidgets.QLabel)]
+    assert apc.BROWSER_ONLY_HEADLESS in texts
+
+
+def test_the_poll_shows_a_new_request_flashes_once_and_keeps_a_half_typed_answer(
+        qtbot, tmp_path, pause_home):
+    flashes = []
+    p = _dpanel(qtbot, _qfile(tmp_path), alert=flashes.append)
+    assert p.pause_card.isHidden() and flashes == []
+    _ask()
+    p._poll_for_changes()
+    assert not p.pause_card.isHidden() and p.pause_card.job_id() == "42"
+    assert flashes == [p]
+    _row_for(p.pause_card, 5)["widget"].setText("Datal")
+    p._poll_for_changes()
+    assert flashes == [p]                               # seen once, flashed once
+    assert _row_for(p.pause_card, 5)["widget"].text() == "Datal"
+    # a second run waits behind it
+    _ask(job={"job_posting_id": "43", "company": "Contoso", "title": "Analyst"}, pause_id="p9")
+    p._poll_for_changes()
+    assert p.pause_card.more_label.text() == "1 more waiting" and len(flashes) == 2
+    p.pause_card.park_btn.click()
+    assert p.pause_card.job_id() == "43"                # the next one shows at once
+    assert "The job parks" in p.status_label.text()
+    apply_pause.clear("43")
+    p._poll_for_changes()
+    assert p.pause_card.isHidden()
+
+
+def test_the_pause_card_sits_at_the_top_of_the_tab(qtbot, tmp_path, pause_home):
+    p = _dpanel(qtbot, _qfile(tmp_path), alert=lambda w: None)
+    assert p.layout().itemAt(0).widget() is p.pause_card
+
+
+def test_the_default_flash_alerts_the_window(monkeypatch, qtbot):
+    seen = []
+    monkeypatch.setattr(QtWidgets.QApplication, "alert",
+                        staticmethod(lambda w, ms=0: seen.append((w, ms))))
+    w = QtWidgets.QWidget()
+    qtbot.addWidget(w)
+    aqp._default_alert(w)
+    assert seen == [(w, 0)]
+
+
+def _parked(qfile, *items):
+    apply_queue.enqueue(apply_queue.new_entry("1", company="Acme", title="Analyst",
+                                              apply_url="https://x/1"), path=qfile)
+    for question, kw in items:
+        apply_queue.add_missing("1", question, path=qfile, **kw)
+    apply_queue.finish("1", "needs_human", notes="required field without an answer",
+                       path=qfile)
+
+
+def test_answer_now_opens_add_answer_prefilled_then_offers_requeue(qtbot, tmp_path,
+                                                                    monkeypatch):
+    qfile = _qfile(tmp_path)
+    _parked(qfile, ("Preferred team", {"help": "Pick one", "options": ["Data", "Platform"],
+                                       "type": "choice"}))
+    opened, asked = [], []
+    p = _dpanel(qtbot, qfile, on_answer_now=lambda prefill: opened.append(prefill) or True)
+    monkeypatch.setattr(p, "_confirm_requeue", lambda e: asked.append(e["company"]) or True)
+    p.table.selectRow(0)
+    p.details.answer_now_btn.click()
+    assert opened == [{"question": "Preferred team", "help": "Pick one", "type": "choice",
+                       "options": ["Data", "Platform"]}]
+    assert asked == ["Acme"]
+    assert apply_queue.load(qfile)["jobs"][0]["status"] == "queued"
+
+
+def test_answer_now_offers_no_requeue_when_the_answer_was_not_saved(qtbot, tmp_path,
+                                                                     monkeypatch):
+    qfile = _qfile(tmp_path)
+    _parked(qfile, ("Preferred team", {}))
+    p = _dpanel(qtbot, qfile, on_answer_now=lambda prefill: False)
+    monkeypatch.setattr(p, "_confirm_requeue", lambda e: pytest.fail("nothing was saved"))
+    p.table.selectRow(0)
+    p.details.answer_now_btn.click()
+    assert apply_queue.load(qfile)["jobs"][0]["status"] == "needs_human"
+
+
+def test_answer_now_with_several_questions_offers_each(qtbot, tmp_path):
+    qfile = _qfile(tmp_path)
+    _parked(qfile, ("Preferred team", {}), ("Number of talks", {"type": "number"}))
+    opened = []
+    p = _dpanel(qtbot, qfile, on_answer_now=lambda prefill: opened.append(prefill))
+    p.table.selectRow(0)
+    menu = p._answer_menu()
+    assert [a.text() for a in menu.actions()] == ["Preferred team", "Number of talks"]
+    menu.actions()[1].trigger()
+    assert opened == [{"question": "Number of talks", "help": "", "type": "number",
+                       "options": []}]
+
+
+def test_answer_now_in_the_window_saves_the_prefilled_answer(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot, monkeypatch, tmp_path)
+    calls = []
+    monkeypatch.setattr(w.answers_tab, "add_answer",
+                        lambda prefill=None: calls.append(("add", prefill)) or True)
+    monkeypatch.setattr(w.answers_tab, "save", lambda: calls.append(("save",)) or True)
+    prefill = {"question": "Preferred team", "help": "", "type": "choice",
+               "options": ["Data", "Platform"]}
+    assert w._answer_now(prefill) is True
+    assert calls == [("add", prefill), ("save",)]
+    assert w.tabs.tabText(w.tabs.currentIndex()) == "Apply Answers"
+    # a cancelled dialog saves nothing
+    calls.clear()
+    monkeypatch.setattr(w.answers_tab, "add_answer", lambda prefill=None: False)
+    assert w._answer_now(prefill) is False and calls == []
+    assert w._answer_now(None) is False

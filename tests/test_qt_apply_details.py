@@ -53,10 +53,12 @@ def test_answer_now_fires_injected_callback(qtbot, tmp_path):
     apply_queue.enqueue(_entry(), path=qfile)
     apply_queue.add_missing("1", "Years of Kubernetes?", path=qfile)
     fired = []
-    p = _panel(qtbot, qfile, on_answer_now=lambda: fired.append(True))
+    # the parked question goes with it (cycle 19, PR-7: Add answer prefilled)
+    p = _panel(qtbot, qfile, on_answer_now=lambda prefill: fired.append(prefill))
     p.table.selectRow(0)
     p.details.answer_now_btn.click()
-    assert fired == [True]
+    assert fired == [{"question": "Years of Kubernetes?", "help": "", "type": "",
+                      "options": []}]
 
 
 def test_status_chips_show_counts(qtbot, tmp_path):

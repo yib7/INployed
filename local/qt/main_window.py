@@ -402,6 +402,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self._show_tab("Apply Answers")
         self.answers_tab.add_answer(prefill)
 
+    def _answer_now(self, prefill: dict | None = None) -> bool:
+        """A parked job's Answer now (PR-7): Add answer on the Apply Answers
+        tab, prefilled with the parked question, and saved when the dialog is
+        accepted. True once the answer is on disk (the Auto-apply tab then
+        offers Re-queue). With no question kept, the tab opens."""
+        self._show_tab("Apply Answers")
+        if not prefill or not self.answers_tab.add_answer(prefill):
+            return False
+        return bool(self.answers_tab.save())
+
     def _show_tab(self, title: str) -> None:
         page = self._tab_widgets.get(title)
         if page is not None:
@@ -591,7 +601,7 @@ class MainWindow(QtWidgets.QMainWindow):
             on_set_password=self._set_ats_password,
             on_mark_applied=self._apply_queue_mark_applied,
             on_mark_seen=self._apply_queue_mark_seen,
-            on_answer_now=lambda: self._show_tab("Apply Answers"),
+            on_answer_now=self._answer_now,
             on_pre_answer=self._pre_answer)
         self._tab_widgets: dict[str, QtWidgets.QWidget] = {}
         pages = {"High Score (Unseen)": self.high_tab, "All Jobs": self.all_tab,

@@ -1042,7 +1042,8 @@ def test_a_jev_request_leaves_the_default_executor_to_the_llm_calls(monkeypatch)
     async def go():
         asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=1))
         run = sj.JevRun(ScriptedJudge())
-        jev_task = asyncio.ensure_future(run.ask(asyncio.Semaphore(1), 1, {"md": "x"}, RESUME))
+        jev_task = asyncio.ensure_future(run.ask(asyncio.Semaphore(1), 1, "job-x", {"md": "x"},
+                                                 RESUME))
         try:
             for _ in range(500):
                 if started.is_set():
@@ -1089,6 +1090,62 @@ def test_jev_on_without_an_llm_provider_keeps_error_rows_and_scores_only(monkeyp
     assert sj.NO_LLM_REASON.startswith("ERROR:")                # the rescore pass retries it
     assert list(sj.rows_needing_rescore(merged.reset_index())["job_posting_id"]) == ["job-b"]
     assert (run.no_llm_errors, run.scores_only) == (1, 1)
+
+
+class Refuses(ScriptedJudge):
+    """Raises for a job whose text holds one of `tags` and answers the rest."""
+
+    def __init__(self, *tags):
+        super().__init__()
+        self.tags = set(tags)
+
+    def judge(self, state, questions):
+        if any(tag in state["job"] for tag in self.tags):
+            raise RuntimeError("no answer for this one")
+        return super().judge(state, questions)
+
+
+def test_a_job_both_passes_see_counts_once_per_stage(monkeypatch):
+    """The rescore pass hands `run_scoring` the run's JevRun again, and the fresh
+    pass's ERROR rows are among the rows it retries. A job that falls back on the
+    fresh pass and again on the rescore pass counts once; so does a job Jev
+    scores on both."""
+    sj = _sj()
+    monkeypatch.setattr(jev_score, "_WARNED", set())
+    run = sj.JevRun(Refuses("JOB-B"))
+    for _pass in ("fresh", "rescore"):
+        asyncio.run(sj.run_scoring(RecordingPool(), RESUME, _jobs_df("JOB-A", "JOB-B"),
+                                   jev_run=run))
+    run.close()
+    assert (run.scored, run.fallback) == ({1: 1, 2: 1}, {1: 1, 2: 1})
+    assert run.stats()["jev_stage1_fallback"] == 1
+
+
+def test_a_jev_score_on_the_rescore_pass_beats_the_fresh_pass_fallback(monkeypatch):
+    sj = _sj()
+    monkeypatch.setattr(jev_score, "_WARNED", set())
+    judge = Refuses("JOB-B")
+    run = sj.JevRun(judge)
+    asyncio.run(sj.run_scoring(RecordingPool(), RESUME, _jobs_df("JOB-B"), jev_run=run))
+    assert (run.scored, run.fallback) == ({1: 0, 2: 0}, {1: 1, 2: 1})
+    judge.tags.clear()                          # Jev answers on the rescore pass
+    asyncio.run(sj.run_scoring(RecordingPool(), RESUME, _jobs_df("JOB-B"), jev_run=run))
+    run.close()
+    assert (run.scored, run.fallback) == ({1: 1, 2: 1}, {1: 0, 2: 0})
+
+
+def test_an_error_row_without_an_llm_provider_counts_once_across_both_passes(monkeypatch):
+    sj = _sj()
+    monkeypatch.setattr(jev_score, "_WARNED", set())
+    judge = Refuses("JOB-B")
+    run = sj.JevRun(judge)
+    for _pass in ("fresh", "rescore"):
+        asyncio.run(sj.run_scoring(None, RESUME, _jobs_df("JOB-B"), jev_run=run))
+    assert (run.no_llm_errors, run.fallback[1]) == (1, 1)
+    judge.tags.clear()                          # a later pass that Jev answers
+    asyncio.run(sj.run_scoring(None, RESUME, _jobs_df("JOB-B"), jev_run=run))
+    run.close()
+    assert (run.no_llm_errors, run.scored[1], run.fallback[1]) == (0, 1, 0)
 
 
 def test_with_jev_off_run_scoring_is_the_llm_path_as_before():

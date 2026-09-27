@@ -310,7 +310,8 @@ RUN_STATS_COLS = [
     "llm_calls", "prompt_tokens", "output_tokens", "free_calls", "vertex_calls",
     "easy_apply_dropped", "scores_reused",
     # SC-4 (JevRun.stats): jobs per stage that Jev scored or handed to the LLM
-    # path, over the fresh and rescore passes, and the requests and spend
+    # path, over the fresh and rescore passes with each job counted once (a
+    # score beats a fallback), and the requests and spend
     "jev_stage1_scored", "jev_stage2_scored", "jev_requests", "jev_usd",
     "jev_stage1_fallback", "jev_stage2_fallback",
 ]
@@ -680,18 +681,21 @@ class JevRun:
     """One run's Jev use (SC-4, SC-5). `judge` None means Jev is off and every
     job takes the LLM path exactly as before. Counts, per stage (1, 2), the
     jobs whose stage Jev composed (`scored`) and those it handed to the LLM
-    path (`fallback`); the request count and spend are `jev.usage()` since the
-    run began. Once the judge's breaker opens (`jev.Guarded.down`) no further
+    path (`fallback`), each job once: the rescore pass retries the fresh pass's
+    ERROR rows with this same JevRun, and a job Jev scores on either pass counts
+    as scored. The request count and spend are `jev.usage()` since the run
+    began. Once the judge's breaker opens (`jev.Guarded.down`) no further
     request is made and the outage is reported once. Its requests run on its
     own worker threads (`JEV_CONCURRENCY`), built on the first request and let
     go by `close()`."""
 
     def __init__(self, judge=None):
         self.judge = judge
-        self.scored = {1: 0, 2: 0}
-        self.fallback = {1: 0, 2: 0}
-        self.no_llm_errors = 0      # stage 1 rows left as NO_LLM_REASON
-        self.scores_only = 0        # stage 2 skipped: Jev could not and no LLM provider
+        # Job ids per stage (1, 2): Jev composed the stage, Jev handed it to the
+        # LLM path, or Jev could not and no LLM provider was there to take it.
+        self._scored: dict[int, set[str]] = {1: set(), 2: set()}
+        self._fallback: dict[int, set[str]] = {1: set(), 2: set()}
+        self._no_llm: dict[int, set[str]] = {1: set(), 2: set()}
         self._outage_noted = False
         self._raised: set[str] = set()
         self._workers: ThreadPoolExecutor | None = None
@@ -700,6 +704,31 @@ class JevRun:
     @property
     def on(self) -> bool:
         return self.judge is not None
+
+    @property
+    def scored(self) -> dict[int, int]:
+        """Jobs whose stage Jev composed, per stage."""
+        return {stage: len(ids) for stage, ids in self._scored.items()}
+
+    @property
+    def fallback(self) -> dict[int, int]:
+        """Jobs whose stage went to the LLM path and that Jev scored on no pass, per stage."""
+        return {stage: len(ids - self._scored[stage]) for stage, ids in self._fallback.items()}
+
+    @property
+    def no_llm_errors(self) -> int:
+        """Jobs left with stage 1's NO_LLM_REASON row."""
+        return len(self._no_llm[1] - self._scored[1])
+
+    @property
+    def scores_only(self) -> int:
+        """Jobs whose stage 2 was skipped: Jev could not and no LLM provider."""
+        return len(self._no_llm[2] - self._scored[2])
+
+    def note_no_llm(self, stage: int, job_id) -> None:
+        """Stage `stage` of job `job_id` went unscored: Jev could not score it
+        and no LLM provider is set up."""
+        self._no_llm[stage].add(str(job_id))
 
     def _usage(self) -> dict:
         if self.judge is None or jev_score is None:
@@ -721,10 +750,10 @@ class JevRun:
             self._workers.shutdown(wait=False, cancel_futures=True)
             self._workers = None
 
-    async def ask(self, sem: asyncio.Semaphore, stage: int, job, resume: str):
-        """Stage `stage` (1 or 2: jev_score.stage1 or stage2) for one job on the
-        run's own worker threads under `sem`: its result, or None for the LLM
-        path."""
+    async def ask(self, sem: asyncio.Semaphore, stage: int, job_id, job, resume: str):
+        """Stage `stage` (1 or 2: jev_score.stage1 or stage2) for job `job_id`
+        on the run's own worker threads under `sem`: its result, or None for the
+        LLM path."""
         if self.judge is None:
             return None
         stage_fn = jev_score.stage1 if stage == 1 else jev_score.stage2
@@ -741,13 +770,13 @@ class JevRun:
                             self._raised.add(kind)
                             print(f"Jev scoring raised {kind}; such jobs take the LLM path.")
         if got is not None:
-            self.scored[stage] += 1
+            self._scored[stage].add(str(job_id))
             return got
         down = self._down()
         if down and not self._outage_noted:
             self._outage_noted = True
             print(f"Jev is unavailable ({down}); the rest of this run scores on the LLM path.")
-        self.fallback[stage] += 1
+        self._fallback[stage].add(str(job_id))
         return None
 
     def stats(self) -> dict:
@@ -1452,12 +1481,13 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame, *,
 
     async def stage1_one(job_id, job_md):
         if jev_on:
-            got = await jev_run.ask(jsem, 1, {"md": job_md, "facts": jev_facts(job_md)}, resume)
+            got = await jev_run.ask(jsem, 1, job_id,
+                                    {"md": job_md, "facts": jev_facts(job_md)}, resume)
             if got is not None:
                 return {"job_posting_id": job_id, "score": int(got["score"]),
                         "reason": got["reason"]}
             if pool is None:
-                jev_run.no_llm_errors += 1
+                jev_run.note_no_llm(1, job_id)
                 return {"job_posting_id": job_id, "score": None, "reason": NO_LLM_REASON}
         return await score_stage1(pool, sem1, resume, job_id, job_md)
 
@@ -1483,11 +1513,11 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame, *,
 
         async def stage2_one(job_id, job_md):
             if jev_on:
-                got = await jev_run.ask(jsem, 2, {"md": job_md}, resume)
+                got = await jev_run.ask(jsem, 2, job_id, {"md": job_md}, resume)
                 if got is not None:
                     return {"job_posting_id": job_id, **got}
                 if pool is None:
-                    jev_run.scores_only += 1
+                    jev_run.note_no_llm(2, job_id)
                     return None
             return await score_stage2(pool, sem2, resume, job_id, job_md)
 

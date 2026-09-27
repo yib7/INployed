@@ -1605,3 +1605,25 @@ def test_a_blank_choice_names_the_fix_in_plain_words():
     under it then asks for a pick, since "Not allowed: ." names nothing."""
     assert settings.validate({"provider": ""})["provider"] == "Pick one of the listed options."
     assert settings.validate({"provider": "openai"})["provider"] == "Not allowed: openai."
+
+
+def test_every_choice_default_is_one_of_its_choices():
+    """Restore defaults and each field's reset button write a choice field's
+    default, and the Settings tab opens a blank stored choice on its default
+    (SP1 review C). Save refuses a choice outside the listed ones, so each of
+    these holds only while the default is listed."""
+    fields = [f for f in settings.SETTINGS_SCHEMA if f.type == "choice"]
+    assert len(fields) >= 12
+    for f in fields:
+        assert f.default in f.choices, f.key
+        assert settings.field_problem(f, f.default) is None, f.key
+
+
+def test_every_multichoice_default_is_among_its_choices():
+    """Restore defaults writes a multichoice field's default too, and Save
+    refuses an item outside the listed ones."""
+    fields = [f for f in settings.SETTINGS_SCHEMA if f.type == "multichoice"]
+    assert fields
+    for f in fields:
+        assert set(f.default) <= set(f.choices), f.key
+        assert settings.field_problem(f, list(f.default)) is None, f.key

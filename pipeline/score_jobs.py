@@ -561,6 +561,19 @@ def today_str() -> str:
     return f"{now:%B} {now.day}, {now.year}"
 
 
+def _use_gemini_models() -> None:
+    """SC-6: the claude provider fell back to Gemini, so the stages send the
+    Gemini model chains and the Gemini prompt layout. A Gemini pool has no
+    claude-* model, so the claude chains would fail every call."""
+    global SCORING_PROVIDER, STAGE1_MODEL, STAGE2_MODEL, STAGE1_MODELS, STAGE2_MODELS
+    SCORING_PROVIDER = "gemini"
+    STAGE1_MODEL = _SCORING["stage1_model"]
+    STAGE2_MODEL = _SCORING["stage2_model"]
+    STAGE1_MODELS = stage_model_chain(_SCORING, "gemini", 1)
+    STAGE2_MODELS = stage_model_chain(_SCORING, "gemini", 2)
+    print(f"Scoring on Gemini: stage 1 {STAGE1_MODEL}, stage 2 {STAGE2_MODEL}.")
+
+
 def make_pool(required: bool = True):
     """Build the scoring pool for SCORING_PROVIDER.
 
@@ -572,6 +585,7 @@ def make_pool(required: bool = True):
     (KeyPool.from_env, GEMINI_API_KEYS + Vertex) is unchanged from before and
     is the only branch that may exit, exactly as today. With `required` False
     (Jev scores this run, SC-4) missing credentials return None and the run goes on.
+    The claude fallback also switches the stage models to Gemini (SC-6).
     """
     if SCORING_PROVIDER == "claude":
         try:
@@ -593,6 +607,7 @@ def make_pool(required: bool = True):
                     max_procs=max(STAGE1_CONCURRENCY, STAGE2_CONCURRENCY))
             print("Scoring provider is 'claude' but the `claude` CLI is not on "
                   "PATH -- falling back to Gemini.")
+        _use_gemini_models()
     limits = configured_limits(_SCORING)
     # Say so when a stage is about to be governed by DEFAULT_LIMITS. That downgrade
     # is invisible from outside -- the run simply crawls, then spills every call

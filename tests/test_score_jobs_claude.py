@@ -18,6 +18,9 @@ import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
+import pandas as pd
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
 
 import score_jobs as sj  # noqa: E402
@@ -255,6 +258,93 @@ def test_make_pool_gemini_provider_unaffected(monkeypatch, tmp_path):
 
     monkeypatch.setattr(sj, "KeyPool", _FakeKeyPool)
     assert sj.make_pool() is fallback_pool
+
+
+# --------------------------------------------------------------------------
+# SC-6: a claude provider that falls back to Gemini sends the Gemini models
+# --------------------------------------------------------------------------
+
+class _ModelRecordingPool:
+    """A Gemini-shaped pool that records the model chain and the system prompt
+    each stage sends."""
+
+    def __init__(self):
+        self.models = []
+        self.systems = []
+
+    async def generate(self, *, model, contents, config):
+        system = str(getattr(config, "system_instruction", "") or "")
+        stage = 1 if system.startswith(sj.STAGE1_SYSTEM) else 2
+        self.models.append((stage, list(model)))
+        self.systems.append((stage, system))
+        if stage == 1:
+            return _claude_resp(json.dumps({"score": 5, "reason": "fit"}))
+        return _claude_resp(json.dumps({"deep_score": 8, "strengths": ["s"], "gaps": ["g"],
+                                        "recommendation": "apply"}))
+
+    def stats(self):
+        return {"free_calls": len(self.models), "vertex_calls": 0}
+
+
+def _claude_config(monkeypatch):
+    """provider "claude" with distinct Gemini and Claude model ids, bound the way
+    the module binds them at import."""
+    cfg = {**sj._SCORING, "provider": "claude",
+           "stage1_model": "gemini-s1", "stage1_models": ["gemini-s1-extra"],
+           "stage2_model": "gemini-s2", "stage2_models": [],
+           "stage1_model_claude": "claude-haiku-4-5", "stage2_model_claude": "claude-sonnet-5"}
+    provider, s1, s2 = sj._active_scoring(cfg)
+    monkeypatch.setattr(sj, "_SCORING", cfg)
+    monkeypatch.setattr(sj, "SCORING_PROVIDER", provider)
+    monkeypatch.setattr(sj, "STAGE1_MODEL", s1)
+    monkeypatch.setattr(sj, "STAGE2_MODEL", s2)
+    monkeypatch.setattr(sj, "STAGE1_MODELS", sj.stage_model_chain(cfg, provider, 1))
+    monkeypatch.setattr(sj, "STAGE2_MODELS", sj.stage_model_chain(cfg, provider, 2))
+
+
+def _fake_keypool(monkeypatch, pool):
+    class _FakeKeyPool:
+        @staticmethod
+        def from_env(state_path, limits=None):
+            return pool
+
+    monkeypatch.setattr(sj, "KeyPool", _FakeKeyPool)
+
+
+def _one_job():
+    return pd.DataFrame({"job_posting_id": ["j1"], "job_description_md": ["A data job."],
+                         "filtered_out": [False]})
+
+
+@pytest.mark.parametrize("cli", ["not_on_path", "module_missing"])
+def test_claude_fallback_to_gemini_sends_the_gemini_models(monkeypatch, capsys, cli):
+    _claude_config(monkeypatch)
+    assert sj.STAGE1_MODELS == ["claude-haiku-4-5"]            # the claude chain before
+    if cli == "not_on_path":
+        _install_fake_claude_cli(monkeypatch, cli_present=False)
+    else:
+        monkeypatch.setitem(sys.modules, "claude_cli", None)   # `import claude_cli` fails
+    pool = _ModelRecordingPool()
+    _fake_keypool(monkeypatch, pool)
+    assert sj.make_pool() is pool
+    asyncio.run(sj.run_scoring(pool, "resume", _one_job()))
+    assert pool.models == [(1, ["gemini-s1", "gemini-s1-extra"]), (2, ["gemini-s2"])]
+    # the Gemini prompt layout too: each system prompt is the stage's own, and the
+    # resume rides the contents
+    assert pool.systems == [(1, sj.STAGE1_SYSTEM), (2, sj.STAGE2_SYSTEM)]
+    assert sj.SCORING_PROVIDER == "gemini"
+    assert (sj.STAGE1_MODEL, sj.STAGE2_MODEL) == ("gemini-s1", "gemini-s2")
+    out = capsys.readouterr().out
+    assert "falling back to Gemini" in out
+    assert "claude-haiku-4-5" not in out       # no rate-limit warning names a claude id
+
+
+def test_claude_with_the_cli_keeps_the_claude_models(monkeypatch):
+    _claude_config(monkeypatch)
+    _install_fake_claude_cli(monkeypatch, cli_present=True)
+    assert isinstance(sj.make_pool(), _FakeClaudePool)
+    assert sj.SCORING_PROVIDER == "claude"
+    assert (sj.STAGE1_MODELS, sj.STAGE2_MODELS) == (["claude-haiku-4-5"], ["claude-sonnet-5"])
 
 
 # --------------------------------------------------------------------------

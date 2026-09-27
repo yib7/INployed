@@ -37,6 +37,21 @@ from keypool import (DEFAULT_LIMITS, LIMITS, KeyPool, PoolError,
                      limits_from_config, ranked_models)
 from run_labels import RUN_LABELS
 
+# Jev scoring (cycle 19, SC-1). jev_score.py sits beside this file in the repo;
+# the VM's flat copy of the pipeline may not carry it, so any import failure
+# reads as "Jev off" and the run keeps the LLM path (make_jev_judge says so
+# once). Importing jev_score imports neither the TypeSafe SDK nor local/jev.py.
+try:
+    import jev_score
+except Exception as _jev_import_error:  # noqa: BLE001
+    jev_score = None
+    # A plain missing file is the VM's normal state; anything else is a fault.
+    JEV_IMPORT_ERROR = ("" if isinstance(_jev_import_error, ModuleNotFoundError)
+                        and _jev_import_error.name == "jev_score"
+                        else type(_jev_import_error).__name__)
+else:
+    JEV_IMPORT_ERROR = ""
+
 # Data root: the directory holding .env, resume.md, the master CSV and the
 # per-run-label output dirs. In the repo this script lives in pipeline/ and the
 # data root is the repo root one level up; on the VM the pipeline scripts are
@@ -594,6 +609,29 @@ def make_pool():
                                 limits=limits)
     except PoolError as e:
         sys.exit(str(e))
+
+
+def make_jev_judge():
+    """The run's Jev judge (JS-4), or None to score on the LLM path.
+
+    `jev_score.use_jev()` decides once per run: SCORE_USE_JEV, else the
+    dashboard's local/config.json when it exists, else off (the VM has
+    neither). A missing jev_score.py reads as off, with one line saying so.
+    """
+    if jev_score is None:
+        if JEV_IMPORT_ERROR:
+            print(f"WARNING: jev_score.py failed to import ({JEV_IMPORT_ERROR}); "
+                  "scoring on the LLM path.")
+        else:
+            print("Jev scoring off: jev_score.py is not beside score_jobs.py.")
+        return None
+    on, why = jev_score.use_jev()
+    if not on:
+        return None
+    judge = jev_score.make_judge()
+    if judge is not None:
+        print(f"Jev scoring on ({why}); a job Jev cannot score takes the LLM path.")
+    return judge
 
 
 def latest_input_csv() -> Path | None:

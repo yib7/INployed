@@ -2197,6 +2197,23 @@
       }
     },
     {
+      "id": "contoso_reloc_options",
+      "label": "We work 5 days on-site in NYC. If you're not local, are you willing to relocate?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "I am in NYC and happy to work in office",
+        "I will relocate and am happy to work in office",
+        "I do not want to work in office"
+      ],
+      "required": true,
+      "expected_fact": "willing_to_relocate",
+      "expect": {
+        "citizen": "I will relocate and am happy to work in office",
+        "sponsor": null
+      }
+    },
+    {
       "id": "contoso_spon_cpt_opt",
       "label": "Do you require visa sponsorship to work legally in the United States (now or in the future)? This includes needing sponsorship for CPT, OPT or other visa types to work in the US.",
       "help": "",

@@ -19,7 +19,7 @@ correctly keeps a run that picks nothing from passing.
   runner target of `scripts/jev_record.ps1` records it): no wrong pick outside
   REAL_MISREADS (empty). The rule raises `pytest.fail`, which the harness
   never turns into a recorded divergence (an xfail). REAL_PICK_FLOOR is the
-  recording's rate (cycle 18: 126 of 151, no wrong pick); the rate prints
+  recording's rate (cycle 18: 125 of 152, no wrong pick); the rate prints
   either way. The fixture pins the catalog's `today` to the recording
   day, as it does for the runner tests. In fake mode the test skips: its judge
   would be the fake, which the fake test holds already.
@@ -42,9 +42,11 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
+import apply_facts  # noqa: E402
 import apply_screening  # noqa: E402
 import jev  # noqa: E402
 import jev_harness  # noqa: E402
+from apply_form import Button, Field, FormDigest  # noqa: E402
 from resume_tailor import apply_answers, apply_config  # noqa: E402
 
 pytest_plugins = ["conftest_jev"]
@@ -98,14 +100,24 @@ SEEDS = (1, 2, 3, 4, 5)
 # location; a Yes is Yes to "located in or willing to relocate" and to a
 # move with no relocation help. A No leaves "If you're not local, are you
 # willing to relocate?" open, since the candidate may be local. The fake
-# settles none of them, so its picks stay at 69 and its rate falls.
-FAKE_PICK_FLOOR = 0.45                                        # 69 of 151
-NOISY_PICK_FLOOR = {1: 0.45, 2: 0.45, 3: 0.45, 4: 0.45, 5: 0.45}  # 68 68 68 69 68 of 151
-# The real judge's floor, from cycle 18's recording (2026-09-27): 126 of 151
-# expected picks and no wrong one, 30 of them the judge's sure read of a
+# settles none of them, so its picks stay at 69 and its rate falls. Round 10
+# (2026-09-27, a live run on the Contoso form parked again) added that question with
+# the form's own options (contoso_reloc_options): sentences that say whether
+# the candidate lives in NYC or will relocate. The fake settles it for no
+# profile.
+FAKE_PICK_FLOOR = 0.45                                        # 69 of 152
+NOISY_PICK_FLOOR = {1: 0.44, 2: 0.44, 3: 0.44, 4: 0.44, 5: 0.44}  # 68 68 68 69 68 of 152
+# The real judge's floor, from cycle 18's recording (2026-09-27): 125 of 152
+# expected picks and no wrong one, 29 of them the judge's sure read of a
 # reworded relocation, on-site, work authorization or sponsorship question
-# (`apply_judge.settle_questions`). None would report the rate only.
-REAL_PICK_FLOOR: float | None = 0.83                          # 126 of 151
+# (`apply_judge.settle_questions`). None would report the rate only. Round
+# 10's line on where the candidate lives settles contoso_reloc_options for
+# the citizen profile at 1.00 and costs two reads that were at 0.88:
+# reloc_contoso offers "I already live in the San Francisco Bay Area", and
+# the citizen profile's Anytown, California may be there, so its read fell
+# to 0.51; reloc_example_cities read No for the sponsor profile at 0.82.
+# Both are left unanswered, the safe side.
+REAL_PICK_FLOOR: float | None = 0.82                          # 125 of 152
 # (question id, profile) cases where a wrong pick by the real judge is
 # accepted, each with its cause. Empty: every wrong pick fails.
 REAL_MISREADS: frozenset[tuple[str, str]] = frozenset()
@@ -269,7 +281,9 @@ def test_the_set_covers_the_topics_the_spec_names():
     # plain forms each vocabulary passes (69 to 90), round 5 the second
     # review's wrong-settle forms (90 to 109), round 7 the recheck's (109 to
     # 128), round 8 four that name the job's city (128 to 132), round 9 the
-    # Contoso questions as worded there and three that stay open (132 to 140)
+    # Contoso questions as worded there and three that stay open (132 to
+    # 140), round 10 the Contoso relocation question with its own options
+    # (140 to 141)
     assert 55 <= len(QUESTIONS) <= 145
     assert {q["widget"] for q in QUESTIONS} == set(apply_screening.WIDGETS)
     prefixes = {q["id"].split("_")[0] for q in QUESTIONS}
@@ -341,3 +355,74 @@ def test_screen_asks_whether_a_held_back_answer_settles_the_question():
     assert (out.answer, out.fact_key) == ("Yes", "onsite_ok")
     # the fake never settles one: the question stays unanswered
     assert apply_screening.screen(q, catalog, jev.FakeJev()).answer is None
+
+
+# A synthetic Ashby form laid out as jobs.ashbyhq.com shows one, every field
+# in page order; its company and title strings feed the replay cache key. Its
+# relocation question is the hard one: its options are sentences, and the
+# first names the city the candidate may live in.
+CONTOSO_JOB = {"company_name": "Contoso", "job_title": "New Grad Software Engineer"}
+CONTOSO_RELOCATE = ("I am in NYC and happy to work in office",
+                    "I will relocate and am happy to work in office",
+                    "I do not want to work in office")
+CONTOSO_TEXT = ("New Grad Software Engineer Location NYC Office Employment Type Full time "
+                "Location Type On-site Department Product & Technology Engineering "
+                "Application Autofill from resume Upload your resume here to autofill key "
+                "application fields.")
+# where each synthetic profile lives, as its resume gives it
+BASICS = {
+    "citizen": {"name": "Alex Doe", "email": "alex@example.com", "phone": "555-0100",
+                "location": "Anytown, CA"},
+    "sponsor": {"name": "Sam Roe", "email": "sam@example.com", "phone": "555-0101",
+                "location": "Springfield, IL"},
+}
+
+
+def contoso_page() -> FormDigest:
+    def field_(n, label, type_, required, **kw):
+        return Field(n=n, locator=(0, f"#f{n}"), label=label, type=type_, required=required,
+                     **kw)
+    fields = [
+        field_(0, "Name", "text", True, placeholder="Type here..."),
+        field_(1, "Email", "email", True, placeholder="hello@example.com..."),
+        field_(2, "Phone", "tel", True, placeholder="1-415-555-1234..."),
+        field_(3, "LinkedIn Profile", "url", False, placeholder="https://example.com..."),
+        field_(4, "Resume", "file", True),
+        field_(5, "What city do you live in?", "text", True, placeholder="Start typing...",
+               widget="typeahead"),
+        field_(6, "We work 5 days on-site in NYC. If you're not local, are you willing to "
+                  "relocate?", "radio", True, options=list(CONTOSO_RELOCATE)),
+        field_(7, "Do you require visa sponsorship to work legally in the United States (now "
+                  "or in the future)?", "radio", True,
+               help="This includes needing sponsorship for CPT, OPT or other visa types to "
+                    "work in the US.", options=["Yes", "No"], widget="choice"),
+        field_(8, "Are you legally authorized to work in the United States?", "radio", True,
+               help="You are a US citizen, already have an employment visa (O1, H1B, etc.), "
+                    "or are specifically covered under a TN/H1-B1/E-3.",
+               options=["Yes", "No"], widget="choice"),
+        field_(9, "What are you looking for in your next role? What would you like to avoid?",
+               "textarea", False, placeholder="Type here..."),
+    ]
+    return FormDigest(url_host="jobs.ashbyhq.com", title="New Grad Software Engineer @ Contoso",
+                      text=CONTOSO_TEXT, fields=fields,
+                      buttons=[Button(n=0, locator=(0, "#submit"), text="Submit Application",
+                                      kind_hint="submit", in_form=True, primary=True)])
+
+
+@pytest.mark.parametrize("profile, want", [
+    # lives in California, will relocate and work on site: the second option
+    ("citizen", {6: CONTOSO_RELOCATE[1], 7: "No", 8: "Yes"}),
+    # will not relocate, happy on site: no option is true, so the run stops
+    # there; a visa holder's authorization under the listed visas is unsaid
+    ("sponsor", {6: None, 7: "Yes", 8: None}),
+])
+def test_the_real_judge_answers_the_contoso_form_from_the_saved_answers(jev_judge, tmp_path,
+                                                                        profile, want):
+    if jev_harness.mode_from(os.environ) == "fake":
+        pytest.skip(f"the real judge runs with {jev_harness.MODE_ENV}=record or replay; "
+                    f"in fake mode its judge is the fake")
+    catalog = apply_facts.build(tmp_path, answers=PROFILES[profile]["answers"],
+                                master_basics=BASICS[profile])
+    plan = apply_screening.screen_page(contoso_page(), catalog, jev_judge(), CONTOSO_JOB)
+    got = {pf.n: pf.option if pf.action == "select" else None for pf in plan.fields}
+    assert {n: got[n] for n in want} == want

@@ -18,7 +18,8 @@ dropped or weak mapping, the option picks for a mapping the judge made
 (`apply_judge.option_questions`), the plan again, the second look at a
 dropped or weak pick, and the settle question for a saved answer the
 own-question gate held back (`apply_judge.settle_questions`). It returns what
-the plan puts in the field, or None.
+the plan puts in the field, or None. `screen_page(digest, catalog, judge,
+job)` asks the same for a whole page and returns the plan.
 `run_screening(answers, judge)` does that for every question over the fact
 catalog one answer list gives. The page read (what kind of page this is) is
 left out: every question sits on an application form.
@@ -118,25 +119,25 @@ def _asked(judge, state: dict, questions: dict) -> dict:
     return {k: v for k, v in judge.judge(state, questions).items() if k in questions}
 
 
-def _plan(digest: FormDigest, catalog, answers: dict) -> FillPlan:
+def _plan(digest: FormDigest, catalog, answers: dict, job: dict = JOB) -> FillPlan:
     # drafting never answers a choice: a question mapped to a draft reads as no answer
     return apply_judge.plan(digest, catalog, answers, generation_enabled=False,
-                            company=JOB["company_name"])
+                            company=job["company_name"])
 
 
 def _second_look(digest: FormDigest, catalog, answers: dict, plan: FillPlan, judge,
-                 what: str) -> FillPlan:
+                 what: str, job: dict = JOB) -> FillPlan:
     """`_JobRun._reask`: the required fields the plan skipped for a dropped or
     weak mapping (`what` "source") or pick ("pick") asked once more, and the
     plan made again with those answers."""
     targets = apply_judge.reask_targets(digest, catalog, answers, plan, what=what,
-                                        company=JOB["company_name"])
+                                        company=job["company_name"])
     if not targets:
         return plan
     state, questions = apply_judge.reask_questions(digest, catalog, plan, targets, what=what,
-                                                   job=JOB)
+                                                   job=job)
     answers.update(_asked(judge, state, questions))
-    return _plan(digest, catalog, answers)
+    return _plan(digest, catalog, answers, job)
 
 
 def _given(pf: PlannedField) -> str | None:
@@ -147,25 +148,34 @@ def _given(pf: PlannedField) -> str | None:
     return None
 
 
+def screen_page(digest: FormDigest, catalog, judge, job: dict = JOB) -> FillPlan:
+    """The plan the run makes for the page `digest` with `catalog`'s facts
+    and `judge`'s answers, asked in the runner's order (`screen`); `job` is
+    the posting, its company name read as the company."""
+    company = job["company_name"]
+    answers: dict = {}
+    requests = [(s, q) for s, q in apply_judge.page_requests(digest, catalog, job) if q]
+    answers.update(apply_judge.merge_answers([_asked(judge, s, q) for s, q in requests]))
+    plan = _plan(digest, catalog, answers, job)
+    plan = _second_look(digest, catalog, answers, plan, judge, "source", job)
+    state, questions = apply_judge.option_questions(digest, plan, catalog=catalog,
+                                                    company=company)
+    if questions:
+        answers.update(_asked(judge, state, questions))
+        plan = _plan(digest, catalog, answers, job)
+    plan = _second_look(digest, catalog, answers, plan, judge, "pick", job)
+    state, questions = apply_judge.settle_questions(digest, plan, answers, catalog,
+                                                    company=company)
+    if questions:
+        answers.update(_asked(judge, state, questions))
+        plan = _plan(digest, catalog, answers, job)
+    return plan
+
+
 def screen(question: dict[str, Any], catalog, judge) -> Outcome:
     """What the run gives `question` with `catalog`'s facts and `judge`'s answers."""
     digest = page_for(question)
-    answers: dict = {}
-    requests = [(s, q) for s, q in apply_judge.page_requests(digest, catalog, JOB) if q]
-    answers.update(apply_judge.merge_answers([_asked(judge, s, q) for s, q in requests]))
-    plan = _plan(digest, catalog, answers)
-    plan = _second_look(digest, catalog, answers, plan, judge, "source")
-    state, questions = apply_judge.option_questions(digest, plan, catalog=catalog,
-                                                    company=JOB["company_name"])
-    if questions:
-        answers.update(_asked(judge, state, questions))
-        plan = _plan(digest, catalog, answers)
-    plan = _second_look(digest, catalog, answers, plan, judge, "pick")
-    state, questions = apply_judge.settle_questions(digest, plan, answers, catalog,
-                                                    company=JOB["company_name"])
-    if questions:
-        answers.update(_asked(judge, state, questions))
-        plan = _plan(digest, catalog, answers)
+    plan = screen_page(digest, catalog, judge)
     pf = plan.fields[0]
     answer = _given(pf)
     f = digest.fields[0]

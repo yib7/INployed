@@ -578,15 +578,18 @@ authorization statement, and fills the field only when it is sure (0.85 or more,
 every other choice) that anyone with those answers would pick that option. Otherwise the field
 stops the job as before. The question itself says which answer Jev reads: "We work 5 days on-site
 in NYC. If you're not local, are you willing to relocate?" asks about moving, so your relocation
-answer settles it even when the office sentence comes first. Some questions always stop the job, since none of your answers says
-them: another country, whether you are employed now, a visa or sponsor you hold now, your
-employer's needs, relocation help you ask for, commuting or where you live. If you need
-sponsorship, so do questions about now alone, about restrictions, about one visa type such as
-H-1B, or with a list of who counts as authorized, since your answers do not name your visa. A No
-to relocating leaves "Are you located in or willing to relocate?" open, since you may live there
-already. Years of experience and remote-only work always need their own question. The note on an
-answer goes to Jev with it, so "only in NYC or Austin" or "only with relocation help" tells it
-what your Yes covers.
+answer settles it even when the office sentence comes first. For a relocating or on-site question
+Jev also reads where you live now: the city and state of your confirmed mailing address, or the
+location on your résumé when no address is saved. That lets it choose between options such as "I
+am in NYC and happy to work in office" and "I will relocate and am happy to work in office". Some
+questions always stop the job, since none of your answers says them: another country, whether you
+are employed now, a visa or sponsor you hold now, your employer's needs, relocation help you ask
+for, or a question only about commuting or where you live. If you need sponsorship, so do
+questions about now alone, about restrictions, about one visa type such as H-1B, or with a list
+of who counts as authorized, since your answers do not name your visa. A No to relocating leaves
+"Are you located in or willing to relocate?" open, since you may live there already. Years of
+experience and remote-only work always need their own question. The note on an answer goes to Jev
+with it, so "only in NYC or Austin" or "only with relocation help" tells it what your Yes covers.
 
 **Test my answers.** Click **Test my answers** to run the shipped screening questions against
 your saved, confirmed answers, off the UI thread, with the judge your Auto-apply judge setting

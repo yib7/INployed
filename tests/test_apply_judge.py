@@ -3716,6 +3716,83 @@ def test_a_field_mapped_to_another_fact_or_none_keeps_its_mapping(tmp_path, labe
     assert (p.fields[0].action, p.fields[0].option) == ("skip", None)
 
 
+# the options the Contoso form gives that question (2026-09-27)
+_CONTOSO_RELOCATE_OPTIONS = ("I am in NYC and happy to work in office",
+                             "I will relocate and am happy to work in office",
+                             "I do not want to work in office")
+
+
+@pytest.mark.parametrize("label, key, options", [
+    (_CONTOSO_RELOCATE, "willing_to_relocate", _CONTOSO_RELOCATE_OPTIONS),
+    (_CONTOSO_RELOCATE, "onsite_ok", _CONTOSO_RELOCATE_OPTIONS),
+    (_NY_OFFICE, "onsite_ok", ("Yes", "No")),
+])
+def test_a_relocation_or_on_site_read_carries_where_the_candidate_lives(tmp_path, label, key,
+                                                                        options):
+    """Whether the candidate is local turns on it: "I am in NYC and happy to
+    work in office" or "I will relocate and am happy to work in office"."""
+    _, _, _, questions, _ = _held_back_plan(tmp_path, label=label, key=key, options=options)
+    assert list(questions) == ["field_0_settle"]
+    q = questions["field_0_settle"]
+    assert q["instructions"]["saved_answer"].splitlines()[-1] == (
+        f"{apply_judge.HOME_LINE}: Anytown, California")
+    assert list(q["criteria"]) == [*options, "not_settled"]
+    assert "where the candidate lives now when no line says it" in q["instructions"]["question"]
+    _assert_clean_text(questions)
+
+
+def test_a_work_authorization_read_carries_no_home(tmp_path):
+    _, _, _, questions, _ = _held_back_plan(tmp_path, label=_CONTOSO_AUTH, key="work_authorized")
+    assert apply_judge.HOME_LINE not in questions["field_0_settle"]["instructions"]["saved_answer"]
+
+
+@pytest.mark.parametrize("address, basics, home", [
+    ({}, {}, "Anytown, California"),
+    # a country other than the United States is named
+    ({"address_city": "Toronto", "address_state": "Ontario", "address_country": "Canada"}, {},
+     "Toronto, Ontario, Canada"),
+    ({"address_country": "USA"}, {}, "Anytown, California"),
+    # no address saved: the resume's location
+    ({"address_city": "", "address_state": ""}, {"location": "Austin, TX"}, "Austin, TX"),
+    ({"address_city": "", "address_state": ""}, {}, ""),
+])
+def test_where_they_live_reads_the_saved_address_then_the_resume(tmp_path, address, basics,
+                                                                 home):
+    cat = apply_facts.build(tmp_path, answers=standard_bank(**address), master_basics=basics,
+                            today=date(2026, 9, 26))
+    assert apply_judge.where_they_live(cat) == home
+
+
+def test_with_no_home_saved_a_relocation_read_carries_no_home_line(tmp_path):
+    bank = standard_bank(address_city="", address_state="")
+    _, _, _, questions, _ = _held_back_plan(tmp_path, label=_CONTOSO_RELOCATE,
+                                            key="willing_to_relocate", bank=bank,
+                                            options=_CONTOSO_RELOCATE_OPTIONS)
+    assert apply_judge.HOME_LINE not in questions["field_0_settle"]["instructions"]["saved_answer"]
+
+
+@pytest.mark.parametrize("settle, filled", [
+    (_settle_answer(_CONTOSO_RELOCATE_OPTIONS[1], 0.97,
+                    {_CONTOSO_RELOCATE_OPTIONS[0]: 0.01, _CONTOSO_RELOCATE_OPTIONS[1]: 0.97,
+                     _CONTOSO_RELOCATE_OPTIONS[2]: 0.0, "not_settled": 0.02}),
+     _CONTOSO_RELOCATE_OPTIONS[1]),
+    # the live read with no home line (2026-09-27): the right option, unsure
+    (_settle_answer(_CONTOSO_RELOCATE_OPTIONS[1], 0.72,
+                    {_CONTOSO_RELOCATE_OPTIONS[0]: 0.02, _CONTOSO_RELOCATE_OPTIONS[1]: 0.79,
+                     _CONTOSO_RELOCATE_OPTIONS[2]: 0.0, "not_settled": 0.19}), None),
+])
+def test_a_sure_read_fills_the_contoso_options(tmp_path, settle, filled):
+    *_, p = _held_back_plan(tmp_path, label=_CONTOSO_RELOCATE, key="willing_to_relocate",
+                            settle=settle, options=_CONTOSO_RELOCATE_OPTIONS)
+    pf = p.fields[0]
+    if filled:
+        assert (pf.action, pf.option, pf.fact_key) == ("select", filled, "willing_to_relocate")
+        assert p.park_reason == ""
+    else:
+        assert (pf.action, pf.option) == ("skip", None)
+        assert p.park_reason == f"required field without an answer: {_CONTOSO_RELOCATE}"
+
+
 def test_a_settle_question_carries_the_authorization_statement(tmp_path):
     bank = standard_bank(authorization_statement=_STATEMENT)
     cat, _, _, questions, _ = _held_back_plan(tmp_path, label=_CONTOSO_AUTH,

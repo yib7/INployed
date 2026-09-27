@@ -2095,6 +2095,14 @@ SETTLE_KEYS = frozenset(("willing_to_relocate", "onsite_ok", "work_authorized",
 # mapping: "Would you rather work remotely than in the office?" names the
 # office beside a willingness word and asks something else.
 SUBJECT_KEYS = ("willing_to_relocate", "onsite_ok")
+# Where the candidate lives now, the line a relocation or on-site read
+# carries: an option can turn on it. The Contoso form (2026-09-27)
+# offers "I am in NYC and happy to work in office", "I will relocate and am
+# happy to work in office" and "I do not want to work in office" under "If
+# you're not local, are you willing to relocate?", and the saved answers
+# said nothing of where the candidate lives, so the judge left it unsettled
+# and the run parked.
+HOME_LINE = "Where the candidate lives now"
 # The questions no saved answer settles, whatever the fact: a conviction, a
 # background or drug check or a security clearance; the candidate's present
 # job or employer ("Are you currently legally employed in the United
@@ -2150,14 +2158,30 @@ SETTLE_QUESTION = (
     "The form field `fields[{i}].label`, with its help, may ask the same thing in the "
     "employer's words: naming the job's city, office or days on site, listing the visa types "
     "it counts or who counts as authorized, or adding a condition such as \"if you are not "
-    "local\" or \"if needed\". Read the field as the employer means it and pick the option "
-    "every candidate with these saved answers would give. A condition the saved answers "
-    "already cover does not stop a pick: a candidate willing to relocate answers \"If you "
-    "are not local, are you willing to relocate?\" with yes. Choose not_settled when the "
-    "field asks something these answers do not say, or when its right option turns on it: "
-    "another country, where the candidate lives now, a cost the candidate pays, a number of "
-    "years or a skill, a date, pay, or a fact about the role or the company. Choose "
-    "not_settled when unsure.")
+    "local\" or \"if needed\". An option may join two answers in one sentence, such as \"I "
+    "will move and can work from the office\". Read the field as the employer means it and "
+    "pick the option every candidate with these saved answers would give. A condition the "
+    "saved answers already cover does not stop a pick: a candidate willing to relocate "
+    "answers \"If you are not local, are you willing to relocate?\" with yes, and a line on "
+    "where the candidate lives now says whether the candidate is in the place the field "
+    "names. Choose not_settled when the field asks something these answers do not say, or "
+    "when its right option turns on it: another country, where the candidate lives now when "
+    "no line says it, a cost the candidate pays, a number of years or a skill, a date, pay, "
+    "or a fact about the role or the company. Choose not_settled when unsure.")
+
+
+def where_they_live(catalog: FactCatalog) -> str:
+    """The candidate's home as the saved answers give it: the mailing
+    address's city and state, with its country when that is not the United
+    States, else the resume's location; "" when neither is saved."""
+    parts = [p for p in (catalog.value("address_city").strip(),
+                         catalog.value("address_state").strip()) if p]
+    if not parts:
+        return catalog.value("location").strip()
+    country = catalog.value("address_country").strip()
+    if country and _alias_set(country) != _ALIASES[0]:
+        parts.append(country)
+    return ", ".join(parts)
 
 
 def _settle_answer_text(catalog: FactCatalog, key: str, value: str,
@@ -2166,11 +2190,17 @@ def _settle_answer_text(catalog: FactCatalog, key: str, value: str,
     the authorization statement last for a yes / no fact when the catalog
     holds one and the lines do not carry it yet, so a question that lists
     visa types or who counts as authorized is read against the candidate's
-    own words."""
+    own words. A relocation or on-site read (`SUBJECT_KEYS`) ends with where
+    the candidate lives now (`HOME_LINE`, `where_they_live`) when it is
+    saved, so an option that says the candidate is local or will move is
+    read against it."""
     text = candidate_answer(catalog, key, value, options)
     if (key in YES_NO_KEYS and catalog.has(STATEMENT_KEY)
             and f"{STATEMENT_LINE}:" not in text):
         text += f"\n{STATEMENT_LINE}: {catalog.value(STATEMENT_KEY)}"
+    home = where_they_live(catalog) if key in SUBJECT_KEYS else ""
+    if home:
+        text += f"\n{HOME_LINE}: {home}"
     return text
 
 

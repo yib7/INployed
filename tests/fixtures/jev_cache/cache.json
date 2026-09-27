@@ -16939,5 +16939,1055 @@
       },
       "confidence": 0.61
     }
+  },
+  "32e09a98d842a0735140cc5df81fa160ed59c16febe2baa5bc64f74c8876e94e": {
+    "field_0_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "onsite_ok",
+      "score": null,
+      "probabilities": {
+        "needs_generation": 0.04,
+        "gender": 0.0,
+        "disability_status": 0.0,
+        "leave_blank": 0.06,
+        "race_ethnicity": 0.0,
+        "address_state": 0.0,
+        "authorized_without_sponsorship": 0.0,
+        "address_country": 0.0,
+        "onsite_ok": 0.58,
+        "how_did_you_hear": 0.0,
+        "requires_sponsorship": 0.0,
+        "willing_to_relocate": 0.32,
+        "veteran_status": 0.0,
+        "years_experience": 0.0,
+        "answer_authorization_statement": 0.0,
+        "remote_only": 0.0,
+        "address_city": 0.0,
+        "address_street": 0.0,
+        "address_zip": 0.0,
+        "work_authorized": 0.0
+      },
+      "confidence": 0.55
+    },
+    "asks_for_prohibited": {
+      "kind": "noul",
+      "noul": 0.04,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    }
+  },
+  "7f911370d689c49bb5a20870643e75ae4d1d479634084944003e692464685bda": {
+    "field_0_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "onsite_ok",
+      "score": null,
+      "probabilities": {
+        "answer_authorization_statement": 0.0,
+        "willing_to_relocate": 0.27,
+        "veteran_status": 0.0,
+        "disability_status": 0.0,
+        "gender": 0.0,
+        "address_state": 0.0,
+        "needs_generation": 0.01,
+        "address_street": 0.0,
+        "years_experience": 0.0,
+        "address_country": 0.0,
+        "authorized_without_sponsorship": 0.0,
+        "work_authorized": 0.0,
+        "address_zip": 0.0,
+        "race_ethnicity": 0.0,
+        "leave_blank": 0.06,
+        "how_did_you_hear": 0.0,
+        "requires_sponsorship": 0.0,
+        "onsite_ok": 0.66,
+        "remote_only": 0.0,
+        "address_city": 0.0
+      },
+      "confidence": 0.63
+    }
+  },
+  "58d8868f8c307b67b393df1fc8c837bfbdef7dd3bc217ce170ea6b6b17515675": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "I will relocate and am happy to work in office",
+      "score": null,
+      "probabilities": {
+        "I am in NYC and happy to work in office": 0.02,
+        "I will relocate and am happy to work in office": 0.79,
+        "I do not want to work in office": 0.0,
+        "not_settled": 0.19
+      },
+      "confidence": 0.72
+    }
+  },
+  "454b1e52629e6dcbe0b07ae0bf90a734edd26aa8cbe92dff218a7b143e753194": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "U.S. Citizen",
+      "score": null,
+      "probabilities": {
+        "Permanent Resident (Green Card)": 0.0,
+        "Student visa (F-1 OPT/CPT)": 0.0,
+        "U.S. Citizen": 1.0,
+        "not_settled": 0.0,
+        "Employment visa (H-1B, L-1, etc.)": 0.0,
+        "Other": 0.0
+      },
+      "confidence": 1.0
+    }
+  },
+  "d083d58a66c8cc3ba6a3172c3d5daaa2da45e8b1a81eeed1eb2fa312ca815429": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "No",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.01,
+        "No": 0.85,
+        "Yes": 0.14
+      },
+      "confidence": 0.76
+    }
+  },
+  "3175885f8a76d28ac7e818e3cf1ab0d5095ea25d1452cf16f9b685679763ecc9": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "Yes": 1.0,
+        "No": 0.0,
+        "not_settled": 0.0
+      },
+      "confidence": 1.0
+    }
+  },
+  "3e044931e9242eab5e89ca805e388cb75548cba33603adb8f64df57ca0eccbc0": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "Yes": 1.0,
+        "No": 0.0,
+        "not_settled": 0.0
+      },
+      "confidence": 1.0
+    }
+  },
+  "64d5241fa565419c5f695e260b13c949ab83467bfb602a8080e17dfb714c5a3f": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "No": 0.0,
+        "not_settled": 0.0,
+        "Yes": 1.0
+      },
+      "confidence": 0.99
+    }
+  },
+  "bfc4d95530da46d3fe9058bdd6ad4799ba68bf17dce5b5257a6d0332ecac5924": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "Yes": 1.0,
+        "No": 0.0,
+        "not_settled": 0.0
+      },
+      "confidence": 0.99
+    }
+  },
+  "834d79ca3059bfaa86ff09c942058d1b08b153defdea59d9aa1b7a2614d4157e": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.03,
+        "Yes": 0.97,
+        "No": 0.0
+      },
+      "confidence": 0.94
+    }
+  },
+  "43345d45a89e704882d0473fd01d98ae9f3fcb4317c5dfa3dfc1c2609b867527": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "I am willing to relocate",
+      "score": null,
+      "probabilities": {
+        "I already live in the San Francisco Bay Area": 0.13,
+        "I am not willing to relocate": 0.0,
+        "I am willing to relocate": 0.61,
+        "I do not want to work in office": 0.0,
+        "not_settled": 0.26
+      },
+      "confidence": 0.51
+    }
+  },
+  "51cc3ed73d4db10d0d28ae06b99ea5ad2d87d6291ed2cf6831b9809f3d513626": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "No": 0.0,
+        "not_settled": 0.01,
+        "Yes": 0.99
+      },
+      "confidence": 0.99
+    }
+  },
+  "3e1d890b29ef05df17a2604c0e9ac53822854c98b58aa703796dd3615927a8cf": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "Yes": 0.95,
+        "not_settled": 0.05,
+        "No": 0.0
+      },
+      "confidence": 0.92
+    }
+  },
+  "b6450d5a9636c5e5ff4132c1e4ac8c222082883338e376f41c119df102822d5c": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "not_settled",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.67,
+        "No": 0.01,
+        "Yes": 0.32
+      },
+      "confidence": 0.51
+    }
+  },
+  "f3f7210c6cfac0b57ad44b79d83ef806684bc8c17f008643b9c3e04ad4a35ddd": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.37,
+        "No": 0.01,
+        "Yes": 0.62
+      },
+      "confidence": 0.44
+    }
+  },
+  "e65eca88426772c405b3931830b3cad019b14713b2dd15c80c212c379015f4ac": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "checked",
+      "score": null,
+      "probabilities": {
+        "checked": 0.95,
+        "not_settled": 0.05
+      },
+      "confidence": 0.91
+    }
+  },
+  "9acc76e10c83ff2aca2cd61f6b9b09dea9505e7af1e271f27fcbd6d7a6f6c696": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "I am able to work on-site",
+      "score": null,
+      "probabilities": {
+        "I am only able to work remotely": 0.0,
+        "not_settled": 0.01,
+        "I am able to work on-site": 0.99
+      },
+      "confidence": 0.99
+    }
+  },
+  "d33f58ce01e96243d33479a529a86a0523ec19116bbd1a67540af0face804784": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "not_settled",
+      "score": null,
+      "probabilities": {
+        "Yes": 0.28,
+        "No": 0.09,
+        "not_settled": 0.63
+      },
+      "confidence": 0.43
+    }
+  },
+  "f55acabc23de96bb6efae05fbb496e4ae2be5725e723d6c34c2f8b0724fbf987": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.01,
+        "No": 0.0,
+        "Yes": 0.99
+      },
+      "confidence": 0.99
+    }
+  },
+  "0ffb64de14d9d91a3b357caf53bc7e7941a2bafafe3d81ca44e19a1940332ee7": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.01,
+        "Yes": 0.99,
+        "No": 0.0
+      },
+      "confidence": 0.99
+    }
+  },
+  "360ba662c7e9ebec223a6f851b8a01129d4fe31e69ad43a6272b2805e05d0d0e": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "No": 0.0,
+        "Yes": 0.99,
+        "not_settled": 0.01
+      },
+      "confidence": 0.99
+    }
+  },
+  "42924c48d427b7b35adce7f4f0dc0a66bf2eb469a53386399954b477b93f9660": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "Yes": 1.0,
+        "No": 0.0,
+        "not_settled": 0.0
+      },
+      "confidence": 1.0
+    }
+  },
+  "d27652fed80925024173f13099de36f01ed0c79f51155f4b070b6e20ba599f69": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "Yes": 1.0,
+        "No": 0.0,
+        "not_settled": 0.0
+      },
+      "confidence": 1.0
+    }
+  },
+  "a12db912cab5942f4bbc3dbfd0f36de7f3638cbbfccb66f577bda7d99d8d5b45": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "I will relocate and am happy to work in office",
+      "score": null,
+      "probabilities": {
+        "I will relocate and am happy to work in office": 1.0,
+        "I am in NYC and happy to work in office": 0.0,
+        "not_settled": 0.0,
+        "I do not want to work in office": 0.0
+      },
+      "confidence": 1.0
+    }
+  },
+  "f782c74f932e9e6d7c759f1a0dfab2db89f6c5a4f7e3d2625d38fb8acbb52396": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "No",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.0,
+        "No": 1.0,
+        "Yes": 0.0
+      },
+      "confidence": 0.99
+    }
+  },
+  "36893c32c28470fefdb30052e376f27162f968c49b068b2ae1f3be55af0a0998": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "No",
+      "score": null,
+      "probabilities": {
+        "Yes": 0.0,
+        "No": 1.0,
+        "not_settled": 0.0
+      },
+      "confidence": 0.99
+    }
+  },
+  "1cdcfb21bb3d17fd1f17b25c341b34c2c8e49a1705d4e965f377c8866aaa67a5": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "No": 0.0,
+        "Yes": 1.0,
+        "not_settled": 0.0
+      },
+      "confidence": 1.0
+    }
+  },
+  "b3836b64f35aaf854cf3193791fe39ca5206165169ecd0fd37fdbc8791eaf641": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "No": 0.0,
+        "Yes": 1.0,
+        "not_settled": 0.0
+      },
+      "confidence": 1.0
+    }
+  },
+  "df0cc368eefe130ee56a9626875d00b24eaa78c9a3e9a7bc57fac5aa6248294a": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "not_settled",
+      "score": null,
+      "probabilities": {
+        "Student visa (F-1 OPT/CPT)": 0.06,
+        "Employment visa (H-1B, L-1, etc.)": 0.37,
+        "U.S. Citizen": 0.01,
+        "Permanent Resident (Green Card)": 0.04,
+        "not_settled": 0.45,
+        "Other": 0.07
+      },
+      "confidence": 0.35
+    }
+  },
+  "425d2810aed7dcd8871c38d3853258db92e923371ee3ba15d34beb2685319c03": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "No",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.05,
+        "No": 0.64,
+        "Yes": 0.31
+      },
+      "confidence": 0.46
+    }
+  },
+  "8fb87b313761c3ae68b48ff6467570ba466a52e69d940680833acee27a831d94": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.06,
+        "No": 0.22,
+        "Yes": 0.72
+      },
+      "confidence": 0.59
+    }
+  },
+  "8cfe0de83218494bd734306b74eb6a850872d517023e4c4948fb07ade47a9a19": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "Yes": 0.53,
+        "No": 0.41,
+        "not_settled": 0.06
+      },
+      "confidence": 0.29
+    }
+  },
+  "185329d8bf6f9a6457066364b164189c01300800ad93dffa8c528b0e3137caae": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "Yes": 0.69,
+        "not_settled": 0.07,
+        "No": 0.24
+      },
+      "confidence": 0.53
+    }
+  },
+  "c5d4839a7862c43de92bb2557e97ba071af6e56532d3ce81f23cdfa362485a9d": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "No",
+      "score": null,
+      "probabilities": {
+        "Yes": 0.0,
+        "No": 0.98,
+        "not_settled": 0.02
+      },
+      "confidence": 0.96
+    }
+  },
+  "de3b802c12b891b35d14912a8ae3da6f5dd1c11c15083ca64fd6d3c45bbbe7be": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "I am not willing to relocate",
+      "score": null,
+      "probabilities": {
+        "I do not want to work in office": 0.0,
+        "I am willing to relocate": 0.01,
+        "I am not willing to relocate": 0.98,
+        "I already live in the San Francisco Bay Area": 0.0,
+        "not_settled": 0.01
+      },
+      "confidence": 0.98
+    }
+  },
+  "3534afb1ddbcc5abd4a5949a9998b6d66a276f30972a5df2b4cf257dcaf33ca1": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "No",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.02,
+        "Yes": 0.0,
+        "No": 0.98
+      },
+      "confidence": 0.97
+    }
+  },
+  "ba8cfa523dae32e45c375c72a38843f48f62a15475d45976a00606bad517556f": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "No",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.21,
+        "No": 0.78,
+        "Yes": 0.01
+      },
+      "confidence": 0.68
+    }
+  },
+  "fb93a20ebb5761979a31a00a48dd6c41f4c38694a67900786e778fb22fc2359a": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "No",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.11,
+        "Yes": 0.01,
+        "No": 0.88
+      },
+      "confidence": 0.82
+    }
+  },
+  "91c2cc8816e27f9c2ad1d8fad00791396805134ccdfb669826596c2fc1abed41": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "No",
+      "score": null,
+      "probabilities": {
+        "No": 0.96,
+        "not_settled": 0.03,
+        "Yes": 0.01
+      },
+      "confidence": 0.95
+    }
+  },
+  "af56890b9fd3f7573b7cfa91ff9dbfaf9a92e48d6fc1d8b6c73f3ef040ed0030": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "No",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.02,
+        "No": 0.97,
+        "Yes": 0.01
+      },
+      "confidence": 0.96
+    }
+  },
+  "1314c5b2ef618878e9ca46df5752b9064f7531f74b9db62430fa063d9cf4b737": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "checked",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.17,
+        "checked": 0.83
+      },
+      "confidence": 0.67
+    }
+  },
+  "cc62900c1b7cad03b7570821fde4c7fbfb6d4e5e8a534be68e5f533a0769db9f": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "I am able to work on-site",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.03,
+        "I am only able to work remotely": 0.0,
+        "I am able to work on-site": 0.97
+      },
+      "confidence": 0.95
+    }
+  },
+  "f3479b9e7718ab83882fdf510ed10c40e5ba27ccad5006afe1e85c9d365904cb": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "not_settled",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.47,
+        "Yes": 0.34,
+        "No": 0.19
+      },
+      "confidence": 0.2
+    }
+  },
+  "da2a4034a0f33d6ed12a40beee7cbd151baa71a6afdb452efedcdc0f44b4c035": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "No",
+      "score": null,
+      "probabilities": {
+        "Yes": 0.0,
+        "not_settled": 0.0,
+        "No": 1.0
+      },
+      "confidence": 0.99
+    }
+  },
+  "9f6575d92a83c4814202357fd3d8be7eccbaa8cfe6a7bf3881ba443cf1e3ce15": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "No": 0.0,
+        "not_settled": 0.01,
+        "Yes": 0.99
+      },
+      "confidence": 0.98
+    }
+  },
+  "69fca7c9fdb3de66d3a462c982a6d6ce99ca1332510d41dd50cfe8062e06e687": {
+    "field_0_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "not_settled": 0.02,
+        "No": 0.01,
+        "Yes": 0.97
+      },
+      "confidence": 0.96
+    }
+  },
+  "f6b0f4d23329ec2ce99cb4a969ea423c334ca9963f04cb336d9ab418ff500bb1": {
+    "field_0_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "full_name",
+      "score": null,
+      "probabilities": {
+        "race_ethnicity": 0.0,
+        "needs_generation": 0.0,
+        "remote_only": 0.0,
+        "address_country": 0.0,
+        "address_city": 0.0,
+        "email": 0.0,
+        "phone": 0.0,
+        "how_did_you_hear": 0.0,
+        "work_authorized": 0.0,
+        "last_name": 0.0,
+        "full_name": 0.99,
+        "gender": 0.0,
+        "answer_authorization_statement": 0.0,
+        "years_experience": 0.0,
+        "signature_today": 0.0,
+        "location": 0.0,
+        "authorized_without_sponsorship": 0.0,
+        "address_zip": 0.0,
+        "willing_to_relocate": 0.0,
+        "leave_blank": 0.01,
+        "disability_status": 0.0,
+        "first_name": 0.0,
+        "requires_sponsorship": 0.0,
+        "veteran_status": 0.0,
+        "address_street": 0.0,
+        "onsite_ok": 0.0,
+        "address_state": 0.0
+      },
+      "confidence": 0.99
+    },
+    "field_1_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "email",
+      "score": null,
+      "probabilities": {
+        "needs_generation": 0.0,
+        "email": 1.0,
+        "leave_blank": 0.0
+      },
+      "confidence": 1.0
+    },
+    "field_2_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "phone",
+      "score": null,
+      "probabilities": {
+        "needs_generation": 0.0,
+        "phone": 1.0,
+        "leave_blank": 0.0
+      },
+      "confidence": 1.0
+    },
+    "field_3_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "leave_blank",
+      "score": null,
+      "probabilities": {
+        "needs_generation": 0.05,
+        "leave_blank": 0.95
+      },
+      "confidence": 0.9
+    },
+    "field_4_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "leave_blank",
+      "score": null,
+      "probabilities": {
+        "needs_generation": 0.08,
+        "leave_blank": 0.92
+      },
+      "confidence": 0.85
+    },
+    "field_5_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "location",
+      "score": null,
+      "probabilities": {
+        "race_ethnicity": 0.0,
+        "needs_generation": 0.0,
+        "remote_only": 0.0,
+        "address_country": 0.0,
+        "address_city": 0.1,
+        "onsite_ok": 0.0,
+        "last_name": 0.0,
+        "how_did_you_hear": 0.0,
+        "work_authorized": 0.0,
+        "email": 0.0,
+        "phone": 0.0,
+        "gender": 0.0,
+        "answer_authorization_statement": 0.0,
+        "years_experience": 0.0,
+        "authorized_without_sponsorship": 0.0,
+        "location": 0.89,
+        "signature_today": 0.0,
+        "address_zip": 0.0,
+        "willing_to_relocate": 0.0,
+        "leave_blank": 0.01,
+        "disability_status": 0.0,
+        "veteran_status": 0.0,
+        "address_street": 0.0,
+        "first_name": 0.0,
+        "requires_sponsorship": 0.0,
+        "address_state": 0.0,
+        "full_name": 0.0
+      },
+      "confidence": 0.88
+    },
+    "field_6_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "onsite_ok",
+      "score": null,
+      "probabilities": {
+        "race_ethnicity": 0.0,
+        "needs_generation": 0.02,
+        "remote_only": 0.0,
+        "address_country": 0.0,
+        "address_city": 0.0,
+        "how_did_you_hear": 0.0,
+        "work_authorized": 0.0,
+        "gender": 0.0,
+        "years_experience": 0.0,
+        "answer_authorization_statement": 0.0,
+        "authorized_without_sponsorship": 0.0,
+        "location": 0.0,
+        "address_zip": 0.0,
+        "willing_to_relocate": 0.4,
+        "leave_blank": 0.01,
+        "disability_status": 0.0,
+        "address_street": 0.0,
+        "requires_sponsorship": 0.0,
+        "veteran_status": 0.0,
+        "onsite_ok": 0.57,
+        "address_state": 0.0
+      },
+      "confidence": 0.54
+    },
+    "field_7_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "requires_sponsorship",
+      "score": null,
+      "probabilities": {
+        "race_ethnicity": 0.0,
+        "needs_generation": 0.0,
+        "remote_only": 0.0,
+        "address_country": 0.0,
+        "address_city": 0.0,
+        "how_did_you_hear": 0.0,
+        "work_authorized": 0.0,
+        "gender": 0.0,
+        "answer_authorization_statement": 0.0,
+        "years_experience": 0.0,
+        "authorized_without_sponsorship": 0.0,
+        "location": 0.0,
+        "address_zip": 0.0,
+        "willing_to_relocate": 0.0,
+        "leave_blank": 0.0,
+        "disability_status": 0.0,
+        "veteran_status": 0.0,
+        "address_street": 0.0,
+        "requires_sponsorship": 1.0,
+        "address_state": 0.0,
+        "onsite_ok": 0.0
+      },
+      "confidence": 1.0
+    },
+    "field_8_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "work_authorized",
+      "score": null,
+      "probabilities": {
+        "race_ethnicity": 0.0,
+        "needs_generation": 0.0,
+        "remote_only": 0.0,
+        "address_country": 0.0,
+        "address_city": 0.0,
+        "how_did_you_hear": 0.0,
+        "work_authorized": 0.96,
+        "gender": 0.0,
+        "answer_authorization_statement": 0.01,
+        "years_experience": 0.0,
+        "authorized_without_sponsorship": 0.03,
+        "location": 0.0,
+        "address_zip": 0.0,
+        "willing_to_relocate": 0.0,
+        "leave_blank": 0.0,
+        "disability_status": 0.0,
+        "requires_sponsorship": 0.0,
+        "address_street": 0.0,
+        "veteran_status": 0.0,
+        "address_state": 0.0,
+        "onsite_ok": 0.0
+      },
+      "confidence": 0.95
+    },
+    "field_9_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "needs_generation",
+      "score": null,
+      "probabilities": {
+        "race_ethnicity": 0.0,
+        "needs_generation": 0.98,
+        "remote_only": 0.0,
+        "address_country": 0.0,
+        "address_city": 0.0,
+        "onsite_ok": 0.0,
+        "phone": 0.0,
+        "how_did_you_hear": 0.0,
+        "work_authorized": 0.0,
+        "last_name": 0.0,
+        "email": 0.0,
+        "gender": 0.0,
+        "years_experience": 0.0,
+        "answer_authorization_statement": 0.0,
+        "authorized_without_sponsorship": 0.0,
+        "location": 0.0,
+        "signature_today": 0.0,
+        "address_zip": 0.0,
+        "willing_to_relocate": 0.0,
+        "leave_blank": 0.02,
+        "disability_status": 0.0,
+        "requires_sponsorship": 0.0,
+        "veteran_status": 0.0,
+        "first_name": 0.0,
+        "address_street": 0.0,
+        "address_state": 0.0,
+        "full_name": 0.0
+      },
+      "confidence": 0.97
+    },
+    "button_0_role": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "submit",
+      "score": null,
+      "probabilities": {
+        "advance": 0.0,
+        "submit": 1.0,
+        "upload": 0.0,
+        "back": 0.0,
+        "other": 0.0,
+        "apply_entry": 0.0
+      },
+      "confidence": 1.0
+    },
+    "asks_for_prohibited": {
+      "kind": "noul",
+      "noul": 0.03,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    }
+  },
+  "21f379c6343f6ee32413b45e21667e48dea8de14d1068fbdde4f1a3370fcaa57": {
+    "field_6_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "onsite_ok",
+      "score": null,
+      "probabilities": {
+        "needs_generation": 0.01,
+        "gender": 0.0,
+        "leave_blank": 0.05,
+        "address_state": 0.0,
+        "location": 0.0,
+        "remote_only": 0.0,
+        "years_experience": 0.0,
+        "answer_authorization_statement": 0.0,
+        "requires_sponsorship": 0.0,
+        "address_country": 0.0,
+        "race_ethnicity": 0.0,
+        "address_city": 0.0,
+        "work_authorized": 0.0,
+        "disability_status": 0.0,
+        "onsite_ok": 0.74,
+        "address_street": 0.0,
+        "authorized_without_sponsorship": 0.0,
+        "how_did_you_hear": 0.0,
+        "veteran_status": 0.0,
+        "willing_to_relocate": 0.2,
+        "address_zip": 0.0
+      },
+      "confidence": 0.71
+    }
+  },
+  "9100fb0ec12091c724f3ce52c9a3d632855037138729261ee2422ff15db50853": {
+    "field_6_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "I will relocate and am happy to work in office",
+      "score": null,
+      "probabilities": {
+        "I will relocate and am happy to work in office": 1.0,
+        "I do not want to work in office": 0.0,
+        "not_settled": 0.0,
+        "I am in NYC and happy to work in office": 0.0
+      },
+      "confidence": 0.99
+    },
+    "field_7_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "No",
+      "score": null,
+      "probabilities": {
+        "No": 0.98,
+        "not_settled": 0.01,
+        "Yes": 0.01
+      },
+      "confidence": 0.97
+    },
+    "field_8_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "No": 0.01,
+        "not_settled": 0.03,
+        "Yes": 0.96
+      },
+      "confidence": 0.94
+    }
+  },
+  "5c0dabc7167e76dda77eec00b324e7aee535e0097f425e79fa56c98afad5112a": {
+    "field_7_settle": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "Yes",
+      "score": null,
+      "probabilities": {
+        "No": 0.0,
+        "not_settled": 0.01,
+        "Yes": 0.99
+      },
+      "confidence": 0.97
+    }
   }
 }

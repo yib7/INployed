@@ -54,6 +54,7 @@ import errmsg
 import jev
 import jev_switch
 from qt import theme, workers
+from apply_pause import builtin_answering  # noqa: F401  (re-exported for the tests)
 from resume_tailor import apply_answers
 
 # The built-in's own text is authoritative for the address rules. It is
@@ -69,26 +70,8 @@ _OWN_TICK = {"work_authorized": "work authorization",
              "authorization_statement": "work-authorization statement"}
 
 
-def builtin_answering(question: str) -> str:
-    """The question text of the built-in answer the run fills `question` from,
-    or "": the built-in's own words (`apply_answers.find_collision`), or a
-    question `apply_facts.question_fit` reads as that built-in's own. A
-    narrower question (another country, a city, a visa type, years of one
-    skill) is "", so a custom answer can hold it. So is a heading with no verb
-    over a yes / no built-in ("Work authorization", `apply_facts.noun_phrase`):
-    it heads a status list as often as a Yes / No, and the run fills a status
-    list there from a custom answer."""
-    hit = apply_answers.find_collision(question, [])
-    if hit:
-        return hit
-    for key in apply_facts.OWN_QUESTIONS:
-        builtin = apply_answers.BUILTINS.get(key)
-        if builtin is None or apply_facts.question_fit(key, question) != "own":
-            continue
-        if builtin.type == "yes_no" and apply_facts.noun_phrase(question):
-            continue
-        return builtin.question
-    return ""
+# `builtin_answering` lives in `apply_pause` (the run's "save for future runs"
+# refuses the same questions, PR-6); the dialog and Save read it from there.
 
 
 # "The <this>." in the Add answer dialog, "the <this>; ..." in a Save message.

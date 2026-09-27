@@ -58,6 +58,13 @@ os.environ["LOCALAPPDATA"] = tempfile.mkdtemp(prefix="inployed-test-appdata-")
 # the file-loading branch can still export its own value.
 os.environ.setdefault("INPLOYED_NO_DOTENV", "1")
 
+# SP7 (park and resume): a run that meets a question it can ask pauses for up
+# to `auto_apply_pause_minutes` (10 by default). No test waits on that: the
+# switch below keeps every run in the suite from pausing (`apply_pause.NEVER_WAIT`
+# reads it at import). The pause tests and the harness's pause flows turn
+# `apply_pause.NEVER_WAIT` off for themselves.
+os.environ["INPLOYED_PAUSE_NEVER_WAIT"] = "1"
+
 # Neutralise load_dotenv process-wide BEFORE `local/` is importable, and scrub any
 # var that a .env could have set so the modules see documented defaults. A test
 # that wants a value sets it with monkeypatch.setenv, which is undone at teardown.

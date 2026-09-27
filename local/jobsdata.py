@@ -1333,6 +1333,16 @@ def suppress_reposts(df: pd.DataFrame, marked_at: dict[str, str], window_days: i
     return final, step3 + step4
 
 
+def _is_manual_row(ids: pd.Series) -> pd.Series:
+    """True where job_posting_id is a hand-added job (SP5/MA-3): those are never
+    scored, so a score-based filter must not hide them regardless of min_score."""
+    try:
+        from manual_add import is_manual_id
+    except Exception:  # noqa: BLE001 - fall back to the documented id prefix
+        return ids.astype(str).str.startswith("manual-")
+    return ids.astype(str).map(is_manual_id)
+
+
 def filter_high_unseen_with_count(
         df: pd.DataFrame, min_score: int = 4, *,
         marked_at: dict[str, str] | None = None,
@@ -1344,7 +1354,9 @@ def filter_high_unseen_with_count(
     score = pd.to_numeric(df["score"], errors="coerce").fillna(0)
     is_seen = (df["is_seen"].astype(str) if "is_seen" in df.columns
                else pd.Series("no", index=df.index))
-    score_mask = score >= min_score
+    manual = (_is_manual_row(df["job_posting_id"]) if "job_posting_id" in df.columns
+              else pd.Series(False, index=df.index))
+    score_mask = (score >= min_score) | manual
     hidden = 0
     if marked_at is not None and window_days > 0:
         # key_source=df (the FULL frame, every score) so a job marked seen or
@@ -1443,7 +1455,9 @@ def filter_and_sort(base: pd.DataFrame, search: str, minscore: str, day: str,
                 view = view.loc[hay.str.contains(search, na=False, regex=False)]
     if minscore not in ("", "Any") and "score" in view.columns:
         sc = pd.to_numeric(view["score"], errors="coerce")
-        view = view.loc[sc >= float(minscore)]
+        manual = (_is_manual_row(view["job_posting_id"]) if "job_posting_id" in view.columns
+                  else pd.Series(False, index=view.index))
+        view = view.loc[(sc >= float(minscore)) | manual]
     if day not in ("", "All") and "extracted_date" in view.columns:
         view = view.loc[view["extracted_date"].astype(str) == day]
     if time_ not in ("", "All") and "run_label" in view.columns:

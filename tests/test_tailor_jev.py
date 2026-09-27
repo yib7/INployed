@@ -9,8 +9,8 @@ before the Jev wiring landed, into `tests/fixtures/tailor_jev_off_prompts.json`.
 A prompt change made on purpose re-records the file (set TAILOR_JEV_OFF_PROMPTS_RECORD=1
 for one run) and shows the diff in review; a change nobody meant fails here.
 
-The rest covers the two Jev steps whose answers land in `select`: the shortlist
-and the skills.
+The rest covers each Jev step where its answer lands (the shortlist and the skills
+in `select`, the lead in `lead_with_overview`).
 
 The runs reuse the golden module's pinned engine (`test_tailor_golden.pinned_engine`),
 so no model is ever reached: its stub raises on any prompt it does not know. Every
@@ -27,9 +27,10 @@ import yaml
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
+import jev  # noqa: E402
 import jev_switch  # noqa: E402
-from resume_tailor import (apply_data, assets, compose, config, measure, output,  # noqa: E402
-                           render, selection, skills)
+from resume_tailor import (apply_data, assets, compose, config, jev_assist, measure,  # noqa: E402
+                           output, render, selection, skills)
 from resume_tailor import run as rt_run  # noqa: E402
 from resume_tailor.compile import CompileResult  # noqa: E402
 
@@ -145,6 +146,38 @@ def test_jev_off_prompts_match_the_recording(pinned_engine, stub_template_head,
         assert got["prompts"][stage]["user"] == want["prompts"][stage]["user"], stage
     assert got["skills_fallback_call"] == want["skills_fallback_call"]
     assert got == want
+
+
+# ── fake judges ──────────────────────────────────────────────────────────────
+class _Recording:
+    """Wraps a judge and keeps every request it was sent."""
+
+    def __init__(self, inner):
+        self.inner = inner
+        self.requests = []
+
+    def judge(self, state, questions):
+        self.requests.append((state, questions))
+        return self.inner.judge(state, questions)
+
+
+class _Pick:
+    """Answers every choice with option `choice` at `confidence`."""
+
+    def __init__(self, choice, confidence):
+        self.choice = choice
+        self.confidence = confidence
+
+    def judge(self, state, questions):
+        return {qid: jev.Answer(kind="choice", choice=self.choice,
+                                probabilities={n: float(n == self.choice) for n in q["criteria"]},
+                                confidence=self.confidence)
+                for qid, q in questions.items()}
+
+
+class _Failing:
+    def judge(self, state, questions):
+        raise RuntimeError("the request was rejected")
 
 
 # ── a master wide enough to trim ─────────────────────────────────────────────
@@ -345,3 +378,59 @@ def test_a_line_keeps_its_count_and_width(wide_master, monkeypatch):
                         measure.skill_line_width("Languages", "SQL"))
     lines = {ln["label"]: ln["items"] for ln in compose.compress_skills(_JD, "Analyst", sel)}
     assert lines["Languages"] == "SQL"
+
+
+# ── TL-3: the lead bullet ────────────────────────────────────────────────────
+def _p1_sel():
+    """P1 as select left it: p1_2 first, though p1_1 is the earlier authored atom."""
+    return {"experience": [], "leadership": [],
+            "projects": [{"name": "P1", "groups": [["p1_2"], ["p1_1"]]}]}
+
+
+def _no_llm(*a, **k):
+    raise AssertionError("the ordering call ran with Jev's answer in hand")
+
+
+@pytest.mark.parametrize("confidence", [0.9, 0.5])
+def test_a_sure_jev_pick_leads_and_the_ordering_call_is_skipped(wide_master, monkeypatch,
+                                                                confidence):
+    monkeypatch.setattr(compose, "call", _no_llm)
+    sel = _p1_sel()
+    compose.lead_with_overview(_JD, "Analyst", sel, judge=_Pick("1", confidence))
+    assert sel["projects"][0]["groups"] == [["p1_2"], ["p1_1"]]
+
+
+def test_an_unsure_jev_pick_keeps_file_order(wide_master, monkeypatch):
+    monkeypatch.setattr(compose, "call", _no_llm)
+    sel = _p1_sel()
+    compose.lead_with_overview(_JD, "Analyst", sel, judge=_Pick("1", 0.4))
+    assert sel["projects"][0]["groups"] == [["p1_1"], ["p1_2"]]
+
+
+def test_a_failing_judge_leaves_the_ordering_call_as_it_was(wide_master, monkeypatch):
+    prompts = []
+
+    def fake_call(system, user, tier, **kw):
+        prompts.append((system, user, tier, kw))
+        return {"projects": [{"project": "P1", "lead": 1}]}
+
+    monkeypatch.setattr(compose, "call", fake_call)
+    off, failed = _p1_sel(), _p1_sel()
+    compose.lead_with_overview(_JD, "Analyst", off)
+    compose.lead_with_overview(_JD, "Analyst", failed, judge=_Failing())
+    assert len(prompts) == 2 and prompts[0] == prompts[1]
+    assert failed == off
+    assert failed["projects"][0]["groups"] == [["p1_2"], ["p1_1"]]
+
+
+def test_with_no_project_to_order_the_lead_line_says_so(wide_master, monkeypatch):
+    monkeypatch.setattr(compose, "call", _no_llm)
+    rec = _Recording(jev.FakeJev())
+    jev_assist.reset_usage()
+    sel = {"experience": [], "leadership": [],
+           "projects": [{"name": "P1", "groups": [["p1_1"]]}]}
+    compose.lead_with_overview(_JD, "Analyst", sel, judge=rec)
+    assert rec.requests == []
+    assert sel["projects"][0]["groups"] == [["p1_1"]]
+    assert jev_assist.usage_line(jev_assist.STEP_LEAD) == (
+        "jev lead: 0 requests, 0 tokens (estimated), $0.000000; nothing to ask")

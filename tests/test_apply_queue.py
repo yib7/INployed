@@ -1208,3 +1208,27 @@ def test_a_dropped_url_also_clears_the_inferred_ats():
     e = apply_queue.new_entry("1", apply_url="javascript:evil.example")
     assert e["ats"] == apply_queue.new_entry("1", apply_url="")["ats"]
     assert e["ats"]["domain"] == ""
+
+
+def test_a_failed_check_is_noted_beside_the_earlier_result(tmp_path):
+    # SP6 fix round 1 (minor 7): the earlier score stays, the failure is noted
+    q = _q(tmp_path)
+    apply_queue.enqueue(_entry("1"), path=q)
+    apply_queue.set_difficulty("1", _DIFFICULTY, path=q)
+    got = apply_queue.note_difficulty_failure("1", "the posting did not load (TimeoutError)",
+                                              at="2026-09-28T09:00:00", path=q)
+    assert got["difficulty"] == {**_DIFFICULTY, "last_failed_at": "2026-09-28T09:00:00",
+                                 "last_failed_why": "the posting did not load (TimeoutError)"}
+    assert apply_queue.FAILED_KEYS == ("last_failed_at", "last_failed_why")
+    assert got["status"] == "queued" and got["attempts"] == 0
+    again = apply_queue.set_difficulty("1", _DIFFICULTY, path=q)     # a check that reads
+    assert again["difficulty"] == _DIFFICULTY
+
+
+def test_a_failed_first_check_is_noted_alone(tmp_path):
+    q = _q(tmp_path)
+    apply_queue.enqueue(_entry("1"), path=q)
+    got = apply_queue.note_difficulty_failure("1", "no saved page", path=q)
+    assert set(got["difficulty"]) == {"last_failed_at", "last_failed_why"}
+    with pytest.raises(apply_queue.UnknownJobError):
+        apply_queue.note_difficulty_failure("nope", "x", path=q)

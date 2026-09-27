@@ -68,6 +68,9 @@ ATS_KEYS = ("domain", "system", "account_status")
 # `local/apply_assess.py` has checked the job.
 DIFFICULTY_KEYS = ("score", "band", "checked_at", "system", "reasons", "questions",
                    "jev_usd")
+# A check that read nothing (`note_difficulty_failure`): when, and why. The
+# earlier result stays beside them; the next result that reads replaces both.
+FAILED_KEYS = ("last_failed_at", "last_failed_why")
 
 # Sidecar-lock tuning. Module-level (not baked into signatures) so tests can
 # monkeypatch LOCK_TIMEOUT down instead of waiting out the real 5 s.
@@ -463,6 +466,23 @@ def set_difficulty(job_id: str, difficulty: Dict[str, Any],
         data = load(path, quarantine=True)   # under locked(): may rename aside
         e = _find(data, job_id)
         e["difficulty"] = {k: difficulty[k] for k in DIFFICULTY_KEYS if k in difficulty}
+        e["updated_at"] = _now()
+        _save(data, path)
+        return dict(e)
+
+
+def note_difficulty_failure(job_id: str, why: str, *, at: Optional[str] = None,
+                            path: Optional[Path] = None) -> Dict[str, Any]:
+    """Note on the entry that a difficulty check read nothing (`FAILED_KEYS`:
+    `at`, now unless given, and `why`), keeping the earlier result beside
+    it; the status and the run's fields are left alone."""
+    with locked(path):
+        data = load(path, quarantine=True)   # under locked(): may rename aside
+        e = _find(data, job_id)
+        earlier = e.get("difficulty") if isinstance(e.get("difficulty"), dict) else {}
+        kept = {k: earlier[k] for k in DIFFICULTY_KEYS if k in earlier}
+        e["difficulty"] = {**kept, "last_failed_at": str(at or _now()),
+                           "last_failed_why": str(why)}
         e["updated_at"] = _now()
         _save(data, path)
         return dict(e)

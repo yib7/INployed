@@ -177,6 +177,19 @@ def test_the_manual_prefix_is_the_one_manual_add_writes():
     assert pm.MANUAL_ID_PREFIX == score_jobs.MANUAL_ID_PREFIX == manual_add._MANUAL_ID_PREFIX
 
 
+def test_prune_keeps_the_description_of_an_aged_hand_added_row(tmp_path):
+    """The user may tailor a hand-added job again, and its pasted description
+    has no LinkedIn url to fetch it back from (MA-3)."""
+    p = _write(tmp_path, [{**BASE, "job_posting_id": "manual-1a2b"},
+                          {**BASE, "job_posting_id": "2"}])
+    r = pm.prune(p, retention_days=3, now=NOW, strip_summary=True)
+    df = pd.read_csv(p, dtype=str, keep_default_na=False).set_index("job_posting_id")
+    assert df.loc["manual-1a2b", "job_description_formatted"] == "FULL <b>desc</b>"
+    assert df.loc["manual-1a2b", "job_summary"] == "short summary"
+    assert (df.loc["2", "job_description_formatted"], df.loc["2", "job_summary"]) == ("", "")
+    assert r["stripped"] == 1
+
+
 def test_prune_never_parks_an_aged_hand_added_row(tmp_path):
     row = {**BASE, "job_posting_id": "manual-1a2b", "score": "", "filtered_out": "",
            "reason": ""}

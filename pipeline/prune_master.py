@@ -3,7 +3,8 @@
 RETENTION_DAYS. The full HTML description is the master's largest column
 (~55% of bytes) and is re-fetchable from each job's LinkedIn url; after a few
 days a job is applied-to or abandoned. job_summary is kept (dashboard +
-resume-tailor fallback). Chunked so peak memory stays low on a large master.
+resume-tailor fallback), and a hand-added job (MANUAL_ID_PREFIX) keeps both.
+Chunked so peak memory stays low on a large master.
 
 Standalone (stdlib + pandas only) — copied to the VM next to scraper.py.
 """
@@ -45,9 +46,14 @@ def _aged_mask(chunk: pd.DataFrame, cutoff) -> pd.Series:
     return dt.notna() & (dt < cutoff_ts)
 
 # MA-3: a hand-added job (local/manual_add.py) keeps blank score columns on
-# purpose, so its blank score never reads as "needs scoring". Keep IDENTICAL to
-# score_jobs.MANUAL_ID_PREFIX.
+# purpose, so its blank score never reads as "needs scoring", and it keeps its
+# description: the user may tailor it again, and the pasted text has no url to
+# fetch it back from. Keep IDENTICAL to score_jobs.MANUAL_ID_PREFIX.
 MANUAL_ID_PREFIX = "manual-"
+
+def _manual(chunk: pd.DataFrame) -> pd.Series:
+    return (_column(chunk, "job_posting_id", "")
+            .fillna("").astype(str).str.strip().str.startswith(MANUAL_ID_PREFIX))
 
 def _needs_rescore(chunk: pd.DataFrame) -> pd.Series:
     score = pd.to_numeric(_column(chunk, "score", None), errors="coerce")
@@ -58,9 +64,7 @@ def _needs_rescore(chunk: pd.DataFrame) -> pd.Series:
     filtered = (_column(chunk, "filtered_out", False)
                 .fillna(False).astype(str).str.strip().str.lower()
                 .isin(("true", "1", "1.0", "yes")))
-    manual = (_column(chunk, "job_posting_id", "")
-              .fillna("").astype(str).str.strip().str.startswith(MANUAL_ID_PREFIX))
-    return score.isna() & ~filtered & ~manual
+    return score.isna() & ~filtered & ~_manual(chunk)
 
 def prune(master_csv: Path, *, retention_days=RETENTION_DAYS, now=None,
           strip_summary=False, dry_run=False) -> dict:
@@ -78,7 +82,8 @@ def prune(master_csv: Path, *, retention_days=RETENTION_DAYS, now=None,
                                  chunksize=CHUNK):
             rows += len(chunk)
             if DESC_COL in chunk.columns:
-                aged = _aged_mask(chunk, cutoff) & (chunk[DESC_COL].fillna("") != "")
+                aged = (_aged_mask(chunk, cutoff) & (chunk[DESC_COL].fillna("") != "")
+                        & ~_manual(chunk))
                 stripped += int(aged.sum())
                 chunk.loc[aged, DESC_COL] = ""
                 if strip_summary and SUMMARY_COL in chunk.columns:

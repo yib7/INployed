@@ -587,26 +587,44 @@ def _dedupe(bullets, judge, reserved=frozenset({"quantified"})):
                                         reserved=reserved, judge=judge)
 
 
+class _Staged:
+    """Answers TL-6's category question with `category` and its verb question with
+    `verb`, each (choice, confidence)."""
+
+    def __init__(self, category, verb):
+        self.category = category
+        self.verb = verb
+
+    def judge(self, state, questions):
+        out = {}
+        for qid, q in questions.items():
+            choice, conf = self.category if qid == "category" else self.verb
+            out[qid] = jev.Answer(kind="choice", choice=choice,
+                                  probabilities={n: float(n == choice) for n in q["criteria"]},
+                                  confidence=conf)
+        return out
+
+
 @pytest.mark.parametrize("confidence", [0.9, 0.5])
 def test_a_sure_verb_pick_swaps_the_first_word_and_skips_reverb(monkeypatch, confidence):
     calls = _reverb_calls(monkeypatch)
-    rec = _Recording(_Pick("Analyzed", confidence))
+    rec = _Recording(_Staged(("Analyze", 0.9), ("Analyzed", confidence)))
     got = _dedupe(_dedupe_bullets(), rec)
     assert calls == [], "reverb ran with Jev's answer in hand"
     assert got["b"] == "Analyzed weekly demand for the ops team."
     assert [got[k] for k in "acd"] == [_dedupe_bullets()[k] for k in "acd"]
-    (state, questions), = rec.requests
-    assert state == {"bullet": "Modeled weekly demand for the ops team."}
-    # The palette's unused verbs, the repeated verb's category first. Out: the verbs
-    # earlier bullets and the verbatim blocks open with ("modeled", "quantified") and
-    # the ones later bullets open with ("built", "led").
-    assert questions["verb"]["criteria"] == {"Analyzed": "Analyze", "Designed": "Build",
-                                             "Engineered": "Build", "Coordinated": "Lead"}
+    (state, first), (state2, second) = rec.requests
+    assert state == state2 == {"bullet": "Modeled weekly demand for the ops team."}
+    assert list(first["category"]["criteria"]) == ["Build", "Analyze", "Lead"]
+    # The picked category's unused verbs. Out: the verbs earlier bullets and the
+    # verbatim blocks open with ("modeled", "quantified") and the ones later
+    # bullets open with ("built", "led").
+    assert second["verb"]["criteria"] == {"Analyzed": "Analyze"}
 
 
 def test_an_unsure_verb_pick_keeps_the_reverb_call(monkeypatch):
     calls = _reverb_calls(monkeypatch)
-    got = _dedupe(_dedupe_bullets(), _Pick("Analyzed", 0.4))
+    got = _dedupe(_dedupe_bullets(), _Staged(("Analyze", 0.9), ("Analyzed", 0.4)))
     assert calls == [(["b"], "Modeled weekly demand for the ops team.",
                       ["modeled", "quantified"])]
     assert got["b"] == _REVERBED
@@ -620,28 +638,27 @@ def test_a_failing_judge_leaves_the_reverb_call_as_it_was(monkeypatch):
     assert failed == off and off["b"] == _REVERBED
 
 
-def test_each_repeated_opener_is_its_own_choice(monkeypatch):
-    """A verb picked for one bullet is used from then on: the next repeat is asked
-    without it."""
+def test_each_repeated_opener_is_its_own_pair_of_choices(monkeypatch):
+    """A verb picked for one bullet is used from then on. The next repeat of the
+    same opener finds its category used up, so it asks nothing more and keeps the
+    reverb call."""
     calls = _reverb_calls(monkeypatch)
     bullets = _dedupe_bullets()
     bullets["e"] = "Modeled the club budget for the spring term."
-    rec = _Recording(jev.FakeJev())
+    rec = _Recording(_Staged(("Analyze", 0.9), ("Analyzed", 0.9)))
     got = _dedupe(dict(bullets), rec)
-    assert calls == []
-    assert [s["bullet"] for s, _q in rec.requests] == [bullets["b"], bullets["e"]]
-    first, second = (list(q["verb"]["criteria"]) for _s, q in rec.requests)
-    # FakeJev finds no option's words in either bullet, so it takes the first option.
-    assert got["b"].split()[0] == first[0] == "Analyzed"
-    assert second == [v for v in first if v != "Analyzed"]
-    assert got["e"] == "Designed the club budget for the spring term."
+    assert [(s["bullet"], list(q)) for s, q in rec.requests] == [
+        (bullets["b"], ["category"]), (bullets["b"], ["verb"]), (bullets["e"], ["category"])]
+    assert got["b"] == "Analyzed weekly demand for the ops team."
+    assert calls == [(["e"], bullets["e"], ["analyzed", "built", "led", "modeled", "quantified"])]
+    assert got["e"] == _REVERBED
 
 
-def test_the_real_palette_sends_a_choice_jev_takes(monkeypatch):
+def test_the_real_palette_sends_two_choices_jev_takes(monkeypatch):
     """VL-3: over the repo's active_words.md (368 verbs), TL-6 asked one choice over
-    every unused verb, past the 255 options Jev takes, and got a 400. The request
-    holds at most VERB_OPTIONS_MAX palette verbs: every unused verb of the repeated
-    verb's own category first, then the other categories in turns."""
+    every unused verb, past the 255 options Jev takes, and got a 400. It now asks the
+    category, then a verb in it: for every category, both requests fit, and the
+    second holds exactly that category's unused verbs."""
     monkeypatch.setattr(compose, "reverb", lambda *a, **k: _REVERBED)
     monkeypatch.setattr(config, "ACTIVE_WORDS_MD", REPO / "resume_tailor_files" / "active_words.md")
     assets.active_verbs.cache_clear()
@@ -650,29 +667,25 @@ def test_the_real_palette_sends_a_choice_jev_takes(monkeypatch):
     finally:
         assets.active_verbs.cache_clear()
     monkeypatch.setattr(assets, "active_verbs", lambda: {k: list(v) for k, v in palette.items()})
-    homes = {}
-    for cat, verbs in palette.items():
-        for v in verbs:
-            homes.setdefault(v.lower(), set()).add(cat)
-    assert len(homes) > jev.CHOICE_OPTIONS_MAX, "the palette no longer outgrows one choice"
-    # The smallest category, by a verb only it holds, so the fill from the rest shows.
-    home = min(palette, key=lambda c: len(palette[c]))
-    verb = next(v for v in palette[home] if homes[v.lower()] == {home})
+    assert len({v.lower() for vs in palette.values() for v in vs}) > jev.CHOICE_OPTIONS_MAX, \
+        "the palette no longer outgrows one choice"
+    verb = next(iter(palette.values()))[0]
     bullets = {"a": f"{verb} churn for the retention team.",
                "b": f"{verb} weekly demand for the ops team."}
-    rec = _Recording(jev.FakeJev())
-    _dedupe(bullets, rec, reserved=frozenset())
-    (state, questions), = rec.requests
-    criteria = questions["verb"]["criteria"]
-    assert jev.request_fits(state, questions)
-    assert len(criteria) == jev_assist.VERB_OPTIONS_MAX <= jev.CHOICE_OPTIONS_MAX
-    assert len({c.lower() for c in criteria}) == len(criteria)
-    assert all(c.strip() == c and 0 < len(c) <= jev_assist.VERB_ID_MAX for c in criteria)
-    assert all(criteria[c] in homes[c.lower()] for c in criteria)
-    own = [v for v in dict.fromkeys(palette[home]) if v.lower() != verb.lower()]
-    assert list(criteria)[:len(own)] == own
-    others = [c for c in palette if c != home]
-    assert [criteria[c] for c in list(criteria)[len(own):len(own) + len(others)]] == others
+    for cat in palette:
+        rec = _Recording(_Staged((cat, 0.9), ("not a verb", 0.9)))
+        _dedupe(dict(bullets), rec, reserved=frozenset())
+        (s1, first), (s2, second) = rec.requests
+        assert list(first["category"]["criteria"]) == list(palette)
+        assert jev.request_fits(s1, first) and jev.request_fits(s2, second)
+        want, seen = [], {verb.lower()}
+        for v in palette[cat]:
+            if v.lower() not in seen:
+                seen.add(v.lower())
+                want.append(v)
+        assert list(second["verb"]["criteria"]) == want, cat
+        assert set(second["verb"]["criteria"].values()) == {cat}
+        assert 0 < len(want) <= jev.CHOICE_OPTIONS_MAX
 
 
 def test_with_no_repeated_opener_the_verb_line_says_so(monkeypatch):
@@ -748,7 +761,8 @@ def test_a_golden_run_with_jev_on_makes_fewer_llm_calls(pinned_engine, stub_temp
     assert gate == [True, False, False, False, False]
     assert captured["skill_lines"] == _JEV_SKILL_LINES
     assert areas == ["tailor"], "one judge per run, handed to every step"
-    assert len(rec.requests) == 3 + 2 + 4 + 7
+    # skills, shortlist, lead; two per repeated opener (TL-6); sweep; faithfulness
+    assert len(rec.requests) == 3 + 2 * 2 + 4 + 7
     verbs = [state["bullet"] for state, questions in rec.requests if "verb" in questions]
     assert verbs == [
         "Built Trailhead, a hiking route planner that ranks trails for a given weather window.",
@@ -763,7 +777,7 @@ def test_a_golden_run_with_jev_on_makes_fewer_llm_calls(pinned_engine, stub_temp
     assert "warnings (0)" in report and "jev (6)" in report
     for step in ("skills", "shortlist", "lead"):
         assert f"  jev {step}: 1 request, " in report
-    assert "  jev verb: 2 requests, " in report
+    assert "  jev verb: 4 requests, " in report
     assert "  jev sweep gate: 4 requests, " in report
     assert "  jev faithfulness: 7 requests, " in report
     assert "fell back" not in report
@@ -922,6 +936,6 @@ def test_each_run_counts_its_own_jev_requests(pinned_engine, stub_template_head,
     report = _report(tmp_path)
     for step in ("skills", "shortlist", "lead"):
         assert f"  jev {step}: 1 request, " in report
-    assert "  jev verb: 2 requests, " in report
+    assert "  jev verb: 4 requests, " in report
     assert "  jev sweep gate: 4 requests, " in report
     assert "  jev faithfulness: 7 requests, " in report

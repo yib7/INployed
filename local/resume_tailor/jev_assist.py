@@ -26,10 +26,11 @@ code to compose. The LLM still writes every bullet.
                         AI-writing sweep calls the model only for an entry with a
                         tell at SWEEP_FLAG or more or a detector finding, and names
                         the tells in that call's payload.
-  pick_verb       TL-6  one choice per repeated opening verb, over up to
-                        VERB_OPTIONS_MAX of the palette's unused verbs, the repeated
-                        verb's own category first: dedupe_leading_verbs swaps the bullet's first
-                        word for a sure pick and keeps its reverb call otherwise.
+  pick_verb       TL-6  two choices per repeated opening verb: the palette category
+                        (the kind of action the bullet describes), then a verb
+                        among that category's unused ones. dedupe_leading_verbs
+                        swaps the bullet's first word for a sure pick and keeps
+                        its reverb call otherwise.
   best_variant    TL-7  one choice per bullet over its rephrase drafts that pass
                         the grounding gate and TL-4 (Settings: "Best of 3 bullet
                         drafts", off by default): the draft the run keeps.
@@ -71,7 +72,8 @@ import math
 import sys
 import threading
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import (Any, Callable, Collection, Dict, List, Mapping, Optional, Sequence,
+                    Tuple)
 
 from . import assets
 from . import skills as _skills
@@ -106,12 +108,17 @@ LEAD_MIN_CONFIDENCE = 0.5
 
 # TL-6: a verb Jev picks with a confidence under this keeps the LLM `reverb` call.
 VERB_MIN_CONFIDENCE = 0.5
-# TL-6: the verbs one choice offers, about one palette category (active_words.md's
-# run from 43 to 83). VL-3: the whole unused palette, about 360 verbs, went past
-# the 255 options Jev takes in one choice (`jev.CHOICE_OPTIONS_MAX`) and every
-# request came back 400. A verb longer than VERB_ID_MAX characters is no verb and
-# is left out (the palette's longest is 14).
-VERB_OPTIONS_MAX = 60
+# TL-6 stage 1: a category Jev picks with a confidence under this is set aside for
+# the repeated verb's own category. active_words.md's categories share verbs (558
+# entries, 368 verbs), so an unsure pick is a bullet between two kinds of action,
+# and the category the writer's verb sits in is then the safer ground. 0.5 is the
+# floor the tailor's other choices use: the pick outweighs every other option
+# together.
+CATEGORY_MIN_CONFIDENCE = 0.5
+# TL-6: a verb longer than this many characters is no verb and is left out of the
+# options (the palette's longest is 14). VL-3: one choice over every unused verb,
+# about 360, went past the 255 options Jev takes (`jev.CHOICE_OPTIONS_MAX`) and came
+# back 400; one category's verbs (43 to 83 in active_words.md) stay well under it.
 VERB_ID_MAX = 40
 
 # TL-5: a tell Jev reads at this P(yes) or more flags its bullet, and the AI-writing
@@ -148,6 +155,10 @@ LEAD_QUESTION = ("Which bullet describes `projects[{i}]` as a whole, saying what
 FOCUS_QUESTION = "Which focus fits the work `job` describes?"
 # TL-6, asked of a bullet whose opening verb another bullet already uses.
 PICK_VERB_QUESTION = "Which verb best names the action in `bullet`?"
+# TL-6 stage 1, over the palette's categories.
+PICK_CATEGORY_QUESTION = "Which kind of action does `bullet` describe?"
+# TL-6 stage 1: each category's description names this many of its verbs.
+CATEGORY_SAMPLE_VERBS = 8
 # select()'s skill_focus enum, each value with the description Jev reads.
 SKILL_FOCUS = {
     "ml_research": "Machine learning research: training and evaluating models",
@@ -359,13 +370,17 @@ def _noul_prob(answer: Any) -> float:
     return float(p)
 
 
-def _choice_pick(answer: Any, names: Sequence[str]) -> Tuple[str, float]:
-    """(the option picked, its confidence); a missing confidence reads as 0.0."""
+def _choice_pick(answer: Any, names: Sequence[str], where: str) -> Tuple[str, float]:
+    """(the option picked, its confidence). A missing confidence reads as 0.0 and is
+    logged with `where` (the step and the question id): a TL-4 "unsupported" pick
+    with none would otherwise pass as unsure, unseen."""
     choice = getattr(answer, "choice", None)
     if choice not in names:
         raise _Unusable("choice")
     conf = getattr(answer, "confidence", None)
     if isinstance(conf, bool) or not isinstance(conf, (int, float)) or not math.isfinite(conf):
+        log.warning("jev_assist: jev %s answered %r with no confidence; it reads as 0.0",
+                    where, str(choice))
         conf = 0.0
     return str(choice), min(1.0, max(0.0, float(conf)))
 
@@ -423,7 +438,8 @@ def skills_pick(jd: str, job_title: str, *, judge: Any = _DEFAULT
                            "criteria": dict(SKILL_FOCUS)}}
         probs, extra = _ask_nouls(STEP_SKILLS, j, _job_state(jd, job_title), "skills",
                                   names, SKILL_QUESTION, focus)
-        skill_focus, _conf = _choice_pick(extra.get("focus"), list(SKILL_FOCUS))
+        skill_focus, _conf = _choice_pick(extra.get("focus"), list(SKILL_FOCUS),
+                                          f"{STEP_SKILLS} focus")
         p = dict(zip(names, probs))
         lines = {label: sorted(pool, key=lambda s: -p[s]) for label, pool in pools.items()}
         return {"lines": lines, "skill_focus": skill_focus, "probabilities": p}
@@ -475,7 +491,8 @@ def lead_group(projects: Sequence[Mapping[str, Any]], *, judge: Any = _DEFAULT
         out: Dict[str, Tuple[int, float]] = {}
         for k, p in enumerate(asked):
             qid = f"project_{k}"
-            choice, conf = _choice_pick(answers.get(qid), list(questions[qid]["criteria"]))
+            choice, conf = _choice_pick(answers.get(qid), list(questions[qid]["criteria"]),
+                                        f"{STEP_LEAD} {qid}")
             out[str(p["project"])] = (int(choice), conf)
         return out
     return _run_step(STEP_LEAD, judge, ask)
@@ -548,7 +565,8 @@ def faithfulness(entries: Sequence[Mapping[str, Any]], *, judge: Any = _DEFAULT
                 state, questions = request(lo, hi)
                 answers = _send(STEP_FAITHFULNESS, j, state, questions)
                 for i, bullet in enumerate(items[lo:hi]):
-                    supported, conf = _choice_pick(answers.get(f"supported_{i}"), options)
+                    supported, conf = _choice_pick(answers.get(f"supported_{i}"), options,
+                                                   f"{STEP_FAITHFULNESS} supported_{i}")
                     out[str(bullet["gkey"])] = _finding(
                         supported, conf, _noul_prob(answers.get(f"inflates_{i}")),
                         _noul_prob(answers.get(f"adds_claim_{i}")))
@@ -598,43 +616,112 @@ def sweep_flags(entries: Sequence[Mapping[str, Any]], *, judge: Any = _DEFAULT
     return _run_step(STEP_SWEEP_GATE, judge, ask)
 
 
-def _verb_ids(options: Mapping[str, str]) -> Dict[str, str]:
-    """TL-6's option ids, in `options`' order: each verb with its whitespace
-    collapsed, left out when empty, longer than VERB_ID_MAX or alike (whatever the
-    case) an earlier one, and at most VERB_OPTIONS_MAX of them."""
+def _option_id(text: Any) -> str:
+    """An option's id: its text with the whitespace collapsed."""
+    return " ".join(str(text).split())
+
+
+def _category_ids(palette: Mapping[str, Sequence[str]]) -> Dict[str, str]:
+    """TL-6 stage 1's option ids: {id: the palette's own key}, one per category,
+    in palette order, left out when empty or alike (whatever the case) an earlier one."""
     out: Dict[str, str] = {}
     seen: set = set()
-    for verb, cat in options.items():
-        name = " ".join(str(verb).split())
-        if not name or len(name) > VERB_ID_MAX or name.lower() in seen:
-            continue
-        seen.add(name.lower())
-        out[name] = str(cat)
-        if len(out) >= VERB_OPTIONS_MAX:
-            break
+    for key in palette:
+        cid = _option_id(key)
+        if cid and cid.lower() not in seen:
+            seen.add(cid.lower())
+            out[cid] = key
     return out
 
 
-def pick_verb(bullet: str, options: Mapping[str, str], *, judge: Any = _DEFAULT
+def _verb_ids(verbs: Sequence[str], cat: str, taken: Collection[str]) -> Dict[str, str]:
+    """TL-6 stage 2's option ids, in palette order: {verb: `cat`} for each verb as its
+    trimmed text, left out when empty, longer than VERB_ID_MAX, alike (whatever the
+    case) an earlier one, or already an opener (its lowercase in `taken`)."""
+    out: Dict[str, str] = {}
+    seen: set = set()
+    for verb in verbs:
+        name = _option_id(verb)
+        low = name.lower()
+        if not name or len(name) > VERB_ID_MAX or low in seen or low in taken:
+            continue
+        seen.add(low)
+        out[name] = cat
+    return out
+
+
+def _own_category(cats: Mapping[str, str], palette: Mapping[str, Sequence[str]],
+                  current: str) -> str:
+    """The id of the first category holding `current`, whatever its case; "" when
+    none does."""
+    low = _option_id(current).lower()
+    for cid, key in cats.items():
+        if low and any(_option_id(v).lower() == low for v in palette[key]):
+            return cid
+    return ""
+
+
+def _pick_category(j: Any, state: Dict[str, str], cats: Mapping[str, str],
+                   palette: Mapping[str, Sequence[str]]) -> Tuple[str, str]:
+    """TL-6 stage 1: (the category Jev picks for the bullet at CATEGORY_MIN_CONFIDENCE
+    or more, else ""; the failure's kind when the request failed, else ""). An
+    outage is raised: the second request would meet it too."""
+    jev, _switch = _jev_modules()
+    criteria = {cid: "Verbs such as " + ", ".join(
+        list(dict.fromkeys(_option_id(v) for v in palette[key] if _option_id(v)))
+        [:CATEGORY_SAMPLE_VERBS]) for cid, key in cats.items()}
+    question = {"category": {"type": "choice", "instructions": PICK_CATEGORY_QUESTION,
+                             "criteria": criteria}}
+    if not jev.request_fits(state, question):
+        return "", ""
+    try:
+        answers = _send(STEP_VERB, j, state, question)
+        cid, conf = _choice_pick(answers.get("category"), list(cats), f"{STEP_VERB} category")
+    except jev.JudgeOutage:
+        raise
+    except Exception as exc:  # noqa: BLE001 - stage 2 asks the verb's own category
+        kind = "unusable answer" if isinstance(exc, _Unusable) else _failure_kind(exc)
+        log.warning("jev_assist: jev %s category pick failed (%s); the repeated verb's "
+                    "own category is asked", STEP_VERB, kind)
+        return "", kind
+    return (cid if conf >= CATEGORY_MIN_CONFIDENCE else ""), ""
+
+
+def pick_verb(bullet: str, palette: Mapping[str, Sequence[str]], current: str,
+              taken: Collection[str] = frozenset(), *, judge: Any = _DEFAULT
               ) -> Optional[Tuple[str, float]]:
     """TL-6: the verb that best names the action in `bullet`, a bullet whose opening
-    verb another bullet already uses.
+    verb `current` another bullet already uses.
 
-    `options` is {verb: its palette category}: the palette's unused verbs, the
-    category holding the repeated verb first. One choice over the first
-    VERB_OPTIONS_MAX of them (PICK_VERB_QUESTION) with the bullet as the state, each
-    verb sent once as its trimmed text (`_verb_ids`). One question cannot be split,
-    so past Jev's limits the options are halved from the end until the request fits.
+    `palette` is {category: verbs} (`assets.active_verbs()`, grouped by the kind of
+    action each verb expresses) and `taken` the lowercase openers no pick may repeat.
+    Two requests, each with the bullet as the state:
+
+    1. one choice over the categories (PICK_CATEGORY_QUESTION, `_pick_category`);
+    2. one choice over the picked category's unused verbs (PICK_VERB_QUESTION,
+       `_verb_ids`), which stays under Jev's 255 options (VL-3). One question cannot
+       be split, so past Jev's limits the options are halved from the end until the
+       request fits.
+
+    When stage 1 fails, would not fit or picks under CATEGORY_MIN_CONFIDENCE, or its
+    category has no unused verb, stage 2 asks the category holding `current`.
     Returns (verb, confidence); the caller swaps the bullet's first word for the verb
     at VERB_MIN_CONFIDENCE or more and keeps its LLM `reverb` call under it. The verb
-    is always one of `options`, trimmed. None when Jev is off or fails, or there is
-    no option."""
+    is always one of the palette's, trimmed. None when Jev is off or fails, when no
+    category has an unused verb, or when the fallback's category has none."""
     def ask(j: Any) -> Tuple[str, float]:
         jev, _switch = _jev_modules()
-        criteria = _verb_ids(options)
-        if not criteria:
+        cats = _category_ids(palette)
+        pools = {cid: _verb_ids(palette[key], cid, taken) for cid, key in cats.items()}
+        if not any(pools.values()):
             raise _NothingToAsk
         state = {"bullet": str(bullet or "")}
+        cid, failed = _pick_category(j, state, cats, palette)
+        if not pools.get(cid):
+            cid = _own_category(cats, palette, current)
+        criteria = pools.get(cid) or {}
+        if not criteria:
+            raise _NothingToAsk
         names = list(criteria)
 
         def question(n: int) -> Dict[str, dict]:
@@ -645,7 +732,13 @@ def pick_verb(bullet: str, options: Mapping[str, str], *, judge: Any = _DEFAULT
         while n > 1 and not jev.request_fits(state, question(n)):
             n //= 2
         answers = _send(STEP_VERB, j, state, question(n))
-        return _choice_pick(answers.get("verb"), names[:n])
+        got = _choice_pick(answers.get("verb"), names[:n], f"{STEP_VERB} verb")
+        if failed:
+            # the pick stands; the note says stage 1 fell back (a stage 2 failure
+            # gets `_run_step`'s note instead)
+            counts = _step_counts(STEP_VERB)
+            counts["note"] = counts["note"] or f"category fell back to the verb's own ({failed})"
+        return got
     return _run_step(STEP_VERB, judge, ask)
 
 
@@ -681,7 +774,8 @@ def best_variant(jd: str, job_title: str, groups: Sequence[Mapping[str, Any]], *
             answers = _send(STEP_BEST_OF, j, state, questions)
             for k, g in enumerate(asked[lo:hi]):
                 qid = f"bullet_{k}"
-                choice, conf = _choice_pick(answers.get(qid), list(questions[qid]["criteria"]))
+                choice, conf = _choice_pick(answers.get(qid), list(questions[qid]["criteria"]),
+                                            f"{STEP_BEST_OF} {qid}")
                 out[str(g["gkey"])] = (int(choice.split()[-1]), conf)
         return out
     return _run_step(STEP_BEST_OF, judge, ask)

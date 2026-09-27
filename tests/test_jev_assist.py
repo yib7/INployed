@@ -196,14 +196,17 @@ def _faith(judge):
     return jev_assist.faithfulness([_CHESS], judge=judge)
 
 
-# TL-6's options: the palette's unused verbs, each with its category, the category
-# holding the repeated verb first.
+# TL-6: a bullet whose opener "built" another bullet uses, and the palette,
+# {category: verbs}, grouped by the kind of action each verb expresses.
 _VERB_BULLET = "Built a sales model to analyze regional demand."
-_VERB_OPTIONS = {"Designed": "Build", "Modeled": "Analyze", "Coordinated": "Lead"}
+_VERB_PALETTE = {"Build": ["Built", "Designed", "Engineered"],
+                 "Analyze": ["Modeled", "Quantified"],
+                 "Lead": ["Coordinated", "Led"]}
+_VERB_TAKEN = frozenset({"built"})
 
 
-def _verb(judge):
-    return jev_assist.pick_verb(_VERB_BULLET, _VERB_OPTIONS, judge=judge)
+def _verb(judge, palette=_VERB_PALETTE, current="built", taken=_VERB_TAKEN):
+    return jev_assist.pick_verb(_VERB_BULLET, palette, current, taken, judge=judge)
 
 
 # TL-5's entries: each bullet's text, as the sweep hands them over.
@@ -254,6 +257,9 @@ _HELPERS = [pytest.param(_skills, id="skills_pick"), pytest.param(_atoms, id="at
             pytest.param(_best, id="best_variant"),
             pytest.param(_letter, id="letter_unsupported"),
             pytest.param(_meaning, id="keyword_meaning")]
+# The requests a helper sends: TL-6 asks the category, then a verb in it, and asks
+# its own category when the first request fails.
+_REQUESTS = {_verb: 2}
 
 
 # ── off, default judge, failures ─────────────────────────────────────────────
@@ -271,7 +277,7 @@ def test_every_helper_is_none_and_asks_nothing_when_jev_is_off(master, monkeypat
     assert jev_assist.atom_relevance(_JD, _TITLE) is None
     assert jev_assist.lead_group(_PROJECTS) is None
     assert jev_assist.faithfulness([_CHESS]) is None
-    assert jev_assist.pick_verb(_VERB_BULLET, _VERB_OPTIONS) is None
+    assert jev_assist.pick_verb(_VERB_BULLET, _VERB_PALETTE, "built", _VERB_TAKEN) is None
     assert jev_assist.sweep_flags([_plain(_CHESS)]) is None
     assert jev_assist.best_variant(_JD, _TITLE, _DRAFTS) is None
     assert jev_assist.letter_unsupported(_SENTENCES, _SOURCES) is None
@@ -296,7 +302,7 @@ def test_the_default_judge_is_the_tailor_client(master, monkeypatch, helper):
     monkeypatch.setattr(jev_switch, "client", client)
     assert helper(jev_assist._DEFAULT) is not None
     assert areas == ["tailor"]
-    assert len(fake.requests) == 1
+    assert len(fake.requests) == _REQUESTS.get(helper, 1)
 
 
 @pytest.mark.parametrize("helper", _HELPERS)
@@ -321,7 +327,7 @@ def test_a_client_that_cannot_be_built_reads_as_off(monkeypatch):
 def test_a_failing_judge_returns_none(master, helper):
     judge = Failing()
     assert helper(judge) is None
-    assert judge.calls == 1
+    assert judge.calls == _REQUESTS.get(helper, 1)
 
 
 _LLM_PATH = "the LLM path"
@@ -388,7 +394,7 @@ def test_once_the_breaker_opens_every_later_helper_returns_none(master):
     assert jev_assist.atom_relevance(_JD, _TITLE, judge=judge) is None
     assert jev_assist.lead_group(_PROJECTS, judge=judge) is None
     assert jev_assist.faithfulness([_CHESS], judge=judge) is None
-    assert jev_assist.pick_verb(_VERB_BULLET, _VERB_OPTIONS, judge=judge) is None
+    assert _verb(judge) is None
     assert jev_assist.sweep_flags([_plain(_CHESS)], judge=judge) is None
     assert jev_assist.best_variant(_JD, _TITLE, _DRAFTS, judge=judge) is None
     assert jev_assist.letter_unsupported(_SENTENCES, _SOURCES, judge=judge) is None
@@ -687,6 +693,60 @@ def test_the_vl3_planted_bullets_get_their_findings(supported, confidence, infla
     assert jev_assist._finding(supported, confidence, inflates, adds) == want
 
 
+class _NoConfidence:
+    """Picks `choice` (`category` for TL-6's category question) with no confidence
+    and answers every noul 0.1."""
+
+    def __init__(self, choice, category=None):
+        self.choice = choice
+        self.category = category
+
+    def judge(self, state, questions):
+        out = {}
+        for qid, q in questions.items():
+            if q["type"] != "choice":
+                out[qid] = jev.Answer(kind="noul", noul=0.1)
+                continue
+            pick = self.category if qid == "category" else self.choice
+            out[qid] = jev.Answer(kind="choice", choice=pick,
+                                  probabilities={n: float(n == pick) for n in q["criteria"]})
+        return out
+
+
+def _confidence_warnings(caplog):
+    return [r.getMessage() for r in caplog.records if "no confidence" in r.getMessage()]
+
+
+def test_a_supported_pick_with_no_confidence_is_logged_and_the_rule_stands(master, caplog):
+    """The flag rule reads a missing confidence as 0.0, so a sure "unsupported" with
+    no confidence would pass unseen; the log names it."""
+    caplog.set_level(logging.WARNING, logger=jev_assist.log.name)
+    got = jev_assist.faithfulness([_CHESS], judge=_NoConfidence("unsupported"))
+    assert got == {"cc_lead": ""}
+    assert _confidence_warnings(caplog) == [
+        "jev_assist: jev faithfulness supported_0 answered 'unsupported' with no "
+        "confidence; it reads as 0.0"]
+
+
+def test_a_choice_with_its_confidence_logs_nothing(master, caplog):
+    caplog.set_level(logging.WARNING, logger=jev_assist.log.name)
+    jev_assist.faithfulness([_CHESS], judge=_reads("unsupported", 0.9, 0.1, 0.1))
+    assert _verb(Staged(category=("Analyze", 0.9), verb=("Modeled", 0.8))) == ("Modeled", 0.8)
+    assert _confidence_warnings(caplog) == []
+
+
+def test_every_choice_step_names_a_missing_confidence(master, caplog):
+    caplog.set_level(logging.WARNING, logger=jev_assist.log.name)
+    # Stage 1 reads a missing confidence as unsure, so stage 2 asks the verb's own
+    # category, Build.
+    assert _verb(_NoConfidence("Designed", category="Analyze")) == ("Designed", 0.0)
+    assert jev_assist.lead_group(_PROJECTS, judge=_NoConfidence("1")) == {"Orbit": (1, 0.0)}
+    assert _confidence_warnings(caplog) == [
+        "jev_assist: jev verb category answered 'Analyze' with no confidence; it reads as 0.0",
+        "jev_assist: jev verb verb answered 'Designed' with no confidence; it reads as 0.0",
+        "jev_assist: jev lead project_0 answered '1' with no confidence; it reads as 0.0"]
+
+
 def test_the_thresholds_are_the_specs():
     assert jev_assist.SUPPORTED_MIN_CONFIDENCE == 0.6
     assert jev_assist.FAITHFULNESS_FLAG == 0.7
@@ -762,103 +822,190 @@ def test_faithfulness_with_no_bullets_asks_nothing(master):
 
 
 # ── TL-6 pick_verb ───────────────────────────────────────────────────────────
-def test_pick_verb_is_one_choice_over_the_options(master):
+class Staged:
+    """Answers each question id with its scripted (choice, confidence), and raises
+    the scripted exception for an id mapped to one."""
+
+    def __init__(self, **picks):
+        self.picks = picks
+        self.requests = []
+
+    def judge(self, state, questions):
+        self.requests.append((state, questions))
+        out = {}
+        for qid, q in questions.items():
+            pick = self.picks[qid]
+            if isinstance(pick, BaseException):
+                raise pick
+            choice, conf = pick
+            out[qid] = jev.Answer(kind="choice", choice=choice,
+                                  probabilities={n: float(n == choice) for n in q["criteria"]},
+                                  confidence=conf)
+        return out
+
+
+_CATEGORY_QUESTION = {
+    "type": "choice", "instructions": "Which kind of action does `bullet` describe?",
+    "criteria": {"Build": "Verbs such as Built, Designed, Engineered",
+                 "Analyze": "Verbs such as Modeled, Quantified",
+                 "Lead": "Verbs such as Coordinated, Led"}}
+
+
+def _verb_question(criteria):
+    return {"verb": {"type": "choice", "instructions": "Which verb best names the action in "
+                     "`bullet`?", "criteria": criteria}}
+
+
+def test_pick_verb_asks_the_category_then_a_verb_among_its_unused_ones(master):
+    judge = Staged(category=("Analyze", 0.9), verb=("Quantified", 0.7))
+    got = _verb(judge, taken=frozenset({"built", "modeled"}))
+    assert got == ("Quantified", 0.7)
+    (state, first), (state2, second) = judge.requests
+    assert state == state2 == {"bullet": _VERB_BULLET}
+    assert first == {"category": _CATEGORY_QUESTION}
+    # Exactly the picked category's verbs no bullet opens with.
+    assert second == _verb_question({"Quantified": "Analyze"})
+    assert jev_assist.usage(jev_assist.STEP_VERB)["requests"] == 2
+    assert jev_assist.usage(jev_assist.STEP_VERB)["tokens"] == sum(
+        jev.request_size(s, q)[1] for s, q in judge.requests)
+
+
+def test_the_fake_judge_takes_the_category_the_bullet_names(master):
     rec = Recording(jev.FakeJev())
-    got = jev_assist.pick_verb(_VERB_BULLET, _VERB_OPTIONS, judge=rec)
-    (state, questions), = rec.requests
-    assert state == {"bullet": _VERB_BULLET}
-    assert questions == {"verb": {
-        "type": "choice", "instructions": "Which verb best names the action in `bullet`?",
-        "criteria": _VERB_OPTIONS}}
-    # The fake reads words: "analyze" in the bullet is the Analyze category's word.
-    assert got == ("Modeled", 1.0)
+    got = _verb(rec)
+    assert [list(q) for _s, q in rec.requests] == [["category"], ["verb"]]
+    # "Built" in the bullet is a word of the Build category's description.
+    assert list(rec.requests[1][1]["verb"]["criteria"]) == ["Designed", "Engineered"]
+    assert got[0] in ("Designed", "Engineered")
+
+
+@pytest.mark.parametrize("confidence,asked", [
+    pytest.param(0.5, {"Modeled": "Analyze", "Quantified": "Analyze"}, id="at-the-floor"),
+    # Under it, stage 2 asks the repeated verb's own category.
+    pytest.param(0.49, {"Designed": "Build", "Engineered": "Build"}, id="under-the-floor"),
+])
+def test_an_unsure_category_asks_the_verbs_own_category(master, confidence, asked):
+    judge = Staged(category=("Analyze", confidence), verb=("Designed", 0.8))
+    _verb(judge)
+    assert judge.requests[1][1] == _verb_question(asked)
+
+
+def test_a_picked_category_with_no_unused_verb_asks_the_verbs_own(master):
+    judge = Staged(category=("Analyze", 0.9), verb=("Engineered", 0.8))
+    got = _verb(judge, taken=frozenset({"built", "modeled", "quantified"}))
+    assert judge.requests[1][1] == _verb_question({"Designed": "Build", "Engineered": "Build"})
+    assert got == ("Engineered", 0.8)
+
+
+def test_with_the_verbs_own_category_used_up_a_fallback_asks_nothing_more(master):
+    judge = Staged(category=("Analyze", 0.3), verb=("Modeled", 0.9))
+    taken = frozenset({"built", "designed", "engineered"})
+    assert _verb(judge, taken=taken) is None
+    assert len(judge.requests) == 1
+    assert jev_assist.usage_line(jev_assist.STEP_VERB).startswith("jev verb: 1 request, ")
+    # A sure pick of a category with verbs left still gets its second request.
+    sure = Staged(category=("Analyze", 0.9), verb=("Modeled", 0.9))
+    assert _verb(sure, taken=taken) == ("Modeled", 0.9)
+
+
+def test_a_verb_outside_the_palette_has_no_own_category_to_fall_back_on(master):
+    judge = Staged(category=("Analyze", 0.3), verb=("Modeled", 0.9))
+    assert _verb(judge, current="drove") is None
+    assert len(judge.requests) == 1
+
+
+@pytest.mark.parametrize("category,note", [
+    pytest.param(RuntimeError("the request was rejected, with detail"),
+                 "category fell back to the verb's own (RuntimeError)", id="rejected"),
+    pytest.param(("Research", 0.9), "category fell back to the verb's own (unusable answer)",
+                 id="not-an-option"),
+])
+def test_a_failed_category_pick_asks_the_verbs_own_category(master, caplog, category, note):
+    caplog.set_level(logging.WARNING, logger=jev_assist.log.name)
+    judge = Staged(category=category, verb=("Designed", 0.8))
+    assert _verb(judge) == ("Designed", 0.8)
+    assert judge.requests[-1][1] == _verb_question({"Designed": "Build", "Engineered": "Build"})
+    assert jev_assist.usage_line(jev_assist.STEP_VERB).endswith(f"; {note}")
+    assert "detail" not in caplog.text
+
+
+def test_an_outage_at_the_category_pick_asks_nothing_more(master):
+    judge = Staged(category=jev.JudgeOutage("TypeSafeServerError 503"), verb=("Designed", 0.8))
+    assert _verb(judge) is None
+    assert len(judge.requests) == 1
+
+
+def test_a_category_pick_too_big_to_fit_asks_the_verbs_own(master, monkeypatch):
+    monkeypatch.setattr(jev, "request_fits",
+                        lambda state, questions: "category" not in questions)
+    judge = Staged(category=("Analyze", 0.9), verb=("Designed", 0.8))
+    assert _verb(judge) == ("Designed", 0.8)
+    assert [list(q) for _s, q in judge.requests] == [["verb"]]
 
 
 def test_pick_verb_hands_back_the_confidence(master):
-    judge = Scripted(choice="Coordinated", confidence=0.4)
-    assert jev_assist.pick_verb(_VERB_BULLET, _VERB_OPTIONS, judge=judge) == ("Coordinated", 0.4)
+    assert _verb(Staged(category=("Lead", 0.9), verb=("Coordinated", 0.4))) == (
+        "Coordinated", 0.4)
 
 
-def test_pick_verb_with_no_option_asks_nothing(master):
+def test_pick_verb_with_no_unused_verb_asks_nothing(master):
     judge = Failing()
-    assert jev_assist.pick_verb(_VERB_BULLET, {}, judge=judge) is None
+    assert _verb(judge, palette={}) is None
+    taken = frozenset(v.lower() for vs in _VERB_PALETTE.values() for v in vs)
+    assert _verb(judge, taken=taken) is None
     assert judge.calls == 0
     assert jev_assist.usage_line(jev_assist.STEP_VERB).endswith("; nothing to ask")
 
 
-def test_a_palette_too_big_to_fit_is_cut_from_its_end(master, monkeypatch):
-    """One choice cannot be split, so past Jev's limits the options are halved from
-    the end, which keeps the repeated verb's own category (it comes first)."""
-    options = {f"Verb{i:03d}": "Build" for i in range(64)}
-    whole = Recording(jev.FakeJev())
-    jev_assist.pick_verb(_VERB_BULLET, options, judge=whole)
-    (state, questions), = whole.requests
+def test_a_category_too_big_to_fit_is_cut_from_its_end(master, monkeypatch):
+    """One choice cannot be split, so past Jev's limits the category's verbs are
+    halved from the end."""
+    palette = {"Build": [f"Verb{i:03d}" for i in range(64)]}
+    whole = Staged(category=("Build", 1.0), verb=("Verb000", 0.9))
+    jev_assist.pick_verb(_VERB_BULLET, palette, "verb063", {"verb063"}, judge=whole)
+    state, questions = whole.requests[1]
     longest, _total = jev.request_size(state, questions)
     monkeypatch.setattr(jev, "STATE_TOKENS_MAX", int(longest * 0.7 / jev.SIZE_MARGIN))
-    cut = Recording(jev.FakeJev())
-    verb, _conf = jev_assist.pick_verb(_VERB_BULLET, options, judge=cut)
-    (state, questions), = cut.requests
+    cut = Staged(category=("Build", 1.0), verb=("Verb000", 0.9))
+    verb, _conf = jev_assist.pick_verb(_VERB_BULLET, palette, "verb063", {"verb063"}, judge=cut)
+    state, questions = cut.requests[-1]
     criteria = questions["verb"]["criteria"]
     assert jev.request_fits(state, questions)
-    assert list(criteria) == list(options)[:len(criteria)] and 1 <= len(criteria) < 64
+    assert list(criteria) == palette["Build"][:len(criteria)] and 1 <= len(criteria) < 63
     assert verb in criteria
-
-
-def test_the_verb_floor_is_the_specs():
-    assert jev_assist.VERB_MIN_CONFIDENCE == 0.5
 
 
 def _choice_shape_ok(questions):
     """Every choice in `questions` holds 1 to jev.CHOICE_OPTIONS_MAX options, each id
-    a trimmed, non-empty string no longer than VERB_ID_MAX, and no two ids alike
-    whatever their case."""
+    a trimmed, non-empty string, and no two ids alike whatever their case."""
     for q in questions.values():
         if q["type"] != "choice":
             continue
         ids = list(q["criteria"])
         assert 1 <= len(ids) <= jev.CHOICE_OPTIONS_MAX
-        assert all(isinstance(i, str) and i == i.strip() and i for i in ids)
-        assert all(len(i) <= jev_assist.VERB_ID_MAX for i in ids)
+        assert all(isinstance(i, str) and i == " ".join(i.split()) and i for i in ids)
         assert len({i.lower() for i in ids}) == len(ids)
 
 
-def test_a_whole_palette_is_cut_to_the_verb_cap_from_its_end(master):
-    """VL-3: TL-6 sent every unused palette verb, about 360, past the 255 options
-    Jev takes in one choice, and the service answered 400. The request holds the
-    first VERB_OPTIONS_MAX options, the repeated verb's own category first."""
-    options = {f"Verb{c}x{i:02d}": f"Cat{c}" for c in range(9) for i in range(62)}
-    rec = Recording(jev.FakeJev())
-    verb, _conf = jev_assist.pick_verb(_VERB_BULLET, options, judge=rec)
-    (state, questions), = rec.requests
-    criteria = questions["verb"]["criteria"]
-    assert jev_assist.VERB_OPTIONS_MAX <= jev.CHOICE_OPTIONS_MAX
-    assert list(criteria) == list(options)[:jev_assist.VERB_OPTIONS_MAX]
-    assert jev.request_fits(state, questions)
-    _choice_shape_ok(questions)
-    assert verb in criteria
+def test_pick_verb_sends_each_option_once_as_a_trimmed_id(master):
+    palette = {" Build ": [" Designed ", "designed", "", "   ", "Set  up", "X" * 41, "Built"],
+               "build": ["Forged"], "": ["Led"], "Analyze": ["Modeled\n"]}
+    judge = Staged(category=("Build", 0.9), verb=("Set up", 0.8))
+    got = jev_assist.pick_verb(_VERB_BULLET, palette, "built", {"built"}, judge=judge)
+    (_s, first), (_s2, second) = judge.requests
+    assert list(first["category"]["criteria"]) == ["Build", "Analyze"]
+    assert second == _verb_question({"Designed": "Build", "Set up": "Build"})
+    assert all(len(v) <= jev_assist.VERB_ID_MAX for v in second["verb"]["criteria"])
+    _choice_shape_ok(first)
+    _choice_shape_ok(second)
+    assert got == ("Set up", 0.8)
 
 
-def test_pick_verb_sends_each_verb_once_as_a_trimmed_id(master):
-    options = {" Designed ": "Build", "designed": "Build", "": "Build", "   ": "Build",
-               "Modeled\n": "Analyze", "Set  up": "Build", "X" * 41: "Lead",
-               "Coordinated": "Lead"}
-    rec = Recording(jev.FakeJev())
-    jev_assist.pick_verb(_VERB_BULLET, options, judge=rec)
-    (_state, questions), = rec.requests
-    assert questions["verb"]["criteria"] == {"Designed": "Build", "Modeled": "Analyze",
-                                             "Set up": "Build", "Coordinated": "Lead"}
-    _choice_shape_ok(questions)
-
-
-def test_the_picked_verb_is_the_id_jev_was_sent(master):
-    judge = Scripted(choice="Modeled", confidence=0.8)
-    assert jev_assist.pick_verb(_VERB_BULLET, {" Modeled ": "Analyze"}, judge=judge) == (
-        "Modeled", 0.8)
-
-
-def test_the_verb_caps_are_the_specs():
-    assert jev_assist.VERB_OPTIONS_MAX == 60
+def test_the_tl6_constants_are_the_specs():
+    assert jev_assist.VERB_MIN_CONFIDENCE == 0.5
+    assert jev_assist.CATEGORY_MIN_CONFIDENCE == 0.5
     assert jev_assist.VERB_ID_MAX == 40
+    assert not hasattr(jev_assist, "VERB_OPTIONS_MAX")
 
 
 # ── TL-5 sweep_flags ─────────────────────────────────────────────────────────

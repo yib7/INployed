@@ -688,43 +688,6 @@ def _swap_leading_verb(text: str, repl: str) -> str:
     return f"{repl} {rest}".strip()
 
 
-def _unused_verbs(palette: Dict[str, List[str]], current: str, taken) -> Dict[str, str]:
-    """TL-6's options: {verb: its category} for palette verbs whose lowercase is not in
-    `taken`, each verb once, at most `jev_assist.VERB_OPTIONS_MAX` of them. The
-    categories holding `current` come first, whole and as written, as in
-    `_pick_unused_verb`; the rest fill what is left in turns, one verb from each
-    category in palette order, so the fill reaches every category (VL-3: the whole
-    unused palette went past the options Jev takes in one choice)."""
-    cap = jev_assist.VERB_OPTIONS_MAX
-    cl = (current or "").lower()
-    home = [cat for cat, items in palette.items() if any(v.lower() == cl for v in items)]
-    out: Dict[str, str] = {}
-    seen: set = set()
-
-    def take(v: str, cat: str) -> None:
-        lv = v.lower()
-        if lv not in taken and lv not in seen and len(out) < cap:
-            seen.add(lv)
-            out[v] = cat
-
-    for cat in home:
-        for v in palette[cat]:
-            take(v, cat)
-    rest = [iter(palette[c]) for c in palette if c not in home]
-    names = [c for c in palette if c not in home]
-    while rest and len(out) < cap:
-        live = []
-        for cat, it in zip(names, rest):
-            for v in it:
-                before = len(out)
-                take(v, cat)
-                if len(out) > before:
-                    live.append((cat, it))
-                    break
-        names, rest = [c for c, _it in live], [it for _c, it in live]
-    return out
-
-
 def reverb(jd: str, ids: List[str], bad_text: str, used) -> str:
     """Regenerate ONE bullet so it opens with a fresh action verb NOT in `used`, keeping
     every fact/number. Deterministic, cheapest tier — the re-roll arm of dedupe_leading_verbs."""
@@ -766,9 +729,10 @@ def dedupe_leading_verbs(bullets: Dict[str, str], gm: Dict[str, List[str]], jd: 
     in-category swap from `active_verbs()` makes the opener unique. Verbatim gkeys are skipped.
     Mutates and returns `bullets`.
 
-    With `judge` (TL-6: `run.tailor()` passes the run's Jev judge), a collision is first a
-    choice over the palette's unused verbs (`jev_assist.pick_verb`): every verb no other
-    bullet opens with, earlier or later, and no verbatim block either. A pick at
+    With `judge` (TL-6: `run.tailor()` passes the run's Jev judge), a collision is first
+    asked of Jev (`jev_assist.pick_verb`): the palette category the bullet's action fits,
+    then a verb in it that no other bullet opens with, earlier or later, and no
+    verbatim block either. A pick at
     `jev_assist.VERB_MIN_CONFIDENCE` or more replaces the first word through the same swap
     the deterministic arm uses, and `reverb` is skipped. Under it, or when Jev is off or
     its request fails, the collision goes to `reverb` as it always has."""
@@ -786,8 +750,7 @@ def dedupe_leading_verbs(bullets: Dict[str, str], gm: Dict[str, List[str]], jd: 
         if judge is not None:
             asked = True
             later = {leading_verb(t) for _gk, t in items[pos + 1:]}
-            pick = jev_assist.pick_verb(text, _unused_verbs(palette, v, used | later),
-                                        judge=judge)
+            pick = jev_assist.pick_verb(text, palette, v, used | later, judge=judge)
             if pick is not None and pick[1] >= jev_assist.VERB_MIN_CONFIDENCE:
                 bullets[gk] = _swap_leading_verb(text, pick[0])
                 used.add(pick[0].lower())
@@ -811,7 +774,7 @@ def dedupe_leading_verbs(bullets: Dict[str, str], gm: Dict[str, List[str]], jd: 
     if judge is not None and not asked:
         # Asked with nothing to pick from, so a run with no repeated opener still gets
         # a usage line that says so ("nothing to ask").
-        jev_assist.pick_verb("", {}, judge=judge)
+        jev_assist.pick_verb("", {}, "", judge=judge)
     return bullets
 
 

@@ -263,10 +263,13 @@ Libraries: {json.dumps(pools["Libraries"], ensure_ascii=False)}
 """
     if skill_pick:
         skill_pools = skills_schema = ""
-    # Static blocks first (catalog/pools/guidance/schema are identical every run),
-    # the per-job JOB/JD last — so Gemini's implicit prefix cache can discount the
-    # large static prefix across back-to-back tailor runs. JSON mode fixes the
-    # output shape regardless of where the schema sits.
+    # The JOB/JD goes last, so Gemini's implicit prefix cache can discount whatever
+    # comes before it across back-to-back tailor runs. With Jev off that prefix is
+    # most of the request: the catalog, the pools, the guidance and the schema repeat
+    # word for word every run. With Jev on, the catalog and the project guidance
+    # follow each job's shortlist and the skills blocks are gone, so the shared
+    # prefix stops early in the catalog, where one job's shortlist first differs from
+    # the last. JSON mode fixes the output shape wherever the schema sits.
     user = f"""ATOM CATALOG (choose atom ids from here only; an atom belongs to the block it is listed under):
 {_catalog(shortlist)}
 

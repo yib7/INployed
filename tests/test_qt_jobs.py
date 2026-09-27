@@ -47,6 +47,19 @@ def test_model_background_role_tags(qapp):
     assert m.row_tag(2) == ""                        # skip -> default (no tint)
 
 
+def test_score_cell_reads_hand_added_for_manual_rows(qapp):
+    # SP5/MA-3: a hand-added job is never scored, so its Score cell reads
+    # "hand-added" instead of a blank value; a scraped row is unaffected.
+    df = _df().copy()
+    df.loc[0, "job_posting_id"] = "manual-1"
+    df.loc[0, "score"] = ""
+    m = JobsTableModel(COL_IDS)
+    m.set_dataframe(df)
+    sc = COL_IDS.index("score")
+    assert m.data(m.index(0, sc)) == "hand-added"
+    assert m.data(m.index(1, sc)) == "4"
+
+
 def test_all_mode_is_untinted(qapp):
     # The All Jobs tab is a plain list: no row gets a color tag.
     m = JobsTableModel(COL_IDS, mode="all")
@@ -94,6 +107,22 @@ def test_proxy_numeric_sort(qapp):
     proxy.sort(COL_IDS.index("score"), QtCore.Qt.SortOrder.AscendingOrder)
     order = [m.job_id(proxy.mapToSource(proxy.index(r, 0)).row()) for r in range(3)]
     assert order == ["3", "2", "1"]                  # numeric 2 < 4 < 5, not "2"<"4"<"5" text
+
+
+def test_sort_by_score_does_not_crash_with_manual_rows(qapp):
+    # SP5/MA-3: "hand-added" is not numeric; the SORT_ROLE fallback must not
+    # raise, and every row (manual included) must still come through the sort.
+    df = _df().copy()
+    df.loc[0, "job_posting_id"] = "manual-1"
+    df.loc[0, "score"] = ""
+    m = JobsTableModel(COL_IDS)
+    m.set_dataframe(df)
+    proxy = QtCore.QSortFilterProxyModel()
+    proxy.setSourceModel(m)
+    proxy.setSortRole(SORT_ROLE)
+    proxy.sort(COL_IDS.index("score"), QtCore.Qt.SortOrder.AscendingOrder)
+    order = [m.job_id(proxy.mapToSource(proxy.index(r, 0)).row()) for r in range(3)]
+    assert set(order) == {"manual-1", "2", "3"}
 
 
 def test_header_click_sorts_in_pandas_not_via_the_proxy(qtbot):
@@ -159,6 +188,22 @@ def test_tab_min_score_filter(qtbot):
     tab.set_source_df(_df())
     tab.minscore.setCurrentText("4")   # currentIndexChanged -> _apply_filters
     assert tab.model.rowCount() == 2
+
+
+def test_tab_min_score_filter_keeps_manual_rows(qtbot):
+    # SP5/MA-3: the per-tab quick-filter min score must not hide a hand-added
+    # row either -- only jobsdata.filter_high_unseen_with_count's own min_score
+    # gate was the other place this could leak through.
+    tab = JobsTab("all", COLS)
+    qtbot.addWidget(tab)
+    df = _df().copy()
+    df.loc[0, "job_posting_id"] = "manual-1"
+    df.loc[0, "score"] = ""
+    tab.set_source_df(df)
+    tab.minscore.setCurrentText("4")   # currentIndexChanged -> _apply_filters
+    ids = [tab.model.job_id(r) for r in range(tab.model.rowCount())]
+    assert "manual-1" in ids
+    assert tab.model.rowCount() == 2   # manual-1 (exempt) + id "2" (score 4 passes)
 
 
 def test_discovery_filters_live_in_popup(qtbot):

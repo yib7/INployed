@@ -547,6 +547,23 @@ def test_the_meaning_line_sits_beside_the_literal_one(ats_page):
     assert lines[shown + 1:shown + 3] == ["  ~ dashboards", "  ~ etl"]
 
 
+def test_the_meaning_count_holds_every_literal_match(ats_page):
+    """Jev leaves out "python", which the page holds word for word: the meaning line
+    counts it all the same, so it never reads below the literal line."""
+    _frac, report = ats_page(meaning=lambda keywords, text: ["dashboards"])
+    assert ("Coverage by meaning (Jev): 50%  (2 of 4 JD keywords the resume shows in "
+            "words or by a direct equivalent)") in report
+
+
+def test_with_nothing_shown_by_meaning_alone_the_section_is_left_out(ats_page):
+    _frac, report = ats_page(meaning=lambda keywords, text: ["python"])
+    assert "Coverage by meaning (Jev): 25%  (1 of 4 " in report
+    assert "SHOWN BY MEANING, MISSING BY WORD:" not in report
+    _frac, today = ats_page()
+    meaning_line = next(ln for ln in report.split("\n") if ln.startswith("Coverage by meaning"))
+    assert [ln for ln in report.split("\n") if ln != meaning_line] == today.split("\n")
+
+
 @pytest.mark.parametrize("meaning", [None, lambda keywords, text: None],
                          ids=["no meaning", "meaning failed"])
 def test_without_a_meaning_answer_the_report_is_todays(ats_page, tmp_path, meaning):

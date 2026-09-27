@@ -219,7 +219,8 @@ def write_report(jd_text: str, pdf_path: Path, out_dir: Path,
     """Write ats_report.txt next to the tailored PDF; return coverage fraction.
 
     With `meaning` (TL-9) the report adds a meaning-level coverage line under the
-    literal one and lists the keywords shown by meaning that no word matched. A
+    literal one, counting every literal match with the keywords Jev reads as shown,
+    and lists the keywords shown by meaning that no word matched, when there are any. A
     check that returns None leaves the report as it was; the fraction returned is
     the literal one either way."""
     keywords = extract_keywords(jd_text)
@@ -229,13 +230,16 @@ def write_report(jd_text: str, pdf_path: Path, out_dir: Path,
     by_meaning: List[str] = []
     extra: List[str] = []
     if shown is not None:
-        kept = set(shown)
+        # a literal match is shown in words, whatever Jev answered for it
+        kept = (set(shown) | set(present)) & set(keywords)
         by_meaning = [
-            f"Coverage by meaning (Jev): {len(kept & set(keywords)) / len(keywords):.0%}  "
-            f"({len(kept & set(keywords))} of {len(keywords)} JD keywords the resume shows "
+            f"Coverage by meaning (Jev): {len(kept) / len(keywords):.0%}  "
+            f"({len(kept)} of {len(keywords)} JD keywords the resume shows "
             "in words or by a direct equivalent)"]
-        extra = ["", "SHOWN BY MEANING, MISSING BY WORD:",
-                 *(f"  ~ {k}" for k in missing if k in kept)]
+        by_meaning_only = [k for k in missing if k in kept]
+        if by_meaning_only:
+            extra = ["", "SHOWN BY MEANING, MISSING BY WORD:",
+                     *(f"  ~ {k}" for k in by_meaning_only)]
     lines = [
         "ATS keyword coverage report",
         f"Resume: {pdf_path.name}",

@@ -466,6 +466,10 @@ class _FakeConfig:
         self.option = _FakeOption(numprocesses)
         if worker:
             self.workerinput = {"workerid": "gw0"}
+        self.ini_lines: list[tuple[str, str]] = []
+
+    def addinivalue_line(self, name, line):
+        self.ini_lines.append((name, line))
 
 
 @pytest.fixture
@@ -611,6 +615,50 @@ def test_fixture_in_replay_mode_fails_a_miss_naming_the_fixture_and_test(
     out = result.stdout.str()
     assert "jev_judge" in out and "test_inner.py::test_one" in out
     assert "jev_record.ps1 -Target runner -Cap <USD>" in out
+
+
+_INNER_UNRECORDED = '''
+import pytest
+pytest_plugins = ["conftest_jev"]
+
+STATE = {STATE!r}
+QUESTIONS = {QUESTIONS!r}
+
+@pytest.mark.jev_unrecorded
+def test_marked(jev_judge):
+    jev_judge().judge(STATE, QUESTIONS)
+
+def test_unmarked(jev_judge):
+    jev_judge().judge(STATE, QUESTIONS)
+'''
+
+
+def test_a_marked_tests_replay_miss_skips_until_sp8_records_it(pytester, monkeypatch,
+                                                              tmp_path):
+    # SP6: a test whose recording is a later phase skips on its miss (no
+    # live request in this phase); an unmarked miss still fails
+    monkeypatch.setenv(jev_harness.MODE_ENV, "replay")
+    monkeypatch.setenv(jev.CACHE_ENV, str(tmp_path / "cache.json"))
+    pytester.syspathinsert(TESTS)
+    pytester.syspathinsert(REPO / "local")
+    pytester.makepyfile(test_inner=_INNER_UNRECORDED.format(STATE=STATE, QUESTIONS=QUESTIONS))
+    result = pytester.runpytest_inprocess("-q", "-rs", "-p", "no:cacheprovider",
+                                          "-p", "conftest_jev",
+                                          "-W", "error::pytest.PytestUnknownMarkWarning")
+    result.assert_outcomes(skipped=1, failed=1)
+    assert jev_harness.UNRECORDED_REASON in result.stdout.str()
+    assert jev_harness.UNRECORDED_REASON == "no replay recording yet; SP8 records it"
+
+
+def test_a_marked_test_runs_in_fake_mode(pytester, monkeypatch, tmp_path):
+    monkeypatch.delenv(jev_harness.MODE_ENV, raising=False)
+    monkeypatch.setenv(jev.CACHE_ENV, str(tmp_path / "cache.json"))
+    pytester.syspathinsert(TESTS)
+    pytester.syspathinsert(REPO / "local")
+    pytester.makepyfile(test_inner=_INNER_UNRECORDED.format(STATE=STATE, QUESTIONS=QUESTIONS))
+    result = pytester.runpytest_inprocess("-q", "-p", "no:cacheprovider", "-p", "conftest_jev",
+                                          "-W", "error::pytest.PytestUnknownMarkWarning")
+    result.assert_outcomes(passed=2)
 
 
 def test_fixture_in_replay_mode_replays_and_turns_a_divergence_into_an_xfail(

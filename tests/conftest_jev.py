@@ -20,8 +20,9 @@ Hooks, active in `record` and `replay` mode only:
   the fixture, the number of requests already in the cache (they replay for
   free) and the spend cap.
 - makereport (call phase): a test whose live request the spend cap stopped
-  (`jev.SpendCap`) skips with the cap's reason; a replay miss recorded on
-  the test becomes a failure whose text names the fixture, the test and the
+  (`jev.SpendCap`) skips with the cap's reason; a replay miss on a test
+  marked `jev_unrecorded` skips with `jev_harness.UNRECORDED_REASON`; any
+  other replay miss recorded on the test becomes a failure whose text names the fixture, the test and the
   re-record command; a failed `AssertionError` becomes an xfail carrying the
   divergence; either way the test's record goes to `outcomes.jsonl`.
 - terminal summary: replay hits and misses, live requests and spend, the
@@ -59,6 +60,9 @@ def _xdist_active(config) -> bool:
 
 
 def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", f"{jev_harness.UNRECORDED_MARK}: {jev_harness.UNRECORDED_REASON} (a replay "
+        f"miss skips)")
     if SESSION_KEY in config.stash:
         return
     try:
@@ -158,6 +162,11 @@ def pytest_runtest_makereport(item, call):
         # answers, so it is neither a divergence nor a miss
         rep.outcome = "skipped"
         rep.longrepr = (str(item.path), item.location[1] or 0, f"Skipped: {record.capped}")
+    elif record.misses and item.get_closest_marker(jev_harness.UNRECORDED_MARK):
+        # a later phase records this test (`jev_harness.UNRECORDED_MARK`)
+        rep.outcome = "skipped"
+        rep.longrepr = (str(item.path), item.location[1] or 0,
+                        f"Skipped: {jev_harness.UNRECORDED_REASON}")
     elif record.misses:
         rep.outcome = "failed"
         rep.longrepr = session.miss_text(record) + "\n\n" + str(rep.longrepr or "")

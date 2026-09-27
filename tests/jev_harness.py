@@ -64,6 +64,12 @@ RUNNER_TESTS = ("tests/test_apply_run.py tests/test_apply_run_boundaries.py "
 # the recording command a miss points at: the script sets the cap, exports
 # the key for one run and runs the runner tests serially
 RECORD_COMMAND = r".\scripts\jev_record.ps1 -Target runner -Cap <USD>"
+# A test whose replay recording a later phase makes carries this mark: in
+# replay mode its miss skips with UNRECORDED_REASON (conftest_jev), and every
+# other mode runs it as usual. The recording phase removes the mark and adds
+# the module to RUNNER_TESTS.
+UNRECORDED_MARK = "jev_unrecorded"
+UNRECORDED_REASON = "no replay recording yet; SP8 records it"
 
 # The day both committed caches (`cache.json`, `matrix_cache.json`) were
 # recorded on. The fact catalog lists today's date (`apply_facts.build`, the

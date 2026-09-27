@@ -511,16 +511,49 @@ _MUST_HEAD_RE = re.compile(r"requir|minimum|basic|\bmust\b")
 _NICE_LINE_RE = re.compile(
     r"\b(?:preferred|preferably|a plus|nice[- ]to[- ]have|good[- ]to[- ]have|bonus|desired"
     r"|desirable|ideally|an advantage|advantageous)\b", re.I)
-# Lines the stage 2 prompt forbids as gaps (location, on-site, hybrid, remote,
-# relocation, time zone, visa, sponsorship, work authorization) and eligibility
-# lines that name no skill or tool (checks, age, lifting, travel, hours).
-_DROP_RE = re.compile(
-    r"\b(?:locat(?:ed|ions?)|on[- ]?site|in[- ]office|in[- ]person|hybrid|remote(?:ly)?"
-    r"|relocat\w*|time[- ]?zones?|visas?|sponsor\w*|work(?:ing)? authori[sz]ation"
-    r"|authori[sz]ed to work|eligib\w* to work|right to work|citizen\w*|commut\w*"
-    r"|background (?:check|screen\w*|investigation)|drug (?:test\w*|screen\w*)"
-    r"|driver'?s licen[cs]e|lift(?:ing)? (?:up to )?\d+\s*(?:lbs?|pounds)|18 years"
-    r"|travel\w*|weekends?|overtime|shifts?)\b", re.I)
+# Lines the stage 2 prompt forbids as gaps: where and when the work happens
+# (location, on-site, hybrid or remote work, relocation, time zone, travel, hours,
+# shifts) and eligibility lines that name no skill or tool (visa, sponsorship, work
+# authorization, citizenship, checks, age, lifting). A word with a skill sense
+# (hybrid, remote, location, travel, sponsor, citizen, shift, commute) drops a line
+# only in its work-arrangement or eligibility wording, so "hybrid cloud" and
+# "remote sensing" stay.
+_ARRANGED = r"(?:hybrid|remote(?:ly)?)"
+_DROP_PARTS = (
+    # where the work happens
+    r"(?:on[- ]?site|in[- ]office|in[- ]person|time[- ]?zones?)\b|relocat\w*",
+    r"commut(?:e|es|ing|able)\b",
+    r"located (?:in|within|near|at)\b|locations?\s*:|(?:office|work|job) locations?\b",
+    rf"^{_ARRANGED}\s*(?:$|[(:]|[-–]\s|\d)",
+    rf"{_ARRANGED}[- ](?:first|friendly|eligible|only)\b",
+    rf"{_ARRANGED}\s+(?:within|in|from|across|anywhere|work(?:ing|place)?|role|position|job"
+    r"|schedule|setting|environment|capacity|basis|option|opportunit\w*|arrangement|policy"
+    r"|days?)\b",
+    rf"(?:work\w*|fully|100%|partially|partly|primarily|mostly|is|be)\s+{_ARRANGED}\b",
+    rf"{_ARRANGED}\s*(?:\bor\b|\band\b|/)\s*(?:hybrid|remote|on[- ]?site|in[- ]office)",
+    # when the work happens
+    r"(?:weekends?|overtime)\b",
+    r"(?:night|day|evening|morning|overnight|weekend|rotating|early|late|split|flexible"
+    r"|on[- ]call|first|second|third|any|\d+[- ]hour) shifts?\b",
+    r"shifts?\s+(?:work|schedule|rotations?|differential)\b|work\w*\s+(?:in\s+)?shifts\b",
+    r"(?:willing(?:ness)?|able|ability|availab\w*|required|expected|need) to travel\b",
+    r"travel\w*\s+(?:is\s+)?(?:required|expected|as needed|up to|\d)",
+    r"travel\w*\s+to\s+(?:\w+\s+)?(?:client|customer|field|office|site)s?\b",
+    r"\d+\s*%\s*(?:of the time\s*)?travel",
+    r"(?:overnight|occasional|frequent|domestic|international|minimal|limited|extensive"
+    r"|some) travel\b",
+    # eligibility
+    r"(?:visas?|sponsorship)\b|(?:not|cannot|to) sponsor\b|[’']t sponsor\b",
+    r"sponsor(?:s|ed)?\s+(?:visas?|employment|work|candidates|applicants)\b",
+    r"(?:work(?:ing)? authori[sz]ation|authori[sz]ed to work|eligib\w* to work"
+    r"|right to work)\b",
+    r"citizenship\b|(?:u\.?\s?s\.?|united states|american)\s+citizens?\b",
+    r"(?:be|are|is)\s+(?:an?\s+)?citizens?\b|citizens?\s+(?:of|or)\b",
+    r"background (?:check|screen\w*|investigation)|drug (?:test\w*|screen\w*)",
+    r"driver[’']?s licen[cs]e|lift(?:ing)? (?:up to )?\d+\s*(?:lbs?|pounds)",
+    r"18 years (?:of age|old|or older)|age of 18\b|18 or older",
+)
+_DROP_RE = re.compile(r"\b(?:" + "|".join(_DROP_PARTS) + ")", re.I)
 
 
 def _plain(text: str) -> str:
@@ -581,10 +614,12 @@ def requirement_lines(desc: Any, limit: int = MAX_REQUIREMENT_LINES) -> list[Req
     first (a heading with no bullets lends its short plain lines); when those
     are fewer than MIN_REQUIREMENT_LINES, bullets from the other sections follow
     in document order. Benefit, company and similar sections never count, and
-    lines about location, on-site, hybrid, remote, relocation, time zone, visa,
-    sponsorship or work authorization (and eligibility lines such as a
-    background check) are dropped. A bullet that ends in a colon introduces a
-    list and is dropped too; duplicates keep their first place."""
+    lines about where or when the work happens (location, on-site, hybrid or
+    remote work, relocation, time zone, travel, shifts) or about eligibility
+    (visa, sponsorship, work authorization, a background check) are dropped; a
+    skill that shares a word with them ("hybrid cloud", "remote sensing") stays.
+    A bullet that ends in a colon introduces a list and is dropped too;
+    duplicates keep their first place."""
     if not isinstance(desc, str) or not desc.strip():
         return []
     preferred: list[Req] = []

@@ -579,11 +579,43 @@ def test_an_inline_preferred_cue_beats_a_required_heading():
     "Must be 18 years or older",
     "Up to 25% travel",
     "Available to work weekends and overtime",
+    # the work-arrangement senses of hybrid, remote, travel, shift and commute
+    "Hybrid or remote",
+    "Fully remote",
+    "Remote (US)",
+    "Hybrid: 3 days a week at our Austin office",
+    "Work remotely from anywhere in the US",
+    "This is a hybrid role",
+    "Travel up to 10% to client sites",
+    "Willing to work night shifts",
+    "Must live within commuting distance",
+    "Valid driver’s license",
+    "Candidates must be U.S. citizens",
+    "We are unable to sponsor",
 ])
 def test_requirement_lines_drop_location_visa_and_eligibility_lines(line):
     md = f"## Requirements\n- Python and SQL\n- {line}\n- Tableau dashboards\n- Statistics\n"
     assert _texts(jev_score.requirement_lines(md)) == [
         "Python and SQL", "Tableau dashboards", "Statistics"]
+
+
+@pytest.mark.parametrize("line", [
+    "Hybrid cloud architecture on AWS and Azure",
+    "Remote sensing and GIS analysis",
+    "Hybrid search with vector databases",
+    "Remote procedure calls with gRPC",
+    "Location data analysis with PostGIS",
+    "Travel industry analytics",
+    "Work with project sponsors to define scope",
+    "Experience supporting citizen data scientists",
+    "Understanding of covariate shift and model drift",
+    "Commutative algebra coursework",
+    "18 years of analytics experience",
+])
+def test_requirement_lines_keep_skills_that_share_a_word_with_a_dropped_line(line):
+    md = f"## Requirements\n- Python and SQL\n- {line}\n- Tableau dashboards\n"
+    assert _texts(jev_score.requirement_lines(md)) == [
+        "Python and SQL", line, "Tableau dashboards"]
 
 
 def test_requirement_lines_skip_benefit_and_company_sections():

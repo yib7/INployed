@@ -502,7 +502,10 @@ REGROUND_FINDING_RULE = (
     "A bullet whose item carries a 'finding' failed a faithfulness check for the reason "
     "that finding names, and its 'banned_tokens' list may be empty. Rewrite that bullet so "
     "it says only what its atoms say: no bigger role, scope or result than they state, and "
-    "no tool, number, outcome or scope they leave out.\n")
+    "no tool, number, outcome or scope they leave out. Such an item also carries a "
+    "'role': 'opening' for the bullet that opens its block, 'detail' for every other. "
+    "Keep that role, whatever the note on opening bullets below says: an opening bullet "
+    "still says what the job or project is, and a detail bullet stays on its own detail.\n")
 
 
 def reground(jd: str, job_title: str, sel: Dict[str, Any],
@@ -527,12 +530,15 @@ def reground(jd: str, job_title: str, sel: Dict[str, Any],
 
     TL-4 (the Jev faithfulness check, `run._check_faithfulness`) sends a bullet it flags
     through this same call, at any stage, with no banned tokens and its finding in
-    `findings`. A finding rides in its bullet's item, and REGROUND_FINDING_RULE explains
-    it once in the system prompt. With no finding the prompt is the one above, word for
-    word."""
+    `findings`. A finding rides in its bullet's item with the bullet's `role` in its
+    block, and REGROUND_FINDING_RULE explains both once in the system prompt, so a
+    flagged detail bullet stays a detail. With no finding the prompt is the one above,
+    word for word."""
     gm = group_map(sel)
     targets = bullet_line_targets(sel)
     findings = findings or {}
+    # A flagged bullet's place in its block: the first bullet opens it.
+    openers = {gkeys[0] for _name, gkeys in _blocks_in_order(sel) if gkeys}
     payload = []
     for gk, tokens in dropped.items():
         if gk not in gm:
@@ -546,6 +552,7 @@ def reground(jd: str, job_title: str, sel: Dict[str, Any],
             item["length_target"] = _length_hint(targets[gk])
         if findings.get(gk):
             item["finding"] = findings[gk]
+            item["role"] = "opening" if gk in openers else "detail"
         payload.append(item)
     if not payload:
         return {}

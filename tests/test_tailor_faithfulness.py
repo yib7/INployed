@@ -110,6 +110,28 @@ def test_a_finding_rides_with_its_bullet_and_is_explained_once(engine, monkeypat
     assert system.count(compose.REGROUND_FINDING_RULE) == 1
 
 
+def test_a_finding_carries_its_bullets_role_in_the_block(engine, monkeypatch):
+    """The reground prompt's note on opening bullets would turn a flagged detail
+    bullet into a second overview, so a bullet with a finding says which it is: the
+    block's first bullet opens it, every other is a detail."""
+    rec = _reground(monkeypatch, {"h1": [], "h2": []},
+                    findings={"h1": _INFLATION, "h2": _INFLATION})
+    sent = {b["gkey"]: b for b in _sent(rec.users[0])}
+    assert (sent["h1"]["role"], sent["h2"]["role"]) == ("opening", "detail")
+
+
+def test_only_a_bullet_with_a_finding_carries_a_role(engine, monkeypatch):
+    rec = _reground(monkeypatch, {"h1": ["Kafka"], "h2": []}, findings={"h2": _INFLATION})
+    sent = {b["gkey"]: b for b in _sent(rec.users[0])}
+    assert "role" not in sent["h1"] and sent["h2"]["role"] == "detail"
+
+
+def test_the_finding_rule_tells_the_model_to_keep_the_bullets_role():
+    rule = compose.REGROUND_FINDING_RULE
+    assert "'role'" in rule
+    assert "opening" in rule and "detail" in rule
+
+
 @pytest.mark.parametrize("findings", [None, {}, {"h1": ""}], ids=["none", "empty", "passing"])
 def test_without_a_finding_the_prompt_is_todays(engine, monkeypatch, findings):
     """No finding, no change: the Jev-off prompt stays word for word what it was,

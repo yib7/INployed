@@ -64,16 +64,6 @@ TERMINAL = frozenset(("ready_to_submit", "submitted", "needs_human", "failed"))
 ARTIFACT_KEYS = ("folder", "resume_pdf", "cover_letter_pdf",
                  "apply_md", "application_record")
 ATS_KEYS = ("domain", "system", "account_status")
-ATS_SYSTEMS = (
-    "linkedin", "workday", "greenhouse", "lever", "icims",
-    # Enterprise / legacy account-required ATSes (trusted for auto-signup):
-    "successfactors", "taleo", "oracle", "brassring",
-    # Payroll-HR suites (trusted for auto-signup):
-    "adp", "ukg", "dayforce",
-    # Modern ATSes (often accountless; trusted for auto-signup if they ask):
-    "smartrecruiters", "jobvite", "ashby", "workable",
-    "other",
-)
 
 # Sidecar-lock tuning. Module-level (not baked into signatures) so tests can
 # monkeypatch LOCK_TIMEOUT down instead of waiting out the real 5 s.
@@ -763,12 +753,9 @@ def _force_utf8_stdio() -> None:
                 pass
 
 
-def _print_entry(e: Dict[str, Any], as_json: bool) -> None:
-    if as_json:
-        print(json.dumps(e, indent=2, ensure_ascii=False))
-    else:
-        print(f"{e['job_posting_id']}  {e['status']:16} "
-              f"{e['company']} — {e['title']}")
+def _print_entry(e: Dict[str, Any]) -> None:
+    print(f"{e['job_posting_id']}  {e['status']:16} "
+          f"{e['company']} — {e['title']}")
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -826,7 +813,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         if args.verb == "list":
             for e in load(qp)["jobs"]:
-                _print_entry(e, as_json=False)
+                _print_entry(e)
         elif args.verb == "requeue":
             requeue(args.job_id, refresh_answers=args.refresh_answers, path=qp)
         elif args.verb == "refresh-answers":
@@ -854,7 +841,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                               is_easy_apply=args.easy_apply,
                               batch_id=args.batch_id, status=args.status)
             stored = enqueue(entry, path=qp)
-            _print_entry(stored, as_json=False)
+            _print_entry(stored)
     except UnknownJobError as exc:
         print(f"apply_queue: {exc.args[0]}", file=sys.stderr)
         return 2

@@ -217,12 +217,17 @@ def test_retailor_existing_survives_tailor_failure():
 def test_retailor_existing_fills_blank_description_from_pasted_jd_text(tmp_path):
     """pipeline/prune_master.py blanks job_description_formatted on a row past
     its retention window. If the user re-pastes the full text into "Tailor
-    again", the tailor must see it even though the saved row itself is blank."""
+    again", the tailor must see it even though the saved row itself is blank --
+    and it must match a FRESH add byte for byte, not the job_summary's
+    whitespace-collapsed variant (_strip_html would flatten _JD's embedded
+    newlines onto one line, which is not what build_job_record stores)."""
     fake_tailor, seen = _fake_tailor_factory(tmp_path)
     record = {"job_posting_id": "manual-abc", "job_title": "Data Analyst",
              "company_name": "Acme Corp", "job_description_formatted": ""}
     manual_add.retailor_existing(record, jd_text=_JD, tailor_fn=fake_tailor)
-    assert seen["job"]["job_description_formatted"] == manual_add._strip_html(_JD)
+    fresh = manual_add.build_job_record(jd_text=_JD, url="https://x/1")
+    assert seen["job"]["job_description_formatted"] == fresh["job_description_formatted"]
+    assert "\n" in seen["job"]["job_description_formatted"]    # not flattened
 
 
 def test_retailor_existing_keeps_stored_description_over_pasted_jd_text(tmp_path):

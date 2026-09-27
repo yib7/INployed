@@ -1913,14 +1913,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self._set_status(f"Find new jobs failed: {msg.splitlines()[0] if msg else exc}")
         QtWidgets.QMessageBox.critical(self, "Find new jobs", f"The run failed.\n\n{msg}")
 
-    # ---- add a job by hand (no scraper) --------------------------------------
+    # ---- add a job by hand (no scraper, no scoring) ----------------------------
 
     def _add_manual_job_dialog(self) -> None:
-        """Open the manual-entry form, then run parse->score->tailor->append off-thread.
+        """Open the manual-entry form, then run parse->tailor->append off-thread.
 
-        Reuses the exact scoring (score_jobs) + tailoring (resume_tailor) pipelines a
-        scraped job goes through; only the input differs (a paste/URL, not Bright
-        Data). The heavy work runs on a worker thread so the window never freezes."""
+        The user already chose this job (SP5/MA-1): there is no scoring step, it
+        goes straight to the same tailoring (resume_tailor) pipeline a scraped job
+        gets. A duplicate check (MA-2) runs BEFORE any of that, against both the
+        rows already loaded and the master file, so re-adding the same posting
+        never spends a fresh tailor call. The heavy work runs on a worker thread
+        so the window never freezes."""
         busy = self._pipeline_busy()
         if busy:
             self._set_status(busy)
@@ -1929,34 +1932,65 @@ class MainWindow(QtWidgets.QMainWindow):
         if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
         vals = dlg.values()
-        do_tailor = bool(vals.get("do_tailor"))
+        import manual_add
+        dup = manual_add.find_duplicate(vals.get("jd_text", ""), vals.get("url", ""),
+                                        df=self.df)
+        if dup is not None:
+            if self._confirm_retailor_duplicate(dup):
+                self._start_manual_pipeline(
+                    lambda opts: self._manual_retailor_work(dup, opts),
+                    verb="Tailoring again")
+            return
+        self._start_manual_pipeline(
+            lambda opts: self._manual_add_work(vals, opts), verb="Adding job")
+
+    def _confirm_retailor_duplicate(self, dup: dict) -> bool:
+        """MA-2's duplicate prompt: tailor the existing row again, or cancel. A
+        duplicate never silently reports success."""
+        import manual_add
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Add a job by hand")
+        box.setText(manual_add.duplicate_message(dup))
+        again = box.addButton("Tailor again", QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Cancel", QtWidgets.QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        return box.clickedButton() is again
+
+    def _start_manual_pipeline(self, work_fn, *, verb: str) -> None:
+        """Shared setup for a fresh add and a "Tailor again": the cover-letter
+        prompt, busy flag and worker-thread dispatch are identical either way."""
         cfg = settings.load()
-        # The cover-letter prompt only makes sense when we're tailoring; a "just score"
-        # add never tailors, so never ask.
-        cover = False
-        if do_tailor:
-            cover = QtWidgets.QMessageBox.question(
-                self, "Cover letter", "Also generate a cover letter for this job?"
-            ) == QtWidgets.QMessageBox.StandardButton.Yes
+        cover = QtWidgets.QMessageBox.question(
+            self, "Cover letter", "Also generate a cover letter for this job?"
+        ) == QtWidgets.QMessageBox.StandardButton.Yes
         opts = {"cover_letter": cover, "ats_report": bool(cfg.get("tailor_ats_report", True)),
                 "prep_sheet": bool(cfg.get("tailor_prep_sheet", False)),
                 "tone": cfg.get("resume_tone", "professional")}
         self._manual_adding = True
         self._apply_auth_env()
-        self._set_status("Adding job: scoring + tailoring …" if do_tailor
-                         else "Adding job: scoring …")
-        workers.run_async(self, lambda: self._manual_add_work(vals, opts, do_tailor),
+        self._set_status(f"{verb}: tailoring …")
+        workers.run_async(self, lambda: work_fn(opts),
                           on_done=self._finish_manual_add, on_error=self._finish_manual_add_error)
 
-    def _manual_add_work(self, vals: dict, opts: dict, do_tailor: bool = True) -> dict:
+    def _manual_add_work(self, vals: dict, opts: dict) -> dict:
         """Worker body: the toolkit-agnostic manual_add pipeline. The LLM/scraper
         seams default to the real implementations (mockable in tests)."""
         import manual_add
         res = manual_add.add_manual_job(
             jd_text=vals.get("jd_text", ""), url=vals.get("url", ""),
             company=vals.get("company", ""), title=vals.get("title", ""),
-            do_tailor=do_tailor, tailor_opts=opts, on_status=self.tailor_progress.emit)
-        res["requested_tailor"] = do_tailor  # so the finish status can distinguish skip vs fail
+            tailor_opts=opts, on_status=self.tailor_progress.emit)
+        self._push_manual_row_to_vm(res)
+        return res
+
+    def _manual_retailor_work(self, record: dict, opts: dict) -> dict:
+        """Worker body for MA-2's "Tailor again": re-run tailoring on an already
+        saved row, never appending a second copy."""
+        import manual_add
+        return manual_add.retailor_existing(
+            record, tailor_opts=opts, on_status=self.tailor_progress.emit)
+
+    def _push_manual_row_to_vm(self, res: dict) -> None:
         # Queue + push the new master row to the VM (best-effort — never fail the add).
         try:
             repo = Path(__file__).resolve().parents[2]
@@ -1973,7 +2007,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 outbox.push_outbox(vm_sync.VMTarget.from_env(), log=log)
         except Exception:  # noqa: BLE001 - sync is best-effort
             pass
-        return res
 
     def _finish_manual_add(self, result: dict) -> None:
         self._manual_adding = False
@@ -1985,21 +2018,20 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:  # noqa: BLE001 - bookkeeping only
                 pass
         # Fold the manual scored gz into the sources so the new job appears now and
-        # survives a restart — same bridge a local scrape gets.
+        # survives a restart, same bridge a local scrape gets.
         for p in jobsdata.local_run_files():
             if p not in self.csv_paths:
                 self.csv_paths.append(p)
         self.reload_data_async()
         title = rec.get("job_title", "job")
         company = rec.get("company_name", "")
-        score = rec.get("score", "")
         if result.get("resume_dir"):
-            tailored = "tailored"
-        elif result.get("requested_tailor"):
-            tailored = "added (tailor later)"     # tailoring was attempted but failed
+            self._set_status(f"Manual job tailored: {title} @ {company}.")
         else:
-            tailored = "scored (not tailored)"    # "just score" — never tailored
-        self._set_status(f"Manual job {tailored}: {title} @ {company} (score {score}).")
+            # MA-4: tailoring failed but the row is still saved; say how to retry.
+            self._set_status(
+                f"Manual job saved but tailoring failed: {title} @ {company}. "
+                "Retry with Tailor résumé on the job.")
 
     def _finish_manual_add_error(self, exc) -> None:
         self._manual_adding = False

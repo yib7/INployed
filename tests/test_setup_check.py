@@ -251,7 +251,8 @@ def test_auto_apply_warnings_jev_switched_off_is_named_in_every_mode():
     assert len(out) == 2 and out[0] == _JEV_OFF and "console.typesafe.ai/keys" in out[1]
 
 
-_UNKNOWN_JUDGE = "Unknown Auto-apply judge 'typesaf'; pick typesafe in Settings > Auto-apply."
+_UNKNOWN_JUDGE = ("Unknown Auto-apply judge 'typesaf'; tick \"Show advanced settings\" "
+                  "and pick typesafe in Settings > Auto-apply.")
 
 
 def test_auto_apply_warnings_name_the_drains_refusal_of_an_unknown_judge():

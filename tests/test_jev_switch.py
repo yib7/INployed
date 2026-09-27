@@ -396,7 +396,8 @@ def test_start_blocked_is_the_jev_gate_for_the_live_judge(sdk):
         lead + "Install typesafe-sdk (pip install -r requirements.txt)."
 
 
-_UNKNOWN_JUDGE = "Unknown Auto-apply judge 'typesaf'; pick typesafe in Settings > Auto-apply."
+_UNKNOWN_JUDGE = ("Unknown Auto-apply judge 'typesaf'; tick \"Show advanced settings\" "
+                  "and pick typesafe in Settings > Auto-apply.")
 
 
 def test_a_mode_jev_get_does_not_build_has_one_sentence():

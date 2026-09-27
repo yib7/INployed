@@ -3121,3 +3121,26 @@ def test_set_combo_keeps_a_blank_on_its_labelled_entry(qtbot):
     assert (combo.currentIndex(), combo.count()) == (2, 3)
     SettingsForm._set_combo(combo, "US-Central1", choices, "global", blank_label=label)
     assert (combo.currentText(), combo.count()) == ("us-central1", 3)
+
+
+# --- SP1 follow-up 3 -----------------------------------------------------------------
+
+def test_the_unknown_judge_sentence_names_the_disclosure_its_row_sits_under(qtbot, tmp_path):
+    """The drain, Start, Check setup, the doctor, Test my answers and probe
+    --judge send a user with a hand-edited Auto-apply judge to that row. It is
+    an advanced row, folded away until the user ticks the disclosure, so the
+    sentence names the disclosure in the words the Settings tab shows, and the
+    section and the row as the tab titles them."""
+    import jev_switch
+    f = _field("auto_apply_jev_mode")
+    assert f.advanced
+    form = _form(tmp_path, show_advanced=True)       # ticked, the label carries no count
+    qtbot.addWidget(form)
+    disclosure = form._advanced_check.text()
+    section = form._section_widgets[f.section].title
+    sentence = jev_switch.UNKNOWN_MODE.format(mode="typesaf")
+    assert f'tick "{disclosure}"' in sentence, (disclosure, sentence)
+    assert f"Settings > {section}." in sentence, (section, sentence)
+    assert sentence.startswith(f"Unknown {f.label} 'typesaf';"), sentence
+    form._advanced_check.setChecked(False)
+    assert not form._field_visible(f, form._gate_values())     # what the sentence opens

@@ -81,9 +81,12 @@ _FIXES = {
 # (cycle 16), and a mode `jev.get` does not build (a hand-edited Auto-apply
 # judge setting, SP1 follow-up 2) with it. The panel's Start gate
 # (`start_blocked`), Check setup and the doctor (`setup_check.auto_apply_warnings`)
-# give the same sentences, through `mode_refusal`.
+# give the same sentences, through `mode_refusal`. The Auto-apply judge row is
+# advanced, so UNKNOWN_MODE names the disclosure that shows it, in the Settings
+# tab's own words (SP1 follow-up 3).
 FIXTURE_ONLY = "Fake and replay judges are fixture-only; use typesafe for a production queue."
-UNKNOWN_MODE = "Unknown Auto-apply judge {mode!r}; pick typesafe in Settings > Auto-apply."
+UNKNOWN_MODE = ("Unknown Auto-apply judge {mode!r}; tick \"Show advanced settings\" and pick "
+                "typesafe in Settings > Auto-apply.")
 
 
 def config_path() -> Path:

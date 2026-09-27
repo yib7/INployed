@@ -1066,7 +1066,8 @@ def test_an_unknown_judge_leaves_start_off_with_the_drains_refusal(qtbot, tmp_pa
     "typesaf"` left Start on with a key and the SDK in place, and the drain it
     launched then stopped at `jev.get`. Start is off with the drain's refusal,
     with the master switch on or off, and a click launches nothing."""
-    refusal = "Unknown Auto-apply judge 'typesaf'; pick typesafe in Settings > Auto-apply."
+    refusal = ("Unknown Auto-apply judge 'typesaf'; tick \"Show advanced settings\" "
+               "and pick typesafe in Settings > Auto-apply.")
     monkeypatch.setattr(jev_switch, "sdk_installed", lambda: True)
     monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key")
     qfile = _qfile(tmp_path)

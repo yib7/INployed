@@ -2797,7 +2797,8 @@ def test_check_setup_and_the_doctor_give_the_drains_refusal_of_a_test_judge(
     assert "MISSING" not in out
 
 
-_UNKNOWN_JUDGE = "Unknown Auto-apply judge 'typesaf'; pick typesafe in Settings > Auto-apply."
+_UNKNOWN_JUDGE = ("Unknown Auto-apply judge 'typesaf'; tick \"Show advanced settings\" "
+                  "and pick typesafe in Settings > Auto-apply.")
 
 
 @pytest.mark.parametrize("verb", [["drain"], ["one", "42"]])

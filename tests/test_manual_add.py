@@ -139,7 +139,7 @@ def test_add_manual_job_dedupes_on_readd(tmp_path):
 
 
 def test_add_manual_job_survives_tailor_failure(tmp_path):
-    """A tailor failure must not lose the job — it's still saved (MA-4)."""
+    """A tailor failure must not lose the job; it's still saved (MA-4)."""
     master = tmp_path / "linkedin_jobs_master.csv"
 
     def boom_tailor(job, **k):

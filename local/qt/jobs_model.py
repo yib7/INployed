@@ -42,6 +42,16 @@ _HEADER_RIGHT = frozenset({
 })
 
 
+def _manual_mask(ids: list[str]) -> list[bool]:
+    """True where an id is a hand-added job (SP5/MA-3): those are never scored,
+    so the Score cell reads "hand-added" instead of a blank value."""
+    try:
+        from manual_add import is_manual_id
+    except Exception:  # noqa: BLE001 - fall back to the documented id prefix
+        return [str(i).startswith("manual-") for i in ids]
+    return [is_manual_id(i) for i in ids]
+
+
 class JobsTableModel(QtCore.QAbstractTableModel):
     def __init__(self, columns, mode="high", parent=None):
         super().__init__(parent)
@@ -84,6 +94,13 @@ class JobsTableModel(QtCore.QAbstractTableModel):
             ]
             self._ids = (df["job_posting_id"].astype(str).tolist()
                          if "job_posting_id" in df.columns else [""] * n)
+            if "score" in self._columns:
+                sc = self._columns.index("score")
+                manual = _manual_mask(self._ids)
+                self._col_lists[sc] = [
+                    "hand-added" if manual[i] else v
+                    for i, v in enumerate(self._col_lists[sc])
+                ]
             recos = (df["recommendation"].astype(str).str.strip().str.lower().tolist()
                      if "recommendation" in df.columns else [""] * n)
             statuses = (df["status"].astype(str).str.strip().str.lower().tolist()

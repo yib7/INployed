@@ -107,6 +107,18 @@ def test_scrape_env_hands_the_scorer_the_dashboard_jev_switch(qtbot, monkeypatch
     assert os.environ["SCORE_USE_JEV"] == "later"        # our own env untouched
 
 
+@pytest.mark.parametrize("off,value", [(True, "0"), (False, "1")])
+def test_the_scorer_switch_comes_from_jev_switch_switched_off(qtbot, monkeypatch, off, value):
+    """The dashboard asks jev_switch's public `switched_off("scoring")`."""
+    import jev_switch
+    w = _win(qtbot)
+    monkeypatch.setattr(mw, "gdrive_root_dir", lambda paths: None)
+    asked = []
+    monkeypatch.setattr(jev_switch, "switched_off", lambda area: asked.append(area) or off)
+    assert w._scrape_env()["SCORE_USE_JEV"] == value
+    assert asked == ["scoring"]
+
+
 @pytest.mark.parametrize("state,reason", [
     ({}, "no TypeSafe API key"),
     ({"key": True, "sdk": False}, "typesafe-sdk is not installed"),

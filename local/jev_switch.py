@@ -167,20 +167,45 @@ def _switch(cfg: Mapping[str, Any], key: str) -> bool:
     return settings.switch_on(cfg.get(key, True))
 
 
+def switched_off(area: str, *, config: Mapping[str, Any] | None = None) -> bool:
+    """Is Jev switched off for `area` in Settings: the master switch or the
+    area's own switch? The key and the SDK play no part. `config` defaults to
+    the config file, read on every call. The dashboard hands its scorer
+    SCORE_USE_JEV=0 on this alone and leaves the key and SDK to the scorer.
+    An unknown area raises ValueError, as `jev_on` does."""
+    _check_area(area)
+    cfg = _config() if config is None else config
+    return _switch_reason(area, cfg) != ""
+
+
+def _check_area(area: str) -> None:
+    """Raise ValueError for an unknown area: a typo there would otherwise read
+    as a silent answer forever."""
+    if area not in AREAS:
+        raise ValueError(f"unknown Jev area {area!r}; expected one of {', '.join(AREAS)}")
+
+
+def _switch_reason(area: str, cfg: Mapping[str, Any]) -> str:
+    """The reason a Settings switch turns Jev off for `area`, or ""."""
+    if not master_on(config=cfg):
+        return REASON_SWITCH
+    area_key = AREA_KEYS.get(area)
+    if area_key is not None and not _switch(cfg, area_key):
+        return f"Jev is switched off for {_AREA_WORDS[area]} in Settings"
+    return ""
+
+
 def _check(area: str, config: Mapping[str, Any] | None, env: Mapping[str, str] | None,
            *, mode: str | None = None, saved_key: bool = False) -> tuple[str, str]:
     """(kind, reason) of the first failing check, or ("", "") when Jev is on.
     `kind` is "switch", "key" or "sdk". An unknown area raises ValueError: a
     typo there would otherwise read as a silent answer forever."""
-    if area not in AREAS:
-        raise ValueError(f"unknown Jev area {area!r}; expected one of {', '.join(AREAS)}")
+    _check_area(area)
     cfg = _config() if config is None else config
     env = os.environ if env is None else env
-    if not master_on(config=cfg):
-        return "switch", REASON_SWITCH
-    area_key = AREA_KEYS.get(area)
-    if area_key is not None and not _switch(cfg, area_key):
-        return "switch", f"Jev is switched off for {_AREA_WORDS[area]} in Settings"
+    reason = _switch_reason(area, cfg)
+    if reason:
+        return "switch", reason
     if area in _MODE_AREAS and apply_mode(mode, config=cfg) in TEST_MODES:
         return "", ""
     if not (saved_key or str(env.get(jev.KEY_ENV) or "").strip()):

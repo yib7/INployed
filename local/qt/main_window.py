@@ -172,13 +172,12 @@ def _no_window_flag() -> int:
 def _scorer_jev_switch() -> str:
     """SCORE_USE_JEV for a scorer the dashboard launches, in the form
     `jev_score.use_jev` reads: "0" when a Settings switch turns Jev scoring off
-    (the master switch or the scoring switch: `jev_switch`'s "switch" kind),
+    (the master switch or the scoring switch: `jev_switch.switched_off`),
     else "1". The key, the SDK and `local/jev.py` are the scorer's to check: it
     loads `.env` first, so it finds a key saved in Settings, and when a piece is
     missing it prints the one warning that names it. Reads config.json, so call
     it off the UI thread."""
-    kind, _reason = jev_switch._check("scoring", None, None)
-    return "0" if kind == "switch" else "1"
+    return "0" if jev_switch.switched_off("scoring") else "1"
 
 
 class MainWindow(QtWidgets.QMainWindow):

@@ -605,3 +605,40 @@ def test_the_switches_settings_reads_by_the_rule_are_the_ones_read_here():
     """One list: the checkbox reads these keys by `settings.switch_on`."""
     assert set(settings.JEV_SWITCHES) == {jev_switch.MASTER_KEY,
                                           *jev_switch.AREA_KEYS.values()}
+
+
+# --- switched_off: the Settings switches alone -----------------------------------------
+
+@pytest.mark.parametrize("cfg,off", [
+    ({}, False),
+    ({"jev_enabled": False}, True),
+    ({"jev_scoring": False}, True),
+    ({"jev_tailor": False}, False),             # another area's switch
+    ({"jev_enabled": None}, True),
+    ({"jev_scoring": "false"}, True),
+    ({"jev_scoring": " Yes "}, False),
+], ids=repr)
+def test_switched_off_reads_the_master_and_the_area_switch(cfg, off):
+    assert jev_switch.switched_off("scoring", config=cfg) is off
+
+
+@pytest.mark.parametrize("cfg", [{}, {"jev_scoring": False}, {"jev_enabled": "off"}], ids=repr)
+def test_switched_off_is_the_switch_kind_of_the_full_check(sdk, cfg):
+    """The key and the SDK play no part: with neither present, switched_off
+    is True exactly when jev_why_off gives a switch reason."""
+    sdk(False)
+    why = jev_switch.jev_why_off("scoring", config=cfg, env={})
+    assert jev_switch.switched_off("scoring", config=cfg) is (why.startswith("Jev is switched off"))
+
+
+def test_switched_off_reads_the_config_file_on_every_call():
+    path = jev_switch.config_path()
+    path.write_text(json.dumps({"jev_scoring": False}), encoding="utf-8")
+    assert jev_switch.switched_off("scoring") is True
+    path.write_text(json.dumps({}), encoding="utf-8")
+    assert jev_switch.switched_off("scoring") is False
+
+
+def test_switched_off_refuses_an_unknown_area():
+    with pytest.raises(ValueError):
+        jev_switch.switched_off("scorin", config={})

@@ -177,8 +177,27 @@ def _lead(judge):
     return jev_assist.lead_group(_PROJECTS, judge=judge)
 
 
+# TL-4's entries: each bullet with the atoms it was written from, as the run hands
+# them over (the atoms as `compose._atom_payload` gives them).
+_CHESS = {"entry": "Chess Club", "bullets": [
+    {"gkey": "cc_lead", "text": "Led weekly training sessions for 20 members.",
+     "atoms": [{"id": "cc_lead", "what": "Led weekly training sessions for 20 members",
+                "angles": ["lead"]}]}]}
+_ACME = {"entry": "Acme Data", "bullets": [
+    {"gkey": "ac_sql", "text": "Wrote SQL reports on warehouse sales data.",
+     "atoms": [{"id": "ac_sql", "what": "Wrote SQL reports on warehouse sales data",
+                "angles": ["data"]}]},
+    {"gkey": "ac_dash", "text": "Built a sales dashboard for regional managers.",
+     "atoms": [{"id": "ac_dash", "what": "Built a sales dashboard for regional managers",
+                "angles": ["data"]}]}]}
+
+
+def _faith(judge):
+    return jev_assist.faithfulness([_CHESS], judge=judge)
+
+
 _HELPERS = [pytest.param(_skills, id="skills_pick"), pytest.param(_atoms, id="atom_relevance"),
-            pytest.param(_lead, id="lead_group")]
+            pytest.param(_lead, id="lead_group"), pytest.param(_faith, id="faithfulness")]
 
 
 # ── off, default judge, failures ─────────────────────────────────────────────
@@ -195,7 +214,8 @@ def test_every_helper_is_none_and_asks_nothing_when_jev_is_off(master, monkeypat
     assert jev_assist.skills_pick(_JD, _TITLE) is None
     assert jev_assist.atom_relevance(_JD, _TITLE) is None
     assert jev_assist.lead_group(_PROJECTS) is None
-    assert areas == ["tailor", "tailor", "tailor"]
+    assert jev_assist.faithfulness([_CHESS]) is None
+    assert areas == ["tailor"] * 4
 
 
 def test_the_suite_default_client_is_off(master):
@@ -243,15 +263,21 @@ def test_a_failing_judge_returns_none(master, helper):
     assert judge.calls == 1
 
 
-@pytest.mark.parametrize("helper,step", [
-    pytest.param(_skills, jev_assist.STEP_SKILLS, id="skills_pick"),
-    pytest.param(_atoms, jev_assist.STEP_SHORTLIST, id="atom_relevance"),
-    pytest.param(_lead, jev_assist.STEP_LEAD, id="lead_group")])
-def test_a_failure_is_named_by_its_class_only(master, helper, step, caplog):
+_LLM_PATH = "the LLM path"
+_GATE_ALONE = "the deterministic gate alone"
+
+
+@pytest.mark.parametrize("helper,step,fallback", [
+    pytest.param(_skills, jev_assist.STEP_SKILLS, _LLM_PATH, id="skills_pick"),
+    pytest.param(_atoms, jev_assist.STEP_SHORTLIST, _LLM_PATH, id="atom_relevance"),
+    pytest.param(_lead, jev_assist.STEP_LEAD, _LLM_PATH, id="lead_group"),
+    # TL-4 has no LLM path to fall back to: without it the grounding gate runs alone.
+    pytest.param(_faith, jev_assist.STEP_FAITHFULNESS, _GATE_ALONE, id="faithfulness")])
+def test_a_failure_is_named_by_its_class_only(master, helper, step, fallback, caplog):
     caplog.set_level(logging.WARNING, logger=jev_assist.log.name)
     helper(Failing())
     line = jev_assist.usage_line(step)
-    assert "fell back to the LLM path (RuntimeError)" in line
+    assert f"fell back to {fallback} (RuntimeError)" in line
     # The warning was logged, so a silenced logger cannot pass the check below.
     assert f"jev {step} failed (RuntimeError)" in caplog.text
     assert "detail" not in line and "detail" not in caplog.text
@@ -292,9 +318,12 @@ def test_once_the_breaker_opens_every_later_helper_returns_none(master):
     assert tries == len(jev.RETRY_DELAYS_S) + 1
     assert jev_assist.atom_relevance(_JD, _TITLE, judge=judge) is None
     assert jev_assist.lead_group(_PROJECTS, judge=judge) is None
+    assert jev_assist.faithfulness([_CHESS], judge=judge) is None
     assert down.calls == tries
     for step in (jev_assist.STEP_SKILLS, jev_assist.STEP_SHORTLIST, jev_assist.STEP_LEAD):
         assert "fell back to the LLM path (JudgeOutage _Busy 503)" in jev_assist.usage_line(step)
+    assert (f"fell back to {_GATE_ALONE} (JudgeOutage _Busy 503)"
+            in jev_assist.usage_line(jev_assist.STEP_FAITHFULNESS))
 
 
 # ── usage ────────────────────────────────────────────────────────────────────
@@ -319,6 +348,30 @@ def test_nothing_to_ask_is_none_and_says_so(master):
     assert jev_assist.lead_group([], judge=judge) is None
     assert judge.calls == 0
     assert jev_assist.usage_line(jev_assist.STEP_LEAD).endswith("; nothing to ask")
+
+
+def test_a_step_asked_again_keeps_its_first_failure(master):
+    """TL-4 asks after every rewrite, so one run can ask a step many times. The first
+    failure stays on its line when a later request goes through: the report has to
+    say that a check fell back, whatever came after it."""
+    assert _faith(Failing()) is None
+    assert _faith(jev.FakeJev()) == {"cc_lead": ""}
+    assert _faith(Down()) is None
+    assert jev_assist.usage(jev_assist.STEP_FAITHFULNESS)["requests"] == 1
+    assert jev_assist.usage(jev_assist.STEP_FAITHFULNESS)["note"] == (
+        f"fell back to {_GATE_ALONE} (RuntimeError)")
+
+
+def test_nothing_to_ask_stands_only_while_the_step_has_sent_nothing(master):
+    step = jev_assist.STEP_FAITHFULNESS
+    assert jev_assist.faithfulness([], judge=jev.FakeJev()) is None
+    assert jev_assist.usage(step)["note"] == "nothing to ask"
+    assert _faith(jev.FakeJev()) == {"cc_lead": ""}
+    assert jev_assist.usage(step)["note"] == ""
+    assert jev_assist.faithfulness([{"entry": "Empty", "bullets": []}],
+                                   judge=jev.FakeJev()) is None
+    assert jev_assist.usage(step)["requests"] == 1
+    assert jev_assist.usage(step)["note"] == ""
 
 
 def test_usage_is_counted_per_run_and_per_thread(master):
@@ -474,13 +527,146 @@ def test_lead_group_asks_every_project_in_one_request(master):
     assert got == {"Orbit": (2, 1.0), "Pantry": (2, 1.0)}
 
 
+# ── TL-4 faithfulness ────────────────────────────────────────────────────────
+def test_faithfulness_is_one_request_per_entry_with_three_questions_a_bullet(master):
+    rec = Recording(jev.FakeJev())
+    got = jev_assist.faithfulness([_ACME, _CHESS], judge=rec)
+    assert len(rec.requests) == 2
+    (state, questions), (chess_state, _chess_questions) = rec.requests
+    assert state == {"entry": "Acme Data",
+                     "bullets": [b["text"] for b in _ACME["bullets"]],
+                     "atoms": [b["atoms"] for b in _ACME["bullets"]]}
+    assert chess_state["entry"] == "Chess Club"
+    assert list(questions) == ["supported_0", "inflates_0", "adds_claim_0",
+                               "supported_1", "inflates_1", "adds_claim_1"]
+    assert questions["supported_1"] == {
+        "type": "choice",
+        "instructions": "Do `atoms[1]` state every claim `bullets[1]` makes?",
+        "criteria": {"verified": "The atoms state every claim the bullet makes.",
+                     "unsupported": "The bullet makes a claim the atoms leave out.",
+                     "contradicted": "The bullet makes a claim an atom contradicts."}}
+    assert questions["inflates_1"] == {"type": "noul", "instructions": (
+        'Does `bullets[1]` give the candidate a bigger role, scope or result than '
+        '`atoms[1]` state, such as "led" for "helped"?')}
+    assert questions["adds_claim_1"] == {"type": "noul", "instructions": (
+        "Does `bullets[1]` state a tool, number, outcome or scope that `atoms[1]` "
+        "do not state?")}
+    # The fake reads each faithful bullet as verified at 1.0 and says no to both nouls.
+    assert got == {"ac_sql": "", "ac_dash": "", "cc_lead": ""}
+
+
+def _reads(choice, confidence, inflates, adds):
+    """A judge that picks `choice` at `confidence` and answers the inflation noul
+    with `inflates` and the added-claim noul with `adds`."""
+    return Scripted(noul=lambda state, text: inflates if "bigger role" in text else adds,
+                    choice=choice, confidence=confidence)
+
+
+_F = jev_assist.FINDINGS
+
+
+@pytest.mark.parametrize("choice,confidence,inflates,adds,want", [
+    pytest.param("verified", 0.6, 0.69, 0.69, "", id="verified-at-the-floor-passes"),
+    pytest.param("verified", 0.59, 0.1, 0.1, _F["unconfirmed"], id="verified-under-the-floor"),
+    pytest.param("unsupported", 0.9, 0.1, 0.1, _F["unsupported"], id="unsupported"),
+    # Not verified is flagged at any confidence: only a sure "verified" passes.
+    pytest.param("contradicted", 0.3, 0.1, 0.1, _F["contradicted"], id="contradicted-unsure"),
+    pytest.param("verified", 1.0, 0.7, 0.1, _F["inflates"], id="inflates-at-the-flag"),
+    pytest.param("verified", 1.0, 0.1, 0.7, _F["adds_claim"], id="adds-claim-at-the-flag"),
+    pytest.param("unsupported", 0.8, 0.9, 0.9,
+                 "; ".join([_F["unsupported"], _F["inflates"], _F["adds_claim"]]),
+                 id="every-finding-in-order"),
+])
+def test_faithfulness_flags_by_the_thresholds(master, choice, confidence, inflates, adds, want):
+    got = jev_assist.faithfulness([_CHESS], judge=_reads(choice, confidence, inflates, adds))
+    assert got == {"cc_lead": want}
+
+
+def test_the_thresholds_are_the_specs():
+    assert jev_assist.SUPPORTED_MIN_CONFIDENCE == 0.6
+    assert jev_assist.FAITHFULNESS_FLAG == 0.7
+
+
+class InflationReader:
+    """Reads the planted case the way the live judge is asked to: a bullet that opens
+    with "Led" over atoms that say the candidate helped gives a bigger role. Every
+    other bullet reads as faithful."""
+
+    def __init__(self):
+        self.requests = []
+
+    def judge(self, state, questions):
+        self.requests.append((state, questions))
+        out = {}
+        for qid, q in questions.items():
+            text = q["instructions"]
+            if q["type"] == "choice":
+                out[qid] = jev.Answer(kind="choice", choice="verified",
+                                      probabilities={n: float(n == "verified")
+                                                     for n in q["criteria"]},
+                                      confidence=0.9)
+                continue
+            bullet = _item(state, text, "bullets").lower()
+            atoms = str(_item(state, text, "atoms")).lower()
+            inflated = ("bigger role" in text and bullet.startswith("led ")
+                        and "helped" in atoms)
+            out[qid] = jev.Answer(kind="noul", noul=0.95 if inflated else 0.05)
+        return out
+
+
+def test_a_planted_led_the_team_inflation_is_flagged(master):
+    """The gap `verify.py` documents: "Led the team" over an atom that says the
+    candidate helped carries no distinctive token, so the grounding gate passes it.
+    TL-4 names it."""
+    planted = {"entry": "Acme Data", "bullets": [
+        {"gkey": "ac_sql", "text": "Led the team that wrote SQL reports on warehouse sales data.",
+         "atoms": [{"id": "ac_sql",
+                    "what": "Helped the team write SQL reports on warehouse sales data"}]},
+        _ACME["bullets"][1]]}
+    got = jev_assist.faithfulness([planted], judge=InflationReader())
+    assert got == {"ac_sql": jev_assist.FINDINGS["inflates"], "ac_dash": ""}
+    assert got["ac_sql"] == ("it gives the candidate a bigger role, scope or result "
+                             "than its atoms state")
+
+
+def test_faithfulness_counts_each_request(master):
+    rec = Recording(jev.FakeJev())
+    jev_assist.faithfulness([_ACME, _CHESS], judge=rec)
+    tokens = sum(jev.request_size(s, q)[1] for s, q in rec.requests)
+    assert jev_assist.usage(jev_assist.STEP_FAITHFULNESS)["requests"] == 2
+    assert jev_assist.usage(jev_assist.STEP_FAITHFULNESS)["tokens"] == tokens
+
+
+def test_an_entry_too_big_to_fit_is_split_and_the_findings_line_up(master, monkeypatch):
+    judge = _reads("verified", 1.0, 0.1, 0.1)
+    whole = jev_assist.faithfulness([_ACME], judge=judge)
+    (state, questions), = judge.requests
+    _longest, total = jev.request_size(state, questions)
+    monkeypatch.setattr(jev, "REQUEST_TOKENS_MAX", int(total * 0.8 / jev.SIZE_MARGIN))
+    split = _reads("verified", 1.0, 0.1, 0.1)
+    assert jev_assist.faithfulness([_ACME], judge=split) == whole
+    assert len(split.requests) == 2
+    assert [s["bullets"] for s, _q in split.requests] == [[b["text"]] for b in _ACME["bullets"]]
+    assert all(s["entry"] == "Acme Data" for s, _q in split.requests)
+
+
+def test_faithfulness_with_no_bullets_asks_nothing(master):
+    judge = Failing()
+    assert jev_assist.faithfulness([{"entry": "Empty", "bullets": []}], judge=judge) is None
+    assert judge.calls == 0
+
+
 # ── the wording ──────────────────────────────────────────────────────────────
 def test_every_judge_question_is_free_of_the_banned_phrasing():
     """The questions follow the rules the prompts do: `compose.style_violations`
     finds none of its `_STYLE_BANS` shapes in them, and they carry no em dash
-    (U+2014) and no clause that opens with a comma and "never"."""
+    (U+2014) and no clause that opens with a comma and "never". TL-4's findings
+    count too: they ride in the reground prompt."""
     texts = [jev_assist.SKILL_QUESTION, jev_assist.ATOM_QUESTION, jev_assist.LEAD_QUESTION,
-             jev_assist.FOCUS_QUESTION, *jev_assist.SKILL_FOCUS.values()]
+             jev_assist.FOCUS_QUESTION, *jev_assist.SKILL_FOCUS.values(),
+             jev_assist.SUPPORTED_QUESTION, *jev_assist.SUPPORTED_OPTIONS.values(),
+             jev_assist.INFLATES_QUESTION, jev_assist.ADDS_CLAIM_QUESTION,
+             *jev_assist.FINDINGS.values()]
     for text in texts:
         assert compose.style_violations(text) == [], text
         assert "\u2014" not in text and not re.search(r",\s*never\s", text), text

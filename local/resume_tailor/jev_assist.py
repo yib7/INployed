@@ -1,4 +1,4 @@
-"""The tailor's Jev requests (TL-1 to TL-3).
+"""The tailor's Jev requests (TL-1 to TL-4).
 
 Jev (`local/jev.py`) answers typed questions about a state and writes no text, so
 each helper here asks one kind of question and hands the answers back as data for
@@ -12,20 +12,28 @@ code to compose. The LLM still writes every bullet.
                         probabilities select() shortlists its catalog by.
   lead_group      TL-3  one choice per project over its numbered bullet groups: the
                         overview bullet lead_with_overview moves to the front.
+  faithfulness    TL-4  one request per résumé entry, three questions per bullet
+                        against the atoms it was written from: `supported` (a
+                        choice), `inflates` and `adds_claim` (nouls). A flagged
+                        bullet comes back with its finding, which the run hands to
+                        one reground call before it reverts or drops the bullet.
 
 Every helper takes `judge=`. Left out, it is `jev_switch.client("tailor")`, which is
 None when Jev is off for the tailor. A helper returns None when Jev is off, when
 there is nothing to ask, when a request fails or an answer comes back unusable, and
 once `jev.Guarded`'s breaker is open; its caller then keeps the LLM path it had
 before cycle 19. `run.tailor()` builds one judge per run and hands it to every
-step, so one outage moves the rest of that run to the LLM path (JS-3).
+step, so one outage moves the rest of that run to the LLM path (JS-3). TL-4 has no
+LLM path of its own: without it, the deterministic grounding gate runs alone, as it
+did before cycle 19.
 
 `usage_line(step)` is a step's line in the run report: its requests, their tokens
 and what those cost. The tokens are estimated (`jev.request_size`): the live client
 counts real tokens only for the whole process (`jev.usage()`), and the dashboard
 tailors several jobs at once, one worker thread each. The counts here are kept per
 thread for the same reason, and `run.tailor()` clears them with `reset_usage()` as
-a run starts.
+a run starts. A step can be asked several times in one run (TL-4 after every
+rewrite), and its line sums every request.
 
 `jev` and `jev_switch` live one directory up, in `local/`; they are imported on
 first use, the way `run.py` reaches `jobsdata`.
@@ -48,6 +56,12 @@ log = logging.getLogger(__name__)
 STEP_SKILLS = "skills"
 STEP_SHORTLIST = "shortlist"
 STEP_LEAD = "lead"
+STEP_FAITHFULNESS = "faithfulness"
+
+# What a step's note says its caller fell back to when the step fails.
+LLM_PATH = "the LLM path"
+GATE_ALONE = "the deterministic gate alone"     # TL-4: no LLM path to fall back to
+NOTHING_TO_ASK = "nothing to ask"
 
 # What a helper's `judge` is when the caller passes none: `default_judge()`.
 _DEFAULT: Any = object()
@@ -58,6 +72,12 @@ JD_CHARS = 12_000
 
 # TL-3: a lead Jev picks with a confidence under this keeps file order.
 LEAD_MIN_CONFIDENCE = 0.5
+
+# TL-4: a bullet passes when Jev picks "verified" at this confidence or more and
+# neither noul reaches FAITHFULNESS_FLAG. Any other `supported` pick is flagged,
+# whatever its confidence: only a sure "verified" lets a bullet through.
+SUPPORTED_MIN_CONFIDENCE = 0.6
+FAITHFULNESS_FLAG = 0.7
 
 # The judge questions. A backticked path names a part of the request's state;
 # `{i}` is the item's index there.
@@ -72,6 +92,26 @@ SKILL_FOCUS = {
     "backend_platform": "Backend and platform engineering: services, APIs and infrastructure",
     "data_analytics": "Data analytics: SQL, dashboards and reporting",
     "general": "General software or data work with no single focus",
+}
+# TL-4, asked of each bullet against the atoms it was written from.
+SUPPORTED_QUESTION = "Do `atoms[{i}]` state every claim `bullets[{i}]` makes?"
+SUPPORTED_OPTIONS = {
+    "verified": "The atoms state every claim the bullet makes.",
+    "unsupported": "The bullet makes a claim the atoms leave out.",
+    "contradicted": "The bullet makes a claim an atom contradicts.",
+}
+INFLATES_QUESTION = ('Does `bullets[{i}]` give the candidate a bigger role, scope or result '
+                     'than `atoms[{i}]` state, such as "led" for "helped"?')
+ADDS_CLAIM_QUESTION = ("Does `bullets[{i}]` state a tool, number, outcome or scope that "
+                       "`atoms[{i}]` do not state?")
+# What a flagged bullet's finding says, one clause per check that failed, joined
+# with "; " in this order. The reground prompt names it, and so does the report.
+FINDINGS = {
+    "unsupported": "it states something its atoms leave out",
+    "contradicted": "it states something its atoms contradict",
+    "unconfirmed": "the check could not confirm that its atoms back every claim",
+    "inflates": "it gives the candidate a bigger role, scope or result than its atoms state",
+    "adds_claim": "it states a tool, number, outcome or scope that its atoms do not state",
 }
 
 _RUN = threading.local()
@@ -122,7 +162,9 @@ def _step_counts(step: str) -> Dict[str, Any]:
 def usage(step: str) -> Dict[str, Any]:
     """{"requests", "tokens", "usd", "note"} for `step` in this thread's run. A
     request counts once the judge answers it; `note` says why the step returned
-    None ("nothing to ask", or the failure that sent it back to the LLM path)."""
+    None ("nothing to ask", or the failure that sent it back to the LLM path). A
+    step asked several times keeps its first failure, and "nothing to ask" stands
+    only while the step has sent no request."""
     jev, _switch = _jev_modules()
     counts = (getattr(_RUN, "steps", None) or {}).get(step) or {
         "requests": 0, "tokens": 0, "note": ""}
@@ -150,11 +192,18 @@ def _failure_kind(exc: BaseException) -> str:
     return jev.error_kind(exc)
 
 
-def _run_step(step: str, judge: Any, ask: Callable[[Any], Any]) -> Any:
+def _run_step(step: str, judge: Any, ask: Callable[[Any], Any], *,
+              fallback: str = LLM_PATH) -> Any:
     """`ask(judge)` for one step: None when Jev is off, when there is nothing to
-    ask, and on any failure, with the step's note saying which."""
+    ask, and on any failure, with the step's note saying which. `fallback` names
+    what the caller runs without Jev, for the note and the log.
+
+    The note outlives a later call: the first failure stays put, so a line for a
+    step asked after every rewrite (TL-4) still says a check fell back when a later
+    request went through."""
     counts = _step_counts(step)
-    counts["note"] = ""
+    if counts["note"] == NOTHING_TO_ASK:
+        counts["note"] = ""
     if judge is _DEFAULT:
         judge = default_judge()
     if judge is None:
@@ -162,14 +211,15 @@ def _run_step(step: str, judge: Any, ask: Callable[[Any], Any]) -> Any:
     try:
         return ask(judge)
     except _NothingToAsk:
-        counts["note"] = "nothing to ask"
+        if not counts["note"] and not counts["requests"]:
+            counts["note"] = NOTHING_TO_ASK
     except _Unusable:
-        counts["note"] = "fell back to the LLM path (unusable answer)"
-        log.warning("jev_assist: jev %s got an unusable answer; the LLM path runs", step)
+        counts["note"] = counts["note"] or f"fell back to {fallback} (unusable answer)"
+        log.warning("jev_assist: jev %s got an unusable answer; %s runs", step, fallback)
     except Exception as exc:  # noqa: BLE001 - any judge failure keeps the LLM path
         kind = _failure_kind(exc)
-        counts["note"] = f"fell back to the LLM path ({kind})"
-        log.warning("jev_assist: jev %s failed (%s); the LLM path runs", step, kind)
+        counts["note"] = counts["note"] or f"fell back to {fallback} ({kind})"
+        log.warning("jev_assist: jev %s failed (%s); %s runs", step, kind, fallback)
     return None
 
 
@@ -331,3 +381,72 @@ def lead_group(projects: Sequence[Mapping[str, Any]], *, judge: Any = _DEFAULT
             out[str(p["project"])] = (int(choice), conf)
         return out
     return _run_step(STEP_LEAD, judge, ask)
+
+
+def _finding(supported: str, confidence: float, inflates: float, adds_claim: float) -> str:
+    """TL-4's finding for one bullet: "" when it passes, else one FINDINGS clause per
+    check that failed, joined with "; "."""
+    parts: List[str] = []
+    if supported != "verified":
+        parts.append(FINDINGS[supported])
+    elif confidence < SUPPORTED_MIN_CONFIDENCE:
+        parts.append(FINDINGS["unconfirmed"])
+    if inflates >= FAITHFULNESS_FLAG:
+        parts.append(FINDINGS["inflates"])
+    if adds_claim >= FAITHFULNESS_FLAG:
+        parts.append(FINDINGS["adds_claim"])
+    return "; ".join(parts)
+
+
+def faithfulness(entries: Sequence[Mapping[str, Any]], *, judge: Any = _DEFAULT
+                 ) -> Optional[Dict[str, str]]:
+    """TL-4: does each bullet say only what the atoms it was written from say?
+
+    `entries` is [{"entry": name, "bullets": [{"gkey", "text", "atoms"}]}], one per
+    résumé entry, where `atoms` is the bullet's own atoms as the writer saw them. One
+    request per entry (split only when it would not fit), three questions per bullet:
+    `supported`, a choice of verified / unsupported / contradicted
+    (SUPPORTED_QUESTION); `inflates` (INFLATES_QUESTION) and `adds_claim`
+    (ADDS_CLAIM_QUESTION), nouls. A bullet is flagged when `supported` is not
+    "verified" at SUPPORTED_MIN_CONFIDENCE or more, or either noul reaches
+    FAITHFULNESS_FLAG.
+
+    Returns {gkey: finding}, "" for a bullet that passes (see `_finding`). The check
+    judges and names; it never writes text. None when Jev is off or fails, or no
+    entry has a bullet."""
+    def ask(j: Any) -> Dict[str, str]:
+        asked = [e for e in entries if e.get("bullets")]
+        if not asked:
+            raise _NothingToAsk
+        options = list(SUPPORTED_OPTIONS)
+        out: Dict[str, str] = {}
+        for entry in asked:
+            name = str(entry.get("entry") or "")
+            items = list(entry["bullets"])
+
+            def request(lo: int, hi: int, name: str = name, items: List[Any] = items
+                        ) -> Tuple[Dict[str, Any], Dict[str, dict]]:
+                part = items[lo:hi]
+                state = {"entry": name, "bullets": [str(b["text"]) for b in part],
+                         "atoms": [b.get("atoms") for b in part]}
+                questions: Dict[str, dict] = {}
+                for i in range(len(part)):
+                    questions[f"supported_{i}"] = {
+                        "type": "choice", "instructions": SUPPORTED_QUESTION.format(i=i),
+                        "criteria": dict(SUPPORTED_OPTIONS)}
+                    questions[f"inflates_{i}"] = {
+                        "type": "noul", "instructions": INFLATES_QUESTION.format(i=i)}
+                    questions[f"adds_claim_{i}"] = {
+                        "type": "noul", "instructions": ADDS_CLAIM_QUESTION.format(i=i)}
+                return state, questions
+
+            for lo, hi in _fit_spans(len(items), request):
+                state, questions = request(lo, hi)
+                answers = _send(STEP_FAITHFULNESS, j, state, questions)
+                for i, bullet in enumerate(items[lo:hi]):
+                    supported, conf = _choice_pick(answers.get(f"supported_{i}"), options)
+                    out[str(bullet["gkey"])] = _finding(
+                        supported, conf, _noul_prob(answers.get(f"inflates_{i}")),
+                        _noul_prob(answers.get(f"adds_claim_{i}")))
+        return out
+    return _run_step(STEP_FAITHFULNESS, judge, ask, fallback=GATE_ALONE)

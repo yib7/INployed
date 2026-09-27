@@ -167,10 +167,10 @@ def test_manual_add_work_queues_and_pushes(monkeypatch, tmp_path, win):
                         lambda ids: calls.setdefault("rows", list(ids)))
     monkeypatch.setattr(outbox, "push_outbox",
                         lambda target, log=None: calls.setdefault("push", True) or (1, 0))
-    res = win._manual_add_work({"jd_text": "x"}, {}, do_tailor=False)
+    res = win._manual_add_work({"jd_text": "x"}, {})
     assert calls["rows"] == ["77"]
     assert calls["push"] is True
-    assert res["requested_tailor"] is False
+    assert res["appended"] is True
 
 
 def test_manual_add_work_no_id_skips_rows_but_pushes(monkeypatch, tmp_path, win):
@@ -180,7 +180,7 @@ def test_manual_add_work_no_id_skips_rows_but_pushes(monkeypatch, tmp_path, win)
                         lambda ids: pytest.fail("no id -> no rows outbox write"))
     monkeypatch.setattr(outbox, "push_outbox",
                         lambda target, log=None: calls.setdefault("push", True) or (0, 0))
-    win._manual_add_work({"jd_text": "x"}, {}, do_tailor=False)
+    win._manual_add_work({"jd_text": "x"}, {})
     assert calls == {"push": True}
 
 
@@ -189,5 +189,5 @@ def test_manual_add_work_outbox_error_never_fails_add(monkeypatch, tmp_path, win
     monkeypatch.setattr(outbox, "write_rows_outbox",
                         lambda ids: (_ for _ in ()).throw(RuntimeError("boom")))
     monkeypatch.setattr(outbox, "push_outbox", lambda target, log=None: (0, 0))
-    res = win._manual_add_work({"jd_text": "x"}, {}, do_tailor=False)
-    assert res["requested_tailor"] is False
+    res = win._manual_add_work({"jd_text": "x"}, {})
+    assert res["appended"] is True

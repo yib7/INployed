@@ -1,4 +1,4 @@
-"""jev_assist: the tailor's Jev requests (TL-1 to TL-4 and TL-6).
+"""jev_assist: the tailor's Jev requests (TL-1 to TL-6).
 
 Each helper asks the judge one kind of question and hands Jev's answers back as
 data; its caller composes. The helpers run here against the key-free FakeJev,
@@ -206,9 +206,19 @@ def _verb(judge):
     return jev_assist.pick_verb(_VERB_BULLET, _VERB_OPTIONS, judge=judge)
 
 
+# TL-5's entries: each bullet's text, as the sweep hands them over.
+def _plain(entry):
+    return {"entry": entry["entry"],
+            "bullets": [{"gkey": b["gkey"], "text": b["text"]} for b in entry["bullets"]]}
+
+
+def _sweep(judge):
+    return jev_assist.sweep_flags([_plain(_CHESS)], judge=judge)
+
+
 _HELPERS = [pytest.param(_skills, id="skills_pick"), pytest.param(_atoms, id="atom_relevance"),
             pytest.param(_lead, id="lead_group"), pytest.param(_faith, id="faithfulness"),
-            pytest.param(_verb, id="pick_verb")]
+            pytest.param(_verb, id="pick_verb"), pytest.param(_sweep, id="sweep_flags")]
 
 
 # ── off, default judge, failures ─────────────────────────────────────────────
@@ -227,7 +237,8 @@ def test_every_helper_is_none_and_asks_nothing_when_jev_is_off(master, monkeypat
     assert jev_assist.lead_group(_PROJECTS) is None
     assert jev_assist.faithfulness([_CHESS]) is None
     assert jev_assist.pick_verb(_VERB_BULLET, _VERB_OPTIONS) is None
-    assert areas == ["tailor"] * 5
+    assert jev_assist.sweep_flags([_plain(_CHESS)]) is None
+    assert areas == ["tailor"] * 6
 
 
 def test_the_suite_default_client_is_off(master):
@@ -285,7 +296,9 @@ _GATE_ALONE = "the deterministic gate alone"
     pytest.param(_lead, jev_assist.STEP_LEAD, _LLM_PATH, id="lead_group"),
     # TL-4 has no LLM path to fall back to: without it the grounding gate runs alone.
     pytest.param(_faith, jev_assist.STEP_FAITHFULNESS, _GATE_ALONE, id="faithfulness"),
-    pytest.param(_verb, jev_assist.STEP_VERB, _LLM_PATH, id="pick_verb")])
+    pytest.param(_verb, jev_assist.STEP_VERB, _LLM_PATH, id="pick_verb"),
+    # Without TL-5 the sweep calls the model for every item, as it did before.
+    pytest.param(_sweep, jev_assist.STEP_SWEEP_GATE, _LLM_PATH, id="sweep_flags")])
 def test_a_failure_is_named_by_its_class_only(master, helper, step, fallback, caplog):
     caplog.set_level(logging.WARNING, logger=jev_assist.log.name)
     helper(Failing())
@@ -333,9 +346,10 @@ def test_once_the_breaker_opens_every_later_helper_returns_none(master):
     assert jev_assist.lead_group(_PROJECTS, judge=judge) is None
     assert jev_assist.faithfulness([_CHESS], judge=judge) is None
     assert jev_assist.pick_verb(_VERB_BULLET, _VERB_OPTIONS, judge=judge) is None
+    assert jev_assist.sweep_flags([_plain(_CHESS)], judge=judge) is None
     assert down.calls == tries
     for step in (jev_assist.STEP_SKILLS, jev_assist.STEP_SHORTLIST, jev_assist.STEP_LEAD,
-                 jev_assist.STEP_VERB):
+                 jev_assist.STEP_VERB, jev_assist.STEP_SWEEP_GATE):
         assert "fell back to the LLM path (JudgeOutage _Busy 503)" in jev_assist.usage_line(step)
     assert (f"fell back to {_GATE_ALONE} (JudgeOutage _Busy 503)"
             in jev_assist.usage_line(jev_assist.STEP_FAITHFULNESS))
@@ -718,6 +732,87 @@ def test_the_verb_floor_is_the_specs():
     assert jev_assist.VERB_MIN_CONFIDENCE == 0.5
 
 
+# ── TL-5 sweep_flags ─────────────────────────────────────────────────────────
+_TELLS = ["contrast framing", "stacked adjectives", "filler or vague impact", "hype words",
+          "padded list of three"]
+
+
+def test_sweep_flags_is_one_request_per_entry_with_five_nouls_a_bullet(master):
+    rec = Recording(jev.FakeJev())
+    got = jev_assist.sweep_flags([_plain(_ACME), _plain(_CHESS)], judge=rec)
+    assert len(rec.requests) == 2
+    (state, questions), (chess_state, _chess_questions) = rec.requests
+    assert state == {"entry": "Acme Data", "bullets": [b["text"] for b in _ACME["bullets"]]}
+    assert chess_state["entry"] == "Chess Club"
+    assert list(questions) == [f"{qid}_{i}" for i in range(2)
+                               for qid in ("contrast", "stacked", "filler", "hype", "three")]
+    assert questions["contrast_1"] == {"type": "noul", "instructions": (
+        "Does `bullets[1]` use contrast framing, which defines a thing by what it is not?")}
+    assert questions["stacked_1"]["instructions"] == (
+        "Does `bullets[1]` stack adjectives in front of a noun?")
+    assert questions["filler_1"]["instructions"] == (
+        "Does `bullets[1]` hold filler words or a vague claim of impact?")
+    assert questions["hype_1"]["instructions"] == (
+        "Does `bullets[1]` use hype words or self-praise?")
+    assert questions["three_1"]["instructions"] == (
+        "Does `bullets[1]` pad a list out to three items?")
+    # The fake finds none of the questions' words in these bullets.
+    assert got == {"ac_sql": (), "ac_dash": (), "cc_lead": ()}
+
+
+def test_the_fake_reads_a_tell_by_its_words(master):
+    entry = {"entry": "Chess Club", "bullets": [
+        {"gkey": "cc_lead", "text": "Wrote words of self praise for the club site."}]}
+    assert jev_assist.sweep_flags([entry], judge=jev.FakeJev()) == {"cc_lead": ("hype words",)}
+
+
+@pytest.mark.parametrize("p,want", [pytest.param(0.6, ("hype words",), id="at-the-flag"),
+                                    pytest.param(0.59, (), id="under-the-flag")])
+def test_sweep_flags_flags_at_the_threshold(master, p, want):
+    judge = Scripted(noul=lambda state, text: p if "hype" in text else 0.1)
+    assert jev_assist.sweep_flags([_plain(_CHESS)], judge=judge) == {"cc_lead": want}
+
+
+def test_sweep_flags_names_every_tell_in_order(master):
+    judge = Scripted(noul=lambda state, text: 0.9)
+    assert jev_assist.sweep_flags([_plain(_CHESS)], judge=judge) == {"cc_lead": tuple(_TELLS)}
+
+
+def test_the_sweep_gate_is_the_specs():
+    assert jev_assist.SWEEP_FLAG == 0.6
+    assert list(jev_assist.SWEEP_QUESTIONS) == _TELLS
+
+
+def test_sweep_flags_counts_each_request(master):
+    rec = Recording(jev.FakeJev())
+    jev_assist.sweep_flags([_plain(_ACME), _plain(_CHESS)], judge=rec)
+    tokens = sum(jev.request_size(s, q)[1] for s, q in rec.requests)
+    assert jev_assist.usage(jev_assist.STEP_SWEEP_GATE)["requests"] == 2
+    assert jev_assist.usage(jev_assist.STEP_SWEEP_GATE)["tokens"] == tokens
+
+
+def test_an_entry_too_big_to_fit_is_split_and_the_flags_line_up(master, monkeypatch):
+    def noul(state, text):
+        return 0.9 if "hype" in text and "dashboard" in _item(state, text, "bullets") else 0.1
+
+    whole = Scripted(noul=noul)
+    want = jev_assist.sweep_flags([_plain(_ACME)], judge=whole)
+    assert want == {"ac_sql": (), "ac_dash": ("hype words",)}
+    (state, questions), = whole.requests
+    _longest, total = jev.request_size(state, questions)
+    monkeypatch.setattr(jev, "REQUEST_TOKENS_MAX", int(total * 0.8 / jev.SIZE_MARGIN))
+    split = Scripted(noul=noul)
+    assert jev_assist.sweep_flags([_plain(_ACME)], judge=split) == want
+    assert [s["bullets"] for s, _q in split.requests] == [[b["text"]] for b in _ACME["bullets"]]
+
+
+def test_sweep_flags_with_no_bullets_asks_nothing(master):
+    judge = Failing()
+    assert jev_assist.sweep_flags([{"entry": "Empty", "bullets": []}], judge=judge) is None
+    assert judge.calls == 0
+    assert jev_assist.usage_line(jev_assist.STEP_SWEEP_GATE).endswith("; nothing to ask")
+
+
 # ── the wording ──────────────────────────────────────────────────────────────
 def test_every_judge_question_is_free_of_the_banned_phrasing():
     """The questions follow the rules the prompts do: `compose.style_violations`
@@ -728,7 +823,8 @@ def test_every_judge_question_is_free_of_the_banned_phrasing():
              jev_assist.FOCUS_QUESTION, *jev_assist.SKILL_FOCUS.values(),
              jev_assist.SUPPORTED_QUESTION, *jev_assist.SUPPORTED_OPTIONS.values(),
              jev_assist.INFLATES_QUESTION, jev_assist.ADDS_CLAIM_QUESTION,
-             *jev_assist.FINDINGS.values(), jev_assist.PICK_VERB_QUESTION]
+             *jev_assist.FINDINGS.values(), jev_assist.PICK_VERB_QUESTION,
+             *jev_assist.SWEEP_QUESTIONS.values()]
     for text in texts:
         assert compose.style_violations(text) == [], text
         assert "\u2014" not in text and not re.search(r",\s*never\s", text), text

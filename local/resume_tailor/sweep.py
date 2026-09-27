@@ -23,6 +23,23 @@ cases the code had already named. The findings still ride in the payload, becaus
 they make the repair TARGETED. A free rewrite is how a grounded bullet drifts off
 its atoms, and every guard below exists to make that drift impossible to commit.
 
+**With Jev on, a judge gate (TL-5).** Before the first call,
+``jev_assist.sweep_flags`` reads every bullet the sweep may rewrite for the tells of
+the user's banned patterns (contrast framing, stacked adjectives, filler or vague
+impact, hype words, a list padded out to three), one request per item. An item then
+makes its call only when a bullet carries a tell at ``jev_assist.SWEEP_FLAG`` or
+more, or when a detector finding forces it: an ``itemcheck`` finding of a repaired
+tier, or an ``aiwriting`` phrasing hit. This gate differs from the detector gate
+rejected above. That gate could only send the model the cases the code had already
+named. The judge reads the same judgment-level tells the call exists to catch, so
+gating on its read still sends the model what the detectors cannot see, and its
+flags ride in the payload (each bullet's ``judge_flags``, which
+``_SWEEP_FLAG_RULE`` tells the model to repair) so that repair is targeted too. An
+item the judge reads as clean and no detector flags has nothing for the call to
+repair: the SCOPE rule returns such bullets exactly as they arrived. A P2 finding
+forces nothing while P2 is only reported, because it never reaches the model. With
+Jev off, or when its read fails, every item is swept as above.
+
 **P0 and P1 are repaired. P2 is reported by default.** Only the repaired tiers
 reach the prompt, because a finding the model can see is a finding the model will
 fix; the rest comes back in the result for the run report to print. The P0
@@ -98,7 +115,7 @@ import json
 import logging
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
-from . import aiwriting, compose, config, itemcheck, measure, verify
+from . import aiwriting, compose, config, itemcheck, jev_assist, measure, verify
 from .common import _PRINCIPLE
 from .llm import as_dict, call
 
@@ -143,6 +160,15 @@ class Lingering(NamedTuple):
     names: Tuple[str, ...]
 
 
+class JudgeFlag(NamedTuple):
+    """A bullet Jev read one or more banned-pattern tells in (TL-5), by name
+    (`jev_assist.SWEEP_QUESTIONS`). The flag bought its item a call, and the names
+    rode in that call's payload."""
+    gkey: str
+    item: str
+    names: Tuple[str, ...]
+
+
 class SweepResult(NamedTuple):
     """What SP4's run report is written from.
 
@@ -151,6 +177,10 @@ class SweepResult(NamedTuple):
     ``changed`` alone. ``unfixed_p2`` holds the P2 findings measured on the text
     the sweep leaves behind, which is the honest list: a P1 repair occasionally
     clears a P2 tell on its way past.
+
+    ``skipped`` and ``judge_flags`` come from the judge gate (TL-5): the items whose
+    call it skipped, and the bullets whose tells sent theirs. Both stay empty with
+    Jev off. ``items`` and ``calls`` count only the items that made a call.
     """
     changed: Tuple[str, ...]
     rejected: Tuple[Rejection, ...]
@@ -160,6 +190,8 @@ class SweepResult(NamedTuple):
     calls: int
     items: int
     failures: Tuple[str, ...]
+    skipped: Tuple[str, ...] = ()
+    judge_flags: Tuple[JudgeFlag, ...] = ()
 
 
 # ── the prompts ──────────────────────────────────────────────────────────────
@@ -201,6 +233,19 @@ _SWEEP_SYSTEM = (
     "BANNED PHRASING (a bullet using any of these is wrong): "
     + compose.BANNED_PHRASING + "\n"
     + aiwriting.RESUME_RULES_PROMPT + "\n" + _PRINCIPLE
+)
+
+# TL-5: appended to the system prompt above for an item whose bullets carry Jev's
+# flags, so the call the flags bought knows what to repair. The SCOPE rule hands back
+# a bullet with no finding and no phrasing hit untouched, so without this rule a call
+# made for a flag alone would change nothing. Held to the same rules as the prompts
+# above (tests/test_sweep_gate.py scans it directly). An item with no flag, and every
+# item with Jev off, is sent the system prompt above byte for byte.
+_SWEEP_FLAG_RULE = (
+    "\nJUDGE FLAGS. A bullet may also carry a 'judge_flags' list: tells a judge read "
+    "in that bullet, each one of " + ", ".join(jev_assist.SWEEP_QUESTIONS) + ". "
+    "Treat each flag as part of that bullet's PHRASING list and repair it by the same "
+    "rules."
 )
 
 # The re-ask. Its opening sentence is also what the transport stub in
@@ -334,7 +379,8 @@ def _specs(gkeys: Sequence[str], bullets: Dict[str, str],
 
 
 def _sweep_body(item: str, specs: Sequence[_Spec],
-                findings: Sequence[itemcheck.Finding]) -> Dict[str, Any]:
+                findings: Sequence[itemcheck.Finding],
+                marks: Optional[Dict[str, Tuple[str, ...]]] = None) -> Dict[str, Any]:
     """The item as the model sees it.
 
     Findings are carried at the ITEM level, in full, because each one already
@@ -342,17 +388,25 @@ def _sweep_body(item: str, specs: Sequence[_Spec],
     detector names that touch it, as an index into that list. Repeating a
     finding's whole `detail` under every bullet it spans would triple the prompt
     for one sentence of content.
+
+    `marks` is {gkey: the tells Jev read} for an item Jev flagged (TL-5). Each of its
+    bullets then carries a `judge_flags` list, empty for a bullet Jev read as clean,
+    so the model can tell the two apart. With no mark the key is absent, and the
+    payload is the one the sweep sends with Jev off.
     """
+    out = []
+    for s in specs:
+        bullet: Dict[str, Any] = {"gkey": s.gkey, "text": s.text,
+                                  "findings": list(s.findings), "phrasing": list(s.phrasing)}
+        if marks:
+            bullet["judge_flags"] = list(marks.get(s.gkey, ()))
+        bullet.update({"lines": measure.line_count(s.text), "max_lines": s.target_lines,
+                       "max_chars": s.max_chars, "atoms": s.atoms})
+        out.append(bullet)
     return {
         "item": item,
         "findings": itemcheck.findings_payload(findings),
-        "bullets": [
-            {"gkey": s.gkey, "text": s.text, "findings": list(s.findings),
-             "phrasing": list(s.phrasing),
-             "lines": measure.line_count(s.text), "max_lines": s.target_lines,
-             "max_chars": s.max_chars, "atoms": s.atoms}
-            for s in specs
-        ],
+        "bullets": out,
     }
 
 
@@ -392,6 +446,10 @@ _SWEEP_CLOSING = (
     "every fact and number, keep each opening verb, and stay within each bullet's "
     "'max_chars'."
 )
+# TL-5: the closing for an item whose bullets carry Jev's flags (see _SWEEP_FLAG_RULE).
+_SWEEP_FLAG_CLOSING = (
+    _SWEEP_CLOSING + " Repair the tells named in each bullet's 'judge_flags' too."
+)
 _REASK_CLOSING = (
     "Return each bullet shortened to fit its 'max_chars', keeping every fact and "
     "number the 'original' carried and keeping its opening verb."
@@ -415,10 +473,12 @@ Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<bullet>"}}, ...]}}
 # trace has no way back from a parameter to the constant a caller passed. Naming
 # the constant at the call site is what keeps both prompts inside that scan, and
 # the scan passing vacuously is the exact failure a prior cycle already found once
-# (aiwriting.RULES_PROMPT, invisible for the same reason).
-def _ask_sweep(job_title: str, body: Dict[str, Any]) -> Dict[str, Any]:
-    return as_dict(call(_SWEEP_SYSTEM,
-                        _user_prompt(job_title, body, _SWEEP_CLOSING),
+# (aiwriting.RULES_PROMPT, invisible for the same reason). TL-5's flag variants are
+# chosen inside the call's own arguments for the same reason.
+def _ask_sweep(job_title: str, body: Dict[str, Any], flagged: bool = False) -> Dict[str, Any]:
+    return as_dict(call((_SWEEP_SYSTEM + _SWEEP_FLAG_RULE) if flagged else _SWEEP_SYSTEM,
+                        _user_prompt(job_title, body,
+                                     _SWEEP_FLAG_CLOSING if flagged else _SWEEP_CLOSING),
                         config.TIER_FLASH, json_out=True, temperature=0.2), "bullets")
 
 
@@ -428,14 +488,46 @@ def _ask_reask(job_title: str, body: Dict[str, Any]) -> Dict[str, Any]:
                         config.TIER_FLASH, json_out=True, temperature=0.2), "bullets")
 
 
+# ── the judge gate (TL-5) ────────────────────────────────────────────────────
+def _judge_flags(sel: Dict[str, Any], bullets: Dict[str, str],
+                 judge: Any) -> Optional[Dict[str, Tuple[str, ...]]]:
+    """Jev's read of every bullet the sweep may rewrite, one request per item
+    (`jev_assist.sweep_flags`): {gkey: the tells read, () for a clean bullet}. None
+    with Jev off, or when the read fails, and then every item is swept."""
+    if judge is None:
+        return None
+    # Each live bullet outside a verbatim block, in print order: the bullets `_specs`
+    # builds its specs from.
+    entries = [{"entry": item,
+                "bullets": [{"gkey": gk, "text": bullets[gk]} for gk in gkeys
+                            if gk in bullets and not compose.is_verbatim_gkey(gk)]}
+               for item, gkeys in compose._blocks_in_order(sel)]
+    return jev_assist.sweep_flags(entries, judge=judge)
+
+
+def _gate_skips(specs: Sequence[_Spec], repaired_findings: Sequence[itemcheck.Finding],
+                flags: Dict[str, Tuple[str, ...]]) -> bool:
+    """True when the item's call has nothing to repair: Jev read every bullet and
+    flagged none, and no detector forces the call. A finding of a repaired tier or a
+    phrasing hit forces it, since both reach the model; a bullet missing from
+    `flags` keeps the call too."""
+    if repaired_findings or any(s.phrasing for s in specs):
+        return False
+    return all(s.gkey in flags and not flags[s.gkey] for s in specs)
+
+
 # ── the pass ─────────────────────────────────────────────────────────────────
 def sweep_items(jd: str, job_title: str, sel: Dict[str, Any],
-                bullets: Dict[str, str]) -> SweepResult:
+                bullets: Dict[str, str], *, judge: Any = None) -> SweepResult:
     """Sweep every non-verbatim item for the AI-writing tells that live across its
     bullets, committing only rewrites that pass all five acceptance conditions.
 
     Mutates `bullets` in place and returns what the run report is written from.
     `jd` is accepted and unused; see the note above the prompt constants.
+
+    `judge` is the run's Jev judge, None with Jev off. With one, Jev reads every
+    bullet first and an item makes its call only for a tell or a detector finding
+    (TL-5, "With Jev on, a judge gate" above).
     """
     targets = compose.bullet_line_targets(sel)
     gm = compose.group_map(sel)
@@ -445,9 +537,12 @@ def sweep_items(jd: str, job_title: str, sel: Dict[str, Any],
     unfixed: List[itemcheck.Finding] = []
     lingering: List[Lingering] = []
     failures: List[str] = []
+    skipped: List[str] = []
+    told: List[JudgeFlag] = []
     calls = items = 0
     repaired = ((itemcheck.P1, itemcheck.P2) if config.sweep_p2_enabled()
                 else (itemcheck.P1,))
+    flags = _judge_flags(sel, bullets, judge)
 
     for item, gkeys in compose._blocks_in_order(sel):
         pre = itemcheck.item_findings(item, [(gk, bullets[gk]) for gk in gkeys
@@ -460,12 +555,18 @@ def sweep_items(jd: str, job_title: str, sel: Dict[str, Any],
         specs = _specs(gkeys, bullets, targets, gm, p1)
         if not specs:
             continue
+        if flags is not None and _gate_skips(specs, p1, flags):
+            skipped.append(item)
+            unfixed.extend(f for f in pre if f.tier not in repaired)
+            continue
+        marks = {s.gkey: flags[s.gkey] for s in specs if flags and flags.get(s.gkey)}
+        told.extend(JudgeFlag(gk, item, names) for gk, names in marks.items())
         items += 1
         by_gkey = {s.gkey: s for s in specs}
-        body = _sweep_body(item, specs, p1)
+        body = _sweep_body(item, specs, p1, marks)
         calls += 1
         try:
-            out = _ask_sweep(job_title, body)
+            out = _ask_sweep(job_title, body, flagged=bool(marks))
         except Exception as exc:  # noqa: BLE001 - the sweep is advisory, never fatal
             log.warning("sweep: item %r failed, leaving its bullets as they are: %s",
                         item, exc)
@@ -519,7 +620,8 @@ def sweep_items(jd: str, job_title: str, sel: Dict[str, Any],
                        rejected=tuple(rejected[gk] for gk in sorted(rejected)),
                        reasked=tuple(reasked), unfixed_p2=tuple(unfixed),
                        unfixed_phrasing=tuple(lingering),
-                       calls=calls, items=items, failures=tuple(failures))
+                       calls=calls, items=items, failures=tuple(failures),
+                       skipped=tuple(skipped), judge_flags=tuple(told))
 
 
 def _commit(spec: _Spec, text: Optional[str], bullets: Dict[str, str], item: str,

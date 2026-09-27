@@ -1,4 +1,4 @@
-"""The tailor's Jev requests (TL-1 to TL-4 and TL-6).
+"""The tailor's Jev requests (TL-1 to TL-6).
 
 Jev (`local/jev.py`) answers typed questions about a state and writes no text, so
 each helper here asks one kind of question and hands the answers back as data for
@@ -17,6 +17,11 @@ code to compose. The LLM still writes every bullet.
                         choice), `inflates` and `adds_claim` (nouls). A flagged
                         bullet comes back with its finding, which the run hands to
                         one reground call before it reverts or drops the bullet.
+  sweep_flags     TL-5  one request per résumé entry, one noul per bullet for each
+                        tell of the user's banned patterns (SWEEP_QUESTIONS): the
+                        AI-writing sweep calls the model only for an entry with a
+                        tell at SWEEP_FLAG or more or a detector finding, and names
+                        the tells in that call's payload.
   pick_verb       TL-6  one choice per repeated opening verb, over the palette's
                         unused verbs: dedupe_leading_verbs swaps the bullet's first
                         word for a sure pick and keeps its reverb call otherwise.
@@ -28,7 +33,8 @@ once `jev.Guarded`'s breaker is open; its caller then keeps the LLM path it had
 before cycle 19. `run.tailor()` builds one judge per run and hands it to every
 step, so one outage moves the rest of that run to the LLM path (JS-3). TL-4 has no
 LLM path of its own: without it, the deterministic grounding gate runs alone, as it
-did before cycle 19.
+did before cycle 19. Without TL-5, the sweep calls the model for every item, as it
+did before.
 
 `usage_line(step)` is a step's line in the run report: its requests, their tokens
 and what those cost. The tokens are estimated (`jev.request_size`): the live client
@@ -60,6 +66,7 @@ STEP_SKILLS = "skills"
 STEP_SHORTLIST = "shortlist"
 STEP_LEAD = "lead"
 STEP_VERB = "verb"
+STEP_SWEEP_GATE = "sweep gate"
 STEP_FAITHFULNESS = "faithfulness"
 
 # What a step's note says its caller fell back to when the step fails.
@@ -79,6 +86,10 @@ LEAD_MIN_CONFIDENCE = 0.5
 
 # TL-6: a verb Jev picks with a confidence under this keeps the LLM `reverb` call.
 VERB_MIN_CONFIDENCE = 0.5
+
+# TL-5: a tell Jev reads at this P(yes) or more flags its bullet, and the AI-writing
+# sweep calls the model for the item that holds it.
+SWEEP_FLAG = 0.6
 
 # TL-4: a bullet passes when Jev picks "verified" at this confidence or more and
 # neither noul reaches FAITHFULNESS_FLAG. Any other `supported` pick is flagged,
@@ -113,6 +124,21 @@ INFLATES_QUESTION = ('Does `bullets[{i}]` give the candidate a bigger role, scop
                      'than `atoms[{i}]` state, such as "led" for "helped"?')
 ADDS_CLAIM_QUESTION = ("Does `bullets[{i}]` state a tool, number, outcome or scope that "
                        "`atoms[{i}]` do not state?")
+# TL-5, asked of each bullet before the AI-writing sweep: one question per tell of
+# the user's banned patterns, keyed by the name the sweep payload and the report
+# give it.
+SWEEP_QUESTIONS = {
+    "contrast framing": ("Does `bullets[{i}]` use contrast framing, which defines a thing "
+                         "by what it is not?"),
+    "stacked adjectives": "Does `bullets[{i}]` stack adjectives in front of a noun?",
+    "filler or vague impact": "Does `bullets[{i}]` hold filler words or a vague claim of impact?",
+    "hype words": "Does `bullets[{i}]` use hype words or self-praise?",
+    "padded list of three": "Does `bullets[{i}]` pad a list out to three items?",
+}
+# Each tell's question id in a request: `<id>_<i>` for the bullet at index i.
+_SWEEP_IDS = {"contrast framing": "contrast", "stacked adjectives": "stacked",
+              "filler or vague impact": "filler", "hype words": "hype",
+              "padded list of three": "three"}
 # What a flagged bullet's finding says, one clause per check that failed, joined
 # with "; " in this order. The reground prompt names it, and so does the report.
 FINDINGS = {
@@ -459,6 +485,48 @@ def faithfulness(entries: Sequence[Mapping[str, Any]], *, judge: Any = _DEFAULT
                         _noul_prob(answers.get(f"adds_claim_{i}")))
         return out
     return _run_step(STEP_FAITHFULNESS, judge, ask, fallback=GATE_ALONE)
+
+
+def sweep_flags(entries: Sequence[Mapping[str, Any]], *, judge: Any = _DEFAULT
+                ) -> Optional[Dict[str, Tuple[str, ...]]]:
+    """TL-5: which of the user's banned patterns Jev reads in each bullet, asked
+    before the AI-writing sweep.
+
+    `entries` is [{"entry": name, "bullets": [{"gkey", "text"}]}], one per résumé
+    entry. One request per entry (split only when it would not fit), one noul per
+    tell per bullet (SWEEP_QUESTIONS), bullet by bullet. Returns {gkey: the names of
+    the tells at SWEEP_FLAG or more, in SWEEP_QUESTIONS order}, () for a bullet Jev
+    reads as clean. The sweep calls the model for an item only when one of its
+    bullets has a tell or a detector finding. None when Jev is off or fails, or no
+    entry has a bullet."""
+    def ask(j: Any) -> Dict[str, Tuple[str, ...]]:
+        asked = [e for e in entries if e.get("bullets")]
+        if not asked:
+            raise _NothingToAsk
+        out: Dict[str, Tuple[str, ...]] = {}
+        for entry in asked:
+            name = str(entry.get("entry") or "")
+            items = list(entry["bullets"])
+
+            def request(lo: int, hi: int, name: str = name, items: List[Any] = items
+                        ) -> Tuple[Dict[str, Any], Dict[str, dict]]:
+                part = items[lo:hi]
+                state = {"entry": name, "bullets": [str(b["text"]) for b in part]}
+                questions = {f"{_SWEEP_IDS[tell]}_{i}": {"type": "noul",
+                                                        "instructions": text.format(i=i)}
+                             for i in range(len(part)) for tell, text in SWEEP_QUESTIONS.items()}
+                return state, questions
+
+            for lo, hi in _fit_spans(len(items), request):
+                state, questions = request(lo, hi)
+                answers = _send(STEP_SWEEP_GATE, j, state, questions)
+                for i, bullet in enumerate(items[lo:hi]):
+                    probs = {tell: _noul_prob(answers.get(f"{_SWEEP_IDS[tell]}_{i}"))
+                             for tell in SWEEP_QUESTIONS}
+                    out[str(bullet["gkey"])] = tuple(
+                        tell for tell, p in probs.items() if p >= SWEEP_FLAG)
+        return out
+    return _run_step(STEP_SWEEP_GATE, judge, ask)
 
 
 def pick_verb(bullet: str, options: Mapping[str, str], *, judge: Any = _DEFAULT

@@ -873,6 +873,17 @@ def _report_sweep(ctx: PassCtx, result: sweep.SweepResult, *, stage: str) -> Non
     rep.note(KIND_AIWRITING,
              f"[{stage}] swept {result.items} item(s) in {result.calls} call(s) and "
              f"rewrote {len(result.changed)} bullet(s){reask}")
+    # TL-5, with Jev on. Notes: a skipped call is the gate doing its job, and a flag
+    # only says why a call was made.
+    if result.skipped:
+        rep.note(KIND_AIWRITING,
+                 f"[{stage}] Jev's sweep gate skipped the call for "
+                 f"{len(result.skipped)} item(s) with no tell and no detector finding: "
+                 + ", ".join(result.skipped))
+    for flag in result.judge_flags:
+        rep.note(KIND_AIWRITING,
+                 f"[{stage}] Jev read {', '.join(flag.names)} in bullet '{flag.gkey}' "
+                 f"in '{flag.item}', so that item was sent to the sweep")
     for rejection in result.rejected:
         rep.note(KIND_AIWRITING,
                  f"[{stage}] kept the original of bullet '{rejection.gkey}' in "
@@ -918,10 +929,15 @@ def _pass_aiwriting_sweep(ctx: PassCtx) -> None:
     cannot. `verify.enforce_grounded` reverts a bullet that INTRODUCES a token with no
     trace in its atoms; the sweep's fifth condition rejects one that DROPS a fact the
     original carried. Neither implies the other, so both run.
+
+    With Jev on, the run's judge reads every bullet first, and an item makes its call
+    only for a tell Jev reads or a detector finding (TL-5, the judge gate in
+    `sweep.py`). The gate's usage line is recorded whichever way the pass ends.
     """
     ctx.log("sweeping each résumé item for AI-writing tells…")
     try:
-        result = sweep.sweep_items(ctx.jd, ctx.job_title, ctx.sel, ctx.bullets)
+        result = sweep.sweep_items(ctx.jd, ctx.job_title, ctx.sel, ctx.bullets,
+                                   **_jev_kw(ctx))
     except Exception as exc:  # noqa: BLE001 - phrasing polish never sinks a résumé
         # `sweep_items` guards each item's model call itself, so what reaches here is a
         # defect rather than a flaky transport. It is still caught: by the time this pass
@@ -934,6 +950,9 @@ def _pass_aiwriting_sweep(ctx: PassCtx) -> None:
                             f"[{AIWRITING_SWEEP_STAGE}] skipped ({exc}); every bullet "
                             f"ships as the style gate left it")
         return
+    finally:
+        if ctx.judge is not None and ctx.report is not None:
+            ctx.report.jev_step(jev_assist.STEP_SWEEP_GATE)
     if result.changed:
         ctx.log(f"AI-writing sweep: rewrote {len(result.changed)} bullet(s).")
     _report_sweep(ctx, result, stage=AIWRITING_SWEEP_STAGE)
@@ -1220,8 +1239,9 @@ def tailor(
     When Jev is on for the tailor (`jev_switch.client("tailor")`), one judge serves
     the whole run: it rates the skills and the atoms before `select` (TL-1, TL-2),
     picks each project's lead bullet (TL-3), picks the new verb for each repeated
-    opener (TL-6), and checks each bullet the rephrase and every later rewrite wrote
-    against its atoms (TL-4, `_check_faithfulness`). A step
+    opener (TL-6), reads each bullet for the banned-pattern tells that gate the
+    AI-writing sweep's calls (TL-5), and checks each bullet the rephrase and every
+    later rewrite wrote against its atoms (TL-4, `_check_faithfulness`). A step
     whose request fails keeps its LLM path (TL-4 leaves the grounding gate to stand
     alone), and once the judge's breaker opens every later step does too. Each step's
     usage line goes to `tailor_report.txt` and to the status log.

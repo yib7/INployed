@@ -1,4 +1,4 @@
-"""The tailor's Jev steps (TL-1 to TL-4 and TL-6) as `run.tailor()` meets them.
+"""The tailor's Jev steps (TL-1 to TL-6) as `run.tailor()` meets them.
 
 With Jev off the tailor must make exactly the LLM calls it made before cycle 19,
 with byte-identical prompts. `test_jev_off_prompts_match_the_recording` pins that:
@@ -15,7 +15,8 @@ The rest covers each Jev step where its answer lands (the shortlist and the skil
 in `select`, the lead in `lead_with_overview`, the new verb for a repeated opener in
 `dedupe_leading_verbs`) and whole runs with Jev on, with Jev
 down from the start and with an outage mid-run. The faithfulness check (TL-4) has its
-own module, `test_tailor_faithfulness.py`; the whole runs here count its requests.
+own module, `test_tailor_faithfulness.py`, and so does the sweep gate (TL-5),
+`test_sweep_gate.py`; the whole runs here count their requests.
 
 The runs reuse the golden module's pinned engine (`test_tailor_golden.pinned_engine`),
 so no model is ever reached: its stub raises on any prompt it does not know. Every
@@ -35,7 +36,7 @@ sys.path.insert(0, str(REPO / "local"))
 import jev  # noqa: E402
 import jev_switch  # noqa: E402
 from resume_tailor import (apply_data, assets, compose, config, jev_assist, measure,  # noqa: E402
-                           output, render, selection, skills, verify)
+                           output, render, selection, skills, sweep, verify)
 from resume_tailor import run as rt_run  # noqa: E402
 from resume_tailor.compile import CompileResult  # noqa: E402
 
@@ -665,11 +666,15 @@ def test_a_golden_run_with_jev_on_makes_fewer_llm_calls(pinned_engine, stub_temp
     in either bullet and takes the first option, the repeated verb's category first:
     "Designed", then "Engineered", the verbs the golden's two dedupe arms reach.
 
+    The sweep gate (TL-5) asks once per sweep item (4 requests). FakeJev reads no tell
+    in any golden bullet and no detector fires on them, so all four sweep calls go too:
+    the golden stub only echoed them.
+
     The faithfulness check (TL-4) passes every golden bullet. It asks once per entry
     after the rephrase (4 requests) and once per entry a later pass rewrote: Trailhead
     after the verb dedupe and after the fill, Globex Analytics after the style gate
-    (rc_workshop's change there is the em-dash strip alone). The sweep echoes, so it
-    changes nothing to ask about."""
+    (rc_workshop's change there is the em-dash strip alone). The sweep makes no call,
+    so it changes nothing to ask about."""
     systems: list = []
     golden._install_stub(monkeypatch, _seeing(pinned_engine, systems))
     rec = _Recording(jev.FakeJev())
@@ -687,30 +692,82 @@ def test_a_golden_run_with_jev_on_makes_fewer_llm_calls(pinned_engine, stub_temp
     assert not any("PURE ORDERING" in s for s in systems), "the ordering call ran"
     assert not any("EXACTLY FOUR fixed lines" in s for s in systems), "the fallback ran"
     assert not any("OPENS WITH A DIFFERENT action verb" in s for s in systems), "reverb ran"
+    assert not any("You clean AI-writing tells" in s for s in systems), "the sweep ran"
     assert pinned_engine == [s for s in golden._GOLDEN_STAGES
-                             if s not in ("lead_with_overview", "reverb")]
-    assert len(pinned_engine) == len(golden._GOLDEN_STAGES) - 3
+                             if s not in ("lead_with_overview", "reverb", "aiwriting_sweep")]
+    assert len(pinned_engine) == len(golden._GOLDEN_STAGES) - 7
     assert captured["bullets"] == golden._GOLDEN_BULLETS
     assert gate == [True, False, False, False, False]
     assert captured["skill_lines"] == _JEV_SKILL_LINES
     assert areas == ["tailor"], "one judge per run, handed to every step"
-    assert len(rec.requests) == 3 + 2 + 7
+    assert len(rec.requests) == 3 + 2 + 4 + 7
     verbs = [state["bullet"] for state, questions in rec.requests if "verb" in questions]
     assert verbs == [
         "Built Trailhead, a hiking route planner that ranks trails for a given weather window.",
         "Built a gradient boosting model on 8,400 logged hikes to predict trail difficulty."]
+    reads = [state["entry"] for state, questions in rec.requests if "contrast_0" in questions]
+    assert reads == ["Globex Analytics", "Trailhead", "Ledgerly", "Robotics Club"]
     faith = [state["entry"] for state, questions in rec.requests
              if "supported_0" in questions]
     assert faith == ["Globex Analytics", "Trailhead", "Ledgerly", "Robotics Club",
                      "Trailhead", "Trailhead", "Globex Analytics"]
     report = _report(tmp_path)
-    assert "warnings (0)" in report and "jev (5)" in report
+    assert "warnings (0)" in report and "jev (6)" in report
     for step in ("skills", "shortlist", "lead"):
         assert f"  jev {step}: 1 request, " in report
     assert "  jev verb: 2 requests, " in report
+    assert "  jev sweep gate: 4 requests, " in report
     assert "  jev faithfulness: 7 requests, " in report
     assert "fell back" not in report
+    assert ("[ai writing sweep] swept 0 item(s) in 0 call(s) and rewrote 0 bullet(s)"
+            in report)
+    assert ("[ai writing sweep] Jev's sweep gate skipped the call for 4 item(s) with no "
+            "tell and no detector finding: Globex Analytics, Trailhead, Ledgerly, "
+            "Robotics Club") in report
+    assert "] Jev read " not in report, "no bullet is flagged, so no flag note is written"
     assert "] faithfulness:" not in report, "no bullet is flagged, so no note is written"
+
+
+class _ReadsHype:
+    """FakeJev, except that it reads hype words in the bullet holding `marker`."""
+
+    def __init__(self, marker):
+        self.marker = marker
+        self.fake = jev.FakeJev()
+
+    def judge(self, state, questions):
+        out = self.fake.judge(state, questions)
+        for qid in questions:
+            if qid.startswith("hype_") and self.marker in state["bullets"][int(qid[5:])]:
+                out[qid] = jev.Answer(kind="noul", noul=0.9)
+        return out
+
+
+def test_a_bullet_jev_flags_sends_its_item_to_the_sweep(pinned_engine, stub_template_head,
+                                                        tmp_path, monkeypatch):
+    """TL-5 in a whole run: Jev reads hype words in rc_lead, so Robotics Club alone
+    makes its sweep call, with the flag in its payload and the flag rule in its system
+    prompt. The stub echoes, so the page is the golden's."""
+    stages: list = []
+    calls: list = []
+    golden._install_stub(monkeypatch, _recording(stages, calls))
+    _jev_on(monkeypatch, _ReadsHype("regional finals"))
+    captured = _run_tailor(monkeypatch, tmp_path)
+    sweeps = [c for c in calls if c["stage"] == "aiwriting_sweep"]
+    assert len(sweeps) == 1
+    assert sweeps[0]["system"] == sweep._SWEEP_SYSTEM + sweep._SWEEP_FLAG_RULE
+    assert sweep._SWEEP_FLAG_CLOSING in sweeps[0]["user"]
+    body = golden._item_body(sweeps[0]["user"])
+    assert body["item"] == "Robotics Club"
+    assert {b["gkey"]: b["judge_flags"] for b in body["bullets"]} == {
+        "rc_lead": ["hype words"], "rc_workshop": []}
+    assert captured["bullets"] == golden._GOLDEN_BULLETS
+    report = _report(tmp_path)
+    assert ("[ai writing sweep] Jev read hype words in bullet 'rc_lead' in 'Robotics "
+            "Club', so that item was sent to the sweep") in report
+    assert ("[ai writing sweep] Jev's sweep gate skipped the call for 3 item(s) with no "
+            "tell and no detector finding: Globex Analytics, Trailhead, Ledgerly") in report
+    assert "[ai writing sweep] swept 1 item(s) in 1 call(s) and rewrote 0 bullet(s)" in report
 
 
 def test_jev_down_from_the_start_makes_exactly_the_jev_off_calls(
@@ -724,10 +781,10 @@ def test_jev_down_from_the_start_makes_exactly_the_jev_off_calls(
     assert got == json.loads(PROMPTS.read_text(encoding="utf-8"))
     assert down.calls == len(jev.RETRY_DELAYS_S) + 1
     report = _report(tmp_path)
-    for step in ("skills", "shortlist", "lead", "verb"):
+    for step in ("skills", "shortlist", "lead", "verb", "sweep gate"):
         assert (f"  jev {step}: 0 requests, 0 tokens (estimated), $0.000000; fell back to "
                 "the LLM path (JudgeOutage ServiceDown 503)") in report
-    assert report.count("fell back to the LLM path (JudgeOutage ServiceDown 503)") == 4
+    assert report.count("fell back to the LLM path (JudgeOutage ServiceDown 503)") == 5
     assert report.count("fell back to the deterministic gate alone "
                         "(JudgeOutage ServiceDown 503)") == 1
 
@@ -750,7 +807,7 @@ def test_an_outage_mid_run_moves_the_rest_of_the_run_to_the_llm_path(
     assert _catalog_ids(select_user) == list(assets.atoms_by_id())
     report = _report(tmp_path)
     assert "  jev skills: 1 request, " in report
-    for step in ("shortlist", "lead", "verb"):
+    for step in ("shortlist", "lead", "verb", "sweep gate"):
         assert (f"  jev {step}: 0 requests, 0 tokens (estimated), $0.000000; fell back to "
                 "the LLM path (JudgeOutage ServiceDown 503)") in report
     assert ("  jev faithfulness: 0 requests, 0 tokens (estimated), $0.000000; fell back "
@@ -767,6 +824,30 @@ def test_jev_off_leaves_the_report_and_the_status_log_as_they_were(
     assert not any(s.startswith("jev ") for s in statuses)
 
 
+def test_jev_off_calls_the_gated_stages_as_they_were_called(
+        pinned_engine, stub_template_head, tmp_path, monkeypatch):
+    """With Jev off the verb dedupe and the sweep are called with the signatures they
+    had before cycle 19 (no `judge=`), so a caller or a test double written against
+    those signatures keeps working."""
+    _jev_off(monkeypatch)
+    real_dedupe, real_sweep = compose.dedupe_leading_verbs, sweep.sweep_items
+    seen = []
+
+    def dedupe(bullets, gm, jd, *, reserved=frozenset()):
+        seen.append("dedupe")
+        return real_dedupe(bullets, gm, jd, reserved=reserved)
+
+    def sweep_items(jd, job_title, sel, bullets):
+        seen.append("sweep")
+        return real_sweep(jd, job_title, sel, bullets)
+
+    monkeypatch.setattr(compose, "dedupe_leading_verbs", dedupe)
+    monkeypatch.setattr(sweep, "sweep_items", sweep_items)
+    captured = _run_tailor(monkeypatch, tmp_path)
+    assert seen == ["dedupe", "sweep"]
+    assert captured["bullets"] == golden._GOLDEN_BULLETS
+
+
 def test_the_usage_lines_reach_the_status_log(pinned_engine, stub_template_head,
                                               tmp_path, monkeypatch):
     statuses: list = []
@@ -775,9 +856,10 @@ def test_the_usage_lines_reach_the_status_log(pinned_engine, stub_template_head,
     jev_lines = [s for s in statuses if s.startswith("jev ")]
     assert jev_lines == [jev_assist.usage_line(step) for step in (
         jev_assist.STEP_SKILLS, jev_assist.STEP_SHORTLIST, jev_assist.STEP_LEAD,
-        jev_assist.STEP_VERB, jev_assist.STEP_FAITHFULNESS)]
+        jev_assist.STEP_VERB, jev_assist.STEP_SWEEP_GATE, jev_assist.STEP_FAITHFULNESS)]
     assert [s.split(":")[0] for s in jev_lines] == ["jev skills", "jev shortlist", "jev lead",
-                                                   "jev verb", "jev faithfulness"]
+                                                   "jev verb", "jev sweep gate",
+                                                   "jev faithfulness"]
     report = _report(tmp_path)
     assert all(f"  {line}" in report for line in jev_lines)
 
@@ -793,4 +875,5 @@ def test_each_run_counts_its_own_jev_requests(pinned_engine, stub_template_head,
     for step in ("skills", "shortlist", "lead"):
         assert f"  jev {step}: 1 request, " in report
     assert "  jev verb: 2 requests, " in report
+    assert "  jev sweep gate: 4 requests, " in report
     assert "  jev faithfulness: 7 requests, " in report

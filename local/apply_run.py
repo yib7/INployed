@@ -113,6 +113,7 @@ import apply_form  # noqa: E402
 import apply_judge  # noqa: E402
 import apply_inbox  # noqa: E402
 import apply_linkedin  # noqa: E402
+import apply_pause  # noqa: E402
 import apply_queue  # noqa: E402
 import apply_trace  # noqa: E402
 import apply_verify  # noqa: E402
@@ -3726,10 +3727,15 @@ def generated_count(pages: list[dict]) -> int:
                if g.get("ok") and not g.get("reused"))
 
 
-def _drafts(plan: FillPlan) -> dict[int, str]:
-    """n -> the accepted draft, for every field a generator filled."""
-    return {pf.n: pf.value for pf in plan.fields
-            if pf.fact_key == "needs_generation" and pf.action == "fill"}
+def _drafts(plan: FillPlan, digest: apply_form.FormDigest | None = None) -> dict[int, str]:
+    """n -> the accepted draft, for every field a generator filled, and the
+    person's own text for every field a pause filled whose shape the page
+    does not change (`apply_pause.user_drafts`, SP7): both are checked in
+    code, never against the sheet."""
+    out = {pf.n: pf.value for pf in plan.fields
+           if pf.fact_key == "needs_generation" and pf.action == "fill"}
+    out.update(apply_pause.user_drafts(plan, _shaped(plan, digest)))
+    return out
 
 
 def _same_text(a: str, b: str) -> bool:
@@ -4149,6 +4155,8 @@ def can_submit(plan: FillPlan, verification: list[VerifyResult],
     without an answer (any action other than fill / select / upload), a
     required field unverified, the submit button's confidence. The
     prohibited and captcha flags are recorded only (`apply_judge`'s rule).
+    A field marked `apply_pause.KEPT` holds the person's own value, typed in
+    the browser during a pause (SP7): the run never typed or verifies it.
     A password box still marked `PASSWORD_ACTION` holds the master password:
     `_JobRun._fill_passwords` typed it and checked its length in the page,
     and a required box it could not fill parked the job before the gate. The
@@ -4169,7 +4177,7 @@ def can_submit(plan: FillPlan, verification: list[VerifyResult],
         return False, plan.park_reason
     by_n = {v.n: v for v in verification}
     for pf in plan.fields:
-        if not pf.required or pf.action == apply_judge.PASSWORD_ACTION:
+        if not pf.required or pf.action in (apply_judge.PASSWORD_ACTION, apply_pause.KEPT):
             continue
         if pf.action not in _ACTED:
             # a skip, or a `generate` nobody resolved: the field holds nothing
@@ -4517,6 +4525,9 @@ class _JobRun:
         self.form_had_password = False  # a form page carried a password box, typed or not
         self.handed_off = False         # the page at the gate came from the account step
         self.gen_budget = GENERATE_MAX
+        # the job's pauses for the person (SP7): a question it can ask waits
+        # for the answer in place of a park
+        self.pause = apply_pause.Pauser(self, _Parked)
         self.catalog: apply_facts.FactCatalog | None = None
         self.allowed: set[str] = set()
         self.ats_host = ""
@@ -5735,33 +5746,41 @@ class _JobRun:
                                     company=self._company())
             rec["flags"] = dict(plan.flags)
             self._trace("plan", plan=apply_trace.plan_json(plan))
-            if state == "job_posting":
-                self._job_posting(digest, answers, plan, rec)
-            elif state == "application_form":
-                self._application_form(digest, answers, plan, rec)
-            elif state == "review_page":
-                self._review_page(digest, answers, plan, rec)
-            elif state in ("login_wall", "signup_form"):
-                self._account_step(state, digest)
-            elif state == "code_gate":
-                self._code_gate(digest, plan, rec)
-            elif state == "captcha_or_bot_check":
-                self._wait_for_human_check(
-                    f"{_PARK_STATES[state]} (has_captcha p={plan.flags.get('has_captcha', 0.0):.2f})",
-                    before=marker)
-            else:
-                closed = apply_judge.closed_posting(answers, facts, state)
-                if closed:
-                    # READ-08: a closed posting has its own reason
-                    raise _Parked("needs_human", f"{CLOSED_POSTING_REASON} ({_cap(closed, 160)})",
-                                  apply_linkedin.CLOSED_NOTE)
-                reason = _PARK_STATES.get(state, state)
-                if state == "payment_request":
-                    reason += (f" (page_payment p="
-                               f"{apply_judge.noul_of(answers, 'page_payment'):.2f})")
-                elif state == "other":
-                    reason += self._reads_suffix()
-                raise _Parked("needs_human", reason)
+            try:
+                if state == "job_posting":
+                    self._job_posting(digest, answers, plan, rec)
+                elif state == "application_form":
+                    self._application_form(digest, answers, plan, rec)
+                elif state == "review_page":
+                    self._review_page(digest, answers, plan, rec)
+                elif state in ("login_wall", "signup_form"):
+                    self._account_step(state, digest)
+                elif state == "code_gate":
+                    self._code_gate(digest, plan, rec)
+                elif state == "captcha_or_bot_check":
+                    self._wait_for_human_check(
+                        f"{_PARK_STATES[state]} (has_captcha p={plan.flags.get('has_captcha', 0.0):.2f})",
+                        before=marker)
+                else:
+                    closed = apply_judge.closed_posting(answers, facts, state)
+                    if closed:
+                        # READ-08: a closed posting has its own reason
+                        raise _Parked("needs_human", f"{CLOSED_POSTING_REASON} ({_cap(closed, 160)})",
+                                      apply_linkedin.CLOSED_NOTE)
+                    reason = _PARK_STATES.get(state, state)
+                    if state == "payment_request":
+                        reason += (f" (page_payment p="
+                                   f"{apply_judge.noul_of(answers, 'page_payment'):.2f})")
+                    elif state == "other":
+                        reason += self._reads_suffix()
+                    raise _Parked("needs_human", reason)
+            except apply_pause.Replan as why:
+                # SP7: the person answered a pause in the browser, or the page
+                # changed during it: the page is read and planned again, the
+                # answers kept for it (`apply_pause.Pauser.apply_pending`)
+                self.last_sig = None
+                self._decide("replan", f"the page is read and planned again ({why})")
+                continue
 
     def _reads_suffix(self) -> str:
         reads = self._reads()
@@ -6745,17 +6764,22 @@ class _JobRun:
         missing = [r for r in invalid if r.get("reason") == "valueMissing"] + empty
         if missing:
             label = " ".join(str(missing[0].get("label") or "a field").split())[:80]
-            raise _Parked("needs_human", f"required field without an answer: {label} (the "
-                                         f"{text} button stays disabled after the fill)")
-        if blank:
+            park = _Parked("needs_human", f"required field without an answer: {label} (the "
+                                          f"{text} button stays disabled after the fill)")
+        elif blank:
             # the page wants a box the plan left blank (SP6 review I4): the
             # unanswered fields are the evidence, in the policy's words
             more = f"; also blank: {_cap(', '.join(blank[1:]), 100)}" if blank[1:] else ""
-            raise _Parked("needs_human", f"required field without an answer: {blank[0]} (the "
-                                         f"{text} button stays disabled after the fill{more})")
-        rows = [_invalid_words(r) for r in invalid[:2]]
-        raise _Parked("needs_human", f"the {text} button stays disabled after the fill"
-                                     + (f" ({_cap('; '.join(rows), 220)})" if rows else ""))
+            park = _Parked("needs_human", f"required field without an answer: {blank[0]} (the "
+                                          f"{text} button stays disabled after the fill{more})")
+        else:
+            rows = [_invalid_words(r) for r in invalid[:2]]
+            park = _Parked("needs_human", f"the {text} button stays disabled after the fill"
+                                          + (f" ({_cap('; '.join(rows), 220)})" if rows else ""))
+        # SP7: the person fixes the page in the browser (or answers its blank
+        # fields in the card) and the page is read again; no answer parks
+        self.pause.at_disabled(digest, plan, park.reason)
+        raise park
 
     # -- the same control after a repair (SP6 review I2) ---------------------------------------
 
@@ -7068,7 +7092,7 @@ class _JobRun:
                 hint = " ".join(str(p.get("text") or "") for p in named[n])
                 fixed.append(apply_fill.repair(self.page, pf, hint))
             self._trace_fill(FillPlan(fields=[by_pf[n] for n in typed]), fixed, [], retry=True)
-            again = {v.n: v for v in self._verify(fixed, _drafts(plan), _picks(plan),
+            again = {v.n: v for v in self._verify(fixed, _drafts(plan, digest), _picks(plan),
                                                   _shaped(plan, digest))}
             self._last_filled.update({f.n: f for f in fixed})
             verification = [again.get(v.n, v) for v in verification]
@@ -7319,16 +7343,23 @@ class _JobRun:
 
     def _fill_and_verify(self, digest: apply_form.FormDigest, plan: FillPlan,
                          rec: dict) -> list[VerifyResult]:
+        # SP7: the person's answers kept for this page go in first; a park the
+        # person can answer pauses the job (`apply_pause.Pauser`), and parks
+        # as before when no answer comes
+        self.pause.apply_pending(digest, plan)
         self._resolve_generation(digest, plan, rec)
+        if plan.park_reason:
+            self.pause.at_plan(digest, plan)
         for question, context in plan.missing:
-            self._add_missing(question, context)
+            self._add_missing(question, context, digest)
         if plan.park_reason:
             raise _Parked("needs_human", plan.park_reason)
         # the text boxes the plan leaves alone, as they read before the fill:
         # one the page writes into during the fill (a resume parser's guess)
-        # is checked after it (`_page_writes`, FILL-03)
+        # is checked after it (`_page_writes`, FILL-03); a box holding the
+        # person's own value (`apply_pause.KEPT`) is theirs
         idle = [pf for pf in plan.fields if pf.action not in _ACTED
-                and pf.action != apply_judge.PASSWORD_ACTION
+                and pf.action not in (apply_judge.PASSWORD_ACTION, apply_pause.KEPT)
                 and _typed_box(digest, pf.n)]
         try:
             idle_before = apply_form.box_values(self.page, [pf.locator for pf in idle])
@@ -7341,16 +7372,22 @@ class _JobRun:
                                   errors=errors, outcomes=outcomes)
         self._trace_fill(plan, filled, errors, outcomes=outcomes)
         rec.setdefault("fill_outcomes", []).extend(outcomes)
-        tied = self._option_ties(plan, errors)
+        tied = self._option_ties(plan, errors, ask_required=False)
         filled = [f for f in filled if f.n not in tied]
+        # SP7: a required field left with no option pauses for the person's pick
+        filled += self.pause.at_tie(digest, plan, tied)
         locators = {pf.n: pf.locator for pf in plan.fields}
         self._filled_here += [locators[f.n] for f in filled
                               if f.n in locators and str(f.value or "").strip()]
+        self._filled_here += apply_pause.kept_locators(plan)
         self._filled_any = self._filled_any or bool(self._filled_here)
         if _fills_the_application(digest, plan, filled):
             self.form_filled = True
+        for pf in plan.fields:
+            if pf.n in tied and pf.required:
+                self._add_missing(pf.label, tied[pf.n], digest)
         self._park_a_required_tie(plan, tied)
-        drafts = _drafts(plan)
+        drafts = _drafts(plan, digest)
         shaped = _shaped(plan, digest)
         verification = self._verify(filled, drafts, _picks(plan), shaped)
         verification = self._retry_failed(plan, filled, verification, drafts, shaped)
@@ -7446,7 +7483,7 @@ class _JobRun:
         again = apply_fill.apply(self.page, FillPlan(fields=changed), deadline=self.deadline,
                                  clock=self.r.clock, errors=errors)
         self._trace_fill(FillPlan(fields=changed), again, errors, retry=True)
-        results = {v.n: v for v in self._verify(again, _drafts(plan), _picks(plan),
+        results = {v.n: v for v in self._verify(again, _drafts(plan, digest), _picks(plan),
                                                 _shaped(plan, digest))}
         self._last_filled.update({f.n: f for f in again})
         verification = [results.get(v.n, v) for v in verification]
@@ -7858,14 +7895,17 @@ class _JobRun:
                 if note:
                     plan.park_reason += f"; {note}"
 
-    def _option_ties(self, plan: FillPlan, errors: list[dict]) -> dict[int, str]:
+    def _option_ties(self, plan: FillPlan, errors: list[dict], *,
+                     ask_required: bool = True) -> dict[int, str]:
         """The fields left with no option chosen, each with the words for
         why: the options tie on the planned answer (`apply_fill.OptionTie`,
         final review B R2 M2: the options that hold it differ in meaning), or
         a list whose options were never read ahead holds no option code
         matches to the answer (`apply_fill.OptionsUnread`, cycle 18 FM-2).
         Each is an open question for the person; the caller parks a required
-        one and leaves an optional one blank, out of the verification."""
+        one and leaves an optional one blank, out of the verification.
+        `ask_required` off leaves a required one's missing entry to the caller
+        (the form's fill asks the person first, SP7)."""
         why = {apply_fill.OptionTie.__name__: OPTION_TIE_WORDS,
                apply_fill.OptionsUnread.__name__: OPTIONS_UNREAD_WORDS}
         tied = {e.get("n"): why[e.get("error")] for e in errors if e.get("error") in why}
@@ -7880,7 +7920,8 @@ class _JobRun:
                 self._decide("options_unread", f"the options of {pf.label!r} could not be "
                                                f"read and none is the answer: none was chosen",
                              fields=[pf.label])
-            self._add_missing(pf.label, tied[pf.n])
+            if ask_required or not pf.required:
+                self._add_missing(pf.label, tied[pf.n])
         return tied
 
     def _clear_wrong_optional(self, plan: FillPlan, verification: list[VerifyResult],
@@ -7923,9 +7964,41 @@ class _JobRun:
             raise _Parked("needs_human", f"required field without an answer: "
                                          f"{required[0].label} ({tied[required[0].n]})")
 
-    def _add_missing(self, question: str, context: str) -> None:
-        self.missing.append({"question": question, "context": context, "suggestion": ""})
-        apply_queue.add_missing(self.job_id, question, context=context, path=self.r.queue_path)
+    def _add_missing(self, question: str, context: str,
+                     digest: apply_form.FormDigest | None = None) -> None:
+        """One missing answer for the queue entry; with `digest`, the field's
+        help, live options and answer type go with it (PR-7), so Answer now
+        opens Add answer prefilled with them."""
+        f = next((x for x in digest.fields if x.label == question), None) \
+            if digest is not None else None
+        extra: dict[str, Any] = {}
+        if f is not None:
+            extra = {"help": f.help or "", "options": [str(o) for o in f.options],
+                     "type": apply_facts.answer_type(f.type, f.options)}
+        self.missing.append({"question": question, "context": context, "suggestion": "",
+                             **extra})
+        apply_queue.add_missing(self.job_id, question, context=context, path=self.r.queue_path,
+                                **extra)
+
+    def _pause_reload(self) -> None:
+        """After a pause saved an answer (PR-6): the store read again and the
+        facts rebuilt from it, the entry's own PDFs kept. A store that no
+        longer reads keeps the answers the run had."""
+        from resume_tailor import apply_answers
+        try:
+            answers = apply_answers.load()
+        except apply_answers.AnswerStoreError as e:
+            self.log.warning("job %s: the answer store did not read after the save (%s)",
+                             self.job_id, type(e).__name__)
+            return
+        self.r.answers = answers
+        old = self.catalog
+        if self.folder is None or old is None:
+            return
+        self.catalog = apply_facts.build(self.folder, answers=answers)
+        for key in ("resume_file", "cover_letter_file"):
+            if key in old.facts and key in self.catalog.facts:
+                self.catalog.facts[key] = old.facts[key]
 
     def _verify(self, filled: list[apply_fill.Filled],
                 drafts: Mapping[int, str] | None = None,

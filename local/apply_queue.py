@@ -442,16 +442,27 @@ def update(job_id: str, path: Optional[Path] = None, *,
 
 
 def add_missing(job_id: str, question: str, context: str = "",
-                suggestion: str = "", path: Optional[Path] = None
+                suggestion: str = "", path: Optional[Path] = None, *,
+                help: str = "", options: Any = (), type: str = ""
                 ) -> Dict[str, Any]:
     """Append one missing-answer item ({question, context, suggestion}) — the
-    agent's "this form asked something the answer store can't cover" report."""
+    agent's "this form asked something the answer store can't cover" report.
+    The field's `help`, live `options` and answer `type` go with it when the
+    run knows them (SP7, PR-7): Answer now opens Add answer prefilled with
+    them."""
+    item: Dict[str, Any] = {"question": str(question), "context": str(context or ""),
+                            "suggestion": str(suggestion or "")}
+    if help:
+        item["help"] = str(help)
+    shown = [str(o) for o in options or () if str(o).strip()]
+    if shown:
+        item["options"] = shown
+    if type:
+        item["type"] = str(type)
     with locked(path):
         data = load(path, quarantine=True)   # under locked(): may rename aside
         e = _find(data, job_id)
-        e["missing_answers"].append({"question": str(question),
-                                     "context": str(context or ""),
-                                     "suggestion": str(suggestion or "")})
+        e["missing_answers"].append(item)
         e["updated_at"] = _now()
         _save(data, path)
         return dict(e)

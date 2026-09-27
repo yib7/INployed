@@ -895,3 +895,64 @@ def test_only_the_real_column_reads_the_recording_day(tmp_path, monkeypatch):
         assert apply_run.apply_facts.build(folder).value("today") == later.isoformat()
     with h.hermetic(tmp_path, today=jev_harness.RECORDED_TODAY):
         assert apply_run.apply_facts.build(folder).value("today") == "2026-09-25"
+
+
+# --- cycle 19 SP7: a person's answer to a pause, and a sensitive field --------------------------
+
+_PAUSED_ON = "http://127.0.0.1/forms/pause_form.html"
+
+
+@pytest.mark.parametrize("plant, code", [
+    ("right_field", None),
+    ("another_field", "USER-ANSWER-ELSEWHERE"),
+    ("another_page", "USER-ANSWER-ELSEWHERE"),
+    ("sensitive_typed", "SENSITIVE-TYPED"),
+    ("sensitive_answer_typed", "SENSITIVE-ANSWER-TYPED")])
+def test_a_pause_answer_invariant_fails_on_its_planted_breach(plant, code):
+    rec, sends = _clean()
+    rec.actions += [h.Action("click", "http://127.0.0.1/forms/a.html", text="Continue"),
+                    h.Action("gate", "http://127.0.0.1/forms/a.html", in_gate=True)]
+    rec.user_values["Datalog 2.0 (user)"] = ("favourite_query_language", _PAUSED_ON)
+    rec.sensitive_values.add("11/11/1911")
+    name, url, value = "favourite_query_language", _PAUSED_ON, "Datalog 2.0 (user)"
+    if plant == "another_field":
+        name = "org"
+    elif plant == "another_page":
+        url = "http://127.0.0.1/forms/next_step.html"
+    elif plant == "sensitive_typed":
+        name, value = "date_of_birth", "01/01/2000"
+    elif plant == "sensitive_answer_typed":
+        name, value = "comments", "11/11/1911"
+    rec._add("fill", "Locator.fill", {"url": url, "tag": "input", "name": name}, value=value)
+    breaks = h.invariant_breaks(_Out(), rec, sends)
+    if code is None:
+        assert breaks == []
+    else:
+        assert code in _codes(breaks), breaks
+
+
+def test_the_pause_responder_answers_as_the_card_does(tmp_path, monkeypatch):
+    import time
+
+    import apply_pause
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    rec, _ = _clean()
+    spec = h.PauseSpec("fill", (("query language", "Datalog 2.0 (user)"),
+                                ("date of birth", "11/11/1911")), save=("query language",))
+    questions = [{"key": "3", "field_id": "favourite_query_language",
+                  "label": "What is your favourite query language?", "sensitive": False},
+                 {"key": "5", "field_id": "date_of_birth", "label": "Date of birth",
+                  "sensitive": True}]
+    with h.PauseResponder(spec, rec, poll_s=0.01):
+        apply_pause.write_request({"job_posting_id": "42"}, _PAUSED_ON, "r", questions,
+                                  pause_id="p")
+        for _ in range(500):
+            if apply_pause.answer_path("42").exists():
+                break
+            time.sleep(0.01)
+    answer = apply_pause.read_answer("42", "p")
+    assert answer["mode"] == "fill"
+    assert answer["values"] == {"3": "Datalog 2.0 (user)", "5": "11/11/1911"}
+    assert answer["save"] == {"3": True}
+    assert rec.user_values == {"Datalog 2.0 (user)": ("favourite_query_language", _PAUSED_ON)}
+    assert rec.sensitive_values == {"11/11/1911"}

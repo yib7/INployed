@@ -728,3 +728,91 @@ def test_a_field_named_only_by_its_label_is_never_parked_on(_browser, flow_serve
     assert not r.breaks and r.sends == 0, r.breaks
     assert "Badge number" not in r.reason, r.reason
     assert any(d.get("by_label") for d in _decisions(r) if d["what"] == "errors_mapped")
+
+
+# === cycle 19 SP7: the pauses after the fill (a way on still disabled, an option tie) ====================
+
+def test_a_still_disabled_way_on_pauses_and_the_answer_goes_in_on_the_page_read_again(
+        _browser, flow_server, tmp_path):
+    # the person answers the blank field in the card; the page is read and
+    # planned again, the answer goes in its own field, and the button enables
+    import dataclasses
+    f = dataclasses.replace(h.flow("lever_single_park"), name="stays_disabled_pause",
+                            start="https://careers.fabrikam.example/apply/42", wrap=_LeavesBlank,
+                            routes=lambda base: {"https://careers.fabrikam.example/**":
+                                                 _STAYS_DISABLED},
+                            pause=h.PauseSpec("fill", (("referral code", "FRIEND-7"),)))
+    r = h.run_flow(f, jev.FakeJev(), "fake", browser=_browser, server=flow_server,
+                   workdir=tmp_path)
+    assert not r.breaks, r.breaks
+    assert r.status == "ready_to_submit", (r.status, r.reason)
+    decided = [d["what"] for d in _decisions(r)]
+    for what in ("still_disabled", "pause", "pause_resume", "replan", "pause_answer"):
+        assert what in decided, (what, decided)
+    typed = [a for a in r.actions if a.kind == "fill" and a.user == "FRIEND-7"]
+    assert [a.name for a in typed] == ["referral"], [(a.name, a.url) for a in typed]
+
+
+def test_a_still_disabled_way_on_parks_as_before_when_no_answer_comes(
+        _browser, flow_server, tmp_path):
+    import dataclasses
+    f = dataclasses.replace(h.flow("lever_single_park"), name="stays_disabled_timeout",
+                            start="https://careers.fabrikam.example/apply/42", wrap=_LeavesBlank,
+                            routes=lambda base: {"https://careers.fabrikam.example/**":
+                                                 _STAYS_DISABLED},
+                            pause=h.PauseSpec("timeout"))
+    r = h.run_flow(f, jev.FakeJev(), "fake", browser=_browser, server=flow_server,
+                   workdir=tmp_path)
+    assert not r.breaks, r.breaks
+    assert (r.status, r.reason) == (
+        "needs_human", "required field without an answer: Referral code (the Submit "
+                       "application button stays disabled after the fill)")
+    assert "pause_timeout" in [d["what"] for d in _decisions(r)]
+
+
+_TIED = """<!doctype html><html><head><title>Apply</title></head><body>
+<h1>Analytics Engineer</h1><form id="f">
+<label>Full name * <input name="name" required></label>
+<label>Email * <input type="email" name="email" required></label>
+<label>Are you legally authorized to work in the United States? *
+  <select name="work_auth" required><option value="">Select...</option>
+    <option>Yes</option><option>No</option></select></label>
+<button type="submit" id="btn-submit">Submit application</button></form>
+<script>
+  document.getElementById('f').addEventListener('submit', (e) => { e.preventDefault();
+    document.body.dataset.submitted = 1; });
+</script></body></html>"""
+
+
+def test_a_required_option_tie_pauses_and_the_persons_pick_goes_in_on_the_spot(
+        _browser, flow_server, tmp_path, monkeypatch):
+    # the first fill reports the list's options as tied on the answer
+    # (`apply_fill.OptionTie`); the pause asks, and the pick goes in with no replan
+    import dataclasses
+    real = apply_fill.apply
+    tied: list[str] = []
+
+    def _ties_once(page, plan, **kw):
+        pf = next((p for p in plan.fields if p.label.startswith("Are you legally")
+                   and p.action == "select"), None)
+        if pf is None or tied:
+            return real(page, plan, **kw)
+        tied.append(pf.label)
+        kw.get("errors", []).append({"n": pf.n, "label": pf.label, "error": "OptionTie"})
+        return real(page, dataclasses.replace(plan, fields=[p for p in plan.fields
+                                                            if p is not pf]), **kw)
+    monkeypatch.setattr(apply_fill, "apply", _ties_once)
+    f = dataclasses.replace(h.flow("lever_single_park"), name="tie_pause",
+                            start="https://careers.fabrikam.example/apply/42",
+                            routes=lambda base: {"https://careers.fabrikam.example/**": _TIED},
+                            pause=h.PauseSpec("fill", (("legally authorized", "Yes"),)))
+    r = h.run_flow(f, jev.FakeJev(), "fake", browser=_browser, server=flow_server,
+                   workdir=tmp_path)
+    assert tied, "the tie was never planted"
+    assert not r.breaks, r.breaks
+    assert r.status == "ready_to_submit", (r.status, r.reason)
+    decided = [d["what"] for d in _decisions(r)]
+    assert "option_tie" in decided and "pause_resume" in decided, decided
+    assert "replan" not in decided, decided
+    picked = [a for a in r.actions if a.kind == "pick" and a.user == "Yes"]
+    assert [a.name for a in picked] == ["work_auth"], [(a.name, a.url) for a in picked]

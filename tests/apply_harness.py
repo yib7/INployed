@@ -37,7 +37,13 @@ Parts (the matrix test, `scripts/apply_matrix.py` and later phases use them):
   Apply control (its text or aria-label); the master password nowhere in the
   record, the trace, the queue or the logs; nothing typed, ticked or picked
   in a read-only box or a honeypot (SP5). A flow that must end before any
-  page opens (`Flow.opens_no_page`) is checked for that too.
+  page opens (`Flow.opens_no_page`) is checked for that too. Cycle 19 SP7
+  (park and resume): a person's answer to a pause goes only into its own
+  field, on the page the run paused on, and code never types into a
+  sensitive field (a date of birth, an SSN).
+- `PauseSpec` / `PauseResponder`: a pause flow's answer (`Flow.pause`), given
+  from a thread as the dashboard's "Waiting for you" card gives it: the
+  answer file in `apply_pause.pause_dir()`.
 - `run_flow` / `run_matrix` / `summary`: one flow under one judge, the whole
   registry under many, and the table with success rates.
 
@@ -712,6 +718,113 @@ _CHALLENGE_STUB = ("<!doctype html><html><body><p>Select every image with a bus<
 
 
 @dataclass(frozen=True)
+class PauseSpec:
+    """How a pause flow's person answers (cycle 19, SP7): `mode` is "fill",
+    "browser" or "park", or "timeout" (no answer comes); `values` are
+    (words of the question's label, the value) pairs; `save` names the
+    labels whose value is kept for future runs."""
+    mode: str
+    values: tuple[tuple[str, str], ...] = ()
+    save: tuple[str, ...] = ()
+
+    def answer(self, request: dict) -> tuple[str, dict[str, str], dict[str, bool]]:
+        values: dict[str, str] = {}
+        save: dict[str, bool] = {}
+        for q in request.get("questions") or []:
+            label = str(q.get("label") or "").lower()
+            for words, value in self.values:
+                if words.lower() in label:
+                    values[str(q["key"])] = value
+                    break
+            if any(words.lower() in label for words in self.save):
+                save[str(q["key"])] = True
+        return self.mode, values, save
+
+
+class PauseResponder:
+    """Answers the run's pauses from a thread as the dashboard's card does:
+    each request that lands in `apply_pause.pause_dir()` gets the answer
+    `spec` gives (`PauseSpec.answer`), written with `apply_pause.write_answer`.
+    With a `recorder`, every value given is noted with the field it answers
+    and the page the run paused on (the SP7 invariants), before the answer
+    file lands."""
+
+    def __init__(self, spec: PauseSpec, recorder: Recorder | None = None, *,
+                 poll_s: float = 0.05):
+        self.spec = spec
+        self.recorder = recorder
+        self.poll_s = poll_s
+        self.requests: list[dict] = []
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="pause-responder", daemon=True)
+
+    def start(self) -> "PauseResponder":
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=5)
+
+    def __enter__(self) -> "PauseResponder":
+        return self.start()
+
+    def __exit__(self, *exc) -> None:
+        self.stop()
+
+    def _run(self) -> None:
+        import apply_pause
+        seen: set[str] = set()
+        while not self._stop.is_set():
+            for req in apply_pause.pending_requests():
+                pid = str(req.get("pause_id") or "")
+                if pid in seen:
+                    continue
+                seen.add(pid)
+                self.requests.append(req)
+                mode, values, save = self.spec.answer(req)
+                if self.recorder is not None:
+                    for q in req.get("questions") or []:
+                        value = values.get(str(q["key"]))
+                        if not value:
+                            continue
+                        if q.get("sensitive"):
+                            self.recorder.sensitive_values.add(value)
+                        else:
+                            self.recorder.user_values[value] = (str(q.get("field_id") or ""),
+                                                                str(req.get("page_url") or ""))
+                apply_pause.write_answer(req["job"], mode, values, save, pause_id=pid)
+            self._stop.wait(self.poll_s)
+
+
+@contextmanager
+def pausing(rundir: Path, spec: PauseSpec | None, recorder: Recorder | None = None):
+    """A pause flow's run: the pause folder in `rundir`, pauses on (the
+    suite's `apply_pause.NEVER_WAIT` off), a short poll, a minute of one
+    second for the timeout flow, and the responder answering. Yields the
+    `auto_apply_pause_minutes` the run takes: 0 (no pause) with no `spec`."""
+    import apply_pause
+    if spec is None:
+        yield 0
+        return
+    p = Patches()
+    responder = None
+    try:
+        p.setenv("LOCALAPPDATA", str(Path(rundir) / "appdata"))
+        p.setattr(apply_pause, "NEVER_WAIT", False)
+        p.setattr(apply_pause, "POLL_S", 0.05)
+        if spec.mode == "timeout":
+            p.setattr(apply_pause, "SECONDS_PER_MINUTE", 1.0)
+        else:
+            responder = PauseResponder(spec, recorder).start()
+        yield 1 if spec.mode == "timeout" else 10
+    finally:
+        if responder is not None:
+            responder.stop()
+        p.undo()
+
+
+@dataclass(frozen=True)
 class Flow:
     """One flow of the registry (see the module docstring)."""
     name: str
@@ -762,6 +875,9 @@ class Flow:
     # read, so a reworded question the saved answers settle parks under the
     # fake and its noisy seeds and fills under the real judge
     real_end: tuple[str, str] = ()
+    # cycle 19 SP7: the run pauses on a question it can ask, and this is how
+    # the person answers (`PauseSpec`); None: the run never pauses
+    pause: PauseSpec | None = None
 
     def start_url(self, base: str) -> str:
         return self.start if "://" in self.start else f"{base}/forms/{self.start}"
@@ -1331,6 +1447,39 @@ FLOWS: tuple[Flow, ...] = (
          covers="a sign-in form sent with method=get, whose next page's query carries the "
                 "password: the trace keeps each URL without its query, so PASSWORD-LEAK "
                 "covers it (final review C-M1)"),
+    # cycle 19 SP7 (park and resume): two required questions no saved answer
+    # holds pause the run; the person's answers go in and the run goes on
+    Flow("pause_fill", "pause_form.html", True, "submitted", _SUBMITTED,
+         confirm="#thanks:visible", recorded=False,
+         pause=PauseSpec("fill", (("query language", "Datalog 2.0 (user)"),
+                                  ("preferred team", "Platform"),
+                                  ("conference talks", "37"))),
+         covers="a pause answered in the card: each value in its own field, then the submit"),
+    Flow("pause_browser", "pause_form.html?browser=1", True, "submitted", _SUBMITTED,
+         confirm="#thanks:visible", recorded=False, pause=PauseSpec("browser"),
+         covers="a pause the person finishes in the browser: the page read again, their "
+                "values kept, then the submit"),
+    Flow("pause_changed_page", "pause_form.html?grow=1", True, "submitted", _SUBMITTED,
+         confirm="#thanks:visible", recorded=False,
+         pause=PauseSpec("fill", (("query language", "Datalog 2.0 (user)"),
+                                  ("preferred team", "Platform"),
+                                  ("conference talks", "37"))),
+         covers="a page that changed during the pause: read and planned again before any "
+                "fill, the answers put in on the new plan"),
+    Flow("pause_sensitive", "pause_form.html?dob=1", True, "submitted", _SUBMITTED,
+         confirm="#thanks:visible", recorded=False,
+         pause=PauseSpec("fill", (("query language", "Datalog 2.0 (user)"),
+                                  ("preferred team", "Platform"),
+                                  ("conference talks", "37"),
+                                  ("date of birth", "11/11/1911"))),
+         covers="a required date of birth the person types in the browser: code never "
+                "types it, the value an answer gives for it is ignored"),
+    Flow("pause_timeout", "pause_form.html", True, "needs_human",
+         r"^required field without an answer: ", recorded=False, pause=PauseSpec("timeout"),
+         covers="no answer in time: the job parks as it did before SP7"),
+    Flow("pause_park", "pause_form.html", True, "needs_human",
+         r"^required field without an answer: ", recorded=False, pause=PauseSpec("park"),
+         covers="Park it: the job parks as it did before SP7"),
 )
 
 
@@ -1485,7 +1634,8 @@ _LIVE_JS = r"""el => {
   return {text: text, role: role, tag: tag, type: type, toggle: toggle,
           aria: (el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim().slice(0, 160),
           form: !!(el.form || (el.closest && el.closest('form'))),
-          url: String(el.ownerDocument.location.href), junk: junk};
+          url: String(el.ownerDocument.location.href), junk: junk,
+          name: el.getAttribute('name') || el.id || ''};
 }"""
 # The focused element of a frame's document, for a key press or typed text
 # without a target; `frame: true` when the focus sits in a child frame (the
@@ -1566,6 +1716,8 @@ class Action:
     unconfirmed: bool = False   # the value filled or picked holds an answer the user has
                                 # not confirmed (cycle 18, FL-1: never the value)
     account: str = ""       # the account step's kind ("login" | "signup") and call, "login#2"
+    name: str = ""          # the element's name, else its id
+    user: str = ""          # the person's answer to a pause the value holds (SP7), else ""
 
     @property
     def host(self) -> str:
@@ -1595,6 +1747,11 @@ class Recorder:
         self._keyboards: dict[int, Any] = {}
         self._account_calls = 0
         self._account_kind: list[str] = []    # the running account step's "login#n" / "signup#n"
+        # cycle 19 SP7: each answer the person gave a pause -> (the field it
+        # answers, the page the run paused on); and the values given for a
+        # sensitive field, which code must never type
+        self.user_values: dict[str, tuple[str, str]] = {}
+        self.sensitive_values: set[str] = set()
 
     def _live(self, target) -> dict:
         try:
@@ -1620,6 +1777,9 @@ class Recorder:
         if kind in ("click", "tick") and info.get("toggle"):
             shown = f"{shown} {info.get('text', '')}"
         unconfirmed = any(u in shown for u in self.unconfirmed)
+        # the person's answer to a pause the value is, word for word (SP7)
+        user = next((u for u in list(self.user_values) + sorted(self.sensitive_values)
+                     if u and u == shown.strip()), "") if kind in ("fill", "pick") else ""
         self.actions.append(Action(kind=kind, how=how, url=str(info.get("url", "")),
                                    text=str(info.get("text", "")), role=str(info.get("role", "")),
                                    tag=str(info.get("tag", "")), type=str(info.get("type", "")),
@@ -1630,7 +1790,8 @@ class Recorder:
                                    junk=str(info.get("junk", "")),
                                    toggle=bool(info.get("toggle", False)), secret=secret,
                                    unconfirmed=unconfirmed,
-                                   account=self._account_kind[-1] if self._account_kind else ""))
+                                   account=self._account_kind[-1] if self._account_kind else "",
+                                   name=str(info.get("name", "")), user=user))
 
     @staticmethod
     def focused(page) -> dict:
@@ -1950,6 +2111,7 @@ def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends, *,
             breaks.append(f"UNCONFIRMED-ANSWER: a {a.kind} of an answer the user has not "
                           f"confirmed, into a {a.tag or 'focused'} {a.type or 'element'} on "
                           f"{a.host}")
+        breaks += _pause_breaks(a, recorder)
     breaks += _password_tries(recorder.actions)
     if recorder.password:
         for path in _text_files(recorder.files):
@@ -1984,6 +2146,27 @@ _PASSWORD_KEY = re.compile(r"pass|pwd|secret|token|credential", re.I)
 # boxes twice at most (the one re-type of a form the site emptied, ACC-12),
 # and no more than this many boxes on one site in all
 PASSWORD_TYPINGS_MAX = 6
+
+
+def _pause_breaks(a: Action, recorder: Recorder) -> list[str]:
+    """Cycle 19 SP7: a person's answer to a pause goes only into its own
+    field, on the page the run paused on; code never types into a sensitive
+    field, and a value the answer gave for one is never typed anywhere."""
+    out = []
+    if a.user in recorder.sensitive_values:
+        out.append(f"SENSITIVE-ANSWER-TYPED: the value given for a sensitive field went into "
+                   f"a {a.tag or 'focused'} {a.type or 'element'} on {a.host}")
+    elif a.user:
+        field_id, page_url = recorder.user_values[a.user]
+        if a.name != field_id or a.url != page_url:
+            out.append(f"USER-ANSWER-ELSEWHERE: an answer for {field_id!r} went into "
+                       f"{a.name or a.tag or 'an element'!r} on {a.url}; it belongs on "
+                       f"{page_url}")
+    if a.kind == "fill" and a.name and apply_run.apply_judge.is_sensitive_field(
+            re.sub(r"[_\-\[\]]+", " ", a.name)):
+        out.append(f"SENSITIVE-TYPED: code typed into the sensitive field {a.name!r} on "
+                   f"{a.host}")
+    return out
 
 
 def _password_tries(actions: list[Action]) -> list[str]:
@@ -2355,6 +2538,7 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
             stack.enter_context(fast_timing(f.settle_s, f.timing))
         if f.on_read:
             stack.enter_context(_after_each_read(f.on_read))
+        pause_minutes = stack.enter_context(pausing(rundir, f.pause, recorder))
         url = f.start_url(server.base)
         apply_queue.enqueue(apply_queue.new_entry(JOB_ID, company="Fabrikam",
                                                   title="Analytics Engineer", apply_url=url),
@@ -2388,7 +2572,7 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
             jev=recorder.watch(judge), queue_path=queue, profile_dir=rundir / "profile",
             settings={"auto_apply_submit": f.submit, "auto_apply_headless": True,
                       "auto_apply_jev_mode": "fake", "auto_apply_batch_cap": 1,
-                      "auto_apply_generate": True},
+                      "auto_apply_generate": True, "auto_apply_pause_minutes": pause_minutes},
             context=context, run_context={"signup_email": SIGNUP_EMAIL, "inbox_url": inbox},
             sleep=lambda s: None, drain_report=False)
         outcomes = runner.drain(cap=1)

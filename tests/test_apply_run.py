@@ -3539,3 +3539,211 @@ def test_one_gives_the_job_back_when_a_check_takes_the_profile_after_the_read(
     assert capsys.readouterr().err.strip() == profile_lock.RUN_BUSY
     entry = apply_queue.load(queue)["jobs"][0]
     assert (entry["status"], entry["attempts"], entry["claimed_by"]) == ("queued", 0, "")
+
+
+# --- cycle 19 SP7: park and resume ---------------------------------------------------------------
+# pause_form.html asks two required questions no saved answer holds (Preferred
+# team, Number of conference talks given); the suite never waits
+# (`apply_pause.NEVER_WAIT`), and each test here turns the pause on with its
+# folder in tmp_path. `h.PauseResponder` answers as the dashboard's card does.
+
+import apply_pause  # noqa: E402
+
+_TEAM, _TALKS = "Preferred team", "Number of conference talks given"
+
+
+def _pauses_on(monkeypatch, tmp_path, minute_s=None):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setattr(apply_pause, "NEVER_WAIT", False)
+    monkeypatch.setattr(apply_pause, "POLL_S", 0.05)
+    if minute_s is not None:
+        monkeypatch.setattr(apply_pause, "SECONDS_PER_MINUTE", minute_s)
+
+
+def _run_decisions(job_folder) -> list[dict]:
+    trace = sorted((job_folder / "apply_trace").glob("attempt-*"))[-1]
+    out: list[dict] = []
+    for p in sorted(trace.glob("*.json")):
+        data = json.loads(p.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            out += [e for e in data.get("events", []) if e.get("kind") == "decision"]
+    return out
+
+
+def _live_page(context):
+    return next(p for p in context.pages if not p.is_closed())
+
+
+def _pause_run(context, fixture_url, job_folder, tmp_path, spec, page="pause_form.html",
+               **settings):
+    settings.setdefault("auto_apply_submit", False)     # the page stays open at the gate
+    _enqueue(job_folder, fixture_url(page))
+    runner = _runner(context, tmp_path, auto_apply_pause_minutes=10, **settings)
+    with h.PauseResponder(spec, poll_s=0.02) as responder:
+        out = runner.drain(cap=1)[0]
+    return out, responder
+
+
+@pytest.mark.jev_unrecorded
+def test_a_required_question_with_no_answer_pauses_and_the_cards_answer_goes_in(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    _pauses_on(monkeypatch, tmp_path)
+    spec = h.PauseSpec("fill", (("preferred team", "Platform"), ("conference talks", "37")))
+    out, responder = _pause_run(context, fixture_url, job_folder, tmp_path, spec)
+    assert out.status == "ready_to_submit", out
+    page = _live_page(context)
+    assert page.locator("select[name=preferred_team]").input_value() == "Platform"
+    assert page.locator("input[name=conference_talks]").input_value() == "37"
+    # one pause asked both questions, with the live options of the list
+    (req,) = responder.requests
+    asked = {q["label"].rstrip(" *"): q for q in req["questions"]}
+    assert set(asked) == {_TEAM, _TALKS}, asked
+    assert asked[_TEAM]["widget"] == apply_pause.W_CHOICE
+    assert asked[_TEAM]["options"] == ["Data", "Platform"]
+    assert asked[_TALKS]["help"] == "Count public conference talks only."
+    assert req["headless"] is True and req["page_url"].endswith("pause_form.html")
+    decided = [d["what"] for d in _run_decisions(job_folder)]
+    assert "pause" in decided and "pause_resume" in decided, decided
+    # the files are gone once the run goes on
+    assert apply_pause.pending_requests() == []
+    assert not apply_pause.answer_path("42").exists()
+
+
+@pytest.mark.jev_unrecorded
+@pytest.mark.parametrize("mode", ["timeout", "park"])
+def test_a_timeout_or_park_it_parks_with_the_reason_it_had_before(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch, mode):
+    _enqueue(job_folder, fixture_url("pause_form.html"))
+    before = _runner(context, tmp_path).drain(cap=1)[0]      # no pause at all
+    assert before.status == "needs_human", before
+    apply_queue.requeue("42")
+    _pauses_on(monkeypatch, tmp_path, minute_s=0.5)
+    runner = _runner(context, tmp_path, auto_apply_pause_minutes=1)
+    if mode == "timeout":
+        out = runner.drain(cap=1)[0]
+    else:
+        with h.PauseResponder(h.PauseSpec("park"), poll_s=0.02):
+            out = runner.drain(cap=1)[0]
+    assert (out.status, out.reason) == (before.status, before.reason)
+    decided = [d["what"] for d in _run_decisions(job_folder)]
+    assert ("pause_timeout" if mode == "timeout" else "pause_park") in decided, decided
+    assert apply_pause.pending_requests() == []
+
+
+@pytest.mark.jev_unrecorded
+def test_a_window_closed_during_the_pause_parks_as_a_closed_window(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    _pauses_on(monkeypatch, tmp_path)
+
+    def _closes(page, job_id, minutes, **kw):
+        page.close()
+        raise apply_pause.PageClosed()
+    monkeypatch.setattr(apply_pause, "wait_for_answer", _closes)
+    _enqueue(job_folder, fixture_url("pause_form.html"))
+    out = _runner(context, tmp_path, auto_apply_pause_minutes=10).drain(cap=1)[0]
+    assert out.status == "needs_human", out
+    assert out.reason.startswith((apply_run.CLOSED_REASON, apply_run.TAB_CLOSED_REASON)), \
+        out.reason
+    assert "required field without an answer: " in out.reason, out.reason
+    assert apply_pause.pending_requests() == []
+
+
+@pytest.mark.jev_unrecorded
+def test_the_wait_stays_off_the_job_clock(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    # a pause longer than the whole job budget still leaves the fill its time
+    _pauses_on(monkeypatch, tmp_path)
+    ticks = {"t": 0.0}
+    real = apply_pause.wait_for_answer
+
+    def _slow(page, job_id, minutes, **kw):
+        got = None
+        while got is None:
+            got = real(page, job_id, minutes, **kw)
+        ticks["t"] += 10_000.0                  # the person took hours
+        return got
+    monkeypatch.setattr(apply_pause, "wait_for_answer", _slow)
+    import time as _time
+    monkeypatch.setattr(apply_run.time, "monotonic", lambda: _time.perf_counter() + ticks["t"])
+    spec = h.PauseSpec("fill", (("preferred team", "Platform"), ("conference talks", "37")))
+    _enqueue(job_folder, fixture_url("pause_form.html"))
+    runner = _runner(context, tmp_path, auto_apply_pause_minutes=10)
+    runner.clock = lambda: _time.perf_counter() + ticks["t"]
+    with h.PauseResponder(spec, poll_s=0.02):
+        out = runner.drain(cap=1)[0]
+    assert out.status == "submitted", out
+
+
+@pytest.mark.jev_unrecorded
+def test_a_sensitive_field_is_never_typed_and_the_persons_browser_value_stays(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    _pauses_on(monkeypatch, tmp_path)
+    spec = h.PauseSpec("fill", (("preferred team", "Platform"), ("conference talks", "37"),
+                                ("date of birth", "11/11/1911")))
+    out, responder = _pause_run(context, fixture_url, job_folder, tmp_path, spec,
+                                page="pause_form.html?dob=1")
+    assert out.status == "ready_to_submit", out
+    page = _live_page(context)
+    # the page's own script typed its value while outlined (the person, in the browser)
+    assert page.locator("input[name=date_of_birth]").input_value() == "02/03/1990"
+    (req,) = responder.requests
+    dob = next(q for q in req["questions"] if "Date of birth" in q["label"])
+    assert dob["sensitive"] is True and dob["widget"] == apply_pause.W_BROWSER
+
+
+@pytest.mark.jev_unrecorded
+def test_a_page_that_changed_during_the_wait_is_planned_again_before_any_fill(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    _pauses_on(monkeypatch, tmp_path)
+    spec = h.PauseSpec("fill", (("preferred team", "Platform"), ("conference talks", "37")))
+    out, _ = _pause_run(context, fixture_url, job_folder, tmp_path, spec,
+                        page="pause_form.html?grow=1")
+    assert out.status == "ready_to_submit", out
+    page = _live_page(context)
+    assert page.locator("select[name=preferred_team]").input_value() == "Platform"
+    assert page.locator("input[name=conference_talks]").input_value() == "37"
+    decided = [d["what"] for d in _run_decisions(job_folder)]
+    assert "pause_page_changed" in decided and "pause_answer" in decided, decided
+
+
+@pytest.mark.jev_unrecorded
+def test_filled_in_the_browser_keeps_the_persons_values(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    _pauses_on(monkeypatch, tmp_path)
+    out, _ = _pause_run(context, fixture_url, job_folder, tmp_path, h.PauseSpec("browser"),
+                        page="pause_form.html?browser=1")
+    assert out.status == "ready_to_submit", out
+    page = _live_page(context)
+    assert page.locator("select[name=preferred_team]").input_value() == "Platform"
+    assert page.locator("input[name=conference_talks]").input_value() == "4"
+
+
+@pytest.mark.jev_unrecorded
+def test_a_value_flagged_save_is_kept_for_future_runs_and_the_run_reads_it(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    _pauses_on(monkeypatch, tmp_path)
+    spec = h.PauseSpec("fill", (("preferred team", "Platform"), ("conference talks", "37")),
+                       save=("preferred team",))
+    out, _ = _pause_run(context, fixture_url, job_folder, tmp_path, spec)
+    assert out.status == "ready_to_submit", out
+    saved = [a for a in apply_answers.load_store()["answers"] if a.get("answer") == "Platform"]
+    assert len(saved) == 1, saved
+    assert saved[0]["confirmed"] is True
+    assert saved[0]["question"].startswith(_TEAM)
+    assert "Saved from Fabrikam on " in saved[0].get("note", "")
+    decided = [d["what"] for d in _run_decisions(job_folder)]
+    assert "pause_saved" in decided, decided
+
+
+@pytest.mark.jev_unrecorded
+def test_a_missing_answer_carries_the_fields_help_options_and_type(
+        context, fixture_url, job_folder, catalog_builder, tmp_path):
+    # no pause (the suite never waits): the park's missing answers keep what
+    # Answer now prefills (PR-7)
+    _enqueue(job_folder, fixture_url("pause_form.html"))
+    out = _runner(context, tmp_path).drain(cap=1)[0]
+    assert out.status == "needs_human", out
+    items = {i["question"].rstrip(" *"): i for i in _entry()["missing_answers"]}
+    assert items[_TEAM]["options"] == ["Data", "Platform"], items
+    assert items[_TALKS]["help"] == "Count public conference talks only.", items
+    assert items[_TALKS]["type"] == "number", items

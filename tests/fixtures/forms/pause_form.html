@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Data Analyst - Northwind Traders</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  label { display: block; margin: 10px 0; }
+  input, textarea, select { display: block; margin-top: 2px; }
+  #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Data Analyst</h1>
+<p>Northwind Traders, Seattle, WA</p>
+<h2>Submit your application</h2>
+<!--
+  SP7 (park and resume): required questions no saved answer holds. The
+  query string adds what a person does in the browser while the run waits:
+  ?browser=1 types each outlined field's data-browser value (the person
+  filled it in the browser), ?grow=1 adds an optional field once a field is
+  outlined (the page changed during the wait), ?dob=1 adds a required date of
+  birth (a sensitive field, typed by the page's own script when outlined).
+-->
+<form id="application" onsubmit="return false">
+  <label>Full name * <input name="name" type="text" required></label>
+  <label>Email * <input name="email" type="email" required></label>
+  <label>Resume/CV * <input name="resume" type="file" required></label>
+  <label>What is your favourite query language? *
+    <input name="favourite_query_language" type="text" required data-browser="Datalog"></label>
+  <label>Preferred team *
+    <select name="preferred_team" required data-browser="Platform">
+      <option value="">Select...</option>
+      <option>Data</option>
+      <option>Platform</option>
+    </select></label>
+  <label>Number of conference talks given *
+    <input name="conference_talks" type="number" required data-browser="4"
+           aria-describedby="talks-help"></label>
+  <small id="talks-help">Count public conference talks only.</small>
+  <button type="button" id="btn-submit">Submit application</button>
+</form>
+<h2 id="thanks">Thank you for applying</h2>
+<script>
+  const params = new URLSearchParams(location.search);
+  const form = document.getElementById('application');
+  const button = document.getElementById('btn-submit');
+  if (params.get('dob')) {
+    const label = document.createElement('label');
+    label.innerHTML = 'Date of birth * <input name="date_of_birth" type="text" required ' +
+                      'data-browser="02/03/1990">';
+    form.insertBefore(label, button);
+  }
+  let grown = false;
+  const outlined = (el) => (el.style.outline || '').indexOf('217, 119, 6') >= 0;
+  const type = (el) => {
+    const want = el.getAttribute('data-browser');
+    if (!want) return;
+    el.value = want;
+    el.dispatchEvent(new Event('input', {bubbles: true}));
+    el.dispatchEvent(new Event('change', {bubbles: true}));
+  };
+  new MutationObserver((changes) => {
+    for (const c of changes) {
+      const el = c.target;
+      if (!outlined(el)) continue;
+      document.body.setAttribute('data-outlined', (document.body.getAttribute('data-outlined') || '') + el.name + ' ');
+      if (params.get('browser') || el.name === 'date_of_birth') type(el);
+      if (params.get('grow') && !grown) {
+        grown = true;
+        const label = document.createElement('label');
+        label.innerHTML = 'Anything else you would like us to know? <textarea name="anything_else"></textarea>';
+        form.insertBefore(label, button);
+      }
+    }
+  }).observe(document.body, {attributes: true, attributeFilter: ['style'], subtree: true});
+  button.addEventListener('click', function () {
+    document.body.setAttribute('data-submitted', '1');
+    form.style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

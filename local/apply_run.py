@@ -343,6 +343,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "auto_apply_jev_mode": "typesafe",
     "auto_apply_batch_cap": 10,
     "auto_apply_generate": True,
+    "auto_apply_pause_minutes": 10,     # the pause's wait for the user (cycle 19)
 }
 _ACTED = ("fill", "select", "upload")     # the actions that put a value on the page
 _PARK_STATES = {

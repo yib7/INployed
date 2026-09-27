@@ -2643,6 +2643,17 @@ def test_main_settings_come_from_the_loader_and_flags_override(hermetic_cli, mon
     assert seen["settings"]["auto_apply_jev_mode"] == "typesafe"
 
 
+def test_the_drain_defaults_match_the_settings_schema():
+    """A run with no config reads `DEFAULT_SETTINGS`, and `load_settings` keeps
+    only the keys it names, so each one carries its Settings row's default. The
+    pause's wait (cycle 19) is one of them."""
+    import settings
+    schema = {f.key: f.default for f in settings.SETTINGS_SCHEMA}
+    assert apply_run.DEFAULT_SETTINGS["auto_apply_pause_minutes"] == 10
+    for key, default in apply_run.DEFAULT_SETTINGS.items():
+        assert schema[key] == default, key
+
+
 # --- cycle 18: the store is the one source of the answers (FL-2, FL-4) ------------------
 
 def test_prepare_refreshes_the_sheet_from_the_store_before_the_facts(

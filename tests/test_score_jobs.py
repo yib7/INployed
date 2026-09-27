@@ -184,7 +184,8 @@ def test_make_pool_warns_for_an_unlimited_fallback_model(monkeypatch, capsys):
 def test_append_run_stats_migrates_old_header(tmp_path, monkeypatch):
     import csv as _csv
     old = tmp_path / "run_stats.csv"
-    old_cols = sj.RUN_STATS_COLS[:-4]  # header before free_calls/vertex_calls/easy_apply_dropped/scores_reused
+    # header before free_calls, vertex_calls, easy_apply_dropped, scores_reused and the jev_* columns
+    old_cols = sj.RUN_STATS_COLS[:sj.RUN_STATS_COLS.index("free_calls")]
     with open(old, "w", encoding="utf-8", newline="") as f:
         w = _csv.DictWriter(f, fieldnames=old_cols)
         w.writeheader()

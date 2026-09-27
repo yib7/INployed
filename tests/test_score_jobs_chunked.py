@@ -249,7 +249,7 @@ def _rescore_master_df(n=6):
 def _fake_run_scoring_recording(calls_list):
     """Returns an async run_scoring stub that records the ids it was asked to
     score and returns df unchanged plus inert score columns -- no network."""
-    async def _run_scoring(pool, resume, df):
+    async def _run_scoring(pool, resume, df, **_kw):
         calls_list.append(sorted(df["job_posting_id"].tolist()))
         out = df.copy()
         out["score"] = 1

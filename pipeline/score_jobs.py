@@ -306,6 +306,8 @@ RUN_STATS_COLS = [
     "llm_errors", "stage2_done", "rescore_attempted", "rescore_scored",
     "llm_calls", "prompt_tokens", "output_tokens", "free_calls", "vertex_calls",
     "easy_apply_dropped", "scores_reused",
+    # SC-4: "Jev scored N (M requests, $X); LLM fallback K" (JevRun.stats)
+    "jev_scored", "jev_requests", "jev_usd", "jev_llm_fallback",
 ]
 
 # Aggregate token spend across both stages and both passes (fresh + rescore).
@@ -559,7 +561,7 @@ def today_str() -> str:
     return f"{now:%B} {now.day}, {now.year}"
 
 
-def make_pool():
+def make_pool(required: bool = True):
     """Build the scoring pool for SCORING_PROVIDER.
 
     "claude" tries the local `claude_cli.ClaudePool` first; a missing
@@ -568,7 +570,8 @@ def make_pool():
     sys.exit, so a local-only provider choice pushed to the VM via
     scoring_config.json can't brick an unattended run. The final fallback
     (KeyPool.from_env, GEMINI_API_KEYS + Vertex) is unchanged from before and
-    is the only branch that may exit, exactly as today.
+    is the only branch that may exit, exactly as today. With `required` False
+    (Jev scores this run, SC-4) missing credentials return None and the run goes on.
     """
     if SCORING_PROVIDER == "claude":
         try:
@@ -608,7 +611,12 @@ def make_pool():
         return KeyPool.from_env(state_path=OUTPUT_DIR / "score_state.json",
                                 limits=limits)
     except PoolError as e:
-        sys.exit(str(e))
+        if required:
+            sys.exit(str(e))
+        # Jev is on (main passes required=False): it scores alone this run.
+        print(f"{str(e).rstrip('. ')}. Jev scores alone this run with no LLM provider; "
+              "a job it cannot score keeps an ERROR row for the rescore pass.")
+        return None
 
 
 def make_jev_judge():
@@ -632,6 +640,94 @@ def make_jev_judge():
     if judge is not None:
         print(f"Jev scoring on ({why}); a job Jev cannot score takes the LLM path.")
     return judge
+
+
+# SC-5: Jev requests in flight at once. They run in worker threads
+# (asyncio.to_thread) under their own semaphore, beside the LLM stages' own.
+JEV_CONCURRENCY = 8
+# Stage 1's row when Jev could not score a job and there is no LLM provider: an
+# ERROR row, so the rescore pass retries it on a later run.
+NO_LLM_REASON = "ERROR: Jev could not score this job and no LLM provider is set up"
+
+
+class JevRun:
+    """One run's Jev use (SC-4, SC-5). `judge` None means Jev is off and every
+    job takes the LLM path exactly as before. Counts the stage results Jev
+    composed (`scored`) and those it handed to the LLM path (`fallback`); the
+    request count and spend are `jev.usage()` since the run began. Once the
+    judge's breaker opens (`jev.Guarded.down`) no further request is made and
+    the outage is reported once."""
+
+    def __init__(self, judge=None):
+        self.judge = judge
+        self.scored = 0
+        self.fallback = 0
+        self.no_llm_errors = 0      # stage 1 rows left as NO_LLM_REASON
+        self.scores_only = 0        # stage 2 skipped: Jev could not and no LLM provider
+        self._outage_noted = False
+        self._raised: set[str] = set()
+        self._start = self._usage()
+
+    @property
+    def on(self) -> bool:
+        return self.judge is not None
+
+    def _usage(self) -> dict:
+        if self.judge is None or jev_score is None:
+            return {"requests": 0, "usd": 0.0}
+        return jev_score.usage()
+
+    def _down(self) -> str:
+        return str(getattr(self.judge, "down", "") or "")
+
+    async def ask(self, sem: asyncio.Semaphore, stage_fn, job, resume: str):
+        """`stage_fn(judge, job, resume)` (jev_score.stage1 or stage2) in a worker
+        thread under `sem`: its result, or None for the LLM path."""
+        if self.judge is None:
+            return None
+        got = None
+        if not self._down():
+            async with sem:
+                if not self._down():        # the breaker may have opened while waiting
+                    try:
+                        got = await asyncio.to_thread(stage_fn, self.judge, job, resume)
+                    except Exception as e:  # noqa: BLE001  (a fault here sends the job to the LLM path)
+                        kind = type(e).__name__
+                        if kind not in self._raised:
+                            self._raised.add(kind)
+                            print(f"Jev scoring raised {kind}; such jobs take the LLM path.")
+        if got is not None:
+            self.scored += 1
+            return got
+        down = self._down()
+        if down and not self._outage_noted:
+            self._outage_noted = True
+            print(f"Jev is unavailable ({down}); the rest of this run scores on the LLM path.")
+        self.fallback += 1
+        return None
+
+    def stats(self) -> dict:
+        now = self._usage()
+        return {
+            "jev_scored": self.scored,
+            "jev_requests": max(0, int(now.get("requests", 0)) - int(self._start.get("requests", 0))),
+            "jev_usd": round(max(0.0, float(now.get("usd", 0.0))
+                                 - float(self._start.get("usd", 0.0))), 6),
+            "jev_llm_fallback": self.fallback,
+        }
+
+    def summary_line(self) -> str:
+        s = self.stats()
+        return (f"Jev scored {s['jev_scored']} ({s['jev_requests']} requests, "
+                f"${s['jev_usd']:.4f}); LLM fallback {s['jev_llm_fallback']}")
+
+
+def jev_facts(job_md: str) -> dict:
+    """The code facts Jev's stage 1 composes with (SC-2): the same detectors
+    the mechanical filter runs."""
+    return {"min_years": min_required_years(job_md),
+            "advanced_degree": requires_advanced_degree(job_md),
+            "clearance": requires_clearance(job_md)}
 
 
 def latest_input_csv() -> Path | None:
@@ -1249,7 +1345,11 @@ def _restore_reused_scores(result: pd.DataFrame, reused_snapshot: pd.DataFrame) 
     return result.reset_index()
 
 
-async def run_scoring(pool, resume: str, df: pd.DataFrame) -> pd.DataFrame:
+_S2_COLUMNS = ["job_posting_id", "deep_score", "strengths", "gaps", "recommendation"]
+
+
+async def run_scoring(pool, resume: str, df: pd.DataFrame, *,
+                      jev_run: JevRun | None = None) -> pd.DataFrame:
     """Stage 1 + Stage 2 over the unfiltered, unreused rows of df; returns df
     with score columns merged.
 
@@ -1259,6 +1359,11 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame) -> pd.DataFrame:
     columns are stripped before the merge below and restored afterward, so the
     merge's left join -- which has no row for an id that was never scored --
     can never blank them back to NaN.
+
+    With `jev_run` on (SC-4), Jev scores each job's stage first and a job it
+    cannot score takes that stage's LLM path; the output columns are the same
+    either way. `pool` is None only when Jev is on and no LLM provider is set
+    up: such a job keeps an ERROR row (stage 1) or its stage-1 score alone.
     """
     reused_mask = (df["score_reused"].fillna(False).astype(bool)
                   if "score_reused" in df.columns else pd.Series(False, index=df.index))
@@ -1287,11 +1392,30 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame) -> pd.DataFrame:
     # block forever -- and on the VM that holds run_scraper.sh's flock for good, so
     # every later cron fire logs "already running" and job discovery stops silently.
     sem1 = asyncio.Semaphore(max(1, STAGE1_CONCURRENCY))
-    print(f"Stage 1: scoring {len(to_score)} jobs with {STAGE1_MODEL}")
-    s1_tasks = [
-        score_stage1(pool, sem1, resume, r.job_posting_id, r.job_description_md)
-        for r in to_score.itertuples(index=False)
-    ]
+    jev_on = jev_run is not None and jev_run.on
+    jsem = asyncio.Semaphore(max(1, JEV_CONCURRENCY))    # see sem1 on max(1, ...)
+    if not jev_on:
+        via = STAGE1_MODEL
+    elif pool is None:
+        via = "Jev (no LLM path)"
+    else:
+        via = f"Jev (LLM path {STAGE1_MODEL})"
+    print(f"Stage 1: scoring {len(to_score)} jobs with {via}")
+
+    async def stage1_one(job_id, job_md):
+        if jev_on:
+            got = await jev_run.ask(jsem, jev_score.stage1,
+                                    {"md": job_md, "facts": jev_facts(job_md)}, resume)
+            if got is not None:
+                return {"job_posting_id": job_id, "score": int(got["score"]),
+                        "reason": got["reason"]}
+            if pool is None:
+                jev_run.no_llm_errors += 1
+                return {"job_posting_id": job_id, "score": None, "reason": NO_LLM_REASON}
+        return await score_stage1(pool, sem1, resume, job_id, job_md)
+
+    s1_tasks = [stage1_one(r.job_posting_id, r.job_description_md)
+                for r in to_score.itertuples(index=False)]
     s1_results = await asyncio.gather(*s1_tasks)
     s1_df = pd.DataFrame(s1_results)
 
@@ -1309,14 +1433,23 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame) -> pd.DataFrame:
         s2_input = to_score[to_score["job_posting_id"].isin(s2_ids)].copy()
         s2_input["_rank"] = s2_input["job_posting_id"].map(rank)
         s2_input = s2_input.sort_values("_rank", kind="stable").drop(columns="_rank")
-        s2_tasks = [
-            score_stage2(pool, sem2, resume, r.job_posting_id, r.job_description_md)
-            for r in s2_input.itertuples(index=False)
-        ]
-        s2_results = await asyncio.gather(*s2_tasks)
-        s2_df = pd.DataFrame(s2_results)
+
+        async def stage2_one(job_id, job_md):
+            if jev_on:
+                got = await jev_run.ask(jsem, jev_score.stage2, {"md": job_md}, resume)
+                if got is not None:
+                    return {"job_posting_id": job_id, **got}
+                if pool is None:
+                    jev_run.scores_only += 1
+                    return None
+            return await score_stage2(pool, sem2, resume, job_id, job_md)
+
+        s2_tasks = [stage2_one(r.job_posting_id, r.job_description_md)
+                    for r in s2_input.itertuples(index=False)]
+        s2_results = [got for got in await asyncio.gather(*s2_tasks) if got is not None]
+        s2_df = pd.DataFrame(s2_results) if s2_results else pd.DataFrame(columns=_S2_COLUMNS)
     else:
-        s2_df = pd.DataFrame(columns=["job_posting_id", "deep_score", "strengths", "gaps", "recommendation"])
+        s2_df = pd.DataFrame(columns=_S2_COLUMNS)
 
     merged = base.merge(s1_df, on="job_posting_id", how="left").merge(s2_df, on="job_posting_id", how="left")
     merged.loc[merged["filtered_out"], "reason"] = merged.loc[merged["filtered_out"], "reason"].fillna("filtered_out")
@@ -1365,8 +1498,10 @@ def _load_rows_by_id(master_csv, ids) -> pd.DataFrame:
     return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
 
 
-async def rescore_master_failures(pool, resume: str) -> tuple[int, int]:
-    """Retry failed/missing master rows. Returns (attempted, newly_scored)."""
+async def rescore_master_failures(pool, resume: str, *,
+                                  jev_run: JevRun | None = None) -> tuple[int, int]:
+    """Retry failed/missing master rows. Returns (attempted, newly_scored).
+    `jev_run` is run_scoring's (SC-4)."""
     if not MASTER_CSV.exists():
         return 0, 0
     # A malformed master must produce the same fix-or-restore message the fold path
@@ -1417,7 +1552,7 @@ async def rescore_master_failures(pool, resume: str) -> tuple[int, int]:
     todo = todo.drop(columns=[c for c in SCORE_COLS if c in todo.columns], errors="ignore")
     title_col = pick_col(master, ("job_title", "job_posting_title", "title"))
     todo = add_filter_columns(todo, desc_col, title_col)
-    merged = await run_scoring(pool, resume, todo)
+    merged = await run_scoring(pool, resume, todo, jev_run=jev_run)
     # Fold back WITHOUT is_seen so locally-triaged state is never reset here.
     update_master_scores(merged.drop(columns=["is_seen"], errors="ignore"))
     n = int(pd.to_numeric(merged["score"], errors="coerce").notna().sum())
@@ -1437,7 +1572,10 @@ def load_resume() -> str:
 async def main() -> None:
     args = parse_args()
     resume = load_resume()
-    pool = make_pool()
+    # SC-4: Jev scores first when its switch is on (make_jev_judge); the LLM
+    # provider is then optional, so missing credentials no longer end the run.
+    jev_run = JevRun(make_jev_judge())
+    pool = make_pool(required=not jev_run.on)
 
     stats = {
         "timestamp": datetime.now().isoformat(timespec="seconds"),
@@ -1492,7 +1630,7 @@ async def main() -> None:
             master_for_reuse = load_master_for_reuse()
             df, n_reused = reuse_repost_scores(df, master_for_reuse, REPOST_REUSE_DAYS)
             stats["scores_reused"] = n_reused
-            merged = await run_scoring(pool, resume, df)
+            merged = await run_scoring(pool, resume, df, jev_run=jev_run)
             out = save_output(merged, csv_path)
             n_scored = merged["score"].notna().sum()
             n_deep = merged["deep_score"].notna().sum()
@@ -1513,14 +1651,22 @@ async def main() -> None:
             )
             stats["stage2_done"] = int(n_deep)
 
-    rescore_attempted, rescore_scored = await rescore_master_failures(pool, resume)
+    rescore_attempted, rescore_scored = await rescore_master_failures(pool, resume,
+                                                                      jev_run=jev_run)
     stats["rescore_attempted"] = rescore_attempted
     stats["rescore_scored"] = rescore_scored
     stats["llm_calls"] = TOKEN_USAGE["calls"]
     stats["prompt_tokens"] = TOKEN_USAGE["prompt"]
     stats["output_tokens"] = TOKEN_USAGE["output"]
-    stats["free_calls"] = pool.stats()["free_calls"]
-    stats["vertex_calls"] = pool.stats()["vertex_calls"]
+    pool_stats = pool.stats() if pool is not None else {}
+    stats["free_calls"] = pool_stats.get("free_calls", 0)
+    stats["vertex_calls"] = pool_stats.get("vertex_calls", 0)
+    stats.update(jev_run.stats())
+    if jev_run.on:
+        print(jev_run.summary_line())
+        if jev_run.no_llm_errors or jev_run.scores_only:
+            print(f"No LLM provider: {jev_run.no_llm_errors} job(s) kept an ERROR row for "
+                  f"the rescore pass and {jev_run.scores_only} kept their stage 1 score alone.")
     append_run_stats(stats)
 
 

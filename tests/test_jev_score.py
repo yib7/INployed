@@ -5,6 +5,7 @@ Hermetic: the dashboard config is a file in tmp_path (monkeypatched onto
 `jev_score.CONFIG_PATH`), the environment is a dict, the SDK probe is patched,
 and every judge is scripted. No key, no network.
 """
+import asyncio
 import importlib.util
 import json
 import os
@@ -13,6 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 import jev
@@ -770,3 +772,298 @@ def test_stage2_returns_none_without_a_judge_or_when_it_fails(monkeypatch):
     assert jev_score.stage2(None, JOB2_MD, RESUME) is None
     assert jev_score.stage2(FailingJudge(RuntimeError("boom")), JOB2_MD, RESUME) is None
     assert jev_score.stage2(ScriptedJudge(), JOB2_MD, "") is None
+
+
+# --- SC-4, SC-5: the hooks in score_jobs.py ---------------------------------------------------
+
+def _sj():
+    import score_jobs
+    return score_jobs
+
+
+def _llm_response(text):
+    from types import SimpleNamespace
+    return SimpleNamespace(text=text, usage_metadata=SimpleNamespace(
+        prompt_token_count=1, candidates_token_count=1))
+
+
+class RecordingPool:
+    """The LLM provider: records (stage, job text) and answers like the Gemini path."""
+
+    def __init__(self, score=5):
+        self.score = score
+        self.calls = []
+
+    async def generate(self, *, model, contents, config):
+        sj = _sj()
+        stage = 1 if model == sj.STAGE1_MODELS else 2
+        self.calls.append((stage, model, contents))
+        if stage == 1:
+            return _llm_response(json.dumps({"score": self.score, "reason": "llm reason"}))
+        return _llm_response(json.dumps({"deep_score": 8, "strengths": ["llm strength"],
+                                         "gaps": ["llm gap"], "recommendation": "consider"}))
+
+    def stats(self):
+        return {"free_calls": len(self.calls), "vertex_calls": 0}
+
+    def jobs(self, stage):
+        return sorted(tag for s, _m, text in self.calls if s == stage
+                      for tag in ("JOB-A", "JOB-B", "JOB-C", "JOB-D") if tag in text)
+
+
+def _jobs_df(*tags, md=JOB2_MD):
+    return pd.DataFrame({
+        "job_posting_id": [t.lower() for t in tags],
+        "job_description_md": [f"{t}\n{md}" for t in tags],
+        "filtered_out": [False] * len(tags),
+    })
+
+
+def test_run_scoring_scores_both_stages_with_jev_and_never_calls_the_llm():
+    sj = _sj()
+    pool = RecordingPool()
+    run = sj.JevRun(ScriptedJudge())
+    merged = asyncio.run(sj.run_scoring(pool, RESUME, _jobs_df("JOB-A", "JOB-B"), jev_run=run))
+    assert pool.calls == []
+    assert list(merged["score"]) == [5, 5]
+    assert set(merged["reason"]) == {"Skills fit strong (1.00); domain data science or ML; "
+                                     "no experience level stated; no degree bar"}
+    assert list(merged["deep_score"]) == [10, 10]
+    assert set(merged["recommendation"]) == {"apply"}
+    assert merged["strengths"].iloc[0].startswith("Python and SQL | ")
+    assert (run.scored, run.fallback) == (4, 0)
+
+
+def test_run_scoring_sends_the_code_facts_with_stage_one(monkeypatch):
+    sj = _sj()
+    seen = []
+
+    def fake_stage1(judge, job, resume):
+        seen.append(job["facts"])
+        return {"score": 4, "reason": "r"}
+
+    monkeypatch.setattr(jev_score, "stage1", fake_stage1)
+    monkeypatch.setattr(jev_score, "stage2", lambda judge, job, resume: None)
+    md = "Requires 3+ years of experience. A Master's degree is required.\n" + JOB2_MD
+    asyncio.run(sj.run_scoring(RecordingPool(), RESUME, _jobs_df("JOB-A", md=md),
+                               jev_run=sj.JevRun(ScriptedJudge())))
+    assert seen == [{"min_years": 3, "advanced_degree": True, "clearance": False}]
+
+
+def test_a_job_jev_cannot_score_takes_the_llm_path():
+    sj = _sj()
+    pool = RecordingPool()
+    run = sj.JevRun(ScriptedJudge())
+    df = pd.concat([_jobs_df("JOB-A"), _jobs_df("JOB-B", md="A short posting with no list.")],
+                   ignore_index=True)
+    merged = asyncio.run(sj.run_scoring(pool, RESUME, df, jev_run=run)).set_index("job_posting_id")
+    # JOB-B has too few requirement lines for Jev's stage 2: the LLM writes it
+    assert pool.jobs(1) == [] and pool.jobs(2) == ["JOB-B"]
+    assert merged.loc["job-b", "recommendation"] == "consider"
+    assert merged.loc["job-a", "recommendation"] == "apply"
+    assert (run.scored, run.fallback) == (3, 1)
+
+
+class FailsAfter(ScriptedJudge):
+    """Answers `ok` requests, then the service goes away."""
+
+    def __init__(self, ok):
+        super().__init__()
+        self.ok = ok
+
+    def judge(self, state, questions):
+        if len(self.calls) >= self.ok:
+            self.calls.append((state, questions))
+            raise ConnectionError("service gone")
+        return super().judge(state, questions)
+
+
+def test_an_outage_mid_run_moves_the_rest_of_the_run_to_the_llm(monkeypatch, capsys):
+    sj = _sj()
+    monkeypatch.setattr(sj, "JEV_CONCURRENCY", 1)
+    inner = FailsAfter(ok=1)
+    judge = jev.Guarded(inner, sleep=lambda s: None, delays=())
+    run = sj.JevRun(judge)
+    pool = RecordingPool(score=5)
+    df = _jobs_df("JOB-A", "JOB-B", "JOB-C", "JOB-D")
+    merged = asyncio.run(sj.run_scoring(pool, RESUME, df, jev_run=run)).set_index("job_posting_id")
+    assert judge.down == "ConnectionError"
+    assert len(inner.calls) == 2                  # one answer, one failure, then no more requests
+    assert pool.jobs(1) == ["JOB-B", "JOB-C", "JOB-D"]
+    assert pool.jobs(2) == ["JOB-A", "JOB-B", "JOB-C", "JOB-D"]
+    assert merged.loc["job-a", "reason"].startswith("Skills fit")
+    assert merged.loc["job-b", "reason"] == "llm reason"
+    assert not merged["reason"].astype(str).str.startswith("ERROR").any()
+    assert (run.scored, run.fallback) == (1, 7)
+    out = capsys.readouterr().out
+    assert out.count("Jev is unavailable (ConnectionError)") == 1
+
+
+def test_jev_calls_run_in_worker_threads_under_their_own_semaphore(monkeypatch):
+    import threading
+    import time
+    sj = _sj()
+    monkeypatch.setattr(sj, "JEV_CONCURRENCY", 2)
+    lock = threading.Lock()
+    live = {"now": 0, "max": 0, "threads": set()}
+
+    class Slow(ScriptedJudge):
+        def judge(self, state, questions):
+            with lock:
+                live["now"] += 1
+                live["max"] = max(live["max"], live["now"])
+                live["threads"].add(threading.current_thread() is threading.main_thread())
+            time.sleep(0.05)
+            with lock:
+                live["now"] -= 1
+            return super().judge(state, questions)
+
+    df = _jobs_df("JOB-A", "JOB-B", "JOB-C", "JOB-D")
+    asyncio.run(sj.run_scoring(RecordingPool(), RESUME, df, jev_run=sj.JevRun(Slow())))
+    assert live["max"] == 2
+    assert live["threads"] == {False}
+
+
+def test_jev_on_without_an_llm_provider_keeps_error_rows_and_scores_only(monkeypatch):
+    sj = _sj()
+    monkeypatch.setattr(jev_score, "_WARNED", set())
+
+    class RefusesB(ScriptedJudge):
+        def judge(self, state, questions):
+            if "JOB-B" in state["job"]:
+                raise RuntimeError("no answer for this one")
+            return super().judge(state, questions)
+
+    run = sj.JevRun(RefusesB())
+    df = pd.concat([_jobs_df("JOB-A", md="A short posting with no list."), _jobs_df("JOB-B")],
+                   ignore_index=True)
+    merged = asyncio.run(sj.run_scoring(None, RESUME, df, jev_run=run)).set_index("job_posting_id")
+    assert merged.loc["job-a", "score"] == 5
+    assert pd.isna(merged.loc["job-a", "deep_score"])          # scores only
+    assert pd.isna(merged.loc["job-b", "score"])
+    assert merged.loc["job-b", "reason"] == sj.NO_LLM_REASON
+    assert sj.NO_LLM_REASON.startswith("ERROR:")                # the rescore pass retries it
+    assert list(sj.rows_needing_rescore(merged.reset_index())["job_posting_id"]) == ["job-b"]
+    assert (run.no_llm_errors, run.scores_only) == (1, 1)
+
+
+def test_with_jev_off_run_scoring_is_the_llm_path_as_before():
+    sj = _sj()
+    pool = RecordingPool()
+    df = _jobs_df("JOB-A", "JOB-B")
+    for run in (None, sj.JevRun(None)):
+        pool.calls.clear()
+        merged = asyncio.run(sj.run_scoring(pool, RESUME, df, jev_run=run))
+        assert pool.jobs(1) == ["JOB-A", "JOB-B"] and pool.jobs(2) == ["JOB-A", "JOB-B"]
+        assert set(merged["reason"]) == {"llm reason"}
+
+
+def test_the_run_summary_counts_jev_requests_spend_and_fallbacks():
+    sj = _sj()
+    run = sj.JevRun(jev.Guarded(jev.DryRun(ScriptedJudge())))
+    df = pd.concat([_jobs_df("JOB-A"), _jobs_df("JOB-B", md="A short posting with no list.")],
+                   ignore_index=True)
+    asyncio.run(sj.run_scoring(RecordingPool(), RESUME, df, jev_run=run))
+    stats = run.stats()
+    assert (stats["jev_scored"], stats["jev_requests"], stats["jev_llm_fallback"]) == (3, 3, 1)
+    assert 0 < stats["jev_usd"] < 0.01
+    assert run.summary_line() == (f"Jev scored 3 (3 requests, ${stats['jev_usd']:.4f}); "
+                                  "LLM fallback 1")
+
+
+def test_run_stats_carry_the_jev_columns(tmp_path, monkeypatch):
+    sj = _sj()
+    assert sj.RUN_STATS_COLS[-4:] == ["jev_scored", "jev_requests", "jev_usd",
+                                      "jev_llm_fallback"]
+    monkeypatch.setattr(sj, "RUN_STATS_CSV", tmp_path / "run_stats.csv")
+    sj.append_run_stats({"jev_scored": 7, "jev_requests": 5, "jev_usd": 0.0021,
+                         "jev_llm_fallback": 2})
+    row = pd.read_csv(tmp_path / "run_stats.csv").iloc[0]
+    assert (row["jev_scored"], row["jev_requests"], row["jev_llm_fallback"]) == (7, 5, 2)
+    assert row["jev_usd"] == pytest.approx(0.0021)
+
+
+def test_jev_run_off_reports_zeros():
+    sj = _sj()
+    assert sj.JevRun(None).stats() == {"jev_scored": 0, "jev_requests": 0, "jev_usd": 0.0,
+                                       "jev_llm_fallback": 0}
+
+
+def test_make_jev_judge_on_the_vm_stays_on_the_llm(monkeypatch, capsys):
+    """No SCORE_USE_JEV and no dashboard config beside the scorer (the VM's flat
+    copy): no judge, and nothing to warn about."""
+    sj = _sj()
+    monkeypatch.delenv("SCORE_USE_JEV", raising=False)
+    monkeypatch.setattr(jev_score, "CONFIG_PATH", None)
+    assert sj.make_jev_judge() is None
+    assert capsys.readouterr().out == ""
+
+
+def test_make_jev_judge_builds_a_guarded_judge_when_the_switch_is_on(monkeypatch, capsys, sdk):
+    sj = _sj()
+
+    class Live:
+        def judge(self, state, questions):
+            raise AssertionError("no request in this test")
+
+    monkeypatch.setenv("SCORE_USE_JEV", "1")
+    monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key")
+    monkeypatch.setattr(jev, "TypeSafeJev", Live)
+    judge = sj.make_jev_judge()
+    assert isinstance(judge, jev.Guarded) and isinstance(judge.inner, Live)
+    out = capsys.readouterr().out
+    assert "Jev scoring on (SCORE_USE_JEV=1)" in out and "not-a-real-key" not in out
+
+
+def _main_stubs(monkeypatch, sj, judge):
+    from types import SimpleNamespace
+    seen = {}
+
+    def make_pool(required=True):
+        seen["required"] = required
+        return None if not required else RecordingPool()
+
+    async def rescore(pool, resume, *, jev_run=None):
+        seen["rescore_jev"] = jev_run
+        return 0, 0
+
+    monkeypatch.setattr(sj, "parse_args", lambda: SimpleNamespace(csv=None))
+    monkeypatch.setattr(sj, "load_resume", lambda: RESUME)
+    monkeypatch.setattr(sj, "latest_input_csv", lambda: None)
+    monkeypatch.setattr(sj, "make_jev_judge", lambda: judge)
+    monkeypatch.setattr(sj, "make_pool", make_pool)
+    monkeypatch.setattr(sj, "rescore_master_failures", rescore)
+    monkeypatch.setattr(sj, "append_run_stats", lambda stats: seen.setdefault("stats", stats))
+    return seen
+
+
+def test_main_with_jev_on_needs_no_llm_provider_and_logs_the_summary(monkeypatch, capsys):
+    sj = _sj()
+    seen = _main_stubs(monkeypatch, sj, ScriptedJudge())
+    asyncio.run(sj.main())
+    assert seen["required"] is False
+    assert seen["rescore_jev"].judge is not None
+    assert seen["stats"]["free_calls"] == 0 and seen["stats"]["jev_scored"] == 0
+    assert "Jev scored 0 (0 requests, $0.0000); LLM fallback 0" in capsys.readouterr().out
+
+
+def test_main_with_jev_off_needs_the_llm_provider_as_today(monkeypatch, capsys):
+    sj = _sj()
+    seen = _main_stubs(monkeypatch, sj, None)
+    asyncio.run(sj.main())
+    assert seen["required"] is True
+    assert seen["stats"]["jev_scored"] == 0 and seen["stats"]["jev_llm_fallback"] == 0
+    assert "Jev scored" not in capsys.readouterr().out
+
+
+def test_make_pool_without_credentials_exits_only_when_it_is_required(monkeypatch, capsys):
+    sj = _sj()
+
+    def no_creds(cls, *, state_path, limits=None):
+        raise sj.PoolError("No Gemini credentials")
+
+    monkeypatch.setattr(sj.KeyPool, "from_env", classmethod(no_creds))
+    assert sj.make_pool(required=False) is None
+    assert "No Gemini credentials" in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        sj.make_pool()

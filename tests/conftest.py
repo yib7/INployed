@@ -121,6 +121,9 @@ for _leaked in (
     # that builds one that way and expects the keyless typesafe refusal.
     "RESUME_TAILOR_BEST_OF_N", "RESUME_TAILOR_COVER_LETTER_JEV_CHECK",
     "RESUME_TAILOR_ATS_MEANING", "AUTO_APPLY_JEV_MODE",
+    # The scorer's Jev switch beats the dashboard config (jev_score.use_jev): a
+    # shell export would turn Jev scoring on for every test that asks.
+    "SCORE_USE_JEV",
 ):
     os.environ.pop(_leaked, None)
 
@@ -316,6 +319,7 @@ def _hermetic_repo_data(tmp_path_factory):
     tests assert their tmp_path holds no leftover file, and a directory this
     fixture created would read as one.
     """
+    import jev_score
     import jobsdata
     import score_jobs
     import scraper
@@ -344,6 +348,9 @@ def _hermetic_repo_data(tmp_path_factory):
         # default and getting 4 -- the value in the author's config.json, where a
         # fresh clone has no file at all and answers 3.
         mp.setattr(rt_config, "CONFIG_JSON", d / "config.json")
+        # The scorer's Jev switch reads local/config.json through its own binding
+        # too (the VM copy has no settings module): the same sandbox file.
+        mp.setattr(jev_score, "CONFIG_PATH", d / "config.json")
         mp.setattr(scraper, "OUTPUT_DIR", d)
         mp.setattr(scraper, "MASTER_CSV", d / "linkedin_jobs_master.csv")
         mp.setattr(scraper, "PREVIOUS_IDS_FILE", d / "last_run_job_ids.json")

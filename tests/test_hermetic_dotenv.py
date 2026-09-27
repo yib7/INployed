@@ -99,6 +99,24 @@ def test_the_judge_key_reaches_only_a_recording_run():
         assert os.environ.get(_JUDGE_KEY) == os.environ[_JUDGE_KEY_CANARY]
 
 
+def test_the_scorer_switch_never_reaches_a_test():
+    """SCORE_USE_JEV beats the dashboard config (JS-4), so a shell export would
+    turn Jev scoring on for every test that asks `jev_score.use_jev()`. The
+    outer test below starts this one in a fresh pytest with the switch set."""
+    assert os.environ.get("SCORE_USE_JEV") is None
+
+
+def test_conftest_drops_a_shell_exported_scorer_switch():
+    env = {k: v for k, v in os.environ.items() if not k.startswith("PYTEST_")}
+    env["SCORE_USE_JEV"] = "1"
+    test = f"{Path(__file__).as_posix()}::test_the_scorer_switch_never_reaches_a_test"
+    res = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+                          "-p", "no:xdist", test],
+                         capture_output=True, text=True, encoding="utf-8", errors="replace",
+                         cwd=str(Path(__file__).resolve().parent.parent), env=env, timeout=110)
+    assert res.returncode == 0 and "1 passed" in res.stdout, res.stdout[-2000:] + res.stderr
+
+
 @pytest.mark.parametrize("mode", [None, *_RECORD_MODES])
 def test_conftest_drops_a_shell_exported_judge_key_unless_the_run_records(mode):
     env = {k: v for k, v in os.environ.items()

@@ -65,6 +65,17 @@ def test_dashboard_config_paths_are_sandboxed():
         assert _is_sandboxed(path), f"settings target {tid!r} is not sandboxed: {path}"
 
 
+def test_the_scorer_reads_the_sandboxed_dashboard_config():
+    """jev_score.CONFIG_PATH is the scorer's own binding to local/config.json
+    (the VM copy has no settings module), so the settings redirect never
+    covered it: the scorer read the author's real Jev switch. It must read the
+    same sandbox file as the dashboard's switch."""
+    import jev_score
+    import jev_switch
+    assert _is_sandboxed(jev_score.CONFIG_PATH), jev_score.CONFIG_PATH
+    assert Path(jev_score.CONFIG_PATH) == jev_switch.config_path()
+
+
 def test_apply_answer_store_is_sandboxed():
     from resume_tailor import apply_answers, apply_config
     assert _is_sandboxed(apply_answers.STORE_PATH), apply_answers.STORE_PATH

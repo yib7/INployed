@@ -66,6 +66,46 @@ def test_scrape_env_omits_extra_master_when_absent(qtbot, monkeypatch, tmp_path)
     assert "LINKEDIN_EXTRA_MASTER" not in w._scrape_env()
 
 
+def _jev_scoring(monkeypatch, *, config=None, key=False, sdk=True, saved_key=False):
+    """The dashboard's Jev scoring switch, set through what jev_switch reads:
+    the sandboxed config.json, the key in our environment, the SDK probe and
+    the key saved in Settings."""
+    import json
+
+    import jev_switch
+    jev_switch.config_path().write_text(json.dumps(config or {}), encoding="utf-8")
+    if key:
+        monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key")
+    else:
+        monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.setattr(jev_switch, "sdk_installed", lambda: sdk)
+    monkeypatch.setattr(jev_switch, "key_saved", lambda: saved_key)
+
+
+@pytest.mark.parametrize("state,value", [
+    ({"key": True}, "1"),
+    ({"key": True, "config": {"jev_scoring": False}}, "0"),
+    ({"key": True, "config": {"jev_enabled": False}}, "0"),
+    ({}, "0"),                                      # no key anywhere
+    ({"saved_key": True}, "1"),                     # the scorer loads .env itself
+    ({"saved_key": True, "config": {"jev_scoring": False}}, "0"),
+    ({"saved_key": True, "sdk": False}, "0"),
+    ({"key": True, "sdk": False}, "0"),
+])
+def test_scrape_env_hands_the_scorer_the_dashboard_jev_switch(qtbot, monkeypatch, state, value):
+    """A dashboard-launched scorer follows the Settings switch even where it
+    finds no config.json of its own, so the two never disagree."""
+    import jev_score
+    w = _win(qtbot)
+    monkeypatch.setattr(mw, "gdrive_root_dir", lambda paths: None)
+    monkeypatch.setenv("SCORE_USE_JEV", "later")        # a stray value in our own env
+    _jev_scoring(monkeypatch, **state)
+    env = w._scrape_env()
+    assert env["SCORE_USE_JEV"] == value
+    assert (value in jev_score._TRUE) is (value == "1")  # the form jev_score reads
+    assert os.environ["SCORE_USE_JEV"] == "later"        # our own env untouched
+
+
 def test_console_python_swaps_pythonw_for_python(monkeypatch):
     # pythonw has no usable stdout -> children must run on the console python
     monkeypatch.setattr(mw.os.path, "exists", lambda p: True)
@@ -1281,6 +1321,27 @@ def test_score_only_work_runs_scorer_only_and_appends_log(qtbot, monkeypatch, tm
     assert len(cmds) == 1 and cmds[0][-1].endswith("score_jobs.py")  # no scraper rerun
     text = (tmp_path / "scrape.log").read_text(encoding="utf-8")
     assert "earlier scrape" in text and "scored ok" in text          # appended, not clobbered
+
+
+@pytest.mark.parametrize("state,value", [
+    ({"key": True}, "1"),
+    ({"key": True, "config": {"jev_scoring": False}}, "0"),
+    ({"saved_key": True}, "1"),
+])
+def test_score_only_work_hands_the_scorer_the_dashboard_jev_switch(qtbot, monkeypatch, tmp_path,
+                                                                  state, value):
+    w = _win(qtbot)
+    monkeypatch.setattr(mw, "APPDATA", tmp_path)
+    _stub_vm_hooks(monkeypatch)
+    _jev_scoring(monkeypatch, **state)
+    envs = []
+    monkeypatch.setattr(mw.subprocess, "Popen",
+                        lambda cmd, **k: (envs.append(k.get("env")), _FakeProc(["ok\n"], 0))[1])
+    assert w._score_only_work() is True
+    assert len(envs) == 1 and envs[0] is not None
+    assert envs[0]["SCORE_USE_JEV"] == value
+    assert envs[0].get("PATH") == os.environ.get("PATH")          # the rest is our environment
+    assert "SCORE_USE_JEV" not in os.environ
 
 
 def test_push_seen_ids_to_vm_swallows_errors(monkeypatch):

@@ -28,6 +28,7 @@ import apply_queue
 import ats_accounts
 import chrome_launch
 import errmsg
+import jev_switch
 import jobsdata
 import osopen
 import settings
@@ -166,6 +167,20 @@ def _no_window_flag() -> int:
     """CREATE_NO_WINDOW on Windows (don't flash a console for the captured child);
     0 everywhere else."""
     return getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def _scorer_jev_switch() -> str:
+    """SCORE_USE_JEV for a scorer the dashboard launches, in the form
+    `jev_score.use_jev` reads: "1" when Jev scoring is on here
+    (`jev_switch.jev_on("scoring")`), else "0". A key saved in Settings counts as
+    present: the scorer loads `.env` itself, so it has that key before the
+    dashboard restarts (the Auto-apply Start gate counts a saved key the same way).
+    Reads config.json and `.env`, so call it off the UI thread."""
+    why = jev_switch.jev_why_off("scoring")
+    if why == jev_switch.REASON_KEY and jev_switch.key_saved():
+        # jev_switch checks the key before the SDK, so the SDK is still unchecked.
+        why = "" if jev_switch.sdk_installed() else jev_switch.REASON_SDK
+    return "0" if why else "1"
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -1707,15 +1722,24 @@ class MainWindow(QtWidgets.QMainWindow):
         workers.run_async(self, self._score_only_work,
                           on_done=self._after_scrape, on_error=self._after_scrape_error)
 
+    def _scorer_env(self) -> dict:
+        """Environment for a score_jobs.py this dashboard launches: a copy of ours with
+        SCORE_USE_JEV set from the Settings switch (`_scorer_jev_switch`). The scorer
+        reads that variable before any config.json, so a scorer that finds no config
+        beside it still follows the dashboard. Set on the child's env only."""
+        env = os.environ.copy()
+        env["SCORE_USE_JEV"] = _scorer_jev_switch()
+        return env
+
     def _scrape_env(self) -> dict:
-        """Environment for the local scrape subprocess: a copy of ours, plus a pointer to
+        """Environment for the local scrape subprocess: `_scorer_env()`, plus a pointer to
         the synced Drive master so the scraper also excludes — and never re-bills — jobs
         the VM already collected. The local repo master is only a small stub of recent
         local runs, so without this a local 'Find new jobs' run re-pulls (and re-scores)
         postings the VM already has. Set on the CHILD's env only, not our own process, so
         the post-scrape VM-push set stays lean — it carries what THIS host collected, not
         the Drive master pulled down from the VM."""
-        env = os.environ.copy()
+        env = self._scorer_env()
         root = gdrive_root_dir(self.csv_paths)
         if root is not None:
             master = Path(root) / "linkedin_jobs_master.csv.gz"
@@ -1750,7 +1774,7 @@ class MainWindow(QtWidgets.QMainWindow):
         log_path = self._scrape_log_path()
         before = self._outbox_snapshot()
         with open(log_path, "a", encoding="utf-8", errors="replace") as log:
-            self._run_pipeline((self.scorer_cmd(),), log, log_path)
+            self._run_pipeline((self.scorer_cmd(),), log, log_path, env=self._scorer_env())
             # The recovered run's ids/rows never made it to the VM either — they
             # ride the same post-scrape sync as a normal run, or the recovery
             # stays local-only.

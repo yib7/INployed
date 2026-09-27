@@ -66,12 +66,13 @@ def test_scrape_env_omits_extra_master_when_absent(qtbot, monkeypatch, tmp_path)
     assert "LINKEDIN_EXTRA_MASTER" not in w._scrape_env()
 
 
-def _jev_scoring(monkeypatch, *, config=None, key=False, sdk=True, saved_key=False):
+def _jev_scoring(monkeypatch, *, config=None, key=False, sdk=True):
     """The dashboard's Jev scoring switch, set through what jev_switch reads:
-    the sandboxed config.json, the key in our environment, the SDK probe and
-    the key saved in Settings."""
+    the sandboxed config.json, the key in our environment and the SDK probe.
+    The scorer's own SDK probe reads the same answer."""
     import json
 
+    import jev_score
     import jev_switch
     jev_switch.config_path().write_text(json.dumps(config or {}), encoding="utf-8")
     if key:
@@ -79,18 +80,18 @@ def _jev_scoring(monkeypatch, *, config=None, key=False, sdk=True, saved_key=Fal
     else:
         monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
     monkeypatch.setattr(jev_switch, "sdk_installed", lambda: sdk)
-    monkeypatch.setattr(jev_switch, "key_saved", lambda: saved_key)
+    monkeypatch.setattr(jev_score, "_sdk_installed", lambda: sdk)
 
 
 @pytest.mark.parametrize("state,value", [
     ({"key": True}, "1"),
     ({"key": True, "config": {"jev_scoring": False}}, "0"),
     ({"key": True, "config": {"jev_enabled": False}}, "0"),
-    ({}, "0"),                                      # no key anywhere
-    ({"saved_key": True}, "1"),                     # the scorer loads .env itself
-    ({"saved_key": True, "config": {"jev_scoring": False}}, "0"),
-    ({"saved_key": True, "sdk": False}, "0"),
-    ({"key": True, "sdk": False}, "0"),
+    ({"config": {"jev_scoring": False}}, "0"),      # a switch is off, with or without a key
+    # The key and the SDK are the scorer's to check: it loads .env first.
+    ({}, "1"),
+    ({"key": True, "sdk": False}, "1"),
+    ({"sdk": False}, "1"),
 ])
 def test_scrape_env_hands_the_scorer_the_dashboard_jev_switch(qtbot, monkeypatch, state, value):
     """A dashboard-launched scorer follows the Settings switch even where it
@@ -104,6 +105,23 @@ def test_scrape_env_hands_the_scorer_the_dashboard_jev_switch(qtbot, monkeypatch
     assert env["SCORE_USE_JEV"] == value
     assert (value in jev_score._TRUE) is (value == "1")  # the form jev_score reads
     assert os.environ["SCORE_USE_JEV"] == "later"        # our own env untouched
+
+
+@pytest.mark.parametrize("state,reason", [
+    ({}, "no TypeSafe API key"),
+    ({"key": True, "sdk": False}, "typesafe-sdk is not installed"),
+])
+def test_a_dashboard_launched_scorer_names_what_is_missing(qtbot, monkeypatch, capsys,
+                                                         state, reason):
+    """With the switches on, the scorer handed the dashboard's environment
+    prints its one warning naming the missing piece (JS-4)."""
+    import jev_score
+    w = _win(qtbot)
+    monkeypatch.setattr(mw, "gdrive_root_dir", lambda paths: None)
+    _jev_scoring(monkeypatch, **state)
+    assert jev_score.use_jev(w._scrape_env()) == (False, reason)
+    warnings = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("WARNING")]
+    assert len(warnings) == 1 and reason in warnings[0]
 
 
 def test_console_python_swaps_pythonw_for_python(monkeypatch):
@@ -1326,7 +1344,7 @@ def test_score_only_work_runs_scorer_only_and_appends_log(qtbot, monkeypatch, tm
 @pytest.mark.parametrize("state,value", [
     ({"key": True}, "1"),
     ({"key": True, "config": {"jev_scoring": False}}, "0"),
-    ({"saved_key": True}, "1"),
+    ({}, "1"),
 ])
 def test_score_only_work_hands_the_scorer_the_dashboard_jev_switch(qtbot, monkeypatch, tmp_path,
                                                                   state, value):

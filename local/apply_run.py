@@ -419,10 +419,9 @@ def _cap(text: str, limit: int = EVIDENCE_CAP) -> str:
     return text if len(text) <= limit else text[:limit - 3].rstrip() + "..."
 
 
-def launch_profile(pw, profile_dir: Path, *, headless: bool, log=None, fallback: bool = True):
+def launch_profile(pw, profile_dir: Path, *, headless: bool, log=None):
     """Open the auto-apply profile in the installed Google Chrome, or in the
-    bundled Playwright Chromium when Chrome will not start (never with
-    `fallback=False`: Chrome's error is raised then).
+    bundled Playwright Chromium when Chrome will not start.
 
     The profile is its own directory, apart from the user's everyday Chrome
     profile: Chrome refuses automation on its default profile and locks a
@@ -445,8 +444,6 @@ def launch_profile(pw, profile_dir: Path, *, headless: bool, log=None, fallback:
             ctx = pw.chromium.launch_persistent_context(
                 str(profile_dir), channel=BROWSER_CHANNEL, headless=headless, viewport=VIEWPORT)
         except Exception as e:      # noqa: BLE001  (Chrome absent or broken: the bundled build)
-            if not fallback:
-                raise
             if profile_lock.chrome_holds(profile_dir):
                 raise profile_lock.ProfileBusy(profile_lock.RUN_BUSY) from None
             first = str(e).strip().splitlines()[0][:200] if str(e).strip() else ""

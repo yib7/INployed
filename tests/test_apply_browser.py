@@ -222,14 +222,13 @@ def test_launch_profile_never_falls_back_onto_a_profile_chrome_holds(tmp_path):
     assert profile_lock.sentinel_held(tmp_path / "profile") is False
 
 
-def test_launch_profile_with_no_fallback_launches_chrome_alone(tmp_path):
+def test_launch_profile_gives_the_sentinel_back_when_no_browser_starts(tmp_path):
     import profile_lock
-    chromium = _Chromium(fail_channels={"chrome"})
+    chromium = _Chromium(fail_channels={"chrome", None})
     with pytest.raises(RuntimeError) as err:
-        apply_run.launch_profile(_PW(chromium), tmp_path / "profile", headless=True,
-                                 fallback=False)
+        apply_run.launch_profile(_PW(chromium), tmp_path / "profile", headless=True)
     assert not isinstance(err.value, profile_lock.ProfileBusy)
-    assert [kw.get("channel") for _, kw in chromium.calls] == ["chrome"]
+    assert [kw.get("channel") for _, kw in chromium.calls] == ["chrome", None]
     assert profile_lock.sentinel_held(tmp_path / "profile") is False
 
 

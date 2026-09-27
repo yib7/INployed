@@ -163,8 +163,8 @@ PAGES_MAX = ENTRY_HOPS_MAX + 2
 STALE_DAYS = 7              # a result older than this shows its age
 CACHE_FOLDER = "apply_assess"
 PROFILE_BUSY = profile_lock.BUSY_LEAD + " Check difficulty once that window closes."
-CHROME_ONLY = ("Google Chrome did not start ({why}). The difficulty check opens the auto-apply "
-               "profile in Chrome alone, so it stops here.")
+NO_BROWSER = ("The browser did not start ({why}): Google Chrome and the bundled Chromium both "
+              "failed to open the auto-apply profile, so the difficulty check stops here.")
 NO_SAVED_PAGE = "no saved page for this job; run Check difficulty first"
 ACCOUNT_NOTE = "An account step comes first: its questions show once you sign in"
 CHECK_NOTE = "A bot check comes first: its questions show once it clears"
@@ -1203,14 +1203,15 @@ def run(job_ids: list[str], *, all_queued: bool = False, recheck: bool = False, 
 
 def main(argv: list[str] | None = None, *, context=None) -> int:
     """`python local/apply_assess.py [--all | <id> ...] [--recheck]`. Exit 0,
-    1 on an error the check could not go past, 2 when it refuses (Jev off,
-    a test judge or an unknown one, the profile in use, Chrome not starting,
-    nothing to check).
+    1 on an error the check could not go past (no browser starting among
+    them), 2 when it refuses (Jev off, a test judge or an unknown one, the
+    profile in use, nothing to check).
 
-    The browser is the auto-apply profile in Google Chrome alone
-    (`launch_profile(..., fallback=False)`): the bundled Chromium leaves no
-    Chrome lock on the profile. The sentinel `launch_profile` takes stays
-    held while the check runs, so a drain started meanwhile refuses."""
+    The browser is the auto-apply profile as the drain opens it
+    (`apply_run.launch_profile`): Google Chrome, or the bundled Chromium when
+    Chrome will not start. The sentinel `launch_profile` takes covers either
+    one and stays held while the check runs, so a drain started meanwhile
+    refuses."""
     import argparse
     import apply_run
     import jev
@@ -1263,13 +1264,13 @@ def main(argv: list[str] | None = None, *, context=None) -> int:
         try:
             ctx = apply_run.launch_profile(
                 pw, profile, headless=bool(settings.get("auto_apply_headless")) or args.headless,
-                log=log, fallback=False)
+                log=log)
         except profile_lock.ProfileBusy:
             print(PROFILE_BUSY, file=sys.stderr)        # a browser opened it after the read
             return 2
-        except Exception as e:      # noqa: BLE001  (Chrome absent or broken: no fallback)
-            print(CHROME_ONLY.format(why=type(e).__name__), file=sys.stderr)
-            return 2
+        except Exception as e:      # noqa: BLE001  (Chrome and the bundled build both failed)
+            print(NO_BROWSER.format(why=type(e).__name__), file=sys.stderr)
+            return 1
         try:
             return run(list(args.job_ids), context=ctx, **common)
         finally:

@@ -837,15 +837,29 @@ def test_main_holds_the_sentinel_while_it_checks(browser_cli):
     assert profile_lock.sentinel_held(aa.default_profile_dir()) is False
 
 
-def test_main_opens_chrome_alone_and_refuses_when_it_does_not_start(browser_cli, capsys):
-    # the bundled Chromium leaves no Chrome lock, so the check never opens
-    # the shared profile in it
+def test_main_opens_the_bundled_browser_when_chrome_does_not_start(browser_cli):
+    """Fix round 2: the sentinel covers the bundled browser too, so the check
+    falls back to it as the drain does, holding the sentinel while it runs."""
+    import profile_lock
     chromium = _FakeChromium(fail={"chrome"})
     _fake_playwright(browser_cli, chromium)
+    seen = []
+    browser_cli.setattr(aa, "run", lambda job_ids, **kw: seen.append(
+        profile_lock.sentinel_held(aa.default_profile_dir())) or 0)
+    assert aa.main(["42"]) == 0
+    assert [kw.get("channel") for _, kw in chromium.calls] == ["chrome", None]
+    assert seen == [True]
+    assert profile_lock.sentinel_held(aa.default_profile_dir()) is False
+
+
+def test_main_stops_in_a_sentence_when_no_browser_starts(browser_cli, capsys):
+    import profile_lock
+    chromium = _FakeChromium(fail={"chrome", None})
+    _fake_playwright(browser_cli, chromium)
     browser_cli.setattr(aa, "run", lambda *a, **kw: pytest.fail("the check ran"))
-    assert aa.main(["42"]) == 2
-    assert [kw.get("channel") for _, kw in chromium.calls] == ["chrome"]
-    assert capsys.readouterr().err.strip() == aa.CHROME_ONLY.format(why="RuntimeError")
+    assert aa.main(["42"]) == 1
+    assert capsys.readouterr().err.strip() == aa.NO_BROWSER.format(why="RuntimeError")
+    assert profile_lock.sentinel_held(aa.default_profile_dir()) is False
 
 
 def test_main_refuses_when_a_browser_takes_the_profile_as_it_starts(browser_cli, capsys):

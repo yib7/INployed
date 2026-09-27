@@ -25,12 +25,20 @@ import types
 from collections import namedtuple
 
 import jev
+import jev_switch
 import pytest
 from PySide6 import QtGui, QtWidgets
 
 from qt import answers_tab as at
 from qt.answers_tab import AddAnswerDialog, AnswersEditor
 from resume_tailor import apply_answers
+
+
+@pytest.fixture(autouse=True)
+def _sdk_found(monkeypatch):
+    """Test my answers asks the Jev gate, which probes for typesafe_sdk: every
+    test here finds it, so no answer depends on this machine's install."""
+    monkeypatch.setattr(jev_switch, "sdk_installed", lambda: True)
 
 
 def _seed_v1(path, entries):
@@ -1138,7 +1146,6 @@ def test_test_answers_reads_the_mode_and_the_saved_key_where_the_drain_does(monk
     """SP1 review B: one reader for each. The mode is `jev_switch.apply_mode`
     (the setting, else typesafe; never AUTO_APPLY_JEV_MODE) and the saved key
     is `jev_switch.key_saved`, the probes the Auto-apply panel's Start uses."""
-    import jev_switch
     monkeypatch.setattr(jev_switch, "apply_mode", lambda flag=None, *, config=None: "replay")
     assert at._current_jev_mode() == "replay"
     monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
@@ -1146,6 +1153,67 @@ def test_test_answers_reads_the_mode_and_the_saved_key_where_the_drain_does(monk
     assert at._typesafe_key_present() is True
     monkeypatch.setattr(jev_switch, "key_saved", lambda: False)
     assert at._typesafe_key_present() is False
+
+
+# --- SP1 review A: the master switch stops every Jev use, Test my answers too ---------
+
+_JEV_OFF = "Auto-apply runs on Jev. Turn Jev on in Settings > Jev."
+
+
+def test_test_answers_is_off_with_the_start_buttons_sentence_while_jev_is_off(
+        qtbot, tmp_path, monkeypatch):
+    """Jev switched off stops the test in every mode, the fake judge too, with
+    the sentence the Auto-apply panel's Start shows; switched back on, the
+    next refresh (a Settings save) brings the button back."""
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [])
+    monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
+    jev_switch.config_path().write_text('{"jev_enabled": false}', encoding="utf-8")
+    for mode in ("typesafe", "fake"):
+        monkeypatch.setattr(at, "_current_jev_mode", lambda m=mode: m)
+        ed = _editor(qtbot, store)
+        assert ed.test_answers_btn.isEnabled() is False, mode
+        assert ed.test_answers_btn.toolTip() == _JEV_OFF, mode
+    jev_switch.config_path().write_text('{"jev_enabled": true}', encoding="utf-8")
+    ed.refresh_test_answers_state()
+    assert ed.test_answers_btn.isEnabled() is True
+
+
+@pytest.mark.parametrize("missing, fix", [
+    ("key", "Add the TypeSafe API key in Settings > Jev."),
+    ("sdk", "Install typesafe-sdk (pip install -r requirements.txt)."),
+])
+def test_test_answers_names_a_missing_key_or_sdk_in_the_start_buttons_words(
+        qtbot, tmp_path, monkeypatch, missing, fix):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [])
+    monkeypatch.setattr(at, "_current_jev_mode", lambda: "typesafe")
+    monkeypatch.setattr(at, "_typesafe_key_present", lambda: missing != "key")
+    if missing == "sdk":
+        monkeypatch.setattr(jev_switch, "sdk_installed", lambda: False)
+    ed = _editor(qtbot, store)
+    assert ed.test_answers_btn.isEnabled() is False
+    assert ed.test_answers_btn.toolTip() == "Auto-apply runs on Jev. " + fix
+
+
+def test_test_answers_click_checks_the_jev_gate_again(qtbot, tmp_path, monkeypatch):
+    """The switch may have moved since the last refresh: a click reads the gate
+    again, starts nothing while Jev cannot run, and says why."""
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    monkeypatch.setattr(at, "_current_jev_mode", lambda: "typesafe")
+    monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
+    started = []
+    monkeypatch.setattr(at.workers, "run_async",
+                        lambda owner, fn, on_done=None, on_error=None: started.append(fn))
+    ed = _editor(qtbot, store)
+    assert ed.test_answers_btn.isEnabled() is True
+    jev_switch.config_path().write_text('{"jev_enabled": false}', encoding="utf-8")
+    ed.test_answers_btn.click()
+    assert started == []
+    assert ed.test_answers_btn.isEnabled() is False
+    assert ed.test_answers_btn.toolTip() == _JEV_OFF
+    assert ed.status.text() == _JEV_OFF
 
 
 def test_test_answers_typesafe_mode_without_a_key_stays_disabled(qtbot, tmp_path, monkeypatch):

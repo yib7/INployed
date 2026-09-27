@@ -25,11 +25,13 @@ these" dismisses it and saves.
 with the judge the Auto-apply judge setting names (`_current_jev_mode`, read by
 `jev_switch.apply_mode`, the reader `local/apply_run.py` uses), on a worker
 thread (`qt.workers.run_async`), and shows the picks in
-`TestAnswersDialog` with the mode named in the result line. The key check that
-disables the button only applies to the "typesafe" (live) mode; a "fake" or
-"replay" mode leaves it enabled and skips the key. The button stays off while
-a run is going (`_test_running`), and `refresh_test_answers_state` re-reads the
-mode and the key after a Settings save.
+`TestAnswersDialog` with the mode named in the result line. The test is a Jev
+use, so the button is off, with the sentence the Auto-apply panel's Start
+shows, while `jev_switch.apply_blocked` names a reason: Jev switched off stops
+every mode, and the key and SDK checks apply to the live "typesafe" mode only.
+The button stays off while a run is going (`_test_running`), and
+`refresh_test_answers_state` re-reads the mode, the switch and the key after a
+Settings save and at each click.
 `apply_screening` is imported inside the worker closure; the judge factory is
 a constructor parameter so tests inject `jev.FakeJev`.
 """
@@ -152,8 +154,8 @@ def _default_judge_factory():
     """The judge the Auto-apply judge setting names, via the same `jev.get`
     factory `local/apply_run.py` calls for a real run. "fake" (and "replay")
     build a key-free judge that makes no live request, safe to construct for
-    real; "typesafe" is the only mode the key check in
-    `refresh_test_answers_state` guards."""
+    real; "typesafe" is the only mode whose key and SDK the Jev gate in
+    `refresh_test_answers_state` checks."""
     return jev.get(_current_jev_mode())
 
 
@@ -900,22 +902,27 @@ class AnswersEditor(QtWidgets.QWidget):
 
     # ---- ED-9: "Test my answers" ----------------------------------------------------
 
-    def refresh_test_answers_state(self) -> None:
-        """Re-read the judge mode and the key and set the button. The main
-        window calls it after a Settings save, so a key set there counts at once."""
+    def refresh_test_answers_state(self) -> str:
+        """Re-read the judge mode, the Jev switch and the key, and set the
+        button. The main window calls it after a Settings save, so a switch
+        flipped or a key set there counts at once.
+
+        The test is a Jev use (SP1 review A): while `jev_switch.apply_blocked`
+        names a reason, the button is off with that sentence, the one the
+        Auto-apply panel's Start shows. Jev switched off stops every mode; the
+        key and SDK checks skip the fake and replay judges. Returns the
+        sentence, "" when the gate is open."""
         mode = _current_jev_mode()
-        live = mode == "typesafe"
-        # Only the "typesafe" mode needs the key; a fake or replay mode skips
-        # the key check.
-        key_ok = _typesafe_key_present() if live else True
+        live = mode not in jev_switch.TEST_MODES
+        # The saved-key probe reads the settings files; a test judge skips it.
+        blocked = jev_switch.apply_blocked(
+            mode=mode, saved_key=live and _typesafe_key_present())
         self.test_answers_btn.setEnabled(
-            key_ok and not self.load_error and not self._test_running)
+            not blocked and not self.load_error and not self._test_running)
         if self.load_error:
             self.test_answers_btn.setToolTip("Fix the damaged answers file first.")
-        elif live and not key_ok:
-            self.test_answers_btn.setToolTip(
-                "Uses the Auto-apply judge setting (currently: %s). Set 'TypeSafe "
-                "API key (Jev judge)' in Settings > Jev to use this." % mode)
+        elif blocked:
+            self.test_answers_btn.setToolTip(blocked)
         elif live:
             self.test_answers_btn.setToolTip(
                 "Uses the Auto-apply judge setting (currently: %s). Runs the "
@@ -928,8 +935,13 @@ class AnswersEditor(QtWidgets.QWidget):
                 "shipped screening questions. Uses your saved, confirmed answers. "
                 "Save first to include new edits. This mode makes no live request "
                 "and costs nothing." % mode)
+        return blocked
 
     def _test_answers_clicked(self) -> None:
+        blocked = self.refresh_test_answers_state()   # the switch may have moved since
+        if blocked:
+            self.status.setText(blocked)
+            return
         store_path = self.store_path
         judge_factory = self._judge_factory
         mode = _current_jev_mode()

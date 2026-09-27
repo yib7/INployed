@@ -9454,6 +9454,15 @@ def _load_env() -> None:
         pass
 
 
+def _jev_gate(mode: str) -> str:
+    """JS-5: the sentence the Auto-apply panel's Start button shows while a run
+    on the `mode` judge cannot start (Jev switched off, no key, no SDK), or ""
+    when it can. `drain`, `one` and `probe --judge` ask it after `_load_env`,
+    so a key saved in `.env` counts. The fake and replay judges need neither a
+    key nor the SDK, so only the master switch stops them here."""
+    return jev_switch.apply_blocked(mode=mode)
+
+
 def _settings_from_args(args: argparse.Namespace) -> dict[str, Any]:
     cfg = load_settings()
     if getattr(args, "no_submit", False):
@@ -9788,6 +9797,10 @@ def main(argv: list[str] | None = None) -> int:
             if args.judge:
                 _load_env()
                 mode = jev_switch.apply_mode(args.jev, config=load_settings())
+                blocked = _jev_gate(mode)       # a judge on every page is a Jev use
+                if blocked:
+                    print(blocked, file=sys.stderr)
+                    return 2
                 try:
                     judge = jev.get(mode)
                 except (jev.JevUnavailable, ValueError) as e:
@@ -9804,7 +9817,7 @@ def main(argv: list[str] | None = None) -> int:
         # JS-5: auto-apply runs on Jev alone. Jev switched off, no key or no SDK
         # stops the run here, after `.env` is read and before a judge, a claim or
         # a browser, in the sentence the Auto-apply panel's Start button shows.
-        blocked = jev_switch.apply_blocked(mode=cfg["auto_apply_jev_mode"])
+        blocked = _jev_gate(cfg["auto_apply_jev_mode"])
         if blocked:
             print(blocked, file=sys.stderr)
             return 2

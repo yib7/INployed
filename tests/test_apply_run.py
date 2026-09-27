@@ -2777,6 +2777,79 @@ def test_a_judge_setting_in_another_case_is_refused_as_fixture_only(monkeypatch,
     assert "fixture-only" in capsys.readouterr().err
 
 
+_PROBE = ["probe", "https://jobs.example/apply/1"]
+
+
+def _never_past_the_probe_gate(monkeypatch):
+    def _never(*a, **kw):
+        raise AssertionError("the probe went past the Jev gate")
+    monkeypatch.setattr(apply_run.jev, "get", _never)
+    monkeypatch.setattr(apply_run, "probe", _never)
+
+
+def test_probe_with_a_judge_refuses_while_jev_is_switched_off(hermetic_cli, monkeypatch,
+                                                                 capsys):
+    """SP1 review A: `probe --judge` asks the judge on every page, a Jev use, so
+    the master switch stops it in every mode with exit 2 and the Start button's
+    sentence, before a judge or a browser. Without --judge the probe reads the
+    page with no judge, whatever the switch says."""
+    jev_switch.config_path().write_text(json.dumps({"jev_enabled": False}), encoding="utf-8")
+    _never_past_the_probe_gate(monkeypatch)
+    for mode in ("typesafe", "fake", "replay"):
+        assert apply_run.main([*_PROBE, "--judge", "--jev", mode]) == 2, mode
+        assert capsys.readouterr().err.strip() == _JEV_OFF, mode
+    seen = {}
+    monkeypatch.setattr(apply_run, "probe", lambda url, **kw: seen.update(kw) or 0)
+    assert apply_run.main(_PROBE) == 0
+    assert seen["judge"] is None
+
+
+def test_probe_names_a_missing_key_in_the_start_buttons_words(hermetic_cli, monkeypatch,
+                                                                 capsys):
+    monkeypatch.delenv("TYPESAFE_API_KEY")
+    _never_past_the_probe_gate(monkeypatch)
+    assert apply_run.main([*_PROBE, "--judge"]) == 2
+    assert capsys.readouterr().err.strip() == _NO_KEY
+
+
+@pytest.mark.parametrize("mode", ["fake", "replay"])
+def test_the_jev_gate_main_asks_passes_a_test_judge_with_no_key_or_sdk(monkeypatch, mode):
+    """SP1 review I: the fake and replay judges need neither a key nor the SDK,
+    so the gate `main` asks before `drain`, `one` and `probe --judge` passes
+    them while the master switch is on. `drain` and `one` go on to refuse them
+    as fixture-only (cycle 16); the suite drains on them through Runner."""
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.setattr(jev_switch, "sdk_installed", lambda: False)
+    assert jev_switch.master_on()                 # the sandbox's config file: on
+    assert apply_run._jev_gate(mode) == ""
+    assert apply_run._jev_gate("typesafe") == _NO_KEY
+
+
+def test_probe_with_the_fake_judge_passes_the_gate_with_no_key_or_sdk(hermetic_cli,
+                                                                      monkeypatch):
+    monkeypatch.delenv("TYPESAFE_API_KEY")
+    monkeypatch.setattr(jev_switch, "sdk_installed", lambda: False)
+    seen = {}
+    monkeypatch.setattr(apply_run, "probe", lambda url, **kw: seen.update(kw) or 0)
+    assert apply_run.main([*_PROBE, "--judge", "--jev", "fake"]) == 0
+    assert isinstance(seen["judge"], jev.FakeJev)
+
+
+def test_drain_one_and_probe_ask_the_one_jev_gate(hermetic_cli, monkeypatch, capsys):
+    """The three verbs that build a judge ask `_jev_gate` with the mode each
+    resolved (the --jev flag, else the setting), and stop on its sentence."""
+    asked = []
+    monkeypatch.setattr(apply_run, "_jev_gate",
+                        lambda mode: asked.append(mode) or "the gate says no")
+    _past_the_jev_gate_fails(monkeypatch)
+    monkeypatch.setattr(apply_run, "probe", lambda *a, **kw: pytest.fail("probe ran"))
+    assert apply_run.main(["drain"]) == 2
+    assert apply_run.main(["one", "42", "--jev", "typesafe"]) == 2
+    assert apply_run.main([*_PROBE, "--judge", "--jev", "fake"]) == 2
+    assert asked == ["typesafe", "typesafe", "fake"]
+    assert capsys.readouterr().err.splitlines() == ["the gate says no"] * 3
+
+
 def test_the_drain_reads_the_key_its_own_env_file_loads(hermetic_cli, monkeypatch, capsys):
     """The gate runs after `_load_env`: a key saved in Settings (the `.env` the
     drain loads) counts before the dashboard that launched it restarts."""

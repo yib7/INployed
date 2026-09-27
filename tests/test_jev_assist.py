@@ -641,21 +641,50 @@ def _reads(choice, confidence, inflates, adds):
 _F = jev_assist.FINDINGS
 
 
+_ALL_THREE = "; ".join([_F["unsupported"], _F["inflates"], _F["adds_claim"]])
+
+
 @pytest.mark.parametrize("choice,confidence,inflates,adds,want", [
     pytest.param("verified", 0.6, 0.69, 0.69, "", id="verified-at-the-floor-passes"),
-    pytest.param("verified", 0.59, 0.1, 0.1, _F["unconfirmed"], id="verified-under-the-floor"),
-    pytest.param("unsupported", 0.9, 0.1, 0.1, _F["unsupported"], id="unsupported"),
-    # Not verified is flagged at any confidence: only a sure "verified" passes.
-    pytest.param("contradicted", 0.3, 0.1, 0.1, _F["contradicted"], id="contradicted-unsure"),
+    # VL-3: a low-confidence "verified" is the judge reading a faithful rephrase.
+    pytest.param("verified", 0.23, 0.1, 0.1, "", id="unsure-verified-passes"),
+    pytest.param("unsupported", 0.6, 0.1, 0.1, _F["unsupported"], id="unsupported-at-the-floor"),
+    pytest.param("unsupported", 0.59, 0.33, 0.1, "", id="unsure-unsupported-passes"),
+    pytest.param("contradicted", 0.6, 0.1, 0.1, _F["contradicted"],
+                 id="contradicted-at-the-floor"),
+    pytest.param("contradicted", 0.3, 0.1, 0.1, "", id="unsure-contradicted-passes"),
     pytest.param("verified", 1.0, 0.7, 0.1, _F["inflates"], id="inflates-at-the-flag"),
-    pytest.param("verified", 1.0, 0.1, 0.7, _F["adds_claim"], id="adds-claim-at-the-flag"),
-    pytest.param("unsupported", 0.8, 0.9, 0.9,
-                 "; ".join([_F["unsupported"], _F["inflates"], _F["adds_claim"]]),
-                 id="every-finding-in-order"),
+    pytest.param("verified", 0.3, 0.7, 0.1, _F["inflates"], id="inflates-flags-an-unsure-verified"),
+    # VL-3: adds_claim reads 0.5 to 0.95 on nearly every faithful rephrase, so it
+    # flags nothing alone and rides along in the finding of a bullet flagged otherwise.
+    pytest.param("verified", 1.0, 0.1, 0.95, "", id="adds-claim-alone-passes"),
+    pytest.param("verified", 1.0, 0.7, 0.7, "; ".join([_F["inflates"], _F["adds_claim"]]),
+                 id="adds-claim-named-beside-inflates"),
+    pytest.param("unsupported", 0.8, 0.1, 0.69, _F["unsupported"],
+                 id="adds-claim-under-the-flag-left-out"),
+    pytest.param("unsupported", 0.8, 0.9, 0.9, _ALL_THREE, id="every-finding-in-order"),
 ])
 def test_faithfulness_flags_by_the_thresholds(master, choice, confidence, inflates, adds, want):
     got = jev_assist.faithfulness([_CHESS], judge=_reads(choice, confidence, inflates, adds))
     assert got == {"cc_lead": want}
+
+
+# VL-3's planted bullets, as the live judge read them: (supported, its confidence,
+# inflates, adds_claim) in, the finding out.
+@pytest.mark.parametrize("supported,confidence,inflates,adds,want", [
+    pytest.param("verified", 0.98, 0.06, 0.17, "", id="faithful-1"),
+    pytest.param("verified", 0.85, 0.12, 0.57, "", id="faithful-2"),
+    pytest.param("verified", 0.54, 0.33, 0.82, "", id="faithful-3-two-atom-merge"),
+    pytest.param("contradicted", 0.73, 0.96, 0.50,
+                 "; ".join([_F["contradicted"], _F["inflates"]]), id="inflate-led"),
+    pytest.param("unsupported", 0.99, 0.95, 0.97, _ALL_THREE, id="inflate-scope"),
+    pytest.param("unsupported", 0.99, 0.83, 0.98, _ALL_THREE, id="adds-number"),
+    pytest.param("unsupported", 0.99, 0.59, 0.92,
+                 "; ".join([_F["unsupported"], _F["adds_claim"]]), id="adds-tool"),
+    pytest.param("unsupported", 0.98, 0.88, 0.97, _ALL_THREE, id="adds-outcome"),
+])
+def test_the_vl3_planted_bullets_get_their_findings(supported, confidence, inflates, adds, want):
+    assert jev_assist._finding(supported, confidence, inflates, adds) == want
 
 
 def test_the_thresholds_are_the_specs():

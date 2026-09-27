@@ -14,9 +14,13 @@ code to compose. The LLM still writes every bullet.
                         overview bullet lead_with_overview moves to the front.
   faithfulness    TL-4  one request per résumé entry, three questions per bullet
                         against the atoms it was written from: `supported` (a
-                        choice), `inflates` and `adds_claim` (nouls). A flagged
-                        bullet comes back with its finding, which the run hands to
-                        one reground call before it reverts or drops the bullet.
+                        choice), `inflates` and `adds_claim` (nouls). A bullet is
+                        flagged by a sure "unsupported" or "contradicted" or by
+                        `inflates`; `adds_claim` only joins a flagged bullet's
+                        finding (VL-3: the live judge reads it high on nearly
+                        every faithful rephrase). A flagged bullet comes back with
+                        its finding, which the run hands to one reground call
+                        before it reverts or drops the bullet.
   sweep_flags     TL-5  one request per résumé entry, one noul per bullet for each
                         tell of the user's banned patterns (SWEEP_QUESTIONS): the
                         AI-writing sweep calls the model only for an entry with a
@@ -106,9 +110,17 @@ VERB_MIN_CONFIDENCE = 0.5
 # sweep calls the model for the item that holds it.
 SWEEP_FLAG = 0.6
 
-# TL-4: a bullet passes when Jev picks "verified" at this confidence or more and
-# neither noul reaches FAITHFULNESS_FLAG. Any other `supported` pick is flagged,
-# whatever its confidence: only a sure "verified" lets a bullet through.
+# TL-4 (the rule is from VL-3, the live check over 54 real bullets and 8 planted
+# ones): a bullet is flagged when Jev picks "unsupported" or "contradicted" at
+# SUPPORTED_MIN_CONFIDENCE or more, or `inflates` reaches FAITHFULNESS_FLAG.
+# `adds_claim` flags nothing alone: it read 0.5 to 0.95 on nearly every faithful
+# rephrase, and a merge of two atoms read 0.82. A flagged bullet's finding still
+# names it at FAITHFULNESS_FLAG or more, so the reground hears it. The real
+# bullets' "verified" picks ran from 0.23 to 0.99 confidence and their
+# "unsupported" picks from 0.24 to 0.59, so neither an unsure "verified" nor an
+# unsure other pick flags; every planted inflation or added claim read
+# "unsupported" or "contradicted" at 0.73 or more, and `inflates` topped out at
+# 0.33 on the real bullets and read 0.95 and 0.96 on the two planted inflations.
 SUPPORTED_MIN_CONFIDENCE = 0.6
 FAITHFULNESS_FLAG = 0.7
 
@@ -173,7 +185,6 @@ _SWEEP_IDS = {"contrast framing": "contrast", "stacked adjectives": "stacked",
 FINDINGS = {
     "unsupported": "it states something its atoms leave out",
     "contradicted": "it states something its atoms contradict",
-    "unconfirmed": "the check could not confirm that its atoms back every claim",
     "inflates": "it gives the candidate a bigger role, scope or result than its atoms state",
     "adds_claim": "it states a tool, number, outcome or scope that its atoms do not state",
 }
@@ -464,15 +475,16 @@ def lead_group(projects: Sequence[Mapping[str, Any]], *, judge: Any = _DEFAULT
 
 def _finding(supported: str, confidence: float, inflates: float, adds_claim: float) -> str:
     """TL-4's finding for one bullet: "" when it passes, else one FINDINGS clause per
-    check that failed, joined with "; "."""
+    check that failed, joined with "; ". A sure "unsupported" or "contradicted"
+    (SUPPORTED_MIN_CONFIDENCE) or `inflates` at FAITHFULNESS_FLAG flags the bullet;
+    `adds_claim` at FAITHFULNESS_FLAG is named only beside one of them, since VL-3
+    read it high on nearly every faithful rephrase (see SUPPORTED_MIN_CONFIDENCE)."""
     parts: List[str] = []
-    if supported != "verified":
+    if supported != "verified" and confidence >= SUPPORTED_MIN_CONFIDENCE:
         parts.append(FINDINGS[supported])
-    elif confidence < SUPPORTED_MIN_CONFIDENCE:
-        parts.append(FINDINGS["unconfirmed"])
     if inflates >= FAITHFULNESS_FLAG:
         parts.append(FINDINGS["inflates"])
-    if adds_claim >= FAITHFULNESS_FLAG:
+    if parts and adds_claim >= FAITHFULNESS_FLAG:
         parts.append(FINDINGS["adds_claim"])
     return "; ".join(parts)
 
@@ -486,9 +498,14 @@ def faithfulness(entries: Sequence[Mapping[str, Any]], *, judge: Any = _DEFAULT
     request per entry (split only when it would not fit), three questions per bullet:
     `supported`, a choice of verified / unsupported / contradicted
     (SUPPORTED_QUESTION); `inflates` (INFLATES_QUESTION) and `adds_claim`
-    (ADDS_CLAIM_QUESTION), nouls. A bullet is flagged when `supported` is not
-    "verified" at SUPPORTED_MIN_CONFIDENCE or more, or either noul reaches
-    FAITHFULNESS_FLAG.
+    (ADDS_CLAIM_QUESTION), nouls. A bullet is flagged when `supported` is
+    "unsupported" or "contradicted" at SUPPORTED_MIN_CONFIDENCE or more, or
+    `inflates` reaches FAITHFULNESS_FLAG. `adds_claim` flags nothing alone; at
+    FAITHFULNESS_FLAG it joins the finding of a bullet flagged otherwise, so the
+    reground hears it. The rule is VL-3's: over real bullets the judge read
+    `adds_claim` high on nearly every faithful rephrase and picked "verified" and
+    "unsupported" at low confidence, while the planted inflations and added claims
+    read a sure "unsupported" or "contradicted" (see SUPPORTED_MIN_CONFIDENCE).
 
     Returns {gkey: finding}, "" for a bullet that passes (see `_finding`). The check
     judges and names; it never writes text. None when Jev is off or fails, or no

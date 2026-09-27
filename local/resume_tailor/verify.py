@@ -36,6 +36,8 @@ airtight):
     words ("led the team of engineers") has no distinctive token to check and
     passes. The gate stops fabricated *credentials, figures and proper nouns*,
     which is the injection payload that matters; it is not a general truth check.
+    With Jev on, the faithfulness check (TL-4, `run._check_faithfulness`) reads
+    each bullet against its own atoms for these claims.
   * The first word of each sentence is skipped, because that slot is the
     generated action verb. A proper noun that lands sentence-initially is
     therefore untraced. Sentences are split on `.!?` and newlines ONLY —

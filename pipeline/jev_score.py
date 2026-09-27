@@ -71,7 +71,7 @@ PLAIN_LINE_CHARS = 250          # an unbulleted line under a requirement heading
 # `jev.request_fits` (which keeps its own margin under Jev's limits); a job that
 # would have to shrink below MIN_JOB_CHARS goes to the LLM path.
 MIN_JOB_CHARS = 1_000
-TRIM_EXTRA_CHARS = 200          # cut this many characters past the size estimate's overage
+TRIM_STEP_CHARS = 200           # the cut job lands within this many characters of the longest fit
 
 _HERE = Path(__file__).resolve().parent
 # The repo keeps this file in pipeline/, with the dashboard's local/ beside it.
@@ -217,25 +217,26 @@ def _job_parts(job: Any) -> tuple[str, Mapping[str, Any]]:
 
 def fitted_state(job_md: str, resume: str, questions: Mapping[str, Any]) -> dict | None:
     """The request's state `{candidate, resume, job}`, with the job text cut from
-    its end until `jev.request_fits` passes. None when the job would have to
-    shrink below MIN_JOB_CHARS (a large résumé, say) or `local/jev.py` is missing."""
+    its end until `jev.request_fits` passes: a halving search for the longest
+    start of the job that fits, to within TRIM_STEP_CHARS. None when even the
+    first MIN_JOB_CHARS do not fit (a large résumé, say) or `local/jev.py` is missing."""
     try:
         jev = _jev_module()
     except Exception:           # noqa: BLE001  (no size check means no request)
         return None
     state = {"candidate": CANDIDATE, "resume": resume, "job": job_md}
-    for _ in range(8):
-        longest, whole = jev.request_size(state, questions)
-        over = max(longest - jev.STATE_TOKENS_MAX * jev.SIZE_MARGIN,
-                   whole - jev.REQUEST_TOKENS_MAX * jev.SIZE_MARGIN)
-        if over <= 0:
-            return state
-        text = state["job"]
-        keep = len(text) - math.ceil(over * jev.CHARS_PER_TOKEN) - TRIM_EXTRA_CHARS
-        if keep < MIN_JOB_CHARS:
-            return None
-        state = dict(state, job=text[:keep])
-    return None
+    if jev.request_fits(state, questions):
+        return state
+    fits, over = MIN_JOB_CHARS, len(job_md)     # job_md[:fits] fits; job_md[:over] does not
+    if fits >= over or not jev.request_fits(dict(state, job=job_md[:fits]), questions):
+        return None
+    while over - fits > TRIM_STEP_CHARS:
+        mid = (fits + over) // 2
+        if jev.request_fits(dict(state, job=job_md[:mid]), questions):
+            fits = mid
+        else:
+            over = mid
+    return dict(state, job=job_md[:fits])
 
 
 # Error classes already reported this run, one line per class. The message itself

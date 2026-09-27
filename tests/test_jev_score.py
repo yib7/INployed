@@ -483,6 +483,24 @@ def test_stage1_gives_up_when_even_a_trimmed_request_cannot_fit():
     assert judge.calls == []
 
 
+def test_fitted_state_keeps_the_longest_job_text_jev_request_fits_passes(monkeypatch):
+    limit = 5_000
+    asked = []
+
+    def request_fits(state, questions):
+        asked.append(len(state["job"]))
+        return len(state["job"]) <= limit
+    monkeypatch.setattr(jev, "request_fits", request_fits)
+    job = "word " * 4_000                         # 20,000 characters
+    state = jev_score.fitted_state(job, RESUME, jev_score.stage1_questions())
+    assert len(state["job"]) <= limit
+    assert limit - jev_score.TRIM_STEP_CHARS <= len(state["job"])
+    assert job.startswith(state["job"])
+    assert len(asked) <= 20
+    monkeypatch.setattr(jev, "request_fits", lambda state, questions: False)
+    assert jev_score.fitted_state(job, RESUME, jev_score.stage1_questions()) is None
+
+
 # --- SC-3: requirement lines ---------------------------------------------------------------
 
 Req = jev_score.Req

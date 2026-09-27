@@ -181,9 +181,7 @@ def client(area: str) -> Any:
     be built. Scoring and the tailor get a guarded TypeSafe judge; apply and
     the difficulty check get the auto-apply mode's judge (`jev.get`), guarded
     the same way. A build failure is logged by its type only, since its message
-    can carry request detail."""
-    if area not in AREAS:
-        raise ValueError(f"unknown Jev area {area!r}; expected one of {', '.join(AREAS)}")
+    can carry request detail. An unknown area raises ValueError (`_check`)."""
     cfg = _config()
     if _check(area, cfg, None)[0]:
         return None

@@ -1727,3 +1727,31 @@ def test_a_failed_check_shows_in_the_tooltip_over_the_earlier_result(qtbot, tmp_
     assert "3/10" in one.toolTip()
     assert two.text() == "check failed"
     assert "Last check failed today: the posting did not load (TimeoutError)." in two.toolTip()
+
+
+
+# --- SP6 fix round 2 ----------------------------------------------------------------------
+
+def test_the_poll_reads_the_profile_gate_again_when_a_browser_closes(qtbot, tmp_path,
+                                                                     monkeypatch):
+    """Start and Check difficulty come back on the next poll tick after the
+    browser holding the profile closes, with no queue change, no tab show and
+    no window activate; the poll re-reads the gates only when the profile's
+    state moved."""
+    qfile = _qfile(tmp_path)
+    _checked(qfile, "1", difficulty=None)
+    busy, gate_reads = [True], []
+    p = _dpanel(qtbot, qfile, profile_busy=lambda: busy[0],
+                jev_blocked=lambda: gate_reads.append(True) or "")
+    monkeypatch.setattr(p, "refresh", lambda: pytest.fail("the queue did not change"))
+    assert not p.start_run_btn.isEnabled() and not p.check_difficulty_btn.isEnabled()
+    before = len(gate_reads)
+    p._poll_for_changes()
+    assert len(gate_reads) == before              # still held: nothing to repaint
+    busy[0] = False
+    p._poll_for_changes()
+    assert p.start_run_btn.isEnabled() and p.check_difficulty_btn.isEnabled()
+    assert p.jev_notice.isHidden()
+    busy[0] = True
+    p._poll_for_changes()
+    assert not p.start_run_btn.isEnabled() and not p.check_difficulty_btn.isEnabled()

@@ -521,6 +521,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self._difficulty_blocked = difficulty_blocked or (lambda: _default_difficulty_blocked())
         self._difficulty_hidden = difficulty_hidden or (lambda: _default_difficulty_hidden())
         self._profile_busy = profile_busy or (lambda: _default_profile_busy())
+        self._gate_busy = False     # the profile's state when the gates were last read
         self._jobs: List[Dict[str, Any]] = []
         self._mtime_sig: tuple | None = None
         self._build()
@@ -798,8 +799,22 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self._debounce.start()     # coalesce the burst; refresh once it settles
 
     def _poll_for_changes(self) -> None:
+        """Each poll tick: a queue change reloads the panel; otherwise a
+        browser opening or closing on the auto-apply profile since the gates
+        were last read (`_busy_now`) reads them again, so Start comes back
+        once a difficulty check's window closes."""
         if self._current_sig() != self._mtime_sig:
             self.refresh()
+        elif self._busy_now() != self._gate_busy:
+            self.refresh_jev_state()
+
+    def _busy_now(self) -> bool:
+        """The profile seam, read safely: a seam that raises reads as free
+        (the drain and the check ask again as they start)."""
+        try:
+            return bool(self._profile_busy())
+        except Exception:  # noqa: BLE001 - never break the panel
+            return False
 
     # ---- data ---------------------------------------------------------------------
 
@@ -930,17 +945,16 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         auto-apply profile, a difficulty check or a sign-in:
         `profile_lock.RUN_BUSY`). Read on every refresh, after a Settings
         save (the main window calls this), whenever the tab shows or the
-        window comes back to the front while it shows, and at each Start
-        click. Returns the reason, "" when a run can start."""
+        window comes back to the front while it shows, at each Start click,
+        and on the poll tick after the profile's state moves. Returns the
+        reason, "" when a run can start."""
+        self._gate_busy = self._busy_now()
         try:
             reason = str(self._jev_blocked() or "")
         except Exception:  # noqa: BLE001 - the drain checks again; never break the panel
             reason = ""
-        if not reason:
-            try:
-                reason = profile_lock.RUN_BUSY if self._profile_busy() else ""
-            except Exception:  # noqa: BLE001 - the drain checks again
-                reason = ""
+        if not reason and self._gate_busy:
+            reason = profile_lock.RUN_BUSY
         self.start_run_btn.setEnabled(not reason)
         self.start_run_btn.setToolTip(reason or self._start_tip)
         self.jev_label.setText(reason)

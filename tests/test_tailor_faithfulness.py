@@ -361,19 +361,68 @@ def test_at_the_verb_dedupe_a_shared_opener_is_no_reason_to_revert(engine, monke
 _WROTE_H1 = "Wrote the queue-based billing design with the team."
 
 
+_AUTHORED_H1 = "Authored the queue-based billing design with the team."
+
+
 def test_a_revert_at_the_verb_dedupe_gets_a_fresh_opener(engine, monkeypatch):
     """The dedupe rewrote h1 because its opener repeated h2's, so the revert target
     repeats it too. The revert takes the dedupe's in-category swap, skipping the verb
-    Jev flagged."""
+    Jev flagged, and the swapped text gets its own faithfulness check: no later pass
+    asks about a bullet it left alone."""
     monkeypatch.setattr(assets, "active_verbs", lambda: {k: list(v) for k, v in _PALETTE.items()})
     _reask(monkeypatch, {})
-    ctx = _ctx({"h1": _H1_LED, "h2": _H2}, judge=Flagger("led"))
+    judge = Flagger("led")
+    ctx = _ctx({"h1": _H1_LED, "h2": _H2}, judge=judge)
     _check(ctx, stage=rt_run.VERB_DEDUPE_STAGE, snapshot={"h1": _WROTE_H1, "h2": _H2})
-    assert ctx.bullets == {"h1": "Authored the queue-based billing design with the team.",
-                           "h2": _H2}
+    assert ctx.bullets == {"h1": _AUTHORED_H1, "h2": _H2}
+    assert judge.requests == [[_H1_LED], [_AUTHORED_H1]]
     assert ctx.report.warnings == [
         f"grounding: [verb dedupe] faithfulness: reverted bullet 'h1' ({_INFLATION}; "
         "the re-ask returned nothing)"]
+
+
+class _FlagThenDown(Flagger):
+    """Answers its first request as Flagger does; then the service is down."""
+
+    def judge(self, state, questions):
+        if self.requests:
+            raise tailor_jev.ServiceDown("service unavailable")
+        return super().judge(state, questions)
+
+
+@pytest.mark.parametrize("make_judge, note", [
+    (lambda: Flagger("led", "authored"), ""),
+    (lambda: Flagger("led", answers=1), "fell back to the deterministic gate alone (RuntimeError)"),
+    (lambda: jev.Guarded(_FlagThenDown("led"), sleep=lambda _s: None),
+     "fell back to the deterministic gate alone (JudgeOutage ServiceDown 503)"),
+], ids=["flagged", "failed", "breaker"])
+def test_a_fresh_opener_the_check_does_not_pass_keeps_the_faithful_text(
+        engine, monkeypatch, make_judge, note):
+    """The swap's verb can come from any palette category, so it can inflate as the
+    flagged text did. A swapped text Jev flags, or one it cannot check, goes back to
+    the faithful text, and the warning says its opener repeats."""
+    monkeypatch.setattr(assets, "active_verbs", lambda: {k: list(v) for k, v in _PALETTE.items()})
+    _reask(monkeypatch, {})
+    ctx = _ctx({"h1": _H1_LED, "h2": _H2}, judge=make_judge())
+    _check(ctx, stage=rt_run.VERB_DEDUPE_STAGE, snapshot={"h1": _WROTE_H1, "h2": _H2})
+    assert ctx.bullets == {"h1": _WROTE_H1, "h2": _H2}
+    assert ctx.report.warnings == [
+        f"grounding: [verb dedupe] faithfulness: reverted bullet 'h1' ({_INFLATION}; "
+        "the re-ask returned nothing; repeated opener)"]
+    assert jev_assist.usage(jev_assist.STEP_FAITHFULNESS)["note"] == note
+
+
+def test_a_regrounded_text_keeps_its_opener_when_the_swap_is_flagged(engine, monkeypatch):
+    monkeypatch.setattr(assets, "active_verbs", lambda: {k: list(v) for k, v in _PALETTE.items()})
+    _reask(monkeypatch, {"h1": _WROTE_H1})
+    judge = Flagger("led", "authored")
+    ctx = _ctx({"h1": _H1_LED, "h2": _H2}, judge=judge)
+    _check(ctx, stage=rt_run.VERB_DEDUPE_STAGE, snapshot={"h1": _H1, "h2": _H2})
+    assert ctx.bullets["h1"] == _WROTE_H1
+    assert judge.requests == [[_H1_LED], [_WROTE_H1], [_AUTHORED_H1]]
+    assert ctx.report.warnings == []
+    assert (f"grounding: [verb dedupe] faithfulness: regrounded bullet 'h1' ({_INFLATION}; "
+            "repeated opener)") in ctx.report.note_lines
 
 
 def test_a_revert_at_the_verb_dedupe_with_no_fresh_verb_names_the_repeat(engine, monkeypatch):

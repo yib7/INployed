@@ -18,7 +18,7 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, FrozenSet, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
 
 from . import (apply_data, assets, ats, compose, config, coverletter, jev_assist, llm,
                measure, output, research, sweep, verify)
@@ -1121,24 +1121,47 @@ def _faith_revert(ctx: PassCtx, gk: str, snapshot: Optional[Dict[str, str]],
     return "dropped"
 
 
-def _fresh_opener(ctx: PassCtx, gk: str, flagged_text: str) -> bool:
+def _fresh_opener(ctx: PassCtx, gk: str, flagged_text: str) -> Optional[str]:
     """At the verb dedupe, give `gk` an opener no other bullet or verbatim block uses,
     through the dedupe's own in-category swap (`compose._pick_unused_verb`), never the
     verb Jev flagged. The dedupe's revert target is the text it had to change, so its
-    opener repeats by construction. False when every palette verb is taken; the
-    faithful text then stays as it is."""
+    opener repeats by construction.
+
+    Returns the faithful text a swap replaced, "" when the opener was unique already,
+    and None when every palette verb is taken (the faithful text then stays). The
+    swapped text is written after TL-4's verdict, so the caller checks it
+    (`_check_fresh_openers`)."""
     text = ctx.bullets[gk]
     verb = compose.leading_verb(text)
     used = ({compose.leading_verb(t) for other, t in ctx.bullets.items() if other != gk}
             | set(ctx.reserved))
     if not verb or verb not in used:
-        return True
+        return ""
     repl = compose._pick_unused_verb(assets.active_verbs(), verb,
                                      used | {verb, compose.leading_verb(flagged_text)})
     if not repl:
-        return False
+        return None
     ctx.bullets[gk] = compose._swap_leading_verb(text, repl)
-    return True
+    return text
+
+
+def _check_fresh_openers(ctx: PassCtx, swapped: Dict[str, str]) -> Set[str]:
+    """One faithfulness request over the bullets `_fresh_opener` gave a new opener
+    ({gkey: the faithful text it replaced}). The swap's verb can come from any palette
+    category, so it can inflate as the flagged text did, and no later pass asks about
+    a bullet it left alone. A swapped text Jev flags, or one it cannot check (the
+    request failed or the breaker is open), goes back to its faithful text. Returns
+    the gkeys put back, whose openers now repeat."""
+    if not swapped:
+        return set()
+    verdicts = jev_assist.faithfulness(
+        _faith_entries(ctx, {gk: ctx.bullets[gk] for gk in swapped}), judge=ctx.judge)
+    back: Set[str] = set()
+    for gk, faithful in swapped.items():
+        if verdicts is None or verdicts.get(gk) != "":
+            ctx.bullets[gk] = faithful
+            back.add(gk)
+    return back
 
 
 def _check_faithfulness(ctx: PassCtx, *, stage: str,
@@ -1164,8 +1187,10 @@ def _check_faithfulness(ctx: PassCtx, *, stage: str,
       5. passes a second faithfulness check; one that cannot run counts as flagged.
     Anything else leaves the bullet flagged, and `_faith_revert` puts it back to its
     last passing version or drops it. At the verb dedupe a regrounded or reverted
-    bullet whose opener repeats gets the dedupe's swap (`_fresh_opener`); with no
-    verb left, the revert warning says "repeated opener".
+    bullet whose opener repeats gets the dedupe's swap (`_fresh_opener`), and the
+    swapped texts share one more faithfulness request (`_check_fresh_openers`). With
+    no verb left, or a swap that request flags or cannot check, the bullet keeps its
+    faithful text and its note or warning says "repeated opener".
 
     Each flagged bullet gets a note with its text, like the gate's rejected-text note;
     a revert or a drop warns, as the gate's do, and a repaired bullet gets a note.
@@ -1226,30 +1251,45 @@ def _check_faithfulness(ctx: PassCtx, *, stage: str,
             refuse(gk, why, text)
         else:
             candidates[gk] = text
+    regrounded: List[str] = []
     if candidates:
         recheck = jev_assist.faithfulness(_faith_entries(ctx, candidates), judge=ctx.judge)
         for gk, text in candidates.items():
             verdict = None if recheck is None else recheck.get(gk)
             if verdict == "":
                 ctx.bullets[gk] = text
-                if stage == VERB_DEDUPE_STAGE:
-                    _fresh_opener(ctx, gk, flagged_texts[gk])
-                if rep is not None:
-                    rep.note(KIND_GROUNDING,
-                             f"[{stage}] faithfulness: regrounded bullet '{gk}' "
-                             f"({flagged[gk]})")
+                regrounded.append(gk)
             elif verdict is None:
                 refuse(gk, "the re-check could not run", text)
             else:
                 refuse(gk, f"the re-check still flags it: {verdict}", text)
+    actions = {gk: _faith_revert(ctx, gk, snapshot, stage) for gk in refused}
+    # At the verb dedupe a regrounded or reverted bullet whose opener repeats gets the
+    # dedupe's swap, and every swapped text shares one more check.
+    repeated: Set[str] = set()
+    if stage == VERB_DEDUPE_STAGE:
+        swapped: Dict[str, str] = {}
+        for gk in regrounded + list(refused):
+            if gk not in ctx.bullets:
+                continue
+            faithful = _fresh_opener(ctx, gk, flagged_texts[gk])
+            if faithful is None:
+                repeated.add(gk)
+            elif faithful:
+                swapped[gk] = faithful
+        repeated |= _check_fresh_openers(ctx, swapped)
+    for gk in regrounded:
+        if rep is not None:
+            tail = "; repeated opener" if gk in repeated else ""
+            rep.note(KIND_GROUNDING,
+                     f"[{stage}] faithfulness: regrounded bullet '{gk}' ({flagged[gk]}{tail})")
     for gk, why in refused.items():
-        action = _faith_revert(ctx, gk, snapshot, stage)
-        if (stage == VERB_DEDUPE_STAGE and gk in ctx.bullets
-                and not _fresh_opener(ctx, gk, flagged_texts[gk])):
+        if gk in repeated:
             why += "; repeated opener"
         if rep is not None:
             rep.warn(KIND_GROUNDING,
-                     f"[{stage}] faithfulness: {action} bullet '{gk}' ({flagged[gk]}; {why})")
+                     f"[{stage}] faithfulness: {actions[gk]} bullet '{gk}' "
+                     f"({flagged[gk]}; {why})")
     return flagged
 
 

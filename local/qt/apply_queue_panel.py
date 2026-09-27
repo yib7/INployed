@@ -753,11 +753,30 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self.pw_pill.set_family("success" if exists else "neutral")
         self.copy_pw_btn.setEnabled(exists)
 
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt override
+        """Read the Jev gate again each time the tab comes into view: the user
+        may have fixed the named problem (installed the SDK, turned Jev on in
+        config.json) since the last refresh, and Start is out of reach while
+        it is off (SP1 review D)."""
+        super().showEvent(event)
+        self.refresh_jev_state()
+
+    def event(self, event) -> bool:
+        """...and each time the dashboard window comes back to the front while
+        this tab shows, which is how a fix made in a terminal (pip install)
+        gets back here. Qt hands WindowActivate down to the visible children
+        only, so a hidden tab reads nothing."""
+        if event.type() == QtCore.QEvent.Type.WindowActivate:
+            self.refresh_jev_state()
+        return super().event(event)
+
     def refresh_jev_state(self) -> str:
         """Start is off, with the reason as its tooltip and in the notice under
         the buttons, while an auto-apply run cannot start on Jev (JS-5). Read
-        on every refresh, after a Settings save (the main window calls this)
-        and at each Start click. Returns the reason, "" when a run can start."""
+        on every refresh, after a Settings save (the main window calls this),
+        whenever the tab shows or the window comes back to the front while it
+        shows, and at each Start click. Returns the reason, "" when a run can
+        start."""
         try:
             reason = str(self._jev_blocked() or "")
         except Exception:  # noqa: BLE001 - the drain checks again; never break the panel

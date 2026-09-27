@@ -1064,6 +1064,33 @@ def test_an_exported_test_mode_leaves_start_off(qtbot, tmp_path, monkeypatch):
         "Auto-apply runs on Jev. Add the TypeSafe API key in Settings > Jev.")
 
 
+def test_showing_the_tab_checks_the_jev_gate_again(qtbot, tmp_path, monkeypatch):
+    """SP1 review D: Start read the gate on a queue change, a Settings save and
+    a Start click (off, so out of reach), so it stayed off after the user fixed
+    the named problem outside the dashboard. Showing the tab reads the gate
+    again, and so does the window coming back to the front while the tab
+    shows, which is how a fix made in a terminal gets back here."""
+    monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key")
+    sdk = [False]
+    monkeypatch.setattr(jev_switch, "sdk_installed", lambda: sdk[0])
+    tabs = QtWidgets.QTabWidget()
+    qtbot.addWidget(tabs)
+    tabs.addTab(QtWidgets.QWidget(), "Tracker")
+    p = ApplyQueuePanel(queue_path=_qfile(tmp_path), jev_blocked=None)   # the real gate
+    tabs.addTab(p, "Auto-apply")
+    tabs.show()
+    assert not p.start_run_btn.isEnabled()
+    assert p.start_run_btn.toolTip() == (
+        "Auto-apply runs on Jev. Install typesafe-sdk (pip install -r requirements.txt).")
+    sdk[0] = True                                # pip install -r requirements.txt
+    tabs.setCurrentWidget(p)
+    assert p.start_run_btn.isEnabled() and p.jev_notice.isHidden()
+    jev_switch.config_path().write_text('{"jev_enabled": false}', encoding="utf-8")
+    QtWidgets.QApplication.sendEvent(tabs, QtCore.QEvent(QtCore.QEvent.Type.WindowActivate))
+    assert not p.start_run_btn.isEnabled()
+    assert p.start_run_btn.toolTip() == _JEV_OFF
+
+
 def test_a_settings_save_checks_the_jev_gate_again(qtbot, monkeypatch, tmp_path):
     """Settings writes the switch to config.json and the save's refresh reads
     it, so Start follows the switch without a restart."""

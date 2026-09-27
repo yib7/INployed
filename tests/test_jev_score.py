@@ -175,6 +175,31 @@ def test_use_jev_agrees_with_jev_switch_on_one_config_file(cfg_file, sdk, monkey
     assert why == (jev_switch.jev_why_off("scoring", env=env) or "Settings")
 
 
+# Stored switch values, hand-edited ones included: the VM copy of the scorer
+# mirrors `settings.switch_on`, so both must read every one of them alike.
+_RAW_SWITCH_VALUES = [True, False, "true", " Yes ", "ON", "1", 1, 0, "0", "false", "off",
+                      "", "  ", None, "maybe", 1.0, [], {}]
+
+
+@pytest.mark.parametrize("raw", _RAW_SWITCH_VALUES, ids=repr)
+def test_the_scorer_reads_a_stored_switch_by_the_settings_rule(raw):
+    import settings
+    assert jev_score.switch_on(raw) is settings.switch_on(raw)
+    assert jev_score.SWITCH_ON_WORDS == settings.SWITCH_ON_WORDS
+
+
+@pytest.mark.parametrize("key", ["jev_enabled", "jev_scoring"])
+@pytest.mark.parametrize("raw", _RAW_SWITCH_VALUES, ids=repr)
+def test_use_jev_and_jev_switch_agree_on_every_stored_switch_value(cfg_file, sdk, monkeypatch,
+                                                                   key, raw):
+    import settings
+    path = cfg_file({key: raw})
+    monkeypatch.setattr(jev_switch, "config_path", lambda: path)
+    on, _why = jev_score.use_jev(KEY)
+    assert on is jev_switch.jev_on("scoring", env=KEY)
+    assert on is settings.switch_on(raw)
+
+
 # --- SC-1: importing score_jobs stays light -------------------------------------------
 
 def _copy_pipeline(dest: Path, names) -> Path:

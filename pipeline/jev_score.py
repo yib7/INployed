@@ -85,6 +85,10 @@ AREA_KEY = "jev_scoring"
 KEY_ENV = "TYPESAFE_API_KEY"
 SDK_MODULE = "typesafe_sdk"
 _TRUE = ("1", "true", "yes", "on")
+# How a stored switch value reads: a copy of `settings.switch_on` (local/settings.py),
+# the rule the Settings checkbox and `jev_switch` use. The VM copies this file flat
+# into ~/ with no local/, so it cannot import that module; a test holds the two equal.
+SWITCH_ON_WORDS = frozenset(("true", "yes", "on", "1"))
 
 # The reasons `jev_switch.jev_why_off("scoring")` gives, word for word, so the
 # dashboard and the scorer name a switched-off Jev the same way.
@@ -108,6 +112,15 @@ def _read_config(path: Path) -> dict[str, Any]:
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def switch_on(value: Any) -> bool:
+    """Is a stored Jev switch `value` on? A bool is itself; any other value is
+    on only as one of SWITCH_ON_WORDS once stripped and lower-cased, so a
+    hand-edited null, 0, "" or "false" reads off (`settings.switch_on`)."""
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in SWITCH_ON_WORDS
 
 
 def _sdk_installed() -> bool:
@@ -145,9 +158,9 @@ def use_jev(env: Any = None) -> tuple[bool, str]:
         source = f"{ENV_SWITCH}={raw}"
     elif CONFIG_PATH is not None and CONFIG_PATH.is_file():
         cfg = _read_config(CONFIG_PATH)
-        if cfg.get(MASTER_KEY, True) is False:
+        if not switch_on(cfg.get(MASTER_KEY, True)):
             return False, REASON_SWITCH
-        if cfg.get(AREA_KEY, True) is False:
+        if not switch_on(cfg.get(AREA_KEY, True)):
             return False, REASON_AREA
         source = "Settings"
     else:

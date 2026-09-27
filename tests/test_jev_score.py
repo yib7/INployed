@@ -615,6 +615,8 @@ def test_an_inline_preferred_cue_beats_a_required_heading():
     "Travel (25%)",
     "Travel - 25%",
     "Travel requirement: up to 20%",
+    "Travel requirements are 10% of the time",
+    "Willing to meet the travel requirements of the role",
     "Remote, US",
     "Remote US",
     "Remote/US",
@@ -647,6 +649,7 @@ def test_requirement_lines_drop_location_visa_and_eligibility_lines(line):
     "Remote user research and usability testing",
     "Hybrid/multi-cloud architecture",
     "Remote/edge device telemetry",
+    "Travel requirements gathering for booking systems",
 ])
 def test_requirement_lines_keep_skills_that_share_a_word_with_a_dropped_line(line):
     md = f"## Requirements\n- Python and SQL\n- {line}\n- Tableau dashboards\n"

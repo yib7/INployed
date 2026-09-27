@@ -544,7 +544,9 @@ _DROP_PARTS = (
     r"|on[- ]call|first|second|third|any|\d+[- ]hour) shifts?\b",
     r"shifts?\s+(?:work|schedule|rotations?|differential)\b|work\w*\s+(?:in\s+)?shifts\b",
     r"(?:willing(?:ness)?|able|ability|availab\w*|required|expected|need) to travel\b",
-    r"^travel\w*\s*(?:$|[(:,]|[-–]\s|\d)|travel requirements?\b",
+    r"^travel\w*\s*(?:$|[(:,]|[-–]\s|\d)",
+    r"travel requirements?\b.{0,40}?(?:\d+\s*%|\bup to\b|\bwilling)"
+    r"|willing\w*\b.{0,40}?travel requirements?\b",
     r"travel\w*\s+(?:is\s+)?(?:required|expected|as needed|up to|\d)",
     r"travel\w*\s+to\s+(?:\w+\s+)?(?:client|customer|field|office|site)s?\b",
     r"\d+\s*%\s*(?:of the time\s*)?travel",

@@ -913,7 +913,7 @@ def test_run_scoring_scores_both_stages_with_jev_and_never_calls_the_llm():
     assert list(merged["deep_score"]) == [10, 10]
     assert set(merged["recommendation"]) == {"apply"}
     assert merged["strengths"].iloc[0].startswith("Python and SQL | ")
-    assert (run.scored, run.fallback) == (4, 0)
+    assert (run.scored, run.fallback) == ({1: 2, 2: 2}, {1: 0, 2: 0})
 
 
 def test_run_scoring_sends_the_code_facts_with_stage_one(monkeypatch):
@@ -943,7 +943,7 @@ def test_a_job_jev_cannot_score_takes_the_llm_path():
     assert pool.jobs(1) == [] and pool.jobs(2) == ["JOB-B"]
     assert merged.loc["job-b", "recommendation"] == "consider"
     assert merged.loc["job-a", "recommendation"] == "apply"
-    assert (run.scored, run.fallback) == (3, 1)
+    assert (run.scored, run.fallback) == ({1: 2, 2: 1}, {1: 0, 2: 1})
 
 
 class FailsAfter(ScriptedJudge):
@@ -976,7 +976,7 @@ def test_an_outage_mid_run_moves_the_rest_of_the_run_to_the_llm(monkeypatch, cap
     assert merged.loc["job-a", "reason"].startswith("Skills fit")
     assert merged.loc["job-b", "reason"] == "llm reason"
     assert not merged["reason"].astype(str).str.startswith("ERROR").any()
-    assert (run.scored, run.fallback) == (1, 7)
+    assert (run.scored, run.fallback) == ({1: 1, 2: 0}, {1: 3, 2: 4})
     out = capsys.readouterr().out
     assert out.count("Jev is unavailable (ConnectionError)") == 1
 
@@ -1040,35 +1040,40 @@ def test_with_jev_off_run_scoring_is_the_llm_path_as_before():
         assert set(merged["reason"]) == {"llm reason"}
 
 
-def test_the_run_summary_counts_jev_requests_spend_and_fallbacks():
+def test_the_run_summary_counts_jev_requests_spend_and_fallbacks_by_stage():
     sj = _sj()
     run = sj.JevRun(jev.Guarded(jev.DryRun(ScriptedJudge())))
     df = pd.concat([_jobs_df("JOB-A"), _jobs_df("JOB-B", md="A short posting with no list.")],
                    ignore_index=True)
     asyncio.run(sj.run_scoring(RecordingPool(), RESUME, df, jev_run=run))
     stats = run.stats()
-    assert (stats["jev_scored"], stats["jev_requests"], stats["jev_llm_fallback"]) == (3, 3, 1)
+    assert (stats["jev_stage1_scored"], stats["jev_stage2_scored"], stats["jev_requests"],
+            stats["jev_stage1_fallback"], stats["jev_stage2_fallback"]) == (2, 1, 3, 0, 1)
     assert 0 < stats["jev_usd"] < 0.01
-    assert run.summary_line() == (f"Jev scored 3 (3 requests, ${stats['jev_usd']:.4f}); "
-                                  "LLM fallback 1")
+    # each count is jobs at one stage: JOB-B's stage 2 took the LLM path
+    assert run.summary_line() == (f"Jev scored stage 1: 2, stage 2: 1 (3 requests, "
+                                  f"${stats['jev_usd']:.4f}); LLM fallback stage 1: 0, "
+                                  "stage 2: 1")
 
 
 def test_run_stats_carry_the_jev_columns(tmp_path, monkeypatch):
     sj = _sj()
-    assert sj.RUN_STATS_COLS[-4:] == ["jev_scored", "jev_requests", "jev_usd",
-                                      "jev_llm_fallback"]
+    assert sj.RUN_STATS_COLS[-6:] == ["jev_stage1_scored", "jev_stage2_scored", "jev_requests",
+                                      "jev_usd", "jev_stage1_fallback", "jev_stage2_fallback"]
     monkeypatch.setattr(sj, "RUN_STATS_CSV", tmp_path / "run_stats.csv")
-    sj.append_run_stats({"jev_scored": 7, "jev_requests": 5, "jev_usd": 0.0021,
-                         "jev_llm_fallback": 2})
+    sj.append_run_stats({"jev_stage1_scored": 7, "jev_stage2_scored": 4, "jev_requests": 11,
+                         "jev_usd": 0.0021, "jev_stage1_fallback": 2, "jev_stage2_fallback": 1})
     row = pd.read_csv(tmp_path / "run_stats.csv").iloc[0]
-    assert (row["jev_scored"], row["jev_requests"], row["jev_llm_fallback"]) == (7, 5, 2)
+    assert (row["jev_stage1_scored"], row["jev_stage2_scored"], row["jev_requests"],
+            row["jev_stage1_fallback"], row["jev_stage2_fallback"]) == (7, 4, 11, 2, 1)
     assert row["jev_usd"] == pytest.approx(0.0021)
 
 
 def test_jev_run_off_reports_zeros():
     sj = _sj()
-    assert sj.JevRun(None).stats() == {"jev_scored": 0, "jev_requests": 0, "jev_usd": 0.0,
-                                       "jev_llm_fallback": 0}
+    assert sj.JevRun(None).stats() == {
+        "jev_stage1_scored": 0, "jev_stage2_scored": 0, "jev_requests": 0, "jev_usd": 0.0,
+        "jev_stage1_fallback": 0, "jev_stage2_fallback": 0}
 
 
 def test_make_jev_judge_on_the_vm_stays_on_the_llm(monkeypatch, capsys):
@@ -1125,8 +1130,9 @@ def test_main_with_jev_on_needs_no_llm_provider_and_logs_the_summary(monkeypatch
     asyncio.run(sj.main())
     assert seen["required"] is False
     assert seen["rescore_jev"].judge is not None
-    assert seen["stats"]["free_calls"] == 0 and seen["stats"]["jev_scored"] == 0
-    assert "Jev scored 0 (0 requests, $0.0000); LLM fallback 0" in capsys.readouterr().out
+    assert seen["stats"]["free_calls"] == 0 and seen["stats"]["jev_stage1_scored"] == 0
+    assert ("Jev scored stage 1: 0, stage 2: 0 (0 requests, $0.0000); "
+            "LLM fallback stage 1: 0, stage 2: 0") in capsys.readouterr().out
 
 
 def test_main_with_jev_off_needs_the_llm_provider_as_today(monkeypatch, capsys):
@@ -1134,7 +1140,7 @@ def test_main_with_jev_off_needs_the_llm_provider_as_today(monkeypatch, capsys):
     seen = _main_stubs(monkeypatch, sj, None)
     asyncio.run(sj.main())
     assert seen["required"] is True
-    assert seen["stats"]["jev_scored"] == 0 and seen["stats"]["jev_llm_fallback"] == 0
+    assert seen["stats"]["jev_stage1_scored"] == 0 and seen["stats"]["jev_stage2_fallback"] == 0
     assert "Jev scored" not in capsys.readouterr().out
 
 

@@ -301,13 +301,17 @@ REPOST_REUSE_DAYS = _SCORING["repost_reuse_days"]
 # shown in the dashboard's Stats tab). One row per score_jobs.py invocation, so
 # cost or volume drift is visible without grepping scraper.log.
 RUN_STATS_CSV = OUTPUT_DIR / "run_stats.csv"
+# `llm_scored` counts every stage 1 score of the fresh pass, Jev's included: the
+# name predates Jev, and the dashboard shows it as "Scored".
 RUN_STATS_COLS = [
     "timestamp", "input_csv", "rows_in", "filtered_out", "llm_scored",
     "llm_errors", "stage2_done", "rescore_attempted", "rescore_scored",
     "llm_calls", "prompt_tokens", "output_tokens", "free_calls", "vertex_calls",
     "easy_apply_dropped", "scores_reused",
-    # SC-4: "Jev scored N (M requests, $X); LLM fallback K" (JevRun.stats)
-    "jev_scored", "jev_requests", "jev_usd", "jev_llm_fallback",
+    # SC-4 (JevRun.stats): jobs per stage that Jev scored or handed to the LLM
+    # path, over the fresh and rescore passes, and the requests and spend
+    "jev_stage1_scored", "jev_stage2_scored", "jev_requests", "jev_usd",
+    "jev_stage1_fallback", "jev_stage2_fallback",
 ]
 
 # Aggregate token spend across both stages and both passes (fresh + rescore).
@@ -667,16 +671,16 @@ NO_LLM_REASON = "ERROR: Jev could not score this job and no LLM provider is set 
 
 class JevRun:
     """One run's Jev use (SC-4, SC-5). `judge` None means Jev is off and every
-    job takes the LLM path exactly as before. Counts the stage results Jev
-    composed (`scored`) and those it handed to the LLM path (`fallback`); the
-    request count and spend are `jev.usage()` since the run began. Once the
-    judge's breaker opens (`jev.Guarded.down`) no further request is made and
-    the outage is reported once."""
+    job takes the LLM path exactly as before. Counts, per stage (1, 2), the
+    jobs whose stage Jev composed (`scored`) and those it handed to the LLM
+    path (`fallback`); the request count and spend are `jev.usage()` since the
+    run began. Once the judge's breaker opens (`jev.Guarded.down`) no further
+    request is made and the outage is reported once."""
 
     def __init__(self, judge=None):
         self.judge = judge
-        self.scored = 0
-        self.fallback = 0
+        self.scored = {1: 0, 2: 0}
+        self.fallback = {1: 0, 2: 0}
         self.no_llm_errors = 0      # stage 1 rows left as NO_LLM_REASON
         self.scores_only = 0        # stage 2 skipped: Jev could not and no LLM provider
         self._outage_noted = False
@@ -695,11 +699,12 @@ class JevRun:
     def _down(self) -> str:
         return str(getattr(self.judge, "down", "") or "")
 
-    async def ask(self, sem: asyncio.Semaphore, stage_fn, job, resume: str):
-        """`stage_fn(judge, job, resume)` (jev_score.stage1 or stage2) in a worker
-        thread under `sem`: its result, or None for the LLM path."""
+    async def ask(self, sem: asyncio.Semaphore, stage: int, job, resume: str):
+        """Stage `stage` (1 or 2: jev_score.stage1 or stage2) for one job in a
+        worker thread under `sem`: its result, or None for the LLM path."""
         if self.judge is None:
             return None
+        stage_fn = jev_score.stage1 if stage == 1 else jev_score.stage2
         got = None
         if not self._down():
             async with sem:
@@ -712,29 +717,33 @@ class JevRun:
                             self._raised.add(kind)
                             print(f"Jev scoring raised {kind}; such jobs take the LLM path.")
         if got is not None:
-            self.scored += 1
+            self.scored[stage] += 1
             return got
         down = self._down()
         if down and not self._outage_noted:
             self._outage_noted = True
             print(f"Jev is unavailable ({down}); the rest of this run scores on the LLM path.")
-        self.fallback += 1
+        self.fallback[stage] += 1
         return None
 
     def stats(self) -> dict:
         now = self._usage()
         return {
-            "jev_scored": self.scored,
+            "jev_stage1_scored": self.scored[1],
+            "jev_stage2_scored": self.scored[2],
             "jev_requests": max(0, int(now.get("requests", 0)) - int(self._start.get("requests", 0))),
             "jev_usd": round(max(0.0, float(now.get("usd", 0.0))
                                  - float(self._start.get("usd", 0.0))), 6),
-            "jev_llm_fallback": self.fallback,
+            "jev_stage1_fallback": self.fallback[1],
+            "jev_stage2_fallback": self.fallback[2],
         }
 
     def summary_line(self) -> str:
         s = self.stats()
-        return (f"Jev scored {s['jev_scored']} ({s['jev_requests']} requests, "
-                f"${s['jev_usd']:.4f}); LLM fallback {s['jev_llm_fallback']}")
+        return (f"Jev scored stage 1: {s['jev_stage1_scored']}, stage 2: "
+                f"{s['jev_stage2_scored']} ({s['jev_requests']} requests, ${s['jev_usd']:.4f}); "
+                f"LLM fallback stage 1: {s['jev_stage1_fallback']}, stage 2: "
+                f"{s['jev_stage2_fallback']}")
 
 
 def jev_facts(job_md: str) -> dict:
@@ -1419,8 +1428,7 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame, *,
 
     async def stage1_one(job_id, job_md):
         if jev_on:
-            got = await jev_run.ask(jsem, jev_score.stage1,
-                                    {"md": job_md, "facts": jev_facts(job_md)}, resume)
+            got = await jev_run.ask(jsem, 1, {"md": job_md, "facts": jev_facts(job_md)}, resume)
             if got is not None:
                 return {"job_posting_id": job_id, "score": int(got["score"]),
                         "reason": got["reason"]}
@@ -1451,7 +1459,7 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame, *,
 
         async def stage2_one(job_id, job_md):
             if jev_on:
-                got = await jev_run.ask(jsem, jev_score.stage2, {"md": job_md}, resume)
+                got = await jev_run.ask(jsem, 2, {"md": job_md}, resume)
                 if got is not None:
                     return {"job_posting_id": job_id, **got}
                 if pool is None:
@@ -1663,7 +1671,7 @@ async def main() -> None:
             stats["rows_in"] = len(merged)
             stats["filtered_out"] = int(merged["filtered_out"].sum())
             stats["easy_apply_dropped"] = int(merged["filter_easy_apply"].sum())
-            stats["llm_scored"] = int(n_scored)
+            stats["llm_scored"] = int(n_scored)     # either path's (RUN_STATS_COLS)
             # Stage-1 failures land in `reason`, Stage-2 failures in
             # `recommendation` (audit P2-8) — count both, else deep-analysis
             # errors are invisible in run stats.

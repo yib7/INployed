@@ -433,6 +433,84 @@ def test_start_blocked_refuses_an_unknown_mode_before_the_jev_gate(sdk):
                                             mode="typesaf") == _UNKNOWN_JUDGE, (found, switch)
 
 
+# --- the difficulty check's gate (SP6, DF-6, JS-5) ---------------------------------------
+
+DIFFICULTY_OFF = ("The difficulty check is switched off. Turn on Jev difficulty check in "
+                  "Settings > Jev.")
+
+
+def test_difficulty_blocked_is_empty_while_jev_is_on(sdk):
+    assert jev_switch.difficulty_blocked(config=ON, env=KEY) == ""
+
+
+@pytest.mark.parametrize("mode", ["typesafe", "fake", "replay"])
+def test_difficulty_blocked_gives_the_drains_sentence_with_the_master_switch_off(sdk, mode):
+    """JS-5: with the master switch off `apply_assess.py` refuses with the
+    drain's reason, in every mode."""
+    cfg = dict(ON, jev_enabled=False)
+    assert jev_switch.difficulty_blocked(config=cfg, env=KEY, mode=mode) == \
+        "Auto-apply runs on Jev. Turn Jev on in Settings > Jev."
+    assert jev_switch.difficulty_blocked(config=cfg, env=KEY, mode=mode) == \
+        jev_switch.apply_blocked(config=cfg, env=KEY, mode=mode)
+
+
+@pytest.mark.parametrize("mode", ["typesafe", "fake", "replay"])
+def test_difficulty_blocked_names_its_own_switch(sdk, mode):
+    cfg = dict(ON, jev_difficulty=False)
+    assert jev_switch.DIFFICULTY_OFF == DIFFICULTY_OFF
+    assert jev_switch.difficulty_blocked(config=cfg, env=KEY, mode=mode) == DIFFICULTY_OFF
+    assert jev_switch.apply_blocked(config=cfg, env=KEY, mode=mode) == ""
+
+
+def test_difficulty_blocked_names_the_key_and_the_sdk_for_the_live_judge(sdk):
+    lead = "Auto-apply runs on Jev. "
+    assert jev_switch.difficulty_blocked(config=ON, env={}) == \
+        lead + "Add the TypeSafe API key in Settings > Jev."
+    assert jev_switch.difficulty_blocked(config=ON, env={}, saved_key=True) == ""
+    sdk(False)
+    assert jev_switch.difficulty_blocked(config=ON, env=KEY) == \
+        lead + "Install typesafe-sdk (pip install -r requirements.txt)."
+
+
+def test_difficulty_blocked_skips_the_key_and_sdk_for_a_test_judge(sdk):
+    sdk(False)
+    assert jev_switch.difficulty_blocked(config=ON, env={}, mode="fake") == ""
+    assert jev_switch.difficulty_blocked(config=dict(ON, auto_apply_jev_mode="replay"),
+                                         env={}) == ""
+    assert jev_switch.difficulty_blocked(config=dict(ON, auto_apply_jev_mode="fake"),
+                                         env={}, mode="typesafe") == \
+        "Auto-apply runs on Jev. Add the TypeSafe API key in Settings > Jev."
+
+
+def test_difficulty_blocked_ignores_the_scoring_and_tailor_switches(sdk):
+    cfg = dict(ON, jev_scoring=False, jev_tailor=False)
+    assert jev_switch.difficulty_blocked(config=cfg, env=KEY) == ""
+
+
+def test_difficulty_blocked_reads_the_config_file_at_call_time(sdk):
+    path = jev_switch.config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(dict(ON, jev_difficulty=False)), encoding="utf-8")
+    assert jev_switch.difficulty_blocked(env=KEY) == DIFFICULTY_OFF
+    path.write_text(json.dumps(ON), encoding="utf-8")
+    assert jev_switch.difficulty_blocked(env=KEY) == ""
+
+
+def test_switched_off_reads_only_the_switches(sdk):
+    """The Auto-apply panel hides Check difficulty while a switch turns it off
+    and shows it disabled for a missing key or SDK, so this reads the master
+    and the area switch alone."""
+    sdk(False)
+    assert jev_switch.switched_off("difficulty", config=ON) is False
+    assert jev_switch.switched_off("difficulty", config=dict(ON, jev_enabled=False)) is True
+    assert jev_switch.switched_off("difficulty", config=dict(ON, jev_difficulty=False)) is True
+    assert jev_switch.switched_off("difficulty", config=dict(ON, jev_scoring=False)) is False
+    assert jev_switch.switched_off("apply", config=dict(ON, jev_difficulty=False)) is False
+    assert jev_switch.switched_off("apply", config=dict(ON, jev_enabled=False)) is True
+    with pytest.raises(ValueError):
+        jev_switch.switched_off("difficulty check", config=ON)
+
+
 # --- the judge -------------------------------------------------------------------------
 
 class _StubTypeSafe:

@@ -29,8 +29,12 @@ shows; the two probes name a mode `jev.get` does not build first
 drain's refusal of the judge mode first (`mode_refusal`: a test judge is
 `FIXTURE_ONLY`, cycle 16, and a mode `jev.get` does not build is
 `UNKNOWN_MODE`), then `apply_blocked()`, the order the drain checks them in,
-so Start predicts the drain it launches. `key_saved()` is the saved-key probe the dashboard passes
-both. `client(area)` returns a `jev.Guarded` judge, or None when the area is
+so Start predicts the drain it launches. `difficulty_blocked()` is the
+difficulty check's Jev gate, the sentence `apply_assess.py` prints and the
+panel's Check difficulty shows after the same mode refusal, and
+`switched_off(area)` reads the switches alone, so the panel hides that button
+while a switch turns it off. `key_saved()` is the saved-key probe the
+dashboard passes the gates. `client(area)` returns a `jev.Guarded` judge, or None when the area is
 off or the judge cannot be built; a caller outside auto-apply keeps its LLM
 path on None, and its judge retries briefly (`jev.QUICK_RETRY_DELAYS_S`), so
 an outage reaches that path in seconds.
@@ -92,6 +96,10 @@ _FIXES = {
 FIXTURE_ONLY = "Fake and replay judges are fixture-only; use typesafe for a production queue."
 UNKNOWN_MODE = ("Unknown Auto-apply judge {mode!r}; tick \"Show advanced settings\" and pick "
                 "typesafe in Settings > Auto-apply.")
+# What `apply_assess.py` prints while the difficulty check's own switch is off
+# (`difficulty_blocked`); the Auto-apply panel hides Check difficulty then.
+DIFFICULTY_OFF = ("The difficulty check is switched off. Turn on Jev difficulty check in "
+                  "Settings > Jev.")
 
 
 def config_path() -> Path:
@@ -247,6 +255,24 @@ def apply_blocked(*, config: Mapping[str, Any] | None = None,
     process that loads `.env` itself, so such a key reaches it before the
     dashboard restarts."""
     kind, _reason = _check("apply", config, env, mode=mode, saved_key=saved_key)
+    return blocked_sentence(kind) if kind else ""
+
+
+def difficulty_blocked(*, config: Mapping[str, Any] | None = None,
+                       env: Mapping[str, str] | None = None, mode: str | None = None,
+                       saved_key: bool = False) -> str:
+    """Why the difficulty check cannot run on Jev, in the sentence
+    `apply_assess.py` prints; "" when it can. Shaped like `apply_blocked`, for
+    the "difficulty" area: the master switch off gives the drain's sentence
+    (JS-5), the check's own switch off gives `DIFFICULTY_OFF`, and a missing
+    key or SDK gives the drain's sentence for it. The key and SDK checks follow
+    the judge mode as they do for the drain (`mode` as in `apply_blocked`), and
+    `saved_key` counts a key saved in Settings (`key_saved`), since
+    `apply_assess.py` loads `.env` itself."""
+    cfg = _config() if config is None else config
+    kind, _reason = _check("difficulty", cfg, env, mode=mode, saved_key=saved_key)
+    if kind == "switch" and master_on(config=cfg):
+        return DIFFICULTY_OFF
     return blocked_sentence(kind) if kind else ""
 
 

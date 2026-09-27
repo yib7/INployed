@@ -1652,3 +1652,26 @@ def test_a_blank_location_is_valid_and_other_blank_choices_still_ask_for_a_pick(
         "GOOGLE_CLOUD_LOCATION": "Not allowed: mars-1."}
     assert settings.validate({"RESUME_TAILOR_MODEL_MODE": ""}) == {
         "RESUME_TAILOR_MODEL_MODE": "Pick one of the listed options."}
+
+
+# --- SP1 follow-up 3: the Jev switches' reading rule -----------------------------------
+
+@pytest.mark.parametrize("value", [True, "true", " True ", "YES", "on", "1", 1], ids=repr)
+def test_switch_on_reads_true_and_the_on_words_as_on(value):
+    assert settings.switch_on(value) is True
+
+
+@pytest.mark.parametrize("value", [False, None, 0, 0.0, "", "   ", "false", " FALSE ", "0",
+                                   "no", "off", " OFF ", "maybe", 2, []], ids=repr)
+def test_switch_on_reads_false_and_every_stray_value_as_off(value):
+    """A hand-edited null, 0, "" or "false" reads off, so it spends nothing."""
+    assert settings.switch_on(value) is False
+
+
+def test_the_jev_switches_are_default_on_bool_fields():
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    assert settings.JEV_SWITCHES == ("jev_enabled", "jev_scoring", "jev_tailor",
+                                     "jev_difficulty")
+    for key in settings.JEV_SWITCHES:
+        assert by_key[key].type == "bool" and by_key[key].default is True, key
+        assert settings.switch_on(by_key[key].default) is True, key

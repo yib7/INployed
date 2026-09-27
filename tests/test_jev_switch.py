@@ -63,10 +63,11 @@ def test_the_master_switch_off_turns_every_area_off_in_every_mode(sdk, mode):
 
 
 def test_master_on_is_the_master_switch_alone():
-    """For the setup checks, which list every missing piece at once (JS-5): off
-    only for False, so a stray value reads as the Settings checkbox shows it."""
+    """For the setup checks, which list every missing piece at once (JS-5). A
+    stray value reads as the Settings checkbox shows it (SP1 follow-up 3):
+    "no" is off in both places."""
     assert jev_switch.master_on(config={}) is True
-    assert jev_switch.master_on(config={"jev_enabled": "no"}) is True
+    assert jev_switch.master_on(config={"jev_enabled": "no"}) is False
     assert jev_switch.master_on(config={"jev_enabled": True, "jev_scoring": False}) is True
     assert jev_switch.master_on(config={"jev_enabled": False}) is False
     jev_switch.config_path().write_text(json.dumps({"jev_enabled": False}), encoding="utf-8")
@@ -536,3 +537,71 @@ def test_the_judges_with_an_llm_fallback_retry_on_the_quick_waits(sdk, monkeypat
         judge.judge(*request)                       # at once, with no wait
     assert slept == waits
     assert sum(jev.QUICK_RETRY_DELAYS_S) < 5 < sum(jev.RETRY_DELAYS_S)
+
+
+# --- stray switch values (SP1 follow-up 3) -------------------------------------------
+
+# A hand-edited config.json can hold anything under a switch key. These read
+# off in jev_switch and in the Settings checkbox alike (test_qt_settings pins
+# the checkbox on the same table), so a stray value spends no TypeSafe credit.
+STRAY_OFF = [None, 0, 0.0, "", "   ", "false", "False", " FALSE ", "0", "no", "No",
+             "off", " OFF ", "maybe", 2, []]
+# A real True and the on-words, any case, spaces stripped.
+ON_WORDS = [True, "true", " True ", "YES", "on", "1", 1]
+
+
+@pytest.mark.parametrize("value", STRAY_OFF, ids=repr)
+def test_a_stray_master_switch_value_turns_every_area_off(sdk, value):
+    cfg = dict(ON, jev_enabled=value)
+    assert jev_switch.master_on(config=cfg) is False
+    for area in jev_switch.AREAS:
+        assert _on(area, cfg) is False, area
+        assert _why(area, cfg) == "Jev is switched off in Settings", area
+    assert jev_switch.apply_blocked(config=cfg, env=KEY) ==         "Auto-apply runs on Jev. Turn Jev on in Settings > Jev."
+    assert jev_switch.start_blocked(config=cfg, env=KEY) ==         "Auto-apply runs on Jev. Turn Jev on in Settings > Jev."
+
+
+@pytest.mark.parametrize("value", STRAY_OFF, ids=repr)
+@pytest.mark.parametrize("area,key,words", [
+    ("scoring", "jev_scoring", "scoring"),
+    ("tailor", "jev_tailor", "tailoring"),
+    ("difficulty", "jev_difficulty", "the difficulty check"),
+])
+def test_a_stray_area_switch_value_turns_its_area_off(sdk, area, key, words, value):
+    cfg = dict(ON, **{key: value})
+    assert _on(area, cfg) is False
+    assert _why(area, cfg) == f"Jev is switched off for {words} in Settings"
+    assert jev_switch.master_on(config=cfg) is True
+
+
+@pytest.mark.parametrize("value", ON_WORDS, ids=repr)
+def test_true_and_the_on_words_read_on_for_every_switch(sdk, value):
+    for key in (jev_switch.MASTER_KEY, *jev_switch.AREA_KEYS.values()):
+        cfg = dict(ON, **{key: value})
+        assert jev_switch.master_on(config=cfg) is True, key
+        for area in jev_switch.AREAS:
+            assert _on(area, cfg) is True, (key, area)
+
+
+def test_a_missing_switch_key_reads_on_and_a_present_null_reads_off(sdk):
+    for key in (jev_switch.MASTER_KEY, *jev_switch.AREA_KEYS.values()):
+        missing = {k: v for k, v in ON.items() if k != key}
+        assert all(_on(area, missing) for area in jev_switch.AREAS), key
+        assert not all(_on(area, dict(ON, **{key: None})) for area in jev_switch.AREAS), key
+
+
+@pytest.mark.parametrize("value", ["no", None, 0, ""], ids=repr)
+def test_a_stray_value_in_the_config_file_reads_off_on_the_next_call(sdk, value):
+    path = jev_switch.config_path()
+    path.write_text(json.dumps({"jev_enabled": value}), encoding="utf-8")
+    assert jev_switch.master_on() is False
+    assert jev_switch.jev_on("scoring", env=KEY) is False
+    path.write_text(json.dumps({"jev_tailor": value}), encoding="utf-8")
+    assert jev_switch.jev_on("tailor", env=KEY) is False
+    assert jev_switch.jev_on("scoring", env=KEY) is True
+
+
+def test_the_switches_settings_reads_by_the_rule_are_the_ones_read_here():
+    """One list: the checkbox reads these keys by `settings.switch_on`."""
+    assert set(settings.JEV_SWITCHES) == {jev_switch.MASTER_KEY,
+                                          *jev_switch.AREA_KEYS.values()}

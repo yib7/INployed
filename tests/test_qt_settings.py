@@ -3144,3 +3144,95 @@ def test_the_unknown_judge_sentence_names_the_disclosure_its_row_sits_under(qtbo
     assert sentence.startswith(f"Unknown {f.label} 'typesaf';"), sentence
     form._advanced_check.setChecked(False)
     assert not form._field_visible(f, form._gate_values())     # what the sentence opens
+
+
+# A hand-edited config.json can hold anything under a Jev switch. The checkbox
+# reads these off, as jev_switch does (tests/test_jev_switch.py, same table),
+# so Settings never shows Jev off while a run spends TypeSafe credits.
+_STRAY_OFF = [None, 0, 0.0, "", "   ", "false", "False", " FALSE ", "0", "no", "No",
+              "off", " OFF ", "maybe", 2, []]
+_ON_WORDS = [True, "true", " True ", "YES", "on", "1", 1]
+
+
+def _info_texts(monkeypatch):
+    shown = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information",
+                        staticmethod(lambda _parent, _title, text, *a, **k: shown.append(text)))
+    return shown
+
+
+@pytest.mark.parametrize("value", [None, 0, "", "false", " No ", "OFF", "maybe"], ids=repr)
+@pytest.mark.parametrize("key", ("jev_enabled",) + _JEV_AREA_SWITCHES)
+def test_a_stray_jev_switch_opens_off_and_clean_and_saves_as_false(
+        qtbot, tmp_path, monkeypatch, key, value):
+    """The checkbox, the value the form reads, and the baseline the dirty dot
+    and the Save summary compare against all read the stray value off. Save
+    writes a real False and names no change, and Revert puts the box back off."""
+    targets = _targets(tmp_path)
+    targets["config"].write_text(json.dumps({key: value}), encoding="utf-8")
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    f = _field(key)
+    assert form._widgets[key].isChecked() is False
+    assert form._field_value(f) == (False, None)
+    assert SettingsForm._as_form_value(f, value) is False
+    assert key not in form._dirty                          # opening as stored is no edit
+    if key == "jev_enabled":
+        assert not any(_rows_visible(form, k) for k in _JEV_AREA_SWITCHES)
+
+    form._widgets[key].setChecked(True)
+    assert key in form._dirty
+    form.revert()
+    assert form._widgets[key].isChecked() is False
+    assert key not in form._dirty
+
+    shown = _info_texts(monkeypatch)
+    assert form.save() is True
+    assert json.loads(targets["config"].read_text("utf-8"))[key] is False
+    assert shown == ["No changes to save; your settings are unchanged."]
+
+
+def _agreement_form(qtbot, tmp_path, config):
+    """A form reading the very config.json jev_switch reads."""
+    import jev_switch
+    path = jev_switch.config_path()
+    path.write_text(json.dumps(config), encoding="utf-8")
+    form = SettingsForm(targets=dict(_targets(tmp_path), config=path),
+                        collapsed_sections=[], save_collapsed=lambda s: None,
+                        show_advanced=True, save_show_advanced=lambda v: None)
+    qtbot.addWidget(form)
+    return form
+
+
+@pytest.mark.parametrize("value", _STRAY_OFF + _ON_WORDS, ids=repr)
+def test_settings_and_jev_on_agree_on_every_switch_value(qtbot, tmp_path, monkeypatch, value):
+    """One file, two readers: the Settings checkbox and `jev_switch.jev_on`
+    give the same answer for each value, under the master switch and under
+    each area switch."""
+    import jev_switch
+    monkeypatch.setattr(jev_switch, "sdk_installed", lambda: True)
+    key_env = {"TYPESAFE_API_KEY": "not-a-real-key"}
+    expected = value in _ON_WORDS
+
+    form = _agreement_form(qtbot, tmp_path, {"jev_enabled": value})
+    assert form._widgets["jev_enabled"].isChecked() is expected
+    for area in jev_switch.AREAS:
+        assert jev_switch.jev_on(area, env=key_env) is expected, area
+    assert jev_switch.master_on() is expected
+
+    areas = {k: value for k in jev_switch.AREA_KEYS.values()}
+    form = _agreement_form(qtbot, tmp_path, dict(areas, jev_enabled=True))
+    for area, key in jev_switch.AREA_KEYS.items():
+        assert form._widgets[key].isChecked() is expected, key
+        assert jev_switch.jev_on(area, env=key_env) is expected, area
+
+
+def test_a_missing_jev_switch_reads_on_in_settings_and_jev_switch(qtbot, tmp_path,
+                                                                    monkeypatch):
+    import jev_switch
+    monkeypatch.setattr(jev_switch, "sdk_installed", lambda: True)
+    form = _agreement_form(qtbot, tmp_path, {})
+    for key in ("jev_enabled",) + _JEV_AREA_SWITCHES:
+        assert form._widgets[key].isChecked() is True, key
+    for area in jev_switch.AREAS:
+        assert jev_switch.jev_on(area, env={"TYPESAFE_API_KEY": "not-a-real-key"}), area

@@ -35,9 +35,11 @@ off or the judge cannot be built; a caller outside auto-apply keeps its LLM
 path on None, and its judge retries briefly (`jev.QUICK_RETRY_DELAYS_S`), so
 an outage reaches that path in seconds.
 
-The switches are read with `is not False`, the spelling
-`resume_tailor/config.py` uses for every default-on toggle, so a stray
-non-bool value reads the same way the Settings checkbox shows it (on).
+A switch reads by `settings.switch_on`, the rule the Settings checkbox
+shows it by (SP1 follow-up 3): a missing key is on (the default), a bool is
+itself, and any other value is on only as "true", "yes", "on" or "1", any
+case, spaces stripped. A hand-edited null, 0, "", "false" or "off" reads off
+here and in Settings alike, so a stray value spends no TypeSafe credit.
 """
 from __future__ import annotations
 
@@ -155,7 +157,14 @@ def master_on(*, config: Mapping[str, Any] | None = None) -> bool:
     file, read on every call. The setup checks read it alone: they list every
     missing piece at once."""
     cfg = _config() if config is None else config
-    return cfg.get(MASTER_KEY, True) is not False
+    return _switch(cfg, MASTER_KEY)
+
+
+def _switch(cfg: Mapping[str, Any], key: str) -> bool:
+    """Is switch `key` on in `cfg`? A missing key is on (the default); a
+    stored value reads by `settings.switch_on`, the Settings checkbox's rule."""
+    import settings
+    return settings.switch_on(cfg.get(key, True))
 
 
 def _check(area: str, config: Mapping[str, Any] | None, env: Mapping[str, str] | None,
@@ -170,7 +179,7 @@ def _check(area: str, config: Mapping[str, Any] | None, env: Mapping[str, str] |
     if not master_on(config=cfg):
         return "switch", REASON_SWITCH
     area_key = AREA_KEYS.get(area)
-    if area_key is not None and cfg.get(area_key, True) is False:
+    if area_key is not None and not _switch(cfg, area_key):
         return "switch", f"Jev is switched off for {_AREA_WORDS[area]} in Settings"
     if area in _MODE_AREAS and apply_mode(mode, config=cfg) in TEST_MODES:
         return "", ""

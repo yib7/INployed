@@ -1064,6 +1064,28 @@ def secret_status(targets: dict[str, Path] | None = None) -> dict[str, bool]:
     return out
 
 
+# The four default-on Jev switches (cycle 19) and the one rule both of their
+# readers use: the Settings checkbox (`settings_tab`) and `jev_switch`, which
+# decides whether a run spends TypeSafe credits (SP1 follow-up 3). A missing
+# key is the Field's default (on) and a real bool is itself. Any other value
+# is on only as one of SWITCH_ON_WORDS, any case, spaces stripped, the words
+# `score_jobs._as_bool` reads for the scoring config's bools. A hand-edited
+# null, 0, "", "false" or "off", and any value outside the words, reads off
+# in both places, so a stray value spends nothing.
+JEV_SWITCHES = ("jev_enabled", "jev_scoring", "jev_tailor", "jev_difficulty")
+SWITCH_ON_WORDS = frozenset(("true", "yes", "on", "1"))
+
+
+def switch_on(value: Any) -> bool:
+    """Is a stored Jev switch `value` on? A bool is itself; any other value is
+    on only as one of `SWITCH_ON_WORDS` once stripped and lower-cased. A
+    missing key never reaches here: `load()` fills the default (True), and
+    `jev_switch` reads a missing key as True."""
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in SWITCH_ON_WORDS
+
+
 def _coerce_ok(f: Field, value: Any) -> bool:
     """True when `value` is the right Python type for Field `f`."""
     if f.type == "int":

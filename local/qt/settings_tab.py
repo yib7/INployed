@@ -1026,9 +1026,9 @@ class SettingsForm(QtWidgets.QWidget):
             return self._secret_widget(f, value)
         if f.type == "bool":
             cb = QtWidgets.QCheckBox()
-            cb.setChecked(bool(value))
+            cb.setChecked(self._checked(f, value))
             self._getters[f.key] = cb.isChecked
-            self._setters[f.key] = lambda v, c=cb: c.setChecked(bool(v))
+            self._setters[f.key] = lambda v, c=cb, fl=f: c.setChecked(self._checked(fl, v))
             self._widgets[f.key] = cb
             return cb
         if f.type == "choice":
@@ -1840,9 +1840,18 @@ class SettingsForm(QtWidgets.QWidget):
         return self._coerce(f, self._getters[f.key]())
 
     @staticmethod
+    def _checked(f: settings.Field, value) -> bool:
+        """A bool field's stored `value` as its checkbox shows it. The Jev
+        switches read by `settings.switch_on`, the rule `jev_switch` reads them
+        by, so a hand-edited "false", null, 0 or "" shows off here and spends
+        nothing there (SP1 follow-up 3). Every other bool keeps `bool()`: its
+        runtime readers spell their own rule."""
+        return settings.switch_on(value) if f.key in settings.JEV_SWITCHES else bool(value)
+
+    @staticmethod
     def _coerce(f: settings.Field, raw):
         if f.type == "bool":
-            return bool(raw), None
+            return SettingsForm._checked(f, raw), None
         text = str(raw).strip()
         if f.type == "int":
             try:

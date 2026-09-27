@@ -1636,3 +1636,65 @@ def test_test_answers_wording_names_saved_answers_in_plain_words(qtbot, tmp_path
     dlg = at.TestAnswersDialog([], "Judge: fake.")
     qtbot.addWidget(dlg)
     assert not any("live judge" in w.text() for w in dlg.findChildren(QtWidgets.QLabel))
+
+
+# --- cycle 19 SP7 (PR-6): the file changed on disk by a paused run's save -------------------
+
+def _run_saves(store, question="Preferred team", answer="Platform"):
+    """What a paused run's "Save for future runs" does to the store."""
+    import os
+    import apply_pause
+    before = store.stat().st_mtime_ns if store.exists() else 0
+    assert apply_pause.save_answer({"label": question, "type": "text"}, answer, "Fabrikam",
+                                   path=store) == ""
+    if store.stat().st_mtime_ns == before:          # a coarse clock: move the stamp on
+        os.utime(store, ns=(before + 1_000_000, before + 1_000_000))
+
+
+def test_the_tab_reloads_a_store_a_paused_run_saved_when_it_has_no_unsaved_edits(
+        qtbot, tmp_path):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    ed = _editor(qtbot, store)
+    assert ed.check_disk() == ""                    # nothing changed yet
+    assert not ed.has_unsaved_edits()
+    _run_saves(store)
+    assert ed.check_disk() == "reloaded"
+    assert any(r["entry"].get("question") == "Preferred team" for r in ed.rows)
+    assert ed.disk_banner.isHidden()
+    assert ed.status.text() == "Reloaded: the answers file changed on disk."
+
+
+def test_the_tab_shows_the_changed_on_disk_banner_over_unsaved_edits(qtbot, tmp_path):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    ed = _editor(qtbot, store)
+    _row(ed, "work_authorized")["answer_widget"].setCurrentText("No")
+    assert ed.has_unsaved_edits()
+    _run_saves(store)
+    assert ed.check_disk() == "banner"
+    assert not ed.disk_banner.isHidden()
+    assert "changed on disk" in ed.disk_label.text()
+    # the edit stays until the person reloads
+    assert _row(ed, "work_authorized")["answer_widget"].currentText() == "No"
+    assert ed.check_disk() == ""                    # one banner per change
+    ed.disk_reload_btn.click()
+    assert ed.disk_banner.isHidden()
+    assert _row(ed, "work_authorized")["answer_widget"].currentText() == "Yes"
+    assert any(r["entry"].get("question") == "Preferred team" for r in ed.rows)
+
+
+def test_the_tabs_own_save_reads_as_no_change_on_disk(qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    ed = _editor(qtbot, store)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", lambda *a, **k: None)
+    _row(ed, "work_authorized")["answer_widget"].setCurrentText("No")
+    assert ed.save()
+    assert ed.check_disk() == "" and not ed.has_unsaved_edits()
+
+
+def test_the_disk_check_rides_a_five_second_timer(qtbot, tmp_path):
+    ed = _editor(qtbot, tmp_path / "apply_answers.json")
+    assert at.DISK_POLL_MS == 5000
+    assert ed._disk_timer.interval() == 5000 and ed._disk_timer.isActive()

@@ -22,6 +22,11 @@ keeps the damaged file as `<name>.damaged`. A migration's review list shows as
 a banner that asks the user to tick Confirmed on each answer; "I've checked
 these" dismisses it and saves.
 
+The file on disk (cycle 19, SP7 PR-6): a paused run's "Save for future runs"
+writes the store while the dashboard is open. Every `DISK_POLL_MS` the tab
+compares the file with what it last read (`check_disk`): with no unsaved edits
+here it reloads, else a "changed on disk" banner offers Reload.
+
 "Test my answers" (`ED-9`, SP6) runs the shipped screening set
 (`apply_screening.run_screening`) over the saved, confirmed answers on disk
 with the judge the Auto-apply judge setting names (`_current_jev_mode`, read by
@@ -109,6 +114,12 @@ _LABEL_TYPES = {v: k for k, v in _TYPE_LABELS.items()}
 # types is already a complete match, with no "keep typing" state to model. The
 # 0-60 range is a separate check `validate()` makes at save.
 _NUMBER_SHAPE = r"^\d{0,2}(\.5?)?$"
+
+# How often the tab looks at the store on disk (SP7): the Auto-apply tab's poll.
+DISK_POLL_MS = 5000
+
+_DISK_CHANGED = ("The answers file changed on disk (a paused run may have saved an "
+                 "answer). Reload to see it; your unsaved edits here are dropped then.")
 
 
 def _is_us(answer: str) -> bool:
@@ -395,9 +406,16 @@ class AnswersEditor(QtWidgets.QWidget):
         # ED-9: the live judge by default; tests pass a fake/stub factory.
         self._judge_factory = judge_factory or _default_judge_factory
         self._test_running = False      # a Test my answers run is going
+        # SP7: the file as last read, and the rows as they were then
+        self._disk_sig: tuple | None = None
+        self._clean: list[dict] = []
 
         self._build_shell()
         self.reload()
+        self._disk_timer = QtCore.QTimer(self)
+        self._disk_timer.setInterval(DISK_POLL_MS)
+        self._disk_timer.timeout.connect(self.check_disk)
+        self._disk_timer.start()
 
     # ---- construction --------------------------------------------------------
 
@@ -432,6 +450,18 @@ class AnswersEditor(QtWidgets.QWidget):
         rb.addWidget(self.review_confirm_btn, 0, QtCore.Qt.AlignmentFlag.AlignTop)
         v.addWidget(self.review_banner)
         self.review_banner.setVisible(False)
+
+        self.disk_banner = QtWidgets.QFrame()
+        self.disk_banner.setProperty("callout", "warning")
+        db = QtWidgets.QHBoxLayout(self.disk_banner)
+        self.disk_label = QtWidgets.QLabel(_DISK_CHANGED)
+        self.disk_label.setWordWrap(True)
+        db.addWidget(self.disk_label, 1)
+        self.disk_reload_btn = QtWidgets.QPushButton("Reload")
+        self.disk_reload_btn.clicked.connect(self._disk_reload_clicked)
+        db.addWidget(self.disk_reload_btn, 0, QtCore.Qt.AlignmentFlag.AlignTop)
+        v.addWidget(self.disk_banner)
+        self.disk_banner.setVisible(False)
 
         scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(True)
@@ -485,6 +515,7 @@ class AnswersEditor(QtWidgets.QWidget):
             self._refresh_counts()
             self._update_review_banner()
             self.refresh_test_answers_state()
+            self._mark_read()
             return
         entries = store["answers"]
         if self._merge_defaults:
@@ -501,6 +532,47 @@ class AnswersEditor(QtWidgets.QWidget):
         self._refresh_counts()
         self._update_review_banner()
         self.refresh_test_answers_state()
+        self._mark_read()
+
+    # ---- the file on disk (SP7) ------------------------------------------------
+
+    def _store_sig(self) -> tuple | None:
+        try:
+            st = os.stat(self.store_path)
+            return (st.st_mtime_ns, st.st_size)
+        except OSError:
+            return None
+
+    def _mark_read(self) -> None:
+        """What `check_disk` compares against: the file's stamp and the rows
+        as this read left them."""
+        self._disk_sig = self._store_sig()
+        self._clean = self.collect()
+        self.disk_banner.setVisible(False)
+
+    def has_unsaved_edits(self) -> bool:
+        """Whether a row differs from the file as last read (an added or a
+        deleted row counts)."""
+        return self.collect() != self._clean
+
+    def check_disk(self) -> str:
+        """Compare the file with the last read: "" when it has not changed,
+        "reloaded" when the tab read it again (no unsaved edits), "banner"
+        when the changed-on-disk banner shows instead."""
+        sig = self._store_sig()
+        if sig == self._disk_sig:
+            return ""
+        if self.load_error or not self.has_unsaved_edits():
+            self.reload()
+            self.status.setText("Reloaded: the answers file changed on disk.")
+            return "reloaded"
+        self._disk_sig = sig            # one banner per change
+        self.disk_banner.setVisible(True)
+        return "banner"
+
+    def _disk_reload_clicked(self) -> None:
+        self.reload()
+        self.status.setText("Reloaded from disk.")
 
     # ---- rows ------------------------------------------------------------------
 

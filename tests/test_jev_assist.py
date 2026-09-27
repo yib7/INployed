@@ -808,6 +808,59 @@ def test_the_verb_floor_is_the_specs():
     assert jev_assist.VERB_MIN_CONFIDENCE == 0.5
 
 
+def _choice_shape_ok(questions):
+    """Every choice in `questions` holds 1 to jev.CHOICE_OPTIONS_MAX options, each id
+    a trimmed, non-empty string no longer than VERB_ID_MAX, and no two ids alike
+    whatever their case."""
+    for q in questions.values():
+        if q["type"] != "choice":
+            continue
+        ids = list(q["criteria"])
+        assert 1 <= len(ids) <= jev.CHOICE_OPTIONS_MAX
+        assert all(isinstance(i, str) and i == i.strip() and i for i in ids)
+        assert all(len(i) <= jev_assist.VERB_ID_MAX for i in ids)
+        assert len({i.lower() for i in ids}) == len(ids)
+
+
+def test_a_whole_palette_is_cut_to_the_verb_cap_from_its_end(master):
+    """VL-3: TL-6 sent every unused palette verb, about 360, past the 255 options
+    Jev takes in one choice, and the service answered 400. The request holds the
+    first VERB_OPTIONS_MAX options, the repeated verb's own category first."""
+    options = {f"Verb{c}x{i:02d}": f"Cat{c}" for c in range(9) for i in range(62)}
+    rec = Recording(jev.FakeJev())
+    verb, _conf = jev_assist.pick_verb(_VERB_BULLET, options, judge=rec)
+    (state, questions), = rec.requests
+    criteria = questions["verb"]["criteria"]
+    assert jev_assist.VERB_OPTIONS_MAX <= jev.CHOICE_OPTIONS_MAX
+    assert list(criteria) == list(options)[:jev_assist.VERB_OPTIONS_MAX]
+    assert jev.request_fits(state, questions)
+    _choice_shape_ok(questions)
+    assert verb in criteria
+
+
+def test_pick_verb_sends_each_verb_once_as_a_trimmed_id(master):
+    options = {" Designed ": "Build", "designed": "Build", "": "Build", "   ": "Build",
+               "Modeled\n": "Analyze", "Set  up": "Build", "X" * 41: "Lead",
+               "Coordinated": "Lead"}
+    rec = Recording(jev.FakeJev())
+    jev_assist.pick_verb(_VERB_BULLET, options, judge=rec)
+    (_state, questions), = rec.requests
+    assert questions["verb"]["criteria"] == {"Designed": "Build", "Modeled": "Analyze",
+                                             "Set up": "Build", "Coordinated": "Lead"}
+    _choice_shape_ok(questions)
+
+
+def test_the_picked_verb_is_the_id_jev_was_sent(master):
+    judge = Scripted(choice="Modeled", confidence=0.8)
+    assert jev_assist.pick_verb(_VERB_BULLET, {" Modeled ": "Analyze"}, judge=judge) == (
+        "Modeled", 0.8)
+
+
+def test_the_verb_caps_are_the_specs():
+    assert jev_assist.VERB_OPTIONS_MAX == 60
+    assert jev_assist.VERB_ID_MAX == 40
+
+
 # ── TL-5 sweep_flags ─────────────────────────────────────────────────────────
 _TELLS = ["contrast framing", "stacked adjectives", "filler or vague impact", "hype words",
           "padded list of three"]

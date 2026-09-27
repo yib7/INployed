@@ -689,19 +689,39 @@ def _swap_leading_verb(text: str, repl: str) -> str:
 
 
 def _unused_verbs(palette: Dict[str, List[str]], current: str, taken) -> Dict[str, str]:
-    """TL-6's options: {verb: its category} for each palette verb whose lowercase is not
-    in `taken`, in `_pick_unused_verb`'s order (the category holding `current` first,
-    then the rest as written), each verb once."""
+    """TL-6's options: {verb: its category} for palette verbs whose lowercase is not in
+    `taken`, each verb once, at most `jev_assist.VERB_OPTIONS_MAX` of them. The
+    categories holding `current` come first, whole and as written, as in
+    `_pick_unused_verb`; the rest fill what is left in turns, one verb from each
+    category in palette order, so the fill reaches every category (VL-3: the whole
+    unused palette went past the options Jev takes in one choice)."""
+    cap = jev_assist.VERB_OPTIONS_MAX
     cl = (current or "").lower()
     home = [cat for cat, items in palette.items() if any(v.lower() == cl for v in items)]
     out: Dict[str, str] = {}
     seen: set = set()
-    for cat in home + [c for c in palette if c not in home]:
+
+    def take(v: str, cat: str) -> None:
+        lv = v.lower()
+        if lv not in taken and lv not in seen and len(out) < cap:
+            seen.add(lv)
+            out[v] = cat
+
+    for cat in home:
         for v in palette[cat]:
-            lv = v.lower()
-            if lv not in taken and lv not in seen:
-                seen.add(lv)
-                out[v] = cat
+            take(v, cat)
+    rest = [iter(palette[c]) for c in palette if c not in home]
+    names = [c for c in palette if c not in home]
+    while rest and len(out) < cap:
+        live = []
+        for cat, it in zip(names, rest):
+            for v in it:
+                before = len(out)
+                take(v, cat)
+                if len(out) > before:
+                    live.append((cat, it))
+                    break
+        names, rest = [c for c, _it in live], [it for _c, it in live]
     return out
 
 

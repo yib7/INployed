@@ -26,8 +26,9 @@ code to compose. The LLM still writes every bullet.
                         AI-writing sweep calls the model only for an entry with a
                         tell at SWEEP_FLAG or more or a detector finding, and names
                         the tells in that call's payload.
-  pick_verb       TL-6  one choice per repeated opening verb, over the palette's
-                        unused verbs: dedupe_leading_verbs swaps the bullet's first
+  pick_verb       TL-6  one choice per repeated opening verb, over up to
+                        VERB_OPTIONS_MAX of the palette's unused verbs, the repeated
+                        verb's own category first: dedupe_leading_verbs swaps the bullet's first
                         word for a sure pick and keeps its reverb call otherwise.
   best_variant    TL-7  one choice per bullet over its rephrase drafts that pass
                         the grounding gate and TL-4 (Settings: "Best of 3 bullet
@@ -105,6 +106,13 @@ LEAD_MIN_CONFIDENCE = 0.5
 
 # TL-6: a verb Jev picks with a confidence under this keeps the LLM `reverb` call.
 VERB_MIN_CONFIDENCE = 0.5
+# TL-6: the verbs one choice offers, about one palette category (active_words.md's
+# run from 43 to 83). VL-3: the whole unused palette, about 360 verbs, went past
+# the 255 options Jev takes in one choice (`jev.CHOICE_OPTIONS_MAX`) and every
+# request came back 400. A verb longer than VERB_ID_MAX characters is no verb and
+# is left out (the palette's longest is 14).
+VERB_OPTIONS_MAX = 60
+VERB_ID_MAX = 40
 
 # TL-5: a tell Jev reads at this P(yes) or more flags its bullet, and the AI-writing
 # sweep calls the model for the item that holds it.
@@ -590,21 +598,40 @@ def sweep_flags(entries: Sequence[Mapping[str, Any]], *, judge: Any = _DEFAULT
     return _run_step(STEP_SWEEP_GATE, judge, ask)
 
 
+def _verb_ids(options: Mapping[str, str]) -> Dict[str, str]:
+    """TL-6's option ids, in `options`' order: each verb with its whitespace
+    collapsed, left out when empty, longer than VERB_ID_MAX or alike (whatever the
+    case) an earlier one, and at most VERB_OPTIONS_MAX of them."""
+    out: Dict[str, str] = {}
+    seen: set = set()
+    for verb, cat in options.items():
+        name = " ".join(str(verb).split())
+        if not name or len(name) > VERB_ID_MAX or name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        out[name] = str(cat)
+        if len(out) >= VERB_OPTIONS_MAX:
+            break
+    return out
+
+
 def pick_verb(bullet: str, options: Mapping[str, str], *, judge: Any = _DEFAULT
               ) -> Optional[Tuple[str, float]]:
     """TL-6: the verb that best names the action in `bullet`, a bullet whose opening
     verb another bullet already uses.
 
     `options` is {verb: its palette category}: the palette's unused verbs, the
-    category holding the repeated verb first. One choice over them
-    (PICK_VERB_QUESTION) with the bullet as the state. One question cannot be split,
+    category holding the repeated verb first. One choice over the first
+    VERB_OPTIONS_MAX of them (PICK_VERB_QUESTION) with the bullet as the state, each
+    verb sent once as its trimmed text (`_verb_ids`). One question cannot be split,
     so past Jev's limits the options are halved from the end until the request fits.
     Returns (verb, confidence); the caller swaps the bullet's first word for the verb
     at VERB_MIN_CONFIDENCE or more and keeps its LLM `reverb` call under it. The verb
-    is always one of `options`. None when Jev is off or fails, or there is no option."""
+    is always one of `options`, trimmed. None when Jev is off or fails, or there is
+    no option."""
     def ask(j: Any) -> Tuple[str, float]:
         jev, _switch = _jev_modules()
-        criteria = {str(v): str(cat) for v, cat in options.items() if str(v).strip()}
+        criteria = _verb_ids(options)
         if not criteria:
             raise _NothingToAsk
         state = {"bullet": str(bullet or "")}

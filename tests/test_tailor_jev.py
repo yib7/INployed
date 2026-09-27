@@ -637,6 +637,44 @@ def test_each_repeated_opener_is_its_own_choice(monkeypatch):
     assert got["e"] == "Designed the club budget for the spring term."
 
 
+def test_the_real_palette_sends_a_choice_jev_takes(monkeypatch):
+    """VL-3: over the repo's active_words.md (368 verbs), TL-6 asked one choice over
+    every unused verb, past the 255 options Jev takes, and got a 400. The request
+    holds at most VERB_OPTIONS_MAX palette verbs: every unused verb of the repeated
+    verb's own category first, then the other categories in turns."""
+    monkeypatch.setattr(compose, "reverb", lambda *a, **k: _REVERBED)
+    monkeypatch.setattr(config, "ACTIVE_WORDS_MD", REPO / "resume_tailor_files" / "active_words.md")
+    assets.active_verbs.cache_clear()
+    try:
+        palette = assets.active_verbs()
+    finally:
+        assets.active_verbs.cache_clear()
+    monkeypatch.setattr(assets, "active_verbs", lambda: {k: list(v) for k, v in palette.items()})
+    homes = {}
+    for cat, verbs in palette.items():
+        for v in verbs:
+            homes.setdefault(v.lower(), set()).add(cat)
+    assert len(homes) > jev.CHOICE_OPTIONS_MAX, "the palette no longer outgrows one choice"
+    # The smallest category, by a verb only it holds, so the fill from the rest shows.
+    home = min(palette, key=lambda c: len(palette[c]))
+    verb = next(v for v in palette[home] if homes[v.lower()] == {home})
+    bullets = {"a": f"{verb} churn for the retention team.",
+               "b": f"{verb} weekly demand for the ops team."}
+    rec = _Recording(jev.FakeJev())
+    _dedupe(bullets, rec, reserved=frozenset())
+    (state, questions), = rec.requests
+    criteria = questions["verb"]["criteria"]
+    assert jev.request_fits(state, questions)
+    assert len(criteria) == jev_assist.VERB_OPTIONS_MAX <= jev.CHOICE_OPTIONS_MAX
+    assert len({c.lower() for c in criteria}) == len(criteria)
+    assert all(c.strip() == c and 0 < len(c) <= jev_assist.VERB_ID_MAX for c in criteria)
+    assert all(criteria[c] in homes[c.lower()] for c in criteria)
+    own = [v for v in dict.fromkeys(palette[home]) if v.lower() != verb.lower()]
+    assert list(criteria)[:len(own)] == own
+    others = [c for c in palette if c != home]
+    assert [criteria[c] for c in list(criteria)[len(own):len(own) + len(others)]] == others
+
+
 def test_with_no_repeated_opener_the_verb_line_says_so(monkeypatch):
     calls = _reverb_calls(monkeypatch)
     rec = _Recording(jev.FakeJev())

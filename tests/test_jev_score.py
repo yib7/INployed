@@ -610,6 +610,19 @@ def test_an_inline_preferred_cue_beats_a_required_heading():
     "Valid driver’s license",
     "Candidates must be U.S. citizens",
     "We are unable to sponsor",
+    # a leading arrangement word with a place, and travel written as a label
+    "Travel: up to 25%",
+    "Travel (25%)",
+    "Travel - 25%",
+    "Travel requirement: up to 20%",
+    "Remote, US",
+    "Remote US",
+    "Hybrid, Austin TX",
+    "Open to remote candidates",
+    # visa in its immigration wording
+    "Must not require a work visa",
+    "Visa status must allow full-time work",
+    "H-1B visa holders are welcome",
 ])
 def test_requirement_lines_drop_location_visa_and_eligibility_lines(line):
     md = f"## Requirements\n- Python and SQL\n- {line}\n- Tableau dashboards\n- Statistics\n"
@@ -629,6 +642,8 @@ def test_requirement_lines_drop_location_visa_and_eligibility_lines(line):
     "Understanding of covariate shift and model drift",
     "Commutative algebra coursework",
     "18 years of analytics experience",
+    "Visa and Mastercard payment data",
+    "Remote user research and usability testing",
 ])
 def test_requirement_lines_keep_skills_that_share_a_word_with_a_dropped_line(line):
     md = f"## Requirements\n- Python and SQL\n- {line}\n- Tableau dashboards\n"

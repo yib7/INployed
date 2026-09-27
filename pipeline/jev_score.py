@@ -521,21 +521,21 @@ _NICE_LINE_RE = re.compile(
 # Lines the stage 2 prompt forbids as gaps: where and when the work happens
 # (location, on-site, hybrid or remote work, relocation, time zone, travel, hours,
 # shifts) and eligibility lines that name no skill or tool (visa, sponsorship, work
-# authorization, citizenship, checks, age, lifting). A word with a skill sense
-# (hybrid, remote, location, travel, sponsor, citizen, shift, commute) drops a line
-# only in its work-arrangement or eligibility wording, so "hybrid cloud" and
-# "remote sensing" stay.
+# authorization, citizenship, checks, age, lifting). A word with a second sense
+# (hybrid, remote, location, travel, visa, sponsor, citizen, shift, commute) drops a
+# line only in its work-arrangement or eligibility wording, so "hybrid cloud",
+# "remote sensing" and "Visa and Mastercard payment data" stay.
 _ARRANGED = r"(?:hybrid|remote(?:ly)?)"
 _DROP_PARTS = (
     # where the work happens
     r"(?:on[- ]?site|in[- ]office|in[- ]person|time[- ]?zones?)\b|relocat\w*",
     r"commut(?:e|es|ing|able)\b",
     r"located (?:in|within|near|at)\b|locations?\s*:|(?:office|work|job) locations?\b",
-    rf"^{_ARRANGED}\s*(?:$|[(:]|[-–]\s|\d)",
+    rf"^{_ARRANGED}\s*(?:$|[(:,;/]|[-–]\s|\d|(?:us|u\.s\.?|usa|united states)(?!\w))",
     rf"{_ARRANGED}[- ](?:first|friendly|eligible|only)\b",
     rf"{_ARRANGED}\s+(?:within|in|from|across|anywhere|work(?:ing|place)?|role|position|job"
     r"|schedule|setting|environment|capacity|basis|option|opportunit\w*|arrangement|policy"
-    r"|days?)\b",
+    r"|days?|candidates|applicants)\b",
     rf"(?:work\w*|fully|100%|partially|partly|primarily|mostly|is|be)\s+{_ARRANGED}\b",
     rf"{_ARRANGED}\s*(?:\bor\b|\band\b|/)\s*(?:hybrid|remote|on[- ]?site|in[- ]office)",
     # when the work happens
@@ -544,13 +544,18 @@ _DROP_PARTS = (
     r"|on[- ]call|first|second|third|any|\d+[- ]hour) shifts?\b",
     r"shifts?\s+(?:work|schedule|rotations?|differential)\b|work\w*\s+(?:in\s+)?shifts\b",
     r"(?:willing(?:ness)?|able|ability|availab\w*|required|expected|need) to travel\b",
+    r"^travel\w*\s*(?:$|[(:,]|[-–]\s|\d)|travel requirements?\b",
     r"travel\w*\s+(?:is\s+)?(?:required|expected|as needed|up to|\d)",
     r"travel\w*\s+to\s+(?:\w+\s+)?(?:client|customer|field|office|site)s?\b",
     r"\d+\s*%\s*(?:of the time\s*)?travel",
     r"(?:overnight|occasional|frequent|domestic|international|minimal|limited|extensive"
     r"|some) travel\b",
     # eligibility
-    r"(?:visas?|sponsorship)\b|(?:not|cannot|to) sponsor\b|[’']t sponsor\b",
+    r"sponsorship\b|(?:not|cannot|to) sponsor\b|[’']t sponsor\b",
+    r"h-?1-?b\b|(?:work|employment|immigration|student)\s+visas?\b",
+    r"visas?\s+(?:status|holders?|support|transfers?|requirements?|required|needed"
+    r"|restrictions?)\b",
+    r"(?:requir\w*|need\w*|without|hold\w*|obtain\w*|valid)\s+(?:an?\s+|any\s+)?visas?\b",
     r"sponsor(?:s|ed)?\s+(?:visas?|employment|work|candidates|applicants)\b",
     r"(?:work(?:ing)? authori[sz]ation|authori[sz]ed to work|eligib\w* to work"
     r"|right to work)\b",

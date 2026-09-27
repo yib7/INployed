@@ -391,6 +391,21 @@ Return ONLY JSON: {{"briefs": [{{"block": "<block name>", "brief": "<1-2 sentenc
     return result
 
 
+# TL-7's additions to the rephrase prompt, sent only when the run asks for drafts
+# (Settings: best of three, with Jev on). Without them the prompt is today's, word
+# for word, which keeps its prompt cache.
+REPHRASE_DRAFTS = 3
+REPHRASE_DRAFTS_RULE = (
+    "\nDRAFTS: write three drafts of every bullet. Each draft follows every rule above "
+    "and re-phrases the same group's atoms; let the drafts differ in which grounded "
+    "facts they lead with and how they frame them. A later check keeps one draft per "
+    "bullet.")
+REPHRASE_DRAFTS_SHAPE = (
+    "\n\nDRAFTS: return three drafts per gkey in this shape, which replaces the shape "
+    'above: {"bullets": [{"gkey": "<gkey>", "texts": ["<draft 1>", "<draft 2>", '
+    '"<draft 3>"]}, ...]}')
+
+
 def rephrase(jd: str, job_title: str, sel: Dict[str, Any],
              briefs: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     """Return {gkey: bullet_text} — one bullet per selected group. The payload is
@@ -398,6 +413,45 @@ def rephrase(jd: str, job_title: str, sel: Dict[str, Any],
     block's bullets read as one story (shared framing, no redundancy, logical
     progression) instead of glued-together atoms. Each bullet still gets a soft length
     hint; final length is enforced deterministically later (run._trim_to_caps)."""
+    gm = group_map(sel)
+    out = _rephrase_answer(jd, job_title, sel, briefs, drafts=False)
+    result: Dict[str, str] = {}
+    for b in out.get("bullets") or []:
+        if not isinstance(b, dict):
+            continue
+        gk, text = b.get("gkey"), (b.get("text") or "").strip()
+        if gk in gm and text:
+            result[gk] = text
+    return result
+
+
+def rephrase_drafts(jd: str, job_title: str, sel: Dict[str, Any],
+                    briefs: Optional[Dict[str, str]] = None) -> Dict[str, List[str]]:
+    """TL-7: {gkey: up to REPHRASE_DRAFTS distinct drafts}, from one rephrase call
+    whose prompt is `rephrase`'s with REPHRASE_DRAFTS_RULE and REPHRASE_DRAFTS_SHAPE
+    appended. A bullet answered in the single-text shape reads as one draft. The run
+    keeps one draft per bullet (`run._resolve_best_of`)."""
+    gm = group_map(sel)
+    out = _rephrase_answer(jd, job_title, sel, briefs, drafts=True)
+    result: Dict[str, List[str]] = {}
+    for b in out.get("bullets") or []:
+        if not isinstance(b, dict):
+            continue
+        texts = b.get("texts")
+        if not isinstance(texts, list):
+            texts = [b.get("text")]
+        clean = [t.strip() for t in texts if isinstance(t, str) and t.strip()]
+        clean = list(dict.fromkeys(clean))[:REPHRASE_DRAFTS]
+        gk = b.get("gkey")
+        if gk in gm and clean:
+            result[gk] = clean
+    return result
+
+
+def _rephrase_answer(jd: str, job_title: str, sel: Dict[str, Any],
+                     briefs: Optional[Dict[str, str]], *, drafts: bool) -> Dict[str, Any]:
+    """The rephrase call's JSON answer. `drafts` appends TL-7's rule and shape; left
+    off, the prompt is today's, byte for byte."""
     briefs = briefs or {}
     gm = group_map(sel)
     targets = bullet_line_targets(sel)
@@ -485,16 +539,11 @@ line. Do NOT exceed the cap and do NOT end mid-clause expecting truncation. Neve
 invent facts to pad and never drop a number to shorten.
 
 Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<one bullet>"}}, ...]}}"""
-    out = as_dict(call(system, user, config.TIER_PRO, json_out=True, temperature=0.25),
-                  "bullets")
-    result: Dict[str, str] = {}
-    for b in out.get("bullets") or []:
-        if not isinstance(b, dict):
-            continue
-        gk, text = b.get("gkey"), (b.get("text") or "").strip()
-        if gk in gm and text:
-            result[gk] = text
-    return result
+    if drafts:
+        system += REPHRASE_DRAFTS_RULE
+        user += REPHRASE_DRAFTS_SHAPE
+    return as_dict(call(system, user, config.TIER_PRO, json_out=True, temperature=0.25),
+                   "bullets")
 
 
 # TL-4's addition to the reground prompt, sent only when a bullet carries a finding.

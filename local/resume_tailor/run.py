@@ -322,6 +322,53 @@ def _resolve_bullets(jd: str, job_title: str, sel: dict, log: Callable[[str], No
     return bullets
 
 
+def _resolve_best_of(jd: str, job_title: str, sel: dict, log: Callable[[str], None], *,
+                     briefs: Optional[Dict[str, str]], judge: Any) -> Dict[str, str]:
+    """TL-7 (Settings: best of three, with Jev on): one rephrase call for three
+    drafts of every bullet, and one draft kept per bullet.
+
+    A draft is a candidate when it passes the grounding gate's check
+    (`verify.group_unseen`) and TL-4 (`jev_assist.faithfulness`, every draft in one
+    check); a TL-4 check that cannot run leaves the gate alone, as it does for every
+    bullet. Jev picks among a bullet's candidates (`jev_assist.best_variant`); a
+    bullet with one candidate keeps it, and a pick that fails keeps the first. A
+    bullet with no candidate keeps its first draft, which is what the rephrase gave
+    before TL-7, and the prologue gate and TL-4 then treat it as any bullet. A drafts
+    answer with no bullet in it falls back to today's rephrase call. Every text kept
+    is one the rephrase wrote."""
+    drafts = compose.rephrase_drafts(jd, job_title, sel, briefs=briefs)
+    if not drafts:
+        log("the drafts call returned no bullet; rephrasing once…")
+        return _resolve_bullets(jd, job_title, sel, log, briefs=briefs)
+    gm = compose.group_map(sel)
+    grounded = {gk: [t for t in texts
+                     if not verify.group_unseen(sel, gm.get(gk) or gk.split("+"), t)]
+                for gk, texts in drafts.items()}
+    entries: List[Dict[str, Any]] = []
+    for name, gkeys in compose._blocks_in_order(sel):
+        items = [{"gkey": f"{gk}#{n}", "text": t,
+                  "atoms": [compose._atom_payload(a) for a in gm[gk]]}
+                 for gk in gkeys for n, t in enumerate(grounded.get(gk) or [])]
+        if items:
+            entries.append({"entry": name, "bullets": items})
+    verdicts = jev_assist.faithfulness(entries, judge=judge) if entries else None
+    passing = {gk: [t for n, t in enumerate(texts)
+                    if verdicts is None or verdicts.get(f"{gk}#{n}") == ""]
+               for gk, texts in grounded.items()}
+    groups = [{"gkey": gk, "drafts": texts} for gk, texts in passing.items()
+              if len(texts) >= 2]
+    picks = jev_assist.best_variant(jd, job_title, groups, judge=judge) or {}
+    bullets: Dict[str, str] = {}
+    for gk, texts in drafts.items():
+        ok = passing.get(gk) or []
+        n = picks.get(gk, (1, 0.0))[0]
+        bullets[gk] = ok[n - 1] if 1 <= n <= len(ok) else (ok[0] if ok else texts[0])
+    total = sum(len(texts) for texts in drafts.values())
+    log(f"rephrased {len(bullets)} bullet(s) from {total} draft(s); Jev picked among the "
+        f"passing drafts of {len(groups)}")
+    return bullets
+
+
 # Words that must never be the LAST word of a trimmed bullet — they leave the
 # sentence dangling (e.g. "...utilizing Gemini Flash to.").
 _TRAILING_STOPWORDS = frozenset((
@@ -1282,7 +1329,11 @@ def tailor(
     picks each project's lead bullet (TL-3), picks the new verb for each repeated
     opener (TL-6), reads each bullet for the banned-pattern tells that gate the
     AI-writing sweep's calls (TL-5), and checks each bullet the rephrase and every
-    later rewrite wrote against its atoms (TL-4, `_check_faithfulness`). A step
+    later rewrite wrote against its atoms (TL-4, `_check_faithfulness`). Three
+    Settings options, off by default, add a step each: best of three keeps one of
+    three rephrase drafts per bullet (TL-7, `_resolve_best_of`), the cover letter
+    check reads each letter sentence against its sources (TL-8), and the ATS meaning
+    line counts the keywords the résumé shows by meaning (TL-9). A step
     whose request fails keeps its LLM path (TL-4 leaves the grounding gate to stand
     alone), and once the judge's breaker opens every later step does too. Each step's
     usage line goes to `tailor_report.txt` and to the status log.
@@ -1338,7 +1389,11 @@ def tailor(
     report.stage("block briefs")
     briefs = compose.block_briefs(jd, job_title, sel)
     report.stage("rephrase")
-    bullets = _resolve_bullets(jd, job_title, sel, log, briefs=briefs)
+    if judge is not None and config.best_of_n():
+        bullets = _resolve_best_of(jd, job_title, sel, log, briefs=briefs, judge=judge)
+        report.jev_step(jev_assist.STEP_BEST_OF)
+    else:
+        bullets = _resolve_bullets(jd, job_title, sel, log, briefs=briefs)
     ctx = PassCtx(
         jd=jd, job_title=job_title, sel=sel, bullets=bullets, verbatim=verbatim,
         # The verbatim blocks' opening verbs: reserved, because the dedupe pass may

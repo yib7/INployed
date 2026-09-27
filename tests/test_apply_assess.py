@@ -3,13 +3,30 @@
 DF-3's score is pure code over counts the check reads from the first
 application page: a base by application system plus fixed steps, rounded half
 up and clamped to 1-10, with Easy Apply, a closed or dead posting and a payment
-page at 10 at once.
+page at 10 at once. DF-1 and DF-2: the gate, the profile and the walk to the
+first application page on the local test pages, where the only click is an
+Apply entry. DF-5: the cached page and "Check again with my answers" with no
+browser. DF-6: the running Jev total.
+
+Hermetic: FakeJev and NoisyJev, local pages and routed hosts in an offline
+browser context, stores and the page cache in tmp_path. No network.
 """
 from __future__ import annotations
+
+import json
+import os
+from datetime import datetime
+from pathlib import Path
 
 import pytest
 
 import apply_assess as aa
+import jev
+import jev_switch
+
+# The browser tests take the module's test browser (they skip where Playwright
+# is missing; CI's browser step runs them); the score tables need neither.
+pytest_plugins = ["conftest_browser", "conftest_jev"]
 
 # --- DF-3: the score ---------------------------------------------------------------------
 
@@ -152,3 +169,569 @@ def test_the_capped_steps_say_so():
         "5 required questions your answers cannot fill (+5, the most this step adds)",
         "6 required essays the run would draft (+2, the most this step adds)",
     ]
+
+
+# --- DF-1: the gate ------------------------------------------------------------------------
+
+ON = {"jev_enabled": True, "jev_scoring": True, "jev_tailor": True, "jev_difficulty": True}
+KEY = {"TYPESAFE_API_KEY": "not-a-real-key"}
+
+
+@pytest.fixture
+def sdk(monkeypatch):
+    monkeypatch.setattr(jev_switch, "sdk_installed", lambda: True)
+
+
+def test_the_gate_names_a_test_judge_before_the_jev_switch(sdk):
+    off = dict(ON, jev_enabled=False)
+    assert aa.refusal(config=off, env=KEY, mode="fake") == jev_switch.FIXTURE_ONLY
+    assert aa.refusal(config=off, env=KEY, mode="replay") == jev_switch.FIXTURE_ONLY
+
+
+def test_the_gate_then_asks_the_difficulty_switch(sdk):
+    assert aa.refusal(config=ON, env=KEY, mode="typesafe") == ""
+    assert aa.refusal(config=dict(ON, jev_difficulty=False), env=KEY, mode="typesafe") == \
+        jev_switch.DIFFICULTY_OFF
+    assert aa.refusal(config=dict(ON, jev_enabled=False), env=KEY, mode="typesafe") == \
+        jev_switch.difficulty_blocked(config=dict(ON, jev_enabled=False), env=KEY,
+                                      mode="typesafe")
+
+
+def test_the_gate_counts_a_key_saved_in_settings(sdk):
+    assert aa.refusal(config=ON, env={}, mode="typesafe") != ""
+    assert aa.refusal(config=ON, env={}, mode="typesafe", saved_key=True) == ""
+
+
+def test_the_gate_reads_the_auto_apply_judge_setting(sdk):
+    cfg = dict(ON, auto_apply_jev_mode="fake")
+    assert aa.refusal(config=cfg, env=KEY) == jev_switch.FIXTURE_ONLY
+
+
+# --- DF-1: the profile ---------------------------------------------------------------------
+
+def test_the_profile_is_the_drains(monkeypatch, tmp_path):
+    import apply_run
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    assert aa.default_profile_dir() == apply_run.default_profile_dir()
+
+
+def test_a_missing_or_idle_profile_is_free(tmp_path):
+    assert aa.profile_busy(tmp_path / "nowhere") is False
+    (tmp_path / "idle").mkdir()
+    (tmp_path / "idle" / "lockfile").write_text("", encoding="utf-8")
+    assert aa.profile_busy(tmp_path / "idle") is False
+
+
+def _hold(lock: Path):
+    """Hold `lock` as a running Chrome does: on Windows open with no sharing,
+    elsewhere a SingletonLock naming this live process. Returns the undo. (A
+    real Chrome is left out: it calls Google's services as it starts, and the
+    bundled headless shell the tests launch locks nothing.)"""
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+        create = ctypes.windll.kernel32.CreateFileW
+        create.restype = wintypes.HANDLE
+        handle = create(str(lock), 0x40000000, 0, None, 4, 0x80, None)
+        assert handle != wintypes.HANDLE(-1).value
+        return lambda: ctypes.windll.kernel32.CloseHandle(handle)
+    os.symlink(f"testhost-{os.getpid()}", str(lock.parent / "SingletonLock"))
+    return lambda: os.unlink(str(lock.parent / "SingletonLock"))
+
+
+def test_a_held_lock_reads_busy_and_a_released_one_free(tmp_path):
+    (tmp_path / "profile").mkdir()
+    release = _hold(tmp_path / "profile" / "lockfile")
+    try:
+        assert aa.profile_busy(tmp_path / "profile") is True
+    finally:
+        release()
+    assert aa.profile_busy(tmp_path / "profile") is False
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the SingletonLock is the POSIX lock")
+def test_a_singleton_lock_of_a_gone_process_is_free(tmp_path):
+    (tmp_path / "profile").mkdir()
+    os.symlink("testhost-999999999", str(tmp_path / "profile" / "SingletonLock"))
+    assert aa.profile_busy(tmp_path / "profile") is False
+
+
+# --- DF-5: the cached page -------------------------------------------------------------------
+
+@pytest.fixture
+def appdata(monkeypatch, tmp_path):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    return tmp_path / "appdata"
+
+
+def test_the_page_is_cached_per_job_under_linkedin_watcher(appdata):
+    page = {"job_id": "42", "url": "https://jobs.lever.co/x", "stop": "", "digest": None}
+    path = aa.save_page(page)
+    assert path == appdata / "linkedin_watcher" / "apply_assess" / "42.json"
+    assert aa.load_page("42") == page
+    assert aa.load_page("43") is None
+
+
+def test_an_odd_job_id_gets_a_safe_file_name(appdata):
+    one, two = aa.cache_path("a/b"), aa.cache_path("a:b")
+    assert one.parent == two.parent == appdata / "linkedin_watcher" / "apply_assess"
+    assert one != two
+    assert "/" not in one.name and ":" not in two.name
+
+
+def test_a_cached_page_for_another_job_is_no_page(appdata):
+    aa.save_page({"job_id": "42", "digest": None})
+    aa.cache_path("42").rename(aa.cache_path("7"))
+    assert aa.load_page("7") is None
+
+
+def test_the_age_shows_past_seven_days():
+    now = datetime(2026, 9, 27, 12, 0)
+    assert aa.age_text("2026-09-20T12:00:00", now) == ""
+    assert aa.age_text("2026-09-19T11:00:00", now) == "8 days old"
+    assert aa.age_text("not a time", now) == ""
+    assert aa.STALE_DAYS == 7
+
+
+@pytest.mark.parametrize("value, family", [
+    (1, "success"), (3, "success"), (4, "warning"), (6, "warning"), (7, "danger"),
+    (10, "danger"), (None, "neutral"), ("", "neutral"), (0, "neutral"),
+])
+def test_the_band_colour(value, family):
+    assert aa.band_family(value) == family
+
+
+@pytest.mark.parametrize("url, system", [
+    ("https://jobs.lever.co/fabrikam/1/apply", "lever"),
+    ("https://boards.greenhouse.io/fabrikam/jobs/1", "greenhouse"),
+    ("https://fabrikam.wd5.myworkdayjobs.com/en-US/careers/job/1", "workday"),
+    ("https://fabrikam.bamboohr.com/careers/1", "bamboohr"),
+    ("https://www.linkedin.com/jobs/view/1/", ""),
+    ("https://careers.fabrikam.example/apply", ""),
+    ("", ""),
+])
+def test_the_system_follows_the_host(url, system):
+    assert aa.system_for(url) == system
+
+
+def _ran(jid, status, domain="jobs.lever.co", attempts=1):
+    return {"job_posting_id": jid, "status": status, "attempts": attempts,
+            "ats": {"system": "", "domain": domain}}
+
+
+def test_past_runs_count_the_other_jobs_the_drain_ran_on_the_system():
+    entries = [_ran("1", "submitted"), _ran("2", "ready_to_submit"), _ran("3", "needs_human"),
+               _ran("4", "submitted", attempts=0), _ran("5", "submitted", "boards.greenhouse.io"),
+               _ran("42", "needs_human"), _ran("6", "failed")]
+    assert aa.past_runs(entries, "lever", "42") == (2, 1)
+    assert aa.past_runs(entries, "", "42") == (0, 0)
+
+
+def test_a_stop_page_is_scored_again_with_no_browser(appdata):
+    aa.save_page({"job_id": "42", "url": "https://x.example", "system": "", "stop": "closed",
+                  "notes": [], "checked_at": "2026-09-01T10:00:00", "digest": None})
+    got, why = aa.recheck_job({"job_posting_id": "42"}, judge=_NoJudge(), answers=[],
+                              settings={}, entries=[])
+    assert why == ""
+    assert got["score"] == 10 and got["reasons"] == [aa.STOP_REASONS["closed"]]
+    assert got["checked_at"] == "2026-09-01T10:00:00"
+
+
+def test_a_recheck_with_no_saved_page_says_so(appdata):
+    got, why = aa.recheck_job({"job_posting_id": "42"}, judge=_NoJudge(), answers=[],
+                              settings={}, entries=[])
+    assert got is None and why == aa.NO_SAVED_PAGE
+
+
+class _NoJudge:
+    def judge(self, state, questions):
+        raise AssertionError("the judge was asked")
+
+
+def test_select_jobs():
+    entries = [{"job_posting_id": "1", "status": "queued"},
+               {"job_posting_id": "2", "status": "needs_human"},
+               {"job_posting_id": "3", "status": "in_progress"}]
+    assert [e["job_posting_id"] for e in aa.select_jobs(entries, [], all_queued=True)[0]] == ["1"]
+    chosen, unknown = aa.select_jobs(entries, ["2", "3", "9"], all_queued=False)
+    assert [e["job_posting_id"] for e in chosen] == ["2"] and unknown == ["9"]
+
+
+# --- DF-1: the command line ----------------------------------------------------------------
+
+@pytest.fixture
+def cli(monkeypatch, tmp_path):
+    import apply_run
+    import settings
+    monkeypatch.setattr(apply_run, "_load_env", lambda: None)
+    monkeypatch.setattr(apply_run, "load_settings", lambda: dict(apply_run.DEFAULT_SETTINGS))
+    monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setattr(jev_switch, "sdk_installed", lambda: True)
+
+    def _never(*a, **kw):
+        raise AssertionError("the real settings store was read")
+    monkeypatch.setattr(settings, "load", _never)
+    monkeypatch.setattr(settings, "secret_status", _never)
+    return monkeypatch
+
+
+def _write_switch(cfg):
+    path = jev_switch.config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+
+
+def test_main_refuses_a_test_judge_first(cli, capsys):
+    _write_switch(dict(ON, jev_enabled=False, auto_apply_jev_mode="fake"))
+    assert aa.main(["--all"]) == 2
+    assert jev_switch.FIXTURE_ONLY in capsys.readouterr().err
+
+
+def test_main_refuses_with_the_switch_off(cli, capsys):
+    _write_switch(dict(ON, jev_difficulty=False, auto_apply_jev_mode="typesafe"))
+    assert aa.main(["--all"]) == 2
+    assert jev_switch.DIFFICULTY_OFF in capsys.readouterr().err
+
+
+def test_main_loads_the_env_before_the_jev_gate(cli, capsys, monkeypatch):
+    import apply_run
+    monkeypatch.delenv("TYPESAFE_API_KEY")
+    monkeypatch.setattr(apply_run, "_load_env",
+                        lambda: monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key"))
+    monkeypatch.setattr(aa, "profile_busy", lambda profile=None: True)
+    _write_switch(dict(ON, auto_apply_jev_mode="typesafe"))
+    assert aa.main(["--all"]) == 2
+    assert aa.PROFILE_BUSY in capsys.readouterr().err
+
+
+def test_main_refuses_while_a_drain_holds_the_profile(cli, capsys, monkeypatch):
+    monkeypatch.setattr(aa, "profile_busy", lambda profile=None: True)
+    _write_switch(dict(ON, auto_apply_jev_mode="typesafe"))
+    assert aa.main(["42"]) == 2
+    assert aa.PROFILE_BUSY in capsys.readouterr().err
+
+
+def test_main_needs_ids_or_all(cli, capsys):
+    assert aa.main([]) == 2
+
+
+# --- DF-2: the walk, on the local test pages ---------------------------------------------
+
+CAREERS = "https://careers.fabrikam.example"
+LINKEDIN_JOB = "https://www.linkedin.com/jobs/view/4438751519/"
+FORMS = Path(__file__).resolve().parent / "fixtures" / "forms"
+_READ_ONLY = {"click"}
+
+
+@pytest.fixture
+def walk_env(tmp_path, monkeypatch):
+    import apply_harness as h
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    with h.hermetic(tmp_path), h.fast_timing():
+        yield tmp_path
+
+
+@pytest.fixture
+def context(_browser, walk_env):
+    import apply_harness as h
+    ctx = _browser.new_context()
+    h.offline(ctx)
+    try:
+        yield ctx
+    finally:
+        ctx.close()
+
+
+def _serve(context, pages: dict, host=CAREERS):
+    def _handle(route):
+        path = "/" + route.request.url.split(host + "/", 1)[1].split("?")[0]
+        route.fulfill(body=pages.get(path, "<body>gone</body>"), content_type="text/html")
+    context.route(f"{host}/**", _handle)
+
+
+def _routes(context, routes):
+    import apply_harness as h
+    for glob, body in routes.items():
+        context.route(glob, h._fulfiller(body))
+
+
+def _form(name):
+    return (FORMS / name).read_text(encoding="utf-8")
+
+
+def _check(context, tmp_path, url, *, judge=None, generate=True, answers=None, **kw):
+    """One job at `url` through the check with the action recorder on:
+    (the difficulty, why none, the recorder, the entry)."""
+    import apply_harness as h
+    import apply_queue
+    folder = h.write_job_folder(tmp_path / "job")
+    apply_queue.enqueue(apply_queue.new_entry("42", company="Fabrikam",
+                                              title="Analytics Engineer", apply_url=url, **kw))
+    apply_queue.set_artifacts("42", {"folder": str(folder), "apply_md": str(folder / "apply.md"),
+                                     "resume_pdf": str(folder / "Jane_Doe_Resume.pdf")})
+    entry = apply_queue.load()["jobs"][0]
+    rec = h.Recorder(None)
+    with rec.recording():
+        got, why = aa.check_job(entry, context=context, judge=judge or jev.FakeJev(),
+                                answers=h.bank() if answers is None else answers,
+                                settings={"auto_apply_generate": generate}, entries=[entry])
+    return got, why, rec, entry
+
+
+def _only_entries(rec, clicks):
+    """DF-2's pin: nothing typed, ticked, picked, uploaded, pressed or
+    dispatched, and the only clicks are the Apply entries named."""
+    assert {a.kind for a in rec.actions} <= _READ_ONLY, rec.actions
+    assert [a.text.strip() for a in rec.actions] == clicks, rec.actions
+
+
+def test_a_lever_form_answered_in_full_is_easy(context, tmp_path):
+    _serve(context, {"/fabrikam/1/apply": _form("lever_single.html")},
+           host="https://jobs.lever.co")
+    got, why, rec, _ = _check(context, tmp_path, "https://jobs.lever.co/fabrikam/1/apply")
+    assert why == ""
+    assert (got["score"], got["band"], got["system"]) == (2, "Queue it", "lever")
+    assert got["questions"] == []
+    _only_entries(rec, [])
+
+
+def test_a_posting_s_apply_is_the_one_click(context, tmp_path):
+    _serve(context, {"/fabrikam/1": _form("job_posting.html"),
+                     "/fabrikam/ashby_steps.html": _form("ashby_steps.html")},
+           host="https://jobs.ashbyhq.com")
+    got, why, rec, _ = _check(context, tmp_path, "https://jobs.ashbyhq.com/fabrikam/1")
+    assert why == ""
+    assert (got["score"], got["system"]) == (2, "ashby")
+    _only_entries(rec, ["Apply now"])
+
+
+def test_linkedins_apply_through_its_redirect(context, flow_server, tmp_path):
+    import apply_harness as h
+    _routes(context, h.linkedin_job_routes()(flow_server.base))
+    got, why, rec, _ = _check(context, tmp_path, LINKEDIN_JOB)
+    assert why == ""
+    assert got["score"] == aa.UNKNOWN_BASE and got["questions"] == []
+    _only_entries(rec, ["Apply"])
+
+
+def test_linkedins_safety_reminder_is_passed_with_no_click(context, flow_server, tmp_path):
+    import apply_harness as h
+    _routes(context, h.linkedin_job_routes(hop="linkedin_safety_interstitial.html",
+                                           target="lever_single.html")(flow_server.base))
+    got, why, rec, _ = _check(context, tmp_path, LINKEDIN_JOB)
+    assert why == ""
+    assert got["score"] == aa.UNKNOWN_BASE
+    _only_entries(rec, ["Apply"])
+
+
+def test_a_job_boards_company_link_is_followed(context, flow_server, tmp_path):
+    import apply_harness as h
+    _routes(context, h.board_routes(flow_server.base))
+    got, why, rec, _ = _check(context, tmp_path, LINKEDIN_JOB)
+    assert why == ""
+    assert got["score"] == aa.UNKNOWN_BASE
+    _only_entries(rec, ["Apply", "Apply on company site"])
+
+
+def test_a_job_board_with_no_company_link_is_a_dead_end(context, flow_server, tmp_path):
+    import apply_harness as h
+    _routes(context, h.board_routes(flow_server.base, company_link=False))
+    got, why, rec, _ = _check(context, tmp_path, LINKEDIN_JOB)
+    assert why == ""
+    assert got["score"] == 10 and got["reasons"][0] == aa.STOP_REASONS["dead"]
+    _only_entries(rec, ["Apply"])
+
+
+def test_an_essay_the_run_drafts_adds_a_half(context, flow_server, tmp_path):
+    got, why, rec, _ = _check(context, tmp_path, f"{flow_server.base}/forms/essay_required.html")
+    assert why == ""
+    assert got["score"] == 5 and got["questions"] == []
+    assert any("1 required essay" in r for r in got["reasons"])
+    _only_entries(rec, [])
+
+
+def test_an_essay_with_drafting_off_is_a_question(context, flow_server, tmp_path):
+    got, why, rec, _ = _check(context, tmp_path, f"{flow_server.base}/forms/essay_required.html",
+                              generate=False)
+    assert why == ""
+    assert got["score"] == 6
+    [q] = got["questions"]
+    assert q["label"].startswith("Describe a project you are proud of")
+    assert (q["required"], q["type"], q["options"]) == (True, "text", [])
+    _only_entries(rec, [])
+
+
+def test_a_login_wall_with_no_saved_account(context, flow_server, tmp_path):
+    got, why, rec, _ = _check(context, tmp_path, f"{flow_server.base}/forms/login_wall.html")
+    assert why == ""
+    assert got["score"] == aa.UNKNOWN_BASE + aa.ACCOUNT_WALL
+    assert aa.ACCOUNT_NOTE in got["reasons"]
+    _only_entries(rec, [])
+
+
+def test_a_bot_check(context, flow_server, tmp_path):
+    got, why, rec, _ = _check(context, tmp_path, f"{flow_server.base}/forms/captcha.html")
+    assert why == ""
+    assert got["score"] == aa.UNKNOWN_BASE + aa.CAPTCHA
+    assert aa.CHECK_NOTE in got["reasons"]
+    _only_entries(rec, [])
+
+
+def test_an_apply_that_opens_an_email_is_ten_with_no_click(context, flow_server, tmp_path):
+    got, why, rec, _ = _check(context, tmp_path, f"{flow_server.base}/forms/mailto_apply.html")
+    assert why == ""
+    assert got["score"] == 10
+    assert aa.MAILTO_NOTE.format(address="jobs@contoso.example") in got["reasons"]
+    _only_entries(rec, [])
+
+
+@pytest.mark.parametrize("page, stop", [("linkedin_easy_apply.html", "easy_apply"),
+                                        ("linkedin_closed.html", "closed")])
+def test_linkedins_easy_apply_and_closed_postings_are_ten(context, flow_server, tmp_path,
+                                                        page, stop):
+    import apply_harness as h
+    _routes(context, h.linkedin_job_routes(page)(flow_server.base))
+    got, why, rec, _ = _check(context, tmp_path, LINKEDIN_JOB)
+    assert why == ""
+    assert got["score"] == 10 and got["reasons"] == [aa.STOP_REASONS[stop]]
+    _only_entries(rec, [])
+
+
+def test_an_easy_apply_entry_is_ten_and_opens_no_page(context, tmp_path):
+    requests = []
+    context.on("request", lambda r: requests.append(r.url))
+    got, why, rec, _ = _check(context, tmp_path, LINKEDIN_JOB, is_easy_apply=True)
+    assert got["score"] == 10 and got["system"] == "linkedin"
+    assert requests == [] and context.pages == []
+    _only_entries(rec, [])
+
+
+def test_a_page_that_does_not_load_gives_no_result(context, tmp_path):
+    context.route(f"{CAREERS}/**", lambda route: route.abort())
+    got, why, rec, _ = _check(context, tmp_path, f"{CAREERS}/apply")
+    assert got is None and why.startswith("the posting did not load")
+    assert not aa.cache_path("42").exists()
+
+
+def test_check_again_with_my_answers_reads_the_saved_page(context, flow_server, tmp_path):
+    got, why, rec, entry = _check(context, tmp_path,
+                                  f"{flow_server.base}/forms/essay_required.html",
+                                  generate=False)
+    assert why == ""
+    [q] = got["questions"]
+    assert got["score"] == 6      # an unknown system (4) and one question (+1.5, half up)
+    import apply_facts
+    import apply_harness as h
+    answers = h.bank() + [{"id": "custom_project", "type": "text",
+                           "answer": "A dashboard for the county food bank.",
+                           "question": apply_facts.saved_question(q["label"], q["help"]),
+                           "note": "", "confirmed": True, "status": "active"}]
+    context.close()             # no browser from here on
+    again, why = aa.recheck_job(entry, judge=jev.FakeJev(), answers=answers,
+                                settings={"auto_apply_generate": False}, entries=[entry])
+    assert why == ""
+    assert again["questions"] == [] and again["score"] == aa.UNKNOWN_BASE
+    assert again["checked_at"] == got["checked_at"]
+
+
+@pytest.mark.parametrize("seed", (1, 2, 3))
+def test_a_noisy_judge_never_types_or_clicks_past_the_entry(context, flow_server, tmp_path,
+                                                            seed):
+    import apply_harness as h
+    _routes(context, h.linkedin_job_routes(target="lever_single.html")(flow_server.base))
+    got, why, rec, _ = _check(context, tmp_path, LINKEDIN_JOB,
+                              judge=jev.NoisyJev(jev.FakeJev(), seed=seed))
+    assert {a.kind for a in rec.actions} <= _READ_ONLY, rec.actions
+    assert [a.text.strip() for a in rec.actions] in ([], ["Apply"]), rec.actions
+    assert got is None or 1 <= got["score"] <= 10
+
+
+# --- DF-6: the run and its running total ------------------------------------------------
+
+def test_run_stores_the_difficulty_and_prints_the_running_total(context, tmp_path, capsys):
+    import apply_harness as h
+    import apply_queue
+    _serve(context, {"/fabrikam/1/apply": _form("lever_single.html")},
+           host="https://jobs.lever.co")
+    folder = h.write_job_folder(tmp_path / "job")
+    apply_queue.enqueue(apply_queue.new_entry("42", company="Fabrikam", title="Analyst",
+                                              apply_url="https://jobs.lever.co/fabrikam/1/apply"))
+    apply_queue.set_artifacts("42", {"folder": str(folder),
+                                     "apply_md": str(folder / "apply.md"),
+                                     "resume_pdf": str(folder / "Jane_Doe_Resume.pdf")})
+    code = aa.run([], all_queued=True, judge=jev.FakeJev(),
+                  settings={"auto_apply_generate": True}, context=context)
+    assert code == 0
+    entry = apply_queue.load()["jobs"][0]
+    assert entry["difficulty"]["score"] == 2 and entry["difficulty"]["jev_usd"] == 0
+    assert set(entry["difficulty"]) == set(apply_queue.DIFFICULTY_KEYS)
+    assert entry["status"] == "queued" and entry["attempts"] == 0
+    out = capsys.readouterr().out
+    assert "Fabrikam / Analyst: 2/10, Queue it." in out
+    assert "Jev so far:" in out and "request(s), $0.0000" in out
+
+
+def _queue_lever(context, tmp_path):
+    import apply_harness as h
+    import apply_queue
+    _serve(context, {"/fabrikam/1/apply": _form("lever_single.html")},
+           host="https://jobs.lever.co")
+    folder = h.write_job_folder(tmp_path / "job")
+    apply_queue.enqueue(apply_queue.new_entry("42", company="Fabrikam", title="Analyst",
+                                              apply_url="https://jobs.lever.co/fabrikam/1/apply"))
+    apply_queue.set_artifacts("42", {"folder": str(folder),
+                                     "apply_md": str(folder / "apply.md"),
+                                     "resume_pdf": str(folder / "Jane_Doe_Resume.pdf")})
+
+
+class _Billed(jev.FakeJev):
+    """The fake judge, each request counted as a live one of a million tokens."""
+
+    def judge(self, state, questions):
+        jev.count_usage(1_000_000)
+        return super().judge(state, questions)
+
+
+def test_the_jobs_jev_cost_is_stored_and_the_total_printed(context, tmp_path, capsys):
+    import apply_queue
+    _queue_lever(context, tmp_path)
+    jev.reset_usage()
+    try:
+        assert aa.run(["42"], judge=_Billed(), settings={}, context=context) == 0
+        spent = jev.usage()
+    finally:
+        jev.reset_usage()
+    got = apply_queue.load()["jobs"][0]["difficulty"]
+    assert spent["requests"] >= 1
+    assert got["jev_usd"] == pytest.approx(spent["usd"])
+    assert f"Jev so far: {spent['requests']} request(s), ${spent['usd']:.4f}" in         capsys.readouterr().out
+
+
+class _Down:
+    def judge(self, state, questions):
+        raise jev.JudgeOutage("ConnectError")
+
+
+def test_the_check_stops_when_jev_is_down(context, tmp_path, capsys):
+    import apply_queue
+    _queue_lever(context, tmp_path)
+    assert aa.run(["42"], judge=_Down(), settings={}, context=context) == 1
+    assert apply_queue.load()["jobs"][0]["difficulty"] == {}
+    assert "Jev is down (ConnectError)" in capsys.readouterr().out
+
+
+def test_an_unknown_job_id_is_named(context, tmp_path, capsys):
+    _queue_lever(context, tmp_path)
+    assert aa.run(["7"], judge=jev.FakeJev(), settings={}, context=context) == 2
+    assert "job 7 is not in the queue" in capsys.readouterr().out
+
+
+@pytest.mark.jev_unrecorded
+def test_the_real_judge_reads_a_lever_form(context, tmp_path, jev_judge):
+    _serve(context, {"/fabrikam/1/apply": _form("lever_single.html")},
+           host="https://jobs.lever.co")
+    got, why, rec, _ = _check(context, tmp_path, "https://jobs.lever.co/fabrikam/1/apply",
+                              judge=jev_judge())
+    assert why == "" and got["system"] == "lever"
+    _only_entries(rec, [])

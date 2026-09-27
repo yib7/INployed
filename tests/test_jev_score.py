@@ -617,6 +617,7 @@ def test_an_inline_preferred_cue_beats_a_required_heading():
     "Travel requirement: up to 20%",
     "Remote, US",
     "Remote US",
+    "Remote/US",
     "Hybrid, Austin TX",
     "Open to remote candidates",
     # visa in its immigration wording
@@ -644,6 +645,8 @@ def test_requirement_lines_drop_location_visa_and_eligibility_lines(line):
     "18 years of analytics experience",
     "Visa and Mastercard payment data",
     "Remote user research and usability testing",
+    "Hybrid/multi-cloud architecture",
+    "Remote/edge device telemetry",
 ])
 def test_requirement_lines_keep_skills_that_share_a_word_with_a_dropped_line(line):
     md = f"## Requirements\n- Python and SQL\n- {line}\n- Tableau dashboards\n"

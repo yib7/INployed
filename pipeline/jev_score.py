@@ -531,7 +531,7 @@ _DROP_PARTS = (
     r"(?:on[- ]?site|in[- ]office|in[- ]person|time[- ]?zones?)\b|relocat\w*",
     r"commut(?:e|es|ing|able)\b",
     r"located (?:in|within|near|at)\b|locations?\s*:|(?:office|work|job) locations?\b",
-    rf"^{_ARRANGED}\s*(?:$|[(:,;/]|[-–]\s|\d|(?:us|u\.s\.?|usa|united states)(?!\w))",
+    rf"^{_ARRANGED}\s*(?:$|[(:,;]|[-–]\s|\d|/?\s*(?:us|u\.s\.?|usa|united states)(?!\w))",
     rf"{_ARRANGED}[- ](?:first|friendly|eligible|only)\b",
     rf"{_ARRANGED}\s+(?:within|in|from|across|anywhere|work(?:ing|place)?|role|position|job"
     r"|schedule|setting|environment|capacity|basis|option|opportunit\w*|arrangement|policy"

@@ -772,18 +772,31 @@ def test_stage2_without_nice_to_haves_reweights_the_rest():
     assert got["deep_score"] == 10
 
 
-def test_stage2_asks_two_nouls_per_line_and_three_scores():
+def test_stage2_asks_the_must_read_only_for_a_line_the_code_gives_no_cue():
     reqs = [Req("Python and SQL", True), Req("Tableau", None), Req("Spark is a plus", False)]
     qs = jev_score.stage2_questions(reqs)
-    assert set(qs) == {"req_0_met", "req_0_must", "req_1_met", "req_1_must", "req_2_met",
-                       "req_2_must", "responsibilities_fit", "seniority_fit", "domain_fit"}
-    assert all(qs[f"req_{i}_{k}"]["type"] == "noul" for i in range(3) for k in ("met", "must"))
+    assert set(qs) == {"req_0_met", "req_1_met", "req_1_must", "req_2_met",
+                       "responsibilities_fit", "seniority_fit", "domain_fit"}
+    assert all(qs[k]["type"] == "noul" for k in ("req_0_met", "req_1_met", "req_1_must",
+                                                  "req_2_met"))
     assert all(qs[k]["type"] == "score" for k in ("responsibilities_fit", "seniority_fit",
                                                    "domain_fit"))
     assert "Python and SQL" in qs["req_0_met"]["instructions"]
     assert "`resume`" in qs["req_0_met"]["instructions"]
-    assert "`job`" in qs["req_0_must"]["instructions"]
+    assert "Tableau" in qs["req_1_must"]["instructions"]
+    assert "`job`" in qs["req_1_must"]["instructions"]
     assert "`candidate`" in qs["seniority_fit"]["instructions"]
+
+
+def test_stage2_reads_and_composes_without_must_answers_for_cued_lines():
+    reqs = [Req("Python and SQL", True), Req("Tableau", None), Req("Spark is a plus", False)]
+    qs = jev_score.stage2_questions(reqs)
+    answers = ScriptedJudge({"req_0_met": 0.2, "req_1_met": 0.2, "req_1_must": 0.1,
+                             "req_2_met": 0.2}).judge({}, qs)
+    reads = jev_score.stage2_reads(answers, qs, len(reqs))
+    assert reads is not None
+    assert set(reads) == set(qs)
+    assert jev_score.compose_stage2(reqs, reads)["gaps"] == "Python and SQL"
 
 
 def test_stage2_questions_pass_the_prompt_hygiene_census():
@@ -812,7 +825,7 @@ def test_stage2_sends_one_request_and_composes_the_columns():
     assert len(judge.calls) == 1
     state, questions = judge.calls[0]
     assert set(state) == {"candidate", "resume", "job"}
-    assert len(questions) == 4 * 2 + 3
+    assert len(questions) == 4 + 3        # every line has a heading cue: no must question
     assert set(got) == {"deep_score", "strengths", "gaps", "recommendation"}
     assert got["strengths"] == "Python and SQL | Tableau or Power BI"
     assert got["gaps"] == "Statistics coursework"       # Spark: the heading says preferred

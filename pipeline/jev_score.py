@@ -685,7 +685,8 @@ _FIT_KEYS = {"responsibilities": "responsibilities_fit", "seniority": "seniority
 
 
 def stage2_questions(reqs: Sequence[Req]) -> dict[str, dict]:
-    """Two nouls per requirement line plus the three fits, asked in one request (SC-3)."""
+    """A met noul per requirement line, a must noul for each line the code gives
+    no cue, and the three fits, asked in one request (SC-3)."""
     qs: dict[str, dict] = {}
     for i, req in enumerate(reqs):
         text = _cut(req.text, REQ_TEXT_CHARS)
@@ -695,12 +696,13 @@ def stage2_questions(reqs: Sequence[Req]) -> dict[str, dict]:
                              f"requirement of the job? Requirement: {text}"),
             "criteria": dict(MET_CRITERIA),
         }
-        qs[f"req_{i}_must"] = {
-            "type": "noul",
-            "instructions": ("Does `job` present this requirement as a must-have? "
-                             f"Requirement: {text}"),
-            "criteria": dict(MUST_CRITERIA),
-        }
+        if req.must is None:
+            qs[f"req_{i}_must"] = {
+                "type": "noul",
+                "instructions": ("Does `job` present this requirement as a must-have? "
+                                 f"Requirement: {text}"),
+                "criteria": dict(MUST_CRITERIA),
+            }
     qs["responsibilities_fit"] = {
         "type": "score",
         "instructions": ("How much of the day-to-day work that `job` describes has the "
@@ -723,11 +725,14 @@ def stage2_questions(reqs: Sequence[Req]) -> dict[str, dict]:
 
 def stage2_reads(answers: Mapping[str, Any], questions: Mapping[str, dict],
                  lines: int) -> dict | None:
-    """The reads `compose_stage2` takes, or None when any answer is unusable."""
+    """The reads `compose_stage2` takes, or None when any answer is unusable.
+    A line's must read is taken only when `questions` asked it."""
     reads: dict[str, float | None] = {}
     for i in range(lines):
         for part in ("met", "must"):
-            reads[f"req_{i}_{part}"] = _noul_read(answers.get(f"req_{i}_{part}"))
+            qid = f"req_{i}_{part}"
+            if part == "met" or qid in questions:
+                reads[qid] = _noul_read(answers.get(qid))
     for qid in _FIT_KEYS.values():
         reads[qid] = _score_read(answers.get(qid), len(questions[qid]["criteria"]))
     return None if any(v is None for v in reads.values()) else reads
@@ -751,8 +756,9 @@ def recommendation_for(deep: int) -> str:
 def compose_stage2(reqs: Sequence[Req], reads: Mapping[str, Any]) -> dict:
     """{"deep_score", "strengths", "gaps", "recommendation"} from the requirement
     lines and Jev's reads (`req_{i}_met`, `req_{i}_must` 0-1 and the three fits
-    scaled 0-1). A line's code cue beats its `req_{i}_must` read. Pure: the
-    rules and constants at the top of the module."""
+    scaled 0-1). A line's code cue decides whether it is a must-have and beats
+    any `req_{i}_must` read; a line with no cue and no read counts as one.
+    Pure: the rules and constants at the top of the module."""
     lines = []
     for i, req in enumerate(reqs):
         met = min(1.0, max(0.0, float(reads[f"req_{i}_met"])))

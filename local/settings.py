@@ -184,14 +184,19 @@ GEMINI_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-f
 # the API-side deprecation of temperature/top_p/top_k on Opus 4.7 and later does
 # not reach this project: llm._call_claude accepts those arguments for signature
 # parity with _call_gemini and drops them, because print-mode exposes neither.
-# All three re-checked against Anthropic's model-deprecation table on 2026-09-04:
-# state Active, none deprecated, none retired. The tier map (haiku fast, sonnet
-# standard, opus deep) still matches what each tier is for. The nearest horizon in
-# the whole model set, Gemini included, is claude-haiku-4-5-20251001's tentative
-# retirement "not sooner than October 15, 2026"; Anthropic gives at least 60 days'
-# notice and there is no newer haiku to move to, so the id stays and this comment
-# is the reminder to re-check it.
-CLAUDE_MODELS = ("claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5")
+# The first three were re-checked against Anthropic's model-deprecation table on
+# 2026-09-04: state Active, none deprecated, none retired. The tier map (haiku
+# fast, sonnet standard, opus deep) still matches what each tier is for. The
+# nearest horizon in the whole model set, Gemini included, is
+# claude-haiku-4-5-20251001's tentative retirement "not sooner than October 15,
+# 2026"; Anthropic gives at least 60 days' notice and there is no newer haiku to
+# move to, so the id stays and this comment is the reminder to re-check it.
+#
+# claude-opus-5-5 joined in cycle 19 (2026-09-27) as the deep tier's default
+# (RESUME_TAILOR_CLAUDE_MODEL_PRO here and resume_tailor/config.py's tier map).
+# claude-opus-5 stays in the tuple, so a stored config naming it keeps resolving
+# and it stays one pick away in all six Claude dropdowns.
+CLAUDE_MODELS = ("claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-opus-5-5")
 
 # How the résumé tailor picks a model for each stage, per provider. The strings
 # are the ones `local/resume_tailor/config.py` compares against
@@ -792,7 +797,7 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Claude provider only, the busiest tier: selecting your atoms, then every "
                "bullet cleanup pass, the skills lines, the prep sheet and the chat."),
     Field("RESUME_TAILOR_CLAUDE_MODEL_PRO", "Claude model: deep (writing)",
-          "editable_choice", "claude-opus-5", "Engine", "env", choices=CLAUDE_MODELS,
+          "editable_choice", "claude-opus-5-5", "Engine", "env", choices=CLAUDE_MODELS,
           show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
           help="Claude provider only: writes the first draft of every bullet and the cover "
                "letter."),

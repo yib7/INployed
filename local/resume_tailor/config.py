@@ -624,7 +624,10 @@ def tailor_provider() -> str:
 
 CLAUDE_MODEL_FLASH_LITE = os.getenv("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "claude-haiku-4-5")
 CLAUDE_MODEL_FLASH      = os.getenv("RESUME_TAILOR_CLAUDE_MODEL_FLASH", "claude-sonnet-5")
-CLAUDE_MODEL_PRO        = os.getenv("RESUME_TAILOR_CLAUDE_MODEL_PRO", "claude-opus-5")
+# Opus 5.5 has been the deep tier's default since cycle 19 (ST-4); claude-opus-5
+# stays selectable in Settings. settings.py's RESUME_TAILOR_CLAUDE_MODEL_PRO default
+# carries the same id (test_each_claude_tier_default_matches_its_settings_default).
+CLAUDE_MODEL_PRO        = os.getenv("RESUME_TAILOR_CLAUDE_MODEL_PRO", "claude-opus-5-5")
 
 _CLAUDE_TIER_ENV = {
     TIER_FLASH_LITE: ("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", CLAUDE_MODEL_FLASH_LITE),

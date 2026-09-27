@@ -109,14 +109,24 @@ def test_claude_model_defaults_are_correct(config_without_model_env):
     cfg = config_without_model_env
     assert cfg.CLAUDE_MODEL_FLASH_LITE == "claude-haiku-4-5"
     assert cfg.CLAUDE_MODEL_FLASH == "claude-sonnet-5"
-    assert cfg.CLAUDE_MODEL_PRO == "claude-opus-5"
+    assert cfg.CLAUDE_MODEL_PRO == "claude-opus-5-5"      # cycle 19: Opus 5.5 writes
 
 
 def test_claude_model_for_returns_tier_default(config_without_model_env):
     cfg = config_without_model_env
     assert cfg.claude_model_for(cfg.TIER_FLASH_LITE) == "claude-haiku-4-5"
     assert cfg.claude_model_for(cfg.TIER_FLASH) == "claude-sonnet-5"
-    assert cfg.claude_model_for(cfg.TIER_PRO) == "claude-opus-5"
+    assert cfg.claude_model_for(cfg.TIER_PRO) == "claude-opus-5-5"
+
+
+def test_each_claude_tier_default_matches_its_settings_default(config_without_model_env):
+    """The Settings dropdown's default and the resolver's fallback name one model
+    per tier, or a fresh install shows one id and tailors with another."""
+    import settings
+    cfg = config_without_model_env
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    for tier, (env, default) in cfg._CLAUDE_TIER_ENV.items():
+        assert by_key[env].default == default, tier
 
 
 def test_claude_model_for_flash_lite_picks_up_env_change_live(monkeypatch):

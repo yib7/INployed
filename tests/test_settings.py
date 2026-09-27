@@ -1475,6 +1475,13 @@ def test_the_auto_apply_judge_stays_in_auto_apply_under_advanced():
 JEV_SECTION_KEYS = ["jev_enabled", "TYPESAFE_API_KEY", "jev_scoring", "jev_tailor",
                     "jev_difficulty"]
 JEV_TAILOR_OPTIONS = ("tailor_best_of_n", "cover_letter_jev_check", "tailor_ats_meaning")
+# The six dropdowns that offer CLAUDE_MODELS: two scorer stages, the tailor's
+# one-model box and its three tiers.
+CLAUDE_DROPDOWNS = {
+    "stage1_model_claude", "stage2_model_claude", "RESUME_TAILOR_CLAUDE_MODEL_ALL",
+    "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "RESUME_TAILOR_CLAUDE_MODEL_FLASH",
+    "RESUME_TAILOR_CLAUDE_MODEL_PRO",
+}
 
 
 def _section_keys(section: str) -> list[str]:
@@ -1575,3 +1582,19 @@ def test_the_jev_tailor_options_default_off_and_show_only_while_jev_tailors():
         assert settings.is_visible(f, {"jev_enabled": True, "jev_tailor": True}) is True
         assert settings.is_visible(f, {"jev_tailor": False}) is False, key
         assert settings.is_visible(f, {"jev_enabled": False, "jev_tailor": True}) is False
+
+
+def test_opus_5_5_is_offered_in_all_six_claude_dropdowns_and_is_the_pro_default():
+    """ST-4: added to CLAUDE_MODELS, so every Claude dropdown offers it; the
+    deep tier defaults to it; opus-5 stays selectable; the scorer's Claude
+    stages keep their defaults."""
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    assert "claude-opus-5-5" in settings.CLAUDE_MODELS
+    assert "claude-opus-5" in settings.CLAUDE_MODELS
+    offering = {f.key for f in settings.SETTINGS_SCHEMA if f.choices == settings.CLAUDE_MODELS}
+    assert offering == CLAUDE_DROPDOWNS
+    for key in CLAUDE_DROPDOWNS:
+        assert "claude-opus-5-5" in by_key[key].choices, key
+    assert by_key["RESUME_TAILOR_CLAUDE_MODEL_PRO"].default == "claude-opus-5-5"
+    assert by_key["stage1_model_claude"].default == "claude-haiku-4-5"
+    assert by_key["stage2_model_claude"].default == "claude-sonnet-5"

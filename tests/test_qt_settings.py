@@ -2728,6 +2728,9 @@ def test_secret_boxes_carry_an_accessible_name(qtbot, tmp_path):
 
 _JEV_AREA_SWITCHES = ("jev_scoring", "jev_tailor", "jev_difficulty")
 _JEV_TAILOR_OPTIONS = ("tailor_best_of_n", "cover_letter_jev_check", "tailor_ats_meaning")
+_CLAUDE_DROPDOWNS = ("stage1_model_claude", "stage2_model_claude",
+                     "RESUME_TAILOR_CLAUDE_MODEL_ALL", "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE",
+                     "RESUME_TAILOR_CLAUDE_MODEL_FLASH", "RESUME_TAILOR_CLAUDE_MODEL_PRO")
 
 
 def test_the_jev_section_renders_first_and_engine_shows_as_resume_tailor(qtbot, tmp_path):
@@ -2789,3 +2792,15 @@ def test_a_bool_gate_is_phrased_as_a_switch_to_turn_on(qtbot, tmp_path):
     option = by_key["tailor_best_of_n"]
     assert form._blocking_gate(option) == f'turn on "{label}" to see it'
     assert form._gate_condition(option) == f"{label} is on"
+
+
+def test_the_six_claude_dropdowns_offer_opus_5_5(qtbot, tmp_path):
+    """ST-4 through the real widgets: every Claude dropdown lists Opus 5.5 beside
+    Opus 5, and the deep tier opens on Opus 5.5."""
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    for key in _CLAUDE_DROPDOWNS:
+        combo = form._widgets[key]
+        items = [combo.itemText(i) for i in range(combo.count())]
+        assert "claude-opus-5-5" in items and "claude-opus-5" in items, key
+    assert form._widgets["RESUME_TAILOR_CLAUDE_MODEL_PRO"].currentText() == "claude-opus-5-5"

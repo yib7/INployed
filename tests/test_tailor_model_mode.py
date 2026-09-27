@@ -37,7 +37,7 @@ _GEMINI_TIER_DEFAULTS = {
 _CLAUDE_TIER_DEFAULTS = {
     config.TIER_FLASH_LITE: "claude-haiku-4-5",
     config.TIER_FLASH: "claude-sonnet-5",
-    config.TIER_PRO: "claude-opus-5",
+    config.TIER_PRO: "claude-opus-5-5",
 }
 
 # (mode env var, "all" env var, resolver, shipped tier map) -- every test that has

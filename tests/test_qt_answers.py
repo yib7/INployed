@@ -1146,6 +1146,11 @@ def test_test_answers_reads_the_mode_and_the_saved_key_where_the_drain_does(monk
     """SP1 review B: one reader for each. The mode is `jev_switch.apply_mode`
     (the setting, else typesafe; never AUTO_APPLY_JEV_MODE) and the saved key
     is `jev_switch.key_saved`, the probes the Auto-apply panel's Start uses."""
+    monkeypatch.setenv("AUTO_APPLY_JEV_MODE", "fake")
+    jev_switch.config_path().write_text('{"auto_apply_jev_mode": "Replay"}', encoding="utf-8")
+    assert at._current_jev_mode() == "replay"
+    jev_switch.config_path().write_text('{"auto_apply_jev_mode": ""}', encoding="utf-8")
+    assert at._current_jev_mode() == "typesafe"
     monkeypatch.setattr(jev_switch, "apply_mode", lambda flag=None, *, config=None: "replay")
     assert at._current_jev_mode() == "replay"
     monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)

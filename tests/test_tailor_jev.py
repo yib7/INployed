@@ -1,4 +1,4 @@
-"""The tailor's Jev steps (TL-1 to TL-3) as `run.tailor()` meets them.
+"""The tailor's Jev steps (TL-1 to TL-4) as `run.tailor()` meets them.
 
 With Jev off the tailor must make exactly the LLM calls it made before cycle 19,
 with byte-identical prompts. `test_jev_off_prompts_match_the_recording` pins that:
@@ -13,7 +13,8 @@ for one run) and shows the diff in review; a change nobody meant fails here.
 
 The rest covers each Jev step where its answer lands (the shortlist and the skills
 in `select`, the lead in `lead_with_overview`) and whole runs with Jev on, with Jev
-down from the start and with an outage mid-run.
+down from the start and with an outage mid-run. The faithfulness check (TL-4) has its
+own module, `test_tailor_faithfulness.py`; the whole runs here count its requests.
 
 The runs reuse the golden module's pinned engine (`test_tailor_golden.pinned_engine`),
 so no model is ever reached: its stub raises on any prompt it does not know. Every
@@ -560,7 +561,13 @@ def test_a_golden_run_with_jev_on_makes_fewer_llm_calls(pinned_engine, stub_temp
     """Jev answers the lead, so the ordering call goes; the bullets, the grounding
     gate and the page are the golden's. The skills lines come from Jev and the pools,
     with no fallback call: every system prompt is kept before the stub answers, and
-    none is the ordering call's or the fallback call's."""
+    none is the ordering call's or the fallback call's.
+
+    The faithfulness check (TL-4) passes every golden bullet. It asks once per entry
+    after the rephrase (4 requests) and once per entry a later pass rewrote: Trailhead
+    after the verb dedupe and after the fill, Globex Analytics after the style gate
+    (rc_workshop's change there is the em-dash strip alone). The sweep echoes, so it
+    changes nothing to ask about."""
     systems: list = []
     golden._install_stub(monkeypatch, _seeing(pinned_engine, systems))
     rec = _Recording(jev.FakeJev())
@@ -583,18 +590,25 @@ def test_a_golden_run_with_jev_on_makes_fewer_llm_calls(pinned_engine, stub_temp
     assert gate == [True, False, False, False, False]
     assert captured["skill_lines"] == _JEV_SKILL_LINES
     assert areas == ["tailor"], "one judge per run, handed to every step"
-    assert len(rec.requests) == 3
+    assert len(rec.requests) == 3 + 7
+    faith = [state["entry"] for state, questions in rec.requests
+             if "supported_0" in questions]
+    assert faith == ["Globex Analytics", "Trailhead", "Ledgerly", "Robotics Club",
+                     "Trailhead", "Trailhead", "Globex Analytics"]
     report = _report(tmp_path)
-    assert "warnings (0)" in report and "jev (3)" in report
+    assert "warnings (0)" in report and "jev (4)" in report
     for step in ("skills", "shortlist", "lead"):
         assert f"  jev {step}: 1 request, " in report
+    assert "  jev faithfulness: 7 requests, " in report
     assert "fell back" not in report
+    assert "] faithfulness:" not in report, "no bullet is flagged, so no note is written"
 
 
 def test_jev_down_from_the_start_makes_exactly_the_jev_off_calls(
         pinned_engine, stub_template_head, tmp_path, monkeypatch):
-    """The first step spends the retries and opens the breaker; the other two never
-    reach the service. Every call and pinned prompt is the Jev-off recording's."""
+    """The first step spends the retries and opens the breaker; the others never
+    reach the service. Every call and pinned prompt is the Jev-off recording's, and
+    the faithfulness check leaves the grounding gate to stand alone."""
     down = _DownAfter(answers=0)
     _jev_on(monkeypatch, down)
     got = _record_jev_off(monkeypatch, tmp_path)
@@ -602,6 +616,8 @@ def test_jev_down_from_the_start_makes_exactly_the_jev_off_calls(
     assert down.calls == len(jev.RETRY_DELAYS_S) + 1
     report = _report(tmp_path)
     assert report.count("fell back to the LLM path (JudgeOutage ServiceDown 503)") == 3
+    assert report.count("fell back to the deterministic gate alone "
+                        "(JudgeOutage ServiceDown 503)") == 1
 
 
 def test_an_outage_mid_run_moves_the_rest_of_the_run_to_the_llm_path(
@@ -625,6 +641,8 @@ def test_an_outage_mid_run_moves_the_rest_of_the_run_to_the_llm_path(
     for step in ("shortlist", "lead"):
         assert (f"  jev {step}: 0 requests, 0 tokens (estimated), $0.000000; fell back to "
                 "the LLM path (JudgeOutage ServiceDown 503)") in report
+    assert ("  jev faithfulness: 0 requests, 0 tokens (estimated), $0.000000; fell back "
+            "to the deterministic gate alone (JudgeOutage ServiceDown 503)") in report
 
 
 def test_jev_off_leaves_the_report_and_the_status_log_as_they_were(
@@ -644,8 +662,10 @@ def test_the_usage_lines_reach_the_status_log(pinned_engine, stub_template_head,
     _run_tailor(monkeypatch, tmp_path, on_status=statuses.append)
     jev_lines = [s for s in statuses if s.startswith("jev ")]
     assert jev_lines == [jev_assist.usage_line(step) for step in (
-        jev_assist.STEP_SKILLS, jev_assist.STEP_SHORTLIST, jev_assist.STEP_LEAD)]
-    assert [s.split(":")[0] for s in jev_lines] == ["jev skills", "jev shortlist", "jev lead"]
+        jev_assist.STEP_SKILLS, jev_assist.STEP_SHORTLIST, jev_assist.STEP_LEAD,
+        jev_assist.STEP_FAITHFULNESS)]
+    assert [s.split(":")[0] for s in jev_lines] == ["jev skills", "jev shortlist", "jev lead",
+                                                   "jev faithfulness"]
     report = _report(tmp_path)
     assert all(f"  {line}" in report for line in jev_lines)
 
@@ -660,3 +680,4 @@ def test_each_run_counts_its_own_jev_requests(pinned_engine, stub_template_head,
     report = _report(tmp_path)
     for step in ("skills", "shortlist", "lead"):
         assert f"  jev {step}: 1 request, " in report
+    assert "  jev faithfulness: 7 requests, " in report

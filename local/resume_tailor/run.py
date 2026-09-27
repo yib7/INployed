@@ -525,6 +525,10 @@ class PassCtx:
     `report` is optional so a caller can drive the passes without one; when it is
     present the driver records each stage and `_gate` routes the gate's findings
     into it.
+
+    `judge` is the run's Jev judge (`jev_assist.default_judge()`), None when Jev is
+    off for the tailor. With it, the faithfulness check (TL-4, `_check_faithfulness`)
+    runs after the prologue gate and after every verified pass.
     """
     jd: str
     job_title: str
@@ -534,6 +538,7 @@ class PassCtx:
     reserved: FrozenSet[str]
     log: Callable[[str], None]
     report: Optional[RunLog] = None
+    judge: Any = None
 
 
 def _always() -> bool:
@@ -824,8 +829,10 @@ def _pass_enforce_style(ctx: PassCtx) -> None:
         ctx.log(f"style gate: repaired {fixed} bullet(s).")
 
 
-# The stage label. Named once so the `Pass` registration and every report line the
-# sweep writes cannot drift apart.
+# The stage labels. Named once so the `Pass` registration and every report line the
+# sweep writes cannot drift apart; the faithfulness check reads the first two.
+VERB_DEDUPE_STAGE = "verb dedupe"
+STYLE_GATE_STAGE = "style gate"
 AIWRITING_SWEEP_STAGE = "ai writing sweep"
 
 
@@ -923,6 +930,213 @@ def _pass_aiwriting_sweep(ctx: PassCtx) -> None:
     _report_sweep(ctx, result, stage=AIWRITING_SWEEP_STAGE)
 
 
+# ── TL-4: the faithfulness check ─────────────────────────────────────────────
+# The grounding gate traces distinctive tokens only, so a claim written in lowercase
+# common words passes it: "Led the team" over an atom that says the candidate helped
+# (verify.py's docstring states the gap). With Jev on, TL-4 asks the judge about every
+# bullet a stage wrote, against the atoms it was written from, after the prologue gate
+# and after every verified pass. It may only reject, revert or drop a bullet: the
+# reground call writes any new text, and the grounding gate runs exactly as before.
+FAITHFULNESS_REGROUND_STAGE = "faithfulness reground"
+
+# The check after these stages runs once the style gate has repaired banned phrasing
+# and stripped em dashes, so a regrounded text there must add no style finding, and a
+# revert at the style gate carries the gate's own em-dash strip.
+_LATE_STAGES = frozenset((STYLE_GATE_STAGE, AIWRITING_SWEEP_STAGE))
+
+
+def _faith_texts(ctx: PassCtx, snapshot: Optional[Dict[str, str]]) -> Dict[str, str]:
+    """{gkey: text} for the bullets a stage wrote: every tailored bullet at the
+    prologue (no snapshot), else each one whose text differs from `snapshot`, a
+    re-keyed bullet included. A change that is only the style gate's em-dash strip is
+    left out: it is punctuation, on text the check already passed."""
+    out: Dict[str, str] = {}
+    for gk, text in ctx.bullets.items():
+        if compose.is_verbatim_gkey(gk):
+            continue
+        if snapshot is not None and gk in snapshot and text in (
+                snapshot[gk], compose._strip_em_dashes(snapshot[gk])):
+            continue
+        out[gk] = text
+    return out
+
+
+def _faith_entries(ctx: PassCtx, texts: Dict[str, str]) -> List[Dict[str, Any]]:
+    """`jev_assist.faithfulness`'s input: `texts` grouped by résumé entry in print
+    order, each bullet with its own atoms as the writer saw them."""
+    gm = compose.group_map(ctx.sel)
+    entries: List[Dict[str, Any]] = []
+    for name, gkeys in compose._blocks_in_order(ctx.sel):
+        bullets = [{"gkey": gk, "text": texts[gk],
+                    "atoms": [compose._atom_payload(a) for a in gm[gk]]}
+                   for gk in gkeys if gk in texts]
+        if bullets:
+            entries.append({"entry": name, "bullets": bullets})
+    return entries
+
+
+def _faith_refusal(ctx: PassCtx, gk: str, text: str, flagged_text: str, *, stage: str,
+                   openers: FrozenSet[str] = frozenset()) -> str:
+    """Why regrounded `text` may not replace `flagged_text`, or "" when it goes on to
+    Jev's re-check. `openers` holds the opening verbs it must not reuse."""
+    if not text:
+        return "the re-ask returned nothing"
+    if text == flagged_text:
+        return "the re-ask returned the same text"
+    ids = compose.group_map(ctx.sel).get(gk) or gk.split("+")
+    unseen = verify.group_unseen(ctx.sel, ids, text)
+    if unseen:
+        return f"the re-ask's text is ungrounded: {', '.join(unseen)}"
+    if stage in _LATE_STAGES:
+        before = sweep._violations(flagged_text)
+        fresh = [v for v in sweep._violations(text) if v not in before]
+        if fresh:
+            return f"the re-ask's text adds {', '.join(fresh)}"
+    verb = compose.leading_verb(text)
+    if verb and verb in openers:
+        return f"the re-ask's text opens with '{verb}', which another bullet already uses"
+    return ""
+
+
+def _undo_fill(ctx: PassCtx, gk: str, snapshot: Dict[str, str]) -> bool:
+    """Undo the underfull fill's re-key of `gk`. The fill appends one borrowed atom to
+    a group and moves the bullet onto the longer key (`compose.fill_underfull`), so
+    the group gets its old atoms back and the bullet its old key and text. False when
+    `gk` is no such fill."""
+    ids = compose.group_map(ctx.sel).get(gk) or []
+    old_ids = list(ids[:-1])
+    old_gk = compose._gkey(old_ids)
+    if not old_ids or old_gk not in snapshot or old_gk in ctx.bullets:
+        return False
+    for sec in ("experience", "projects", "leadership"):
+        for entry in ctx.sel.get(sec) or []:
+            groups = entry.get("groups") or []
+            for gi, group in enumerate(groups):
+                if list(group) == list(ids):
+                    groups[gi] = old_ids
+                    del ctx.bullets[gk]
+                    ctx.bullets[old_gk] = snapshot[old_gk]
+                    return True
+    return False
+
+
+def _faith_revert(ctx: PassCtx, gk: str, snapshot: Optional[Dict[str, str]],
+                  stage: str) -> str:
+    """Put a still-flagged bullet back to its last passing version, and say how:
+    "reverted" to its `snapshot` text (a fill's re-key undone first), else "dropped",
+    exactly as `verify.enforce_grounded` drops an ungrounded bullet. At the style gate
+    the revert takes the gate's em-dash strip, which is the text the gate leaves when
+    it refuses a repair."""
+    if snapshot is not None and gk in snapshot:
+        text = snapshot[gk]
+        ctx.bullets[gk] = compose._strip_em_dashes(text) if stage == STYLE_GATE_STAGE else text
+        return "reverted"
+    if snapshot is not None and _undo_fill(ctx, gk, snapshot):
+        return "reverted"
+    del ctx.bullets[gk]
+    return "dropped"
+
+
+def _check_faithfulness(ctx: PassCtx, *, stage: str,
+                        snapshot: Optional[Dict[str, str]] = None,
+                        retrim: bool = False) -> Dict[str, str]:
+    """TL-4: ask Jev whether each bullet `stage` wrote says only what its atoms say,
+    and act on the verdict. Returns {gkey: finding} for the bullets it flagged: empty
+    when Jev is off or failed (the grounding gate then stands alone, as it did before
+    cycle 19) or when every bullet passed.
+
+    `snapshot` is the stage's pre-pass copy, None at the prologue. It picks which
+    bullets are asked about (`_faith_texts`) and is the revert target. `retrim` says
+    the stage re-trims what it writes, so a regrounded text is trimmed the same way.
+
+    The flagged bullets share ONE `compose.reground` call, each with its finding
+    named. A regrounded text replaces the flagged one only when it:
+      1. is non-empty and differs from the flagged text,
+      2. passes the grounding gate's own check (`verify.group_unseen`),
+      3. adds no style finding, at the style gate and the sweep (`_LATE_STAGES`),
+      4. opens with a verb no other bullet uses, on the passes after the verb dedupe
+         (the revert target at the dedupe itself is the text it had to change),
+      5. passes a second faithfulness check; one that cannot run counts as flagged.
+    Anything else leaves the bullet flagged, and `_faith_revert` puts it back to its
+    last passing version or drops it.
+
+    Each flagged bullet gets a note with its text, like the gate's rejected-text note;
+    a revert or a drop warns, as the gate's do, and a repaired bullet gets a note.
+    """
+    if ctx.judge is None:
+        return {}
+    texts = _faith_texts(ctx, snapshot)
+    verdicts = jev_assist.faithfulness(_faith_entries(ctx, texts), judge=ctx.judge) or {}
+    flagged = {gk: finding for gk, finding in verdicts.items()
+               if finding and gk in ctx.bullets}
+    if not flagged:
+        return {}
+    rep = ctx.report
+    if rep is not None:
+        rep.stage(FAITHFULNESS_REGROUND_STAGE)
+        for gk, finding in flagged.items():
+            rep.note(KIND_GROUNDING,
+                     f"[{stage}] faithfulness: flagged text for '{gk}' ({finding}): "
+                     f"{json.dumps(ctx.bullets[gk], ensure_ascii=False)}")
+    ctx.log(f"faithfulness check: re-asking {len(flagged)} flagged bullet(s) against "
+            f"their own atoms…")
+    failed = ""
+    try:
+        answers = compose.reground(ctx.jd, ctx.job_title, ctx.sel,
+                                   {gk: [] for gk in flagged}, findings=flagged)
+    except Exception as exc:  # noqa: BLE001 - the re-ask is advisory; the flag stands
+        ctx.log(f"faithfulness re-ask failed ({exc})")
+        answers, failed = {}, "the re-ask failed"
+    refused: Dict[str, str] = {}
+    candidates: Dict[str, str] = {}
+
+    def refuse(gk: str, why: str, text: str) -> None:
+        refused[gk] = why
+        if text and rep is not None:
+            rep.note(KIND_GROUNDING,
+                     f"[{stage}] faithfulness: refused the re-ask's text for '{gk}': "
+                     f"{json.dumps(text, ensure_ascii=False)}")
+
+    targets = compose.bullet_line_targets(ctx.sel)
+    settled = snapshot is not None and stage != VERB_DEDUPE_STAGE
+    for gk in flagged:
+        text = (answers.get(gk) or "").strip()
+        if text and retrim:
+            text = _fit_to_lines(text, targets.get(gk, config.PROJECT_BULLET_LINES))
+        openers: FrozenSet[str] = frozenset()
+        if settled:
+            openers = frozenset(
+                {compose.leading_verb(t) for other, t in ctx.bullets.items() if other != gk}
+                | {compose.leading_verb(t) for t in candidates.values()}
+                | set(ctx.reserved))
+        why = failed or _faith_refusal(ctx, gk, text, ctx.bullets[gk], stage=stage,
+                                       openers=openers)
+        if why:
+            refuse(gk, why, text)
+        else:
+            candidates[gk] = text
+    if candidates:
+        recheck = jev_assist.faithfulness(_faith_entries(ctx, candidates), judge=ctx.judge)
+        for gk, text in candidates.items():
+            verdict = None if recheck is None else recheck.get(gk)
+            if verdict == "":
+                ctx.bullets[gk] = text
+                if rep is not None:
+                    rep.note(KIND_GROUNDING,
+                             f"[{stage}] faithfulness: regrounded bullet '{gk}' "
+                             f"({flagged[gk]})")
+            elif verdict is None:
+                refuse(gk, "the re-check could not run", text)
+            else:
+                refuse(gk, f"the re-check still flags it: {verdict}", text)
+    for gk, why in refused.items():
+        action = _faith_revert(ctx, gk, snapshot, stage)
+        if rep is not None:
+            rep.warn(KIND_GROUNDING,
+                     f"[{stage}] faithfulness: {action} bullet '{gk}' ({flagged[gk]}; {why})")
+    return flagged
+
+
 # The order of this tuple IS the pipeline, and reordering it is the only way to
 # reorder the stages.
 # `enabled` holds the toggle FUNCTION rather than its value, so it is read per run.
@@ -935,11 +1149,11 @@ def _pass_aiwriting_sweep(ctx: PassCtx) -> None:
 # count non-increasing; a stage placed after it could re-lengthen a bullet and take that
 # guarantee away, so there is nothing after it.
 _BULLET_PASSES = (
-    Pass("verb dedupe", _pass_dedupe_verbs),
+    Pass(VERB_DEDUPE_STAGE, _pass_dedupe_verbs),
     Pass("verbatim + trim", _pass_merge_verbatim, verify=False),
     Pass("underfull fill", _pass_fill_underfull,
          enabled=config.fill_underfull_enabled, retrim=True, recheck_fill=True),
-    Pass("style gate", _pass_enforce_style, retrim=True),
+    Pass(STYLE_GATE_STAGE, _pass_enforce_style, retrim=True),
     Pass(AIWRITING_SWEEP_STAGE, _pass_aiwriting_sweep,
          enabled=config.aiwriting_sweep_enabled, retrim=True),
 )
@@ -949,7 +1163,9 @@ def _run_bullet_passes(ctx: PassCtx,
                        passes: Sequence[Pass] = _BULLET_PASSES) -> None:
     """Run each enabled pass under the snapshot -> mutate -> re-trim -> re-verify ->
     (optionally) re-measure discipline. Nobody writes a snapshot by hand, so nobody can
-    forget one."""
+    forget one. Re-verifying is the grounding gate and then, with Jev on, the
+    faithfulness check (TL-4) over the bullets the pass changed, against the same
+    snapshot."""
     for p in passes:
         if not p.enabled():
             continue
@@ -961,6 +1177,7 @@ def _run_bullet_passes(ctx: PassCtx,
             _trim_to_caps(ctx.sel, ctx.bullets)
         if p.verify:
             _gate(ctx, stage=p.name, fallback=snapshot)
+            _check_faithfulness(ctx, stage=p.name, snapshot=snapshot, retrim=p.retrim)
         if p.recheck_fill:
             _note_still_underfull(ctx, snapshot or {}, stage=p.name)
 
@@ -992,9 +1209,11 @@ def tailor(
     it cannot mark the run degraded.
 
     When Jev is on for the tailor (`jev_switch.client("tailor")`), one judge serves
-    the whole run: it rates the skills and the atoms before `select` (TL-1, TL-2) and
-    picks each project's lead bullet (TL-3). A step whose request fails keeps its LLM
-    path, and once the judge's breaker opens every later step does too. Each step's
+    the whole run: it rates the skills and the atoms before `select` (TL-1, TL-2),
+    picks each project's lead bullet (TL-3), and checks each bullet the rephrase and
+    every later rewrite wrote against its atoms (TL-4, `_check_faithfulness`). A step
+    whose request fails keeps its LLM path (TL-4 leaves the grounding gate to stand
+    alone), and once the judge's breaker opens every later step does too. Each step's
     usage line goes to `tailor_report.txt` and to the status log.
     """
     log = on_status or _noop
@@ -1054,7 +1273,7 @@ def tailor(
         # The verbatim blocks' opening verbs: reserved, because the dedupe pass may
         # not rewrite the user's own text, so it must not reuse their openers either.
         reserved=frozenset(compose.leading_verb(t) for t in verbatim.values()),
-        log=log, report=report,
+        log=log, report=report, judge=judge,
     )
     # Deterministic grounding gate (audit P1-2): every bullet's distinctive tokens
     # must trace to its own group's atoms — a hallucinated or JD-injected fact is
@@ -1065,11 +1284,17 @@ def tailor(
     # provisional, not final, while reground can still recover it — see
     # _prologue_gate for how that changes its severity.
     _prologue_gate(ctx)
+    # TL-4, with Jev on: the judge reads every surviving bullet against its atoms for
+    # the claims the gate cannot trace. A bullet still flagged after one reground has
+    # no earlier text to go back to here, so it is dropped as the gate drops one.
+    _check_faithfulness(ctx, stage="rephrase")
     if not bullets and not verbatim:
         raise RuntimeError("No grounded bullets survived selection/rephrase.")
     # Verb dedupe -> verbatim merge + trim -> underfull fill + re-trim -> style gate ->
     # item-level AI-writing sweep.
     _run_bullet_passes(ctx)
+    if judge is not None:
+        report.jev_step(jev_assist.STEP_FAITHFULNESS)
 
     log("compressing skills…")
     report.stage("skills")

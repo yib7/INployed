@@ -1,6 +1,6 @@
 """The "Add a job by hand" form (PySide6 / Qt).
 
-A thin shell over `manual_add` — it collects input, validates that every field is
+A thin shell over `manual_add`: it collects input, validates that every field is
 present, then hands the values back to the caller (MainWindow) which runs the
 parse -> tailor -> append pipeline on a worker thread. All the real logic lives in
 the toolkit-agnostic `manual_add` module (project convention: keep Qt-agnostic
@@ -44,10 +44,10 @@ class ManualAddDialog(QtWidgets.QDialog):
                 "Add a job by hand (for a posting the automatic search didn't surface). "
                 "Fill in the URL and paste the job description; it's saved and tailored "
                 "right away, the same résumé engine discovered jobs use.")
-        intro = QtWidgets.QLabel(intro_text)
-        intro.setWordWrap(True)
-        intro.setProperty("muted", True)
-        v.addWidget(intro)
+        self.intro = QtWidgets.QLabel(intro_text)
+        self.intro.setWordWrap(True)
+        self.intro.setProperty("muted", True)
+        v.addWidget(self.intro)
 
         form = QtWidgets.QFormLayout()
         self.url = QtWidgets.QLineEdit(str(self._initial.get("url", "")))

@@ -378,6 +378,7 @@ def duplicate_message(dup: Dict[str, Any]) -> str:
 def retailor_existing(
     record: Dict[str, Any],
     *,
+    jd_text: str = "",
     tailor_opts: Optional[Dict[str, Any]] = None,
     tailor_fn: Optional[Callable[..., Path]] = None,
     on_status: Optional[Callable[[str], None]] = None,
@@ -387,10 +388,23 @@ def retailor_existing(
     Never appends a new row (the record already lives in the master), so
     `appended` is always False. Shares the tailor seam and the MA-4 failure
     handling with `add_manual_job` through `_run_tailor`.
+
+    `jd_text` is the description the user just re-pasted into the dialog. The
+    master's retention prune (pipeline/prune_master.py) blanks a row's
+    job_description_formatted once it ages past the retention window, so a
+    duplicate re-added after that point can carry only the 1000-char
+    job_summary even though the user just pasted the full text again. When
+    the stored record's job_description_formatted is blank, this fills it
+    from jd_text (stripped the same way build_job_record does) for THIS
+    tailor run only: `record` is copied up front, so neither the caller's
+    dict nor (in turn) the master row it came from is ever rewritten. A
+    present, non-blank stored description always wins over a re-paste.
     """
     log = on_status or (lambda _m: None)
-    resume_dir = _run_tailor(record, tailor_opts or {}, tailor_fn, log)
     record = dict(record)
+    if jd_text.strip() and not str(record.get("job_description_formatted") or "").strip():
+        record["job_description_formatted"] = _strip_html(jd_text)
+    resume_dir = _run_tailor(record, tailor_opts or {}, tailor_fn, log)
     if resume_dir:
         record["resume"] = str(resume_dir)
     log("done.")

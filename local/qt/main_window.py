@@ -1938,7 +1938,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if dup is not None:
             if self._confirm_retailor_duplicate(dup):
                 self._start_manual_pipeline(
-                    lambda opts: self._manual_retailor_work(dup, opts),
+                    lambda opts: self._manual_retailor_work(
+                        dup, vals.get("jd_text", ""), opts),
                     verb="Tailoring again")
             return
         self._start_manual_pipeline(
@@ -1983,12 +1984,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self._push_manual_row_to_vm(res)
         return res
 
-    def _manual_retailor_work(self, record: dict, opts: dict) -> dict:
+    def _manual_retailor_work(self, record: dict, jd_text: str, opts: dict) -> dict:
         """Worker body for MA-2's "Tailor again": re-run tailoring on an already
-        saved row, never appending a second copy."""
+        saved row, never appending a second copy. `jd_text` is the description
+        the user just re-pasted into the dialog; retailor_existing uses it only
+        to patch a blank stored description for this run (the master's
+        retention prune can blank an older row), and never rewrites the row
+        with it."""
         import manual_add
         return manual_add.retailor_existing(
-            record, tailor_opts=opts, on_status=self.tailor_progress.emit)
+            record, jd_text=jd_text, tailor_opts=opts, on_status=self.tailor_progress.emit)
 
     def _push_manual_row_to_vm(self, res: dict) -> None:
         # Queue + push the new master row to the VM (best-effort — never fail the add).

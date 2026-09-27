@@ -856,6 +856,13 @@ def _resolve_targets(targets: dict[str, Path] | None) -> dict[str, Path]:
     return TARGET_FILES if targets is None else targets
 
 
+def target_path(target_id: str) -> Path:
+    """The backing file `load()` reads for `target_id` (a TARGET_FILES key), for
+    a reader outside this module that needs the same file: `jev_switch` reads
+    the Jev switches from the "config" file on every call."""
+    return Path(_resolve_targets(None)[target_id])
+
+
 def _read_file(path: Path) -> dict[str, Any]:
     """Parse a backing JSON file, or {} when missing/unreadable.
 

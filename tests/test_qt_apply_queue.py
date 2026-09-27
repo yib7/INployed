@@ -1032,25 +1032,32 @@ def test_the_default_gate_reads_a_broken_settings_backend_as_no_saved_key(monkey
         "Auto-apply runs on Jev. Add the TypeSafe API key in Settings > Jev.")
 
 
-def test_a_test_judge_starts_a_run_with_no_key_or_sdk(qtbot, tmp_path, monkeypatch):
-    """The fake and replay judges (the Auto-apply judge setting) need neither,
-    so the suite runs keyless; the master switch still stops them."""
+def test_a_test_judge_leaves_start_off_with_the_drains_refusal(qtbot, tmp_path, monkeypatch):
+    """SP1 fix round 2: the drain Start launches refuses the fake and replay
+    judges (the Auto-apply judge setting) as fixture-only before its Jev gate
+    (cycle 16), so Start is off with that sentence, with no key or SDK and the
+    master switch on or off, and a click launches nothing."""
     monkeypatch.setattr(jev_switch, "sdk_installed", lambda: False)
-    jev_switch.config_path().write_text('{"auto_apply_jev_mode": "fake"}', encoding="utf-8")
     qfile = _qfile(tmp_path)
     apply_queue.enqueue(apply_queue.new_entry("1", company="Acme", title="A"), path=qfile)
     spy = []
     p = _panel(qtbot, qfile, on_start_run=lambda: spy.append(True),
                password_exists=lambda: True, jev_blocked=None)     # the real gate
     monkeypatch.setattr(p, "_confirm_run", lambda n: True)
-    assert p.start_run_btn.isEnabled() and p.jev_notice.isHidden()
-    p.start_run_btn.click()
-    assert spy == [True]
-    jev_switch.config_path().write_text(
-        '{"jev_enabled": false, "auto_apply_jev_mode": "fake"}', encoding="utf-8")
-    p.refresh()
-    assert not p.start_run_btn.isEnabled()
-    assert p.start_run_btn.toolTip() == _JEV_OFF
+    for mode in ("fake", "replay"):
+        for switch in ("true", "false"):
+            jev_switch.config_path().write_text(
+                '{"jev_enabled": %s, "auto_apply_jev_mode": "%s"}' % (switch, mode),
+                encoding="utf-8")
+            p.refresh()
+            case = (mode, switch)
+            assert not p.start_run_btn.isEnabled(), case
+            assert p.start_run_btn.toolTip() == jev_switch.FIXTURE_ONLY, case
+            assert p.jev_label.text() == jev_switch.FIXTURE_ONLY, case
+            assert not p.jev_notice.isHidden(), case
+            p._start_run()
+            assert spy == [], case
+            assert p.status_label.text() == jev_switch.FIXTURE_ONLY, case
 
 
 def test_an_exported_test_mode_leaves_start_off(qtbot, tmp_path, monkeypatch):

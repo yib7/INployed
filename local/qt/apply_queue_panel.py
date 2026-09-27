@@ -6,7 +6,8 @@ truth shared with the drain CLI (local/apply_run.py); this panel only
 Clear finished, opening a job's artifacts, the master-password state, "Sign in
 to sites" (the one-time `apply_run.py login`), "Copy kickoff command" (the
 exact PowerShell line that starts the drain) and "Start auto-apply run" (off,
-with the reason beside it, while Jev cannot run: `refresh_jev_state`).
+with the reason beside it, while the drain it launches would refuse to start:
+`refresh_jev_state`).
 
 Freshness: reads are lock-free (`apply_queue.load`, never quarantine=True — the
 panel must never rename a file a locked writer owns). A QFileSystemWatcher
@@ -66,8 +67,9 @@ def _console_command(root: Path, verb: str) -> str:
 # queued job, drives a persistent Chromium profile through the application
 # with the Jev judge, and submits only when the confidence gate passes
 # (`auto_apply_submit` in Settings, `--no-submit` on the command line parks
-# every job at its review page instead). It refuses to start while Jev cannot
-# run (switched off, no key, no SDK), and the Start button is off then too.
+# every job at its review page instead). It refuses to start on a test judge
+# (fake, replay) and while Jev cannot run (switched off, no key, no SDK), and
+# the Start button is off then too.
 KICKOFF_COMMAND = _console_command(REPO_ROOT, "drain")
 
 # The one-time sign-in: opens the same persistent profile, headed, at
@@ -171,13 +173,14 @@ def _default_password_exists() -> bool:
 
 
 def _default_jev_blocked() -> str:
-    """Panel seam for the Jev gate (JS-5): why a run cannot start, in the words
-    `jev_switch.apply_blocked` gives the Start button and `apply_run.py drain`
-    alike, or "" when it can. The drain Start launches has no --jev flag, so
-    the gate reads the mode that drain reads (`jev_switch.apply_mode`). A key
-    saved in Settings counts (`jev_switch.key_saved`): the drain's console
-    loads `.env` itself, so the key reaches it before the dashboard restarts."""
-    return jev_switch.apply_blocked(saved_key=jev_switch.key_saved())
+    """Panel seam for the Start gate: why the drain Start launches would refuse
+    to start, in the words `apply_run.py drain` prints, or "" when it would run
+    (`jev_switch.start_blocked`: a test judge's fixture-only refusal, then the
+    Jev gate, JS-5). The drain has no --jev flag, so the gate reads the mode
+    that drain reads (`jev_switch.apply_mode`). A key saved in Settings counts
+    (`jev_switch.key_saved`): the drain's console loads `.env` itself, so the
+    key reaches it before the dashboard restarts."""
+    return jev_switch.start_blocked(saved_key=jev_switch.key_saved())
 
 
 def _run_inline(fn: Callable[[], Any],
@@ -510,8 +513,8 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         actions.addWidget(self.start_run_btn)
         v.addLayout(actions)
 
-        # Why Start is off while Jev cannot run (JS-5), in the drain's words;
-        # hidden while a run can start. Queueing goes on either way.
+        # Why Start is off (a test judge, or Jev unable to run: JS-5), in the
+        # drain's words; hidden while a run can start. Queueing goes on either way.
         self.jev_notice = QtWidgets.QFrame()
         self.jev_notice.setProperty("callout", "warning")
         jn = QtWidgets.QHBoxLayout(self.jev_notice)
@@ -772,11 +775,11 @@ class ApplyQueuePanel(QtWidgets.QWidget):
 
     def refresh_jev_state(self) -> str:
         """Start is off, with the reason as its tooltip and in the notice under
-        the buttons, while an auto-apply run cannot start on Jev (JS-5). Read
-        on every refresh, after a Settings save (the main window calls this),
-        whenever the tab shows or the window comes back to the front while it
-        shows, and at each Start click. Returns the reason, "" when a run can
-        start."""
+        the buttons, while the drain it launches would refuse to start (a test
+        judge, or Jev unable to run: JS-5). Read on every refresh, after a
+        Settings save (the main window calls this), whenever the tab shows or
+        the window comes back to the front while it shows, and at each Start
+        click. Returns the reason, "" when a run can start."""
         try:
             reason = str(self._jev_blocked() or "")
         except Exception:  # noqa: BLE001 - the drain checks again; never break the panel

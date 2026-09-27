@@ -356,6 +356,46 @@ def test_apply_blocked_keeps_the_master_switch_in_a_test_mode(sdk):
         "Auto-apply runs on Jev. Turn Jev on in Settings > Jev."
 
 
+# --- the Start gate: the drain's refusal of a test judge comes first (SP1 fix round 2) ---
+
+def test_the_fixture_only_sentence_is_the_drains_refusal_of_a_test_judge():
+    """The words `apply_run.py drain` and `one` print for the fake and replay
+    judges (cycle 16), which the Auto-apply panel's Start shows too."""
+    assert jev_switch.FIXTURE_ONLY == (
+        "Fake and replay judges are fixture-only; use typesafe for a production queue.")
+    for mode in jev_switch.TEST_MODES:
+        assert jev_switch.fixture_only(mode) == jev_switch.FIXTURE_ONLY, mode
+    assert jev_switch.fixture_only("typesafe") == ""
+
+
+@pytest.mark.parametrize("mode", ["fake", "replay"])
+def test_start_blocked_refuses_a_test_judge_first_as_the_drain_does(sdk, mode):
+    """The drain refuses a test judge before its Jev gate, so the Start gate
+    names that refusal with the switch on or off, no key and no SDK. The
+    probes ask `apply_blocked` (Test my answers, `probe --judge`), which keeps
+    the key and SDK skip."""
+    sdk(False)
+    for switch in (True, False):
+        cfg = dict(ON, jev_enabled=switch, auto_apply_jev_mode=mode)
+        assert jev_switch.start_blocked(config=cfg, env={}) == jev_switch.FIXTURE_ONLY, switch
+        assert jev_switch.start_blocked(config=dict(ON, jev_enabled=switch), env={},
+                                        mode=mode) == jev_switch.FIXTURE_ONLY, switch
+    assert jev_switch.apply_blocked(config=dict(ON, auto_apply_jev_mode=mode), env={}) == ""
+
+
+def test_start_blocked_is_the_jev_gate_for_the_live_judge(sdk):
+    lead = "Auto-apply runs on Jev. "
+    assert jev_switch.start_blocked(config=ON, env=KEY) == ""
+    assert jev_switch.start_blocked(config=ON, env={}) == \
+        lead + "Add the TypeSafe API key in Settings > Jev."
+    assert jev_switch.start_blocked(config=ON, env={}, saved_key=True) == ""
+    assert jev_switch.start_blocked(config=dict(ON, jev_enabled=False), env=KEY) == \
+        lead + "Turn Jev on in Settings > Jev."
+    sdk(False)
+    assert jev_switch.start_blocked(config=ON, env=KEY) == \
+        lead + "Install typesafe-sdk (pip install -r requirements.txt)."
+
+
 # --- the judge -------------------------------------------------------------------------
 
 class _StubTypeSafe:

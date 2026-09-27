@@ -26,9 +26,12 @@ with the judge the Auto-apply judge setting names (`_current_jev_mode`, read by
 `jev_switch.apply_mode`, the reader `local/apply_run.py` uses), on a worker
 thread (`qt.workers.run_async`), and shows the picks in
 `TestAnswersDialog` with the mode named in the result line. The test is a Jev
-use, so the button is off, with the sentence the Auto-apply panel's Start
-shows, while `jev_switch.apply_blocked` names a reason: Jev switched off stops
-every mode, and the key and SDK checks apply to the live "typesafe" mode only.
+use, so the button is off while `jev_switch.apply_blocked` (the Jev gate
+`local/apply_run.py` asks) names a reason, with that sentence: Jev switched off
+stops every mode, and the key and SDK checks apply to the live "typesafe" mode
+only. The test is a probe, so the fake and replay judges run here; the
+Auto-apply panel's Start refuses them as the drain does
+(`jev_switch.start_blocked`).
 The button stays off while a run is going (`_test_running`), and
 `refresh_test_answers_state` re-reads the mode, the switch and the key after a
 Settings save and at each click.
@@ -909,9 +912,10 @@ class AnswersEditor(QtWidgets.QWidget):
 
         The test is a Jev use (SP1 review A): while `jev_switch.apply_blocked`
         names a reason, the button is off with that sentence, the one the
-        Auto-apply panel's Start shows. Jev switched off stops every mode; the
-        key and SDK checks skip the fake and replay judges. Returns the
-        sentence, "" when the gate is open."""
+        Auto-apply panel's Start shows for the live judge. Jev switched off
+        stops every mode; the key and SDK checks skip the fake and replay
+        judges, which run here (a probe) while Start refuses them as the drain
+        does. Returns the sentence, "" when the gate is open."""
         mode = _current_jev_mode()
         live = mode not in jev_switch.TEST_MODES
         # The saved-key probe reads the settings files; a test judge skips it.

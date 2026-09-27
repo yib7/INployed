@@ -1160,6 +1160,34 @@ def test_test_answers_reads_the_mode_and_the_saved_key_where_the_drain_does(monk
     assert at._typesafe_key_present() is False
 
 
+@pytest.mark.parametrize("mode", ["fake", "replay"])
+def test_test_answers_runs_a_test_judge_that_start_refuses(qtbot, tmp_path, monkeypatch, mode):
+    """SP1 fix round 2: the Start gate refuses the fake and replay judges as
+    the drain does (fixture-only). Test my answers is a probe: with the switch
+    on, no key and no SDK it stays on, and a click runs the screening set with
+    the judge the setting names."""
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    monkeypatch.setattr(jev_switch, "sdk_installed", lambda: False)
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    jev_switch.config_path().write_text(json.dumps({"auto_apply_jev_mode": mode}),
+                                        encoding="utf-8")
+    assert jev_switch.start_blocked() == jev_switch.FIXTURE_ONLY
+    seen = {}
+    _stub_apply_screening(
+        monkeypatch, fn=lambda answers, judge: (seen.setdefault("judge", judge), [])[1])
+    captured = {}
+    monkeypatch.setattr(
+        at.workers, "run_async",
+        lambda owner, fn, on_done=None, on_error=None: captured.update(fn=fn))
+    ed = _editor(qtbot, store)
+    assert ed.test_answers_btn.isEnabled() is True
+    assert "makes no live request" in ed.test_answers_btn.toolTip()
+    ed.test_answers_btn.click()
+    captured["fn"]()
+    assert isinstance(seen["judge"], jev.FakeJev if mode == "fake" else jev.ReplayJev)
+
+
 # --- SP1 review A: the master switch stops every Jev use, Test my answers too ---------
 
 _JEV_OFF = "Auto-apply runs on Jev. Turn Jev on in Settings > Jev."

@@ -22,12 +22,15 @@ setting, else typesafe), so the panel's Start button, Test my answers,
 builds. The environment's AUTO_APPLY_JEV_MODE is read by none of them.
 
 `jev_why_off(area)` names the first check that fails, as the one-line reason
-the UI and the logs show. `apply_blocked()` builds the sentence the Auto-apply
-panel's Start button and `apply_run.py drain` both show, so the two cannot
-drift; `key_saved()` is the saved-key probe the dashboard passes it.
-`client(area)` returns a `jev.Guarded` judge, or None when the area is off or
-the judge cannot be built; a caller outside auto-apply keeps its LLM path on
-None.
+the UI and the logs show. `apply_blocked()` builds the Jev gate's sentence,
+the one `apply_run.py` drain, one and probe --judge print and Test my answers
+shows. `start_blocked()` is the Auto-apply panel's Start gate: it gives the
+drain's refusal of a test judge first (`FIXTURE_ONLY`, cycle 16), then
+`apply_blocked()`, the order the drain checks them in, so Start predicts the
+drain it launches. `key_saved()` is the saved-key probe the dashboard passes
+both. `client(area)` returns a `jev.Guarded` judge, or None when the area is
+off or the judge cannot be built; a caller outside auto-apply keeps its LLM
+path on None.
 
 The switches are read with `is not False`, the spelling
 `resume_tailor/config.py` uses for every default-on toggle, so a stray
@@ -72,6 +75,9 @@ _FIXES = {
     "key": "Add the TypeSafe API key in Settings > Jev.",
     "sdk": "Install typesafe-sdk (pip install -r requirements.txt).",
 }
+# `apply_run.py drain` and `one` refuse a test judge before their Jev gate
+# (cycle 16); the panel's Start gate gives the same sentence (`start_blocked`).
+FIXTURE_ONLY = "Fake and replay judges are fixture-only; use typesafe for a production queue."
 
 
 def config_path() -> Path:
@@ -115,7 +121,8 @@ def key_saved() -> bool:
     """Is a TypeSafe API key saved in Settings (the `.env` file)? Presence only,
     through `settings.secret_status`, so the value never leaves that module.
     False when the settings files cannot be read. The Auto-apply panel's Start
-    gate and Test my answers pass it to `apply_blocked` as `saved_key`."""
+    gate (`start_blocked`) and Test my answers (`apply_blocked`) pass it as
+    `saved_key`."""
     try:
         import settings
         return bool(settings.secret_status().get(jev.KEY_ENV))
@@ -183,8 +190,10 @@ def blocked_sentence(kind: str) -> str:
 def apply_blocked(*, config: Mapping[str, Any] | None = None,
                   env: Mapping[str, str] | None = None, mode: str | None = None,
                   saved_key: bool = False) -> str:
-    """Why an auto-apply run cannot start, as the sentence the panel's Start
-    button and `apply_run.py drain` both show; "" when it can.
+    """Why an auto-apply run cannot start on Jev (switched off, no key, no
+    SDK), in the sentence `apply_run.py` drain, one and probe --judge print and
+    Test my answers shows; "" when it can. The panel's Start gate
+    (`start_blocked`) gives it too, after the drain's refusal of a test judge.
 
     `mode` is the drain's --jev flag or a mode `apply_mode` resolved; None
     reads the setting (`apply_mode`), as a drain with no flag does. `saved_key`
@@ -193,6 +202,28 @@ def apply_blocked(*, config: Mapping[str, Any] | None = None,
     dashboard restarts."""
     kind, _reason = _check("apply", config, env, mode=mode, saved_key=saved_key)
     return blocked_sentence(kind) if kind else ""
+
+
+def fixture_only(mode: str) -> str:
+    """The refusal `apply_run.py drain` and `one` print for a test judge before
+    their Jev gate (cycle 16), `FIXTURE_ONLY`; "" for the live judge. `mode` is
+    a mode `apply_mode` resolved."""
+    return FIXTURE_ONLY if mode in TEST_MODES else ""
+
+
+def start_blocked(*, config: Mapping[str, Any] | None = None,
+                  env: Mapping[str, str] | None = None, mode: str | None = None,
+                  saved_key: bool = False) -> str:
+    """Why the drain the Auto-apply panel's Start launches would stop before it
+    claims a job, in the sentence it prints; "" when it would run. It asks in
+    the drain's order: a test judge's refusal (`fixture_only`), then the Jev
+    gate (`apply_blocked`, with the same arguments). Test my answers and
+    `probe --judge` ask `apply_blocked` alone: they are probes, and the test
+    judges run there."""
+    cfg = _config() if config is None else config
+    resolved = apply_mode(mode, config=cfg)
+    return fixture_only(resolved) or apply_blocked(config=cfg, env=env, mode=resolved,
+                                                   saved_key=saved_key)
 
 
 def client(area: str) -> Any:

@@ -9455,11 +9455,13 @@ def _load_env() -> None:
 
 
 def _jev_gate(mode: str) -> str:
-    """JS-5: the sentence the Auto-apply panel's Start button shows while a run
-    on the `mode` judge cannot start (Jev switched off, no key, no SDK), or ""
-    when it can. `drain`, `one` and `probe --judge` ask it after `_load_env`,
-    so a key saved in `.env` counts. The fake and replay judges need neither a
-    key nor the SDK, so only the master switch stops them here."""
+    """JS-5: why a run on the `mode` judge cannot start on Jev (switched off,
+    no key, no SDK), in the sentence the Auto-apply panel's Start button shows
+    for the live judge; "" when it can. `drain`, `one` and `probe --judge` ask
+    it after `_load_env`, so a key saved in `.env` counts. The fake and replay
+    judges need neither a key nor the SDK, so only the master switch stops
+    them here; `drain` and `one` refuse them as fixture-only before this
+    (`jev_switch.fixture_only`)."""
     return jev_switch.apply_blocked(mode=mode)
 
 
@@ -9809,9 +9811,11 @@ def main(argv: list[str] | None = None) -> int:
             return probe(args.url, follow_apply=args.follow_apply, judge=judge,
                          headed=args.headed, profile_dir=profile, park_mode=args.no_submit)
         cfg = _settings_from_args(args)
-        if cfg["auto_apply_jev_mode"] in ("fake", "replay"):
-            print("apply_run: fake and replay judges are fixture-only; use typesafe for a "
-                  "production queue", file=sys.stderr)
+        # cycle 16: a test judge is refused first, in the sentence the Auto-apply
+        # panel's Start button shows for it (`jev_switch.start_blocked`)
+        refused = jev_switch.fixture_only(cfg["auto_apply_jev_mode"])
+        if refused:
+            print(refused, file=sys.stderr)
             return 2
         _load_env()
         # JS-5: auto-apply runs on Jev alone. Jev switched off, no key or no SDK

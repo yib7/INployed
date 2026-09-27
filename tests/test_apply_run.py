@@ -2757,6 +2757,23 @@ def test_the_panel_gate_and_the_drain_gate_give_one_answer(monkeypatch, capsys):
     assert panel == capsys.readouterr().err.strip() == _NO_KEY
 
 
+@pytest.mark.parametrize("switch", [True, False])
+@pytest.mark.parametrize("stored", ["fake", "replay"])
+def test_the_panel_gate_gives_the_drains_refusal_of_a_test_judge(monkeypatch, capsys,
+                                                                   stored, switch):
+    """SP1 fix round 2: `drain` refuses the fake and replay judges as
+    fixture-only before its Jev gate (cycle 16), so the Start gate names that
+    refusal. With the Auto-apply judge setting on either one and no key, the
+    panel's gate gives the sentence `main` prints for drain, with the master
+    switch on and off."""
+    from qt import apply_queue_panel
+    _real_settings_no_key(monkeypatch, {"jev_enabled": switch, "auto_apply_jev_mode": stored})
+    panel = apply_queue_panel._default_jev_blocked()
+    assert apply_run.main(["drain"]) == 2
+    assert panel == capsys.readouterr().err.strip()
+    assert "fixture-only" in panel
+
+
 @pytest.mark.parametrize("stored", ["", "   ", None])
 def test_a_blank_judge_setting_drains_on_typesafe_whatever_the_shell_exports(
         monkeypatch, capsys, stored):

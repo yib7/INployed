@@ -22,8 +22,10 @@ import importlib.util
 import json
 import math
 import os
+import re
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +49,23 @@ CLEARANCE_CAP = 1               # a new graduate cannot hold an active clearance
 ANALYTICAL_YES = 0.5            # analytical_work at or above this reads as yes
 SKILLS_WORDS: tuple[tuple[float, str], ...] = (
     (SKILLS_FOR_5, "strong"), (SKILLS_FOR_4, "good"), (0.30, "partial"), (0.0, "weak"))
+
+# Stage 2 follows the stage 2 prompt: the deep score is a mix of must-have coverage
+# (the mean met probability over the must-have lines), nice-to-have coverage and
+# the three fits, each 0-1; a part with no lines drops out and the rest are
+# reweighted. deep = 1 + 9 * mix, rounded half up.
+MIN_REQUIREMENT_LINES = 3       # fewer: that job's stage 2 takes the LLM path
+MAX_REQUIREMENT_LINES = 30
+MET_YES = 0.5                   # req_{i}_met at or above this counts the line as met
+MUST_YES = 0.5                  # req_{i}_must at or above this makes the line a must-have
+DEEP_WEIGHTS: dict[str, float] = {"must": 0.45, "nice": 0.10, "responsibilities": 0.20,
+                                  "seniority": 0.15, "domain": 0.10}
+RECOMMEND_APPLY = 7             # a deep score at or above this: apply
+RECOMMEND_CONSIDER = 5          # at or above this: consider; below it: skip
+LIST_MAX = 5                    # strengths and gaps keep at most this many lines each
+LINE_CHARS = 90                 # a strength or gap is cut to this length
+REQ_TEXT_CHARS = 300            # a requirement line is cut to this length in its question
+PLAIN_LINE_CHARS = 250          # an unbulleted line under a requirement heading, at most
 
 # The request (SC-1): the job text is cut from its end until the request fits
 # `jev.request_fits` (which keeps its own margin under Jev's limits); a job that
@@ -449,3 +468,293 @@ def stage1(judge: Any, job: Any, resume: str) -> dict | None:
         return None
     score, reason = compose_stage1(facts, reads)
     return {"score": score, "reason": reason}
+
+
+# --- SC-3: requirement lines -------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Req:
+    """One requirement line of a job description. `must` is the code cue: True
+    under a required heading, False for a preferred cue (the heading's or the
+    line's own), None when Jev decides."""
+    text: str
+    must: bool | None = None
+
+
+_ATX_RE = re.compile(r"^\s{0,3}#{1,6}\s+(?P<text>.+?)\s*#*\s*$")
+_BOLD_LINE_RE = re.compile(r"^\s*(?:\*\*|__)(?P<text>[^*_]+?)(?:\*\*|__)\s*:?\s*$")
+_COLON_LINE_RE = re.compile(r"^\s*(?P<text>[^\s:*#\d\-+][^:]{1,59}):\s*$")
+_BULLET_RE = re.compile(r"^\s{0,8}(?:(?:[-*+]|\(?\d{1,2}[.)])\s+"
+                        r"|[•·▪●◦‣⁃–]\s*)(?P<text>\S.*)$")
+_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+_ESCAPE_RE = re.compile(r"\\([\\`*_{}\[\]()#+\-.!|>~<])")
+
+# Section headings, read in this order: a skipped section's lines never count; a
+# preferred heading marks its lines nice to have; a requirement heading marks them
+# required when it says so (required, minimum, basic, must) and leaves the rest to Jev.
+_SKIP_HEAD_RE = re.compile(
+    r"benefit|perk|we offer|compensation|salary|\bpay\b|total rewards|about us"
+    r"|about the company|who we are|equal (?:employment )?opportunit|\beeo\b|our values"
+    r"|culture|why join|why you'll love|physical|work environment|working conditions"
+    r"|schedule|location|travel|how to apply|disclaimer|accommodation")
+_NICE_HEAD_RE = re.compile(
+    r"prefer|nice[- ]to[- ]have|good[- ]to[- ]have|bonus|\bplus(?:es)?\b|desir|\bideal"
+    r"|extra credit|stand out|set you apart")
+_REQ_HEAD_RE = re.compile(
+    r"requir|qualif|\bmust\b|minimum|basic|what you(?:'ll)? (?:need|bring|have)"
+    r"|you(?:'ll)? (?:need|bring|have)|who you are|about you|skills|experience|competenc"
+    r"|knowledge|education|looking for|expertise|background")
+_MUST_HEAD_RE = re.compile(r"requir|minimum|basic|\bmust\b")
+# A line's own preferred cue beats its heading.
+_NICE_LINE_RE = re.compile(
+    r"\b(?:preferred|preferably|a plus|nice[- ]to[- ]have|good[- ]to[- ]have|bonus|desired"
+    r"|desirable|ideally|an advantage|advantageous)\b", re.I)
+# Lines the stage 2 prompt forbids as gaps (location, on-site, hybrid, remote,
+# relocation, time zone, visa, sponsorship, work authorization) and eligibility
+# lines that name no skill or tool (checks, age, lifting, travel, hours).
+_DROP_RE = re.compile(
+    r"\b(?:locat(?:ed|ions?)|on[- ]?site|in[- ]office|in[- ]person|hybrid|remote(?:ly)?"
+    r"|relocat\w*|time[- ]?zones?|visas?|sponsor\w*|work(?:ing)? authori[sz]ation"
+    r"|authori[sz]ed to work|eligib\w* to work|right to work|citizen\w*|commut\w*"
+    r"|background (?:check|screen\w*|investigation)|drug (?:test\w*|screen\w*)"
+    r"|driver'?s licen[cs]e|lift(?:ing)? (?:up to )?\d+\s*(?:lbs?|pounds)|18 years"
+    r"|travel\w*|weekends?|overtime|shifts?)\b", re.I)
+
+
+def _plain(text: str) -> str:
+    """A line with its markdown taken out: links, escapes, emphasis, spacing."""
+    t = _LINK_RE.sub(r"\1", text)
+    t = _ESCAPE_RE.sub(r"\1", t)
+    t = t.replace("**", "").replace("__", "").replace("*", "").replace("`", "")
+    return " ".join(t.split()).strip(" ;,:.")
+
+
+def _cut(text: str, limit: int) -> str:
+    """`text` cut to `limit` characters at a word boundary, marked with "..."."""
+    if len(text) <= limit:
+        return text
+    head = text[:limit - 3]
+    space = head.rfind(" ")
+    if space >= limit // 2:
+        head = head[:space]
+    return head.rstrip(" ,;:.") + "..."
+
+
+def _heading_kind(heading: str) -> tuple[str, bool | None]:
+    """("skip" | "req" | "other", the heading's must cue)."""
+    h = _plain(heading).lower().replace("’", "'")
+    if _SKIP_HEAD_RE.search(h):
+        return "skip", None
+    if _NICE_HEAD_RE.search(h):
+        return "req", False
+    if _REQ_HEAD_RE.search(h):
+        return "req", (True if _MUST_HEAD_RE.search(h) else None)
+    return "other", None
+
+
+def _sections(desc: str) -> list[tuple[str, bool | None, list[str], list[str]]]:
+    """The description cut at its headings: (kind, must cue, bullet lines, plain lines)."""
+    sections: list[tuple[str, bool | None, list[str], list[str]]] = [("other", None, [], [])]
+    for line in desc.splitlines():
+        if not line.strip():
+            continue
+        head = _ATX_RE.match(line) or _BOLD_LINE_RE.match(line)
+        bullet = None if head else _BULLET_RE.match(line)
+        if head is None and bullet is None:
+            head = _COLON_LINE_RE.match(line)
+        if head is not None:
+            sections.append((*_heading_kind(head.group("text")), [], []))
+        elif bullet is not None:
+            sections[-1][2].append(bullet.group("text"))
+        else:
+            sections[-1][3].append(line.strip())
+    return sections
+
+
+def requirement_lines(desc: Any, limit: int = MAX_REQUIREMENT_LINES) -> list[Req]:
+    """Up to `limit` requirement lines from a job description's markdown (SC-3).
+
+    Bullet and numbered lines under requirement or qualification headings come
+    first (a heading with no bullets lends its short plain lines); when those
+    are fewer than MIN_REQUIREMENT_LINES, bullets from the other sections follow
+    in document order. Benefit, company and similar sections never count, and
+    lines about location, on-site, hybrid, remote, relocation, time zone, visa,
+    sponsorship or work authorization (and eligibility lines such as a
+    background check) are dropped. A bullet that ends in a colon introduces a
+    list and is dropped too; duplicates keep their first place."""
+    if not isinstance(desc, str) or not desc.strip():
+        return []
+    preferred: list[Req] = []
+    others: list[Req] = []
+    seen: set[str] = set()
+    for kind, must, bullets, plains in _sections(desc):
+        if kind == "skip":
+            continue
+        if kind == "req":
+            lines = bullets or [p for p in plains if len(p) <= PLAIN_LINE_CHARS]
+        else:
+            lines = bullets
+        for raw in lines:
+            if raw.rstrip(" *_").endswith(":"):
+                continue
+            text = _plain(raw)
+            key = text.casefold()
+            if sum(c.isalpha() for c in text) < 2 or key in seen or _DROP_RE.search(text):
+                continue
+            seen.add(key)
+            cue = False if _NICE_LINE_RE.search(text) else must
+            (preferred if kind == "req" else others).append(Req(_cut(text, REQ_TEXT_CHARS), cue))
+    picked = preferred if len(preferred) >= MIN_REQUIREMENT_LINES else preferred + others
+    return picked[:max(0, int(limit))]
+
+
+# --- SC-3: stage 2 (deep score 1-10, strengths, gaps, recommendation) -----------------------
+
+MET_CRITERIA = {
+    "true": ("The résumé or the candidate context shows it: the skill, tool, degree or "
+             "experience appears in the degree, the internship, a project or coursework."),
+    "false": "Nothing in the résumé or the candidate context shows it.",
+}
+MUST_CRITERIA = {
+    "true": "The job lists it as required: a must-have, minimum or basic qualification.",
+    "false": "The job lists it as preferred, a plus, a bonus or nice to have.",
+}
+RESPONSIBILITIES_LEVELS = (
+    "The candidate has done none of the kinds of work the responsibilities describe.",
+    "The candidate has done a few of the kinds of work the responsibilities describe.",
+    "The candidate has done about half of the kinds of work the responsibilities describe.",
+    "The candidate has done most of the kinds of work the responsibilities describe.",
+    "The candidate has done nearly all of the kinds of work the responsibilities describe.",
+)
+SENIORITY_LEVELS = (
+    "The job is for experienced or senior staff and would pass over a new graduate.",
+    "The job asks for more experience than a new graduate has; a strong junior could still "
+    "be considered.",
+    "The job suits early-career candidates with a year or two of experience; a new graduate "
+    "could compete.",
+    "The job is entry level or open to new graduates.",
+)
+DOMAIN_FIT_LEVELS = (
+    "The job's field has nothing to do with data, analytics or software.",
+    "The job is in a neighbouring technical field; a few skills carry over.",
+    "The job is in a related field; most skills carry over.",
+    "The job is in the candidate's own field: data science, machine learning, analytics or "
+    "software engineering.",
+)
+_FIT_KEYS = {"responsibilities": "responsibilities_fit", "seniority": "seniority_fit",
+             "domain": "domain_fit"}
+
+
+def stage2_questions(reqs: Sequence[Req]) -> dict[str, dict]:
+    """Two nouls per requirement line plus the three fits, asked in one request (SC-3)."""
+    qs: dict[str, dict] = {}
+    for i, req in enumerate(reqs):
+        text = _cut(req.text, REQ_TEXT_CHARS)
+        qs[f"req_{i}_met"] = {
+            "type": "noul",
+            "instructions": ("Do `resume` and `candidate` show that the candidate meets this "
+                             f"requirement of the job? Requirement: {text}"),
+            "criteria": dict(MET_CRITERIA),
+        }
+        qs[f"req_{i}_must"] = {
+            "type": "noul",
+            "instructions": ("Does `job` present this requirement as a must-have? "
+                             f"Requirement: {text}"),
+            "criteria": dict(MUST_CRITERIA),
+        }
+    qs["responsibilities_fit"] = {
+        "type": "score",
+        "instructions": ("How much of the day-to-day work that `job` describes has the "
+                         "candidate in `resume` done, in the internship, projects or coursework?"),
+        "criteria": list(RESPONSIBILITIES_LEVELS),
+    }
+    qs["seniority_fit"] = {
+        "type": "score",
+        "instructions": "How well does the seniority that `job` asks for suit `candidate`?",
+        "criteria": list(SENIORITY_LEVELS),
+    }
+    qs["domain_fit"] = {
+        "type": "score",
+        "instructions": ("How close is the field of `job` to the field the candidate trained "
+                         "and worked in, as `resume` shows?"),
+        "criteria": list(DOMAIN_FIT_LEVELS),
+    }
+    return qs
+
+
+def stage2_reads(answers: Mapping[str, Any], questions: Mapping[str, dict],
+                 lines: int) -> dict | None:
+    """The reads `compose_stage2` takes, or None when any answer is unusable."""
+    reads: dict[str, float | None] = {}
+    for i in range(lines):
+        for part in ("met", "must"):
+            reads[f"req_{i}_{part}"] = _noul_read(answers.get(f"req_{i}_{part}"))
+    for qid in _FIT_KEYS.values():
+        reads[qid] = _score_read(answers.get(qid), len(questions[qid]["criteria"]))
+    return None if any(v is None for v in reads.values()) else reads
+
+
+def _mean(values: list[float]) -> float | None:
+    return sum(values) / len(values) if values else None
+
+
+def _joined(lines: list[str]) -> str:
+    """Up to LIST_MAX lines, each cut to LINE_CHARS, joined with " | " as the LLM path joins them."""
+    return " | ".join(_cut(t.replace("|", "/"), LINE_CHARS) for t in lines[:LIST_MAX])
+
+
+def recommendation_for(deep: int) -> str:
+    if deep >= RECOMMEND_APPLY:
+        return "apply"
+    return "consider" if deep >= RECOMMEND_CONSIDER else "skip"
+
+
+def compose_stage2(reqs: Sequence[Req], reads: Mapping[str, Any]) -> dict:
+    """{"deep_score", "strengths", "gaps", "recommendation"} from the requirement
+    lines and Jev's reads (`req_{i}_met`, `req_{i}_must` 0-1 and the three fits
+    scaled 0-1). A line's code cue beats its `req_{i}_must` read. Pure: the
+    rules and constants at the top of the module."""
+    lines = []
+    for i, req in enumerate(reqs):
+        met = min(1.0, max(0.0, float(reads[f"req_{i}_met"])))
+        must = req.must if req.must is not None else (
+            float(reads.get(f"req_{i}_must", 1.0)) >= MUST_YES)
+        lines.append((req.text, met, must))
+    parts = {"must": _mean([met for _t, met, must in lines if must]),
+             "nice": _mean([met for _t, met, must in lines if not must])}
+    for part, qid in _FIT_KEYS.items():
+        value = reads.get(qid)
+        parts[part] = None if value is None else min(1.0, max(0.0, float(value)))
+    present = {k: v for k, v in parts.items() if v is not None}
+    total = sum(DEEP_WEIGHTS[k] for k in present)
+    mix = sum(DEEP_WEIGHTS[k] * v for k, v in present.items()) / total if total else 0.0
+    deep = max(1, min(10, math.floor(1 + 9 * mix + 0.5)))
+    strengths = ([t for t, met, must in lines if must and met >= MET_YES]
+                 + [t for t, met, must in lines if not must and met >= MET_YES])
+    gaps = [t for t, met, must in lines if must and met < MET_YES]
+    return {"deep_score": deep, "strengths": _joined(strengths), "gaps": _joined(gaps),
+            "recommendation": recommendation_for(deep)}
+
+
+def stage2(judge: Any, job: Any, resume: str) -> dict | None:
+    """{"deep_score", "strengths", "gaps", "recommendation"} for one job from one
+    Jev request, or None to run that job's stage 2 on the LLM path: no judge,
+    fewer than MIN_REQUIREMENT_LINES requirement lines, a request that failed or
+    did not fit, an answer that could not be read. `job` is as for `stage1`."""
+    if judge is None:
+        return None
+    md, _facts = _job_parts(job)
+    if not md.strip() or not str(resume or "").strip():
+        return None
+    reqs = requirement_lines(md)
+    if len(reqs) < MIN_REQUIREMENT_LINES:
+        return None
+    questions = stage2_questions(reqs)
+    state = fitted_state(md, resume, questions)
+    if state is None:
+        return None
+    answers = _ask(judge, state, questions)
+    reads = stage2_reads(answers, questions, len(reqs)) if answers is not None else None
+    if reads is None:
+        return None
+    return compose_stage2(reqs, reads)

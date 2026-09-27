@@ -1464,13 +1464,13 @@ class SettingsForm(QtWidgets.QWidget):
 
     @staticmethod
     def _switch_state(gate: settings.Field, allowed) -> str | None:
-        """"on" or "off" when the shut gate is a checkbox (the VM section's master
-        switch, or a bool `show_if` gate such as "Use Jev"), else None. A checkbox
-        has no value to type, so its hint names the state to put it in."""
-        if not allowed:
+        """"on" when the shut gate is a checkbox that opens on True (the VM
+        section's master switch, or a bool `show_if` gate such as "Use Jev"),
+        else None. A checkbox has no value to type, so its hint names the state
+        to put it in. Every bool gate in the schema opens on ("True",); one on
+        another value would read as that value, the way a dropdown gate does."""
+        if not allowed or (gate.type == "bool" and "True" in allowed):
             return "on"
-        if gate.type == "bool":
-            return "on" if "True" in allowed else "off"
         return None
 
     def _gate_condition(self, f: settings.Field) -> str | None:

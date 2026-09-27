@@ -1005,6 +1005,32 @@ def test_the_default_gate_is_jev_switch_with_a_saved_key_counted(monkeypatch):
     assert aqp._default_jev_blocked() == _JEV_OFF
 
 
+def test_a_gate_that_raises_leaves_start_on_for_the_drain_to_check(qtbot, tmp_path):
+    """SP1 review F: the panel never breaks on the gate. A probe that raises
+    reads as "can start", since the drain asks again before a judge, a claim
+    or a browser."""
+    def broken():
+        raise OSError("the config file is unreadable")
+    p = _panel(qtbot, _qfile(tmp_path), jev_blocked=broken)
+    assert p.start_run_btn.isEnabled()
+    assert "new terminal" in p.start_run_btn.toolTip().lower()
+    assert p.jev_notice.isHidden()
+    assert p.refresh_jev_state() == ""
+
+
+def test_the_default_gate_reads_a_broken_settings_backend_as_no_saved_key(monkeypatch):
+    """SP1 review F: an unreadable settings file counts as no saved key
+    (`jev_switch.key_saved`), so Start names the key instead of breaking."""
+    import settings
+
+    def broken():
+        raise OSError("the env file is unreadable")
+    monkeypatch.setattr(jev_switch, "sdk_installed", lambda: True)
+    monkeypatch.setattr(settings, "secret_status", broken)
+    assert aqp._default_jev_blocked() == (
+        "Auto-apply runs on Jev. Add the TypeSafe API key in Settings > Jev.")
+
+
 def test_a_test_judge_starts_a_run_with_no_key_or_sdk(qtbot, tmp_path, monkeypatch):
     """The fake and replay judges (the Auto-apply judge setting) need neither,
     so the suite runs keyless; the master switch still stops them."""

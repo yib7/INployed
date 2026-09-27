@@ -2824,6 +2824,21 @@ def test_a_bool_gate_is_phrased_as_a_switch_to_turn_on(qtbot, tmp_path):
     assert form._gate_condition(option) == f"{label} is on"
 
 
+def test_a_checkbox_gate_is_phrased_as_on_and_any_other_value_by_its_value():
+    """SP1 review F: every bool `show_if` gate in the schema opens on ("True",),
+    so "turn on" is the one checkbox state a hint names. A gate on another
+    value (none exists) would read as that value, the way a dropdown's does."""
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    bool_gates = {f.show_if[1] for f in settings.SETTINGS_SCHEMA
+                  if f.show_if and by_key[f.show_if[0]].type == "bool"}
+    assert bool_gates == {("True",)}
+    jev = by_key["jev_enabled"]
+    assert SettingsForm._switch_state(jev, ("True",)) == "on"
+    assert SettingsForm._switch_state(jev, ()) == "on"         # a section's master switch
+    assert SettingsForm._switch_state(jev, ("False",)) is None
+    assert SettingsForm._switch_state(by_key["provider"], ("claude",)) is None
+
+
 def test_the_six_claude_dropdowns_offer_opus_5_5(qtbot, tmp_path):
     """ST-4 through the real widgets: every Claude dropdown lists Opus 5.5 beside
     Opus 5, and the deep tier opens on Opus 5.5."""

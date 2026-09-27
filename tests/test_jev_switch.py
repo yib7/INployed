@@ -241,6 +241,19 @@ def test_the_key_value_never_reaches_a_reason_the_log_or_the_console(sdk, monkey
         assert secret not in text
 
 
+@pytest.mark.parametrize("error", [ImportError, ValueError])
+def test_a_find_spec_that_raises_reads_as_no_sdk(monkeypatch, error):
+    """find_spec raises ImportError when a parent package fails to import and
+    ValueError when a loaded module has no __spec__. Either reads as no SDK,
+    so the gate names the fix instead of breaking."""
+    def fail(name):
+        raise error("the probe failed")
+    monkeypatch.setattr(jev_switch.importlib.util, "find_spec", fail)
+    assert jev_switch.sdk_installed() is False
+    assert jev_switch.apply_blocked(config=ON, env=KEY) == \
+        "Auto-apply runs on Jev. Install typesafe-sdk (pip install -r requirements.txt)."
+
+
 def test_the_sdk_probe_asks_find_spec_for_typesafe_sdk(monkeypatch):
     asked = []
     monkeypatch.setattr(jev_switch.importlib.util, "find_spec",

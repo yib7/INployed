@@ -707,3 +707,64 @@ def test_asks_about_reads_the_subject_of_the_question_sentence(label, keys):
     asked = tuple(k for k in ("willing_to_relocate", "onsite_ok", "work_authorized",
                               "requires_sponsorship") if apply_facts.asks_about(k, label))
     assert asked == keys
+
+
+# --- the question a custom answer saves for a field (PR-6, PR-9) ---------------------
+
+@pytest.mark.parametrize("label, help_text, saved", [
+    ("Desired salary", "", "Desired salary"),
+    ("Desired salary", "Enter your expected base pay in USD",
+     "Desired salary Enter your expected base pay in USD"),
+    # each part without its trailing neutral sentences
+    ("Do you hold a CDL? (If not, please explain.)", "Commercial driver license",
+     "Do you hold a CDL? Commercial driver license"),
+    ("Years of Kafka *", "Please enter a number", "Years of Kafka"),
+    ("Will you travel?", "Required", "Will you travel?"),
+    ("How did you hear about us?\nPlease select one", "", "How did you hear about us?"),
+    # the characters in their plain forms, the spaces collapsed
+    ("Candidate’s   notice period", "", "Candidate's notice period"),
+    ("", "", ""),
+])
+def test_saved_question_is_the_label_then_the_help_without_neutral_tails(label, help_text,
+                                                                         saved):
+    assert apply_facts.saved_question(label, help_text) == saved
+
+
+@pytest.mark.parametrize("label, help_text", [
+    ("Do you hold a CDL? (If not, please explain.)", "Commercial driver license"),
+    ("Desired salary", "Enter your expected base pay in USD"),
+    ("Years of Kafka *", "Please enter a number"),
+    ("Will you travel? Yes/No", "Up to 25% of the time"),
+    ("Candidate’s notice period", "In weeks"),
+    ("Are you 18 or older?", ""),
+])
+def test_the_saved_question_matches_its_field_word_for_word(label, help_text):
+    """The own-question gate (`same_question`) reads the field as the saved
+    question next time. A plain join of the two would keep the label's
+    neutral tail in the middle and miss."""
+    assert apply_facts.same_question(label, help_text,
+                                     apply_facts.saved_question(label, help_text)) is True
+
+
+def test_a_plain_join_misses_the_gate_the_saved_question_passes():
+    label, help_text = "Do you hold a CDL? (If not, please explain.)", "Commercial driver license"
+    assert apply_facts.same_question(label, help_text, f"{label} {help_text}") is False
+    assert apply_facts.same_question(label, help_text,
+                                     apply_facts.saved_question(label, help_text)) is True
+
+
+@pytest.mark.parametrize("field_type, options, want", [
+    ("radio", ["Yes", "No"], "yes_no"),
+    ("select", ["yes", "no"], "yes_no"),
+    ("radio", ["Y", "N"], "yes_no"),
+    ("select", ["Yes", "No", "Prefer not to say"], "choice"),
+    ("select", ["LinkedIn", "Referral", "Other"], "choice"),
+    ("radio", ["Yes"], "choice"),
+    ("checkbox", ["checked"], "choice"),
+    ("number", [], "number"),
+    ("text", [], "text"),
+    ("textarea", [], "text"),
+    ("select", ["", "  "], "text"),
+])
+def test_answer_type_follows_the_widget(field_type, options, want):
+    assert apply_facts.answer_type(field_type, options) == want

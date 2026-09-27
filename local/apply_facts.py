@@ -1143,3 +1143,34 @@ def same_question(label: str, help_text: str, saved: str) -> bool:
     / no or number answer settles only its own saved question."""
     words = literal_words(label, help_text)
     return bool(words) and words == literal_words(saved)
+
+
+def saved_question(label: str, help_text: str = "") -> str:
+    """The question a custom answer saves for a field with this label and
+    help (PR-6, PR-9): the label, then the help when present, each without
+    its trailing neutral sentences (`_NEUTRAL_TAILS`) and in plain characters,
+    so `same_question` reads the field as this question word for word next
+    time. A plain join would keep a label's "(If not, please explain.)" in the
+    middle, where no tail is dropped."""
+    parts = (" ".join(_drop_neutral_tail(str(part or "").translate(_CHARACTERS)).split())
+             for part in (label, help_text))
+    return " ".join(part for part in parts if part)
+
+
+def answer_type(field_type: str, options=()) -> str:
+    """The answer type a field's widget takes (PR-6): yes / no options
+    ("Yes" and "No", `yes_no_form`) give "yes_no", a number box "number",
+    other options "choice", anything else "text". A custom answer holds text,
+    yes / no or a number (`apply_answers.CUSTOM_TYPES`), so the Add answer
+    dialog saves a "choice" as text with the options to pick from."""
+    shown = [str(o) for o in options or () if str(o).strip()]
+    if shown:
+        kinds = [_yes_or_no(o) for o in shown]
+        return "yes_no" if all(kinds) and set(kinds) == {"yes", "no"} else "choice"
+    return "number" if str(field_type or "") == "number" else "text"
+
+
+def _yes_or_no(value: str) -> str:
+    """"yes" or "no" for a yes or a no (`yes_no_form`), else ""."""
+    words = " ".join(_FORM_NORM.sub(" ", str(value or "").lower().replace("'", " ")).split())
+    return "yes" if words in YES_FORMS else "no" if words in NO_FORMS else ""

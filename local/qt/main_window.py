@@ -40,6 +40,7 @@ from jobsdata import (
     TRACKER_COLUMNS,
     drop_blocklisted,
     filter_high_unseen_with_count,
+    find_google_drive_app,
     gdrive_root_dir,
     load_files,
     load_followup_days,
@@ -86,8 +87,10 @@ PREVIEW_TABS = {"High Score (Unseen)", "All Jobs", "Tracker"}
 # not be read, so the empty state can say "this file is unreadable" instead of
 # "no jobs yet". Defaulted so the four-field construction older tests use, and
 # the bare (df, id_to_path) tuple _apply_frames also accepts, both still work.
-LoadedFrames = namedtuple("LoadedFrames", "df id_to_path stats stale_hours problems",
-                          defaults=((),))
+# `offline` carries (path, copy mtime or None, rows) for each Drive source whose
+# folder was gone (Google Drive not running), shown from its saved copy.
+LoadedFrames = namedtuple("LoadedFrames", "df id_to_path stats stale_hours problems offline",
+                          defaults=((), ()))
 
 # How long a cached resume-folder disk probe stays valid (audit P2-24: resume
 # folders can live under the Drive root, so per-selection stats must not hit the
@@ -262,6 +265,7 @@ class MainWindow(QtWidgets.QMainWindow):
                        "and score new jobs, then add your résumé data so jobs get "
                        "matched to you.")
     EMPTY_UNREADABLE_TITLE = "Your job file could not be read"
+    EMPTY_OFFLINE_TITLE = "Google Drive is not running"
 
     def _build_empty_hint(self) -> QtWidgets.QWidget:
         """First-run hint shown on the High Score tab when no jobs are loaded yet."""
@@ -315,6 +319,53 @@ class MainWindow(QtWidgets.QMainWindow):
             "then press Refresh; if it persists, delete the file below and let the "
             "next run re-sync it.\n\n" + "\n".join(lines))
 
+    def offline_message(self) -> str:
+        """What the Drive banner says while a Drive source's folder is gone.
+
+        Names the file by folder and file name only (the full path can carry the
+        user's name into screenshots), says how old the copy on screen is, and
+        says the dashboard recovers by itself once Drive runs."""
+        offline = tuple(getattr(self, "_offline", ()) or ())
+        if not offline:
+            return ""
+        lines = []
+        for path, saved_at, rows in offline:
+            name = str(Path(Path(path).parent.name, Path(path).name))
+            if saved_at is None:
+                lines.append(f"{name} is missing and its jobs are hidden.")
+            else:
+                dt = datetime.fromtimestamp(saved_at)
+                when = f"{dt:%b} {dt.day}, {dt.hour % 12 or 12}:{dt:%M %p}"
+                lines.append(f"{name} is missing, so this shows its saved copy from "
+                             f"{when} ({rows:,} jobs).")
+        return ("Google Drive for desktop is not running. " + " ".join(lines)
+                + " Start Google Drive and the dashboard switches back by itself.")
+
+    def _refresh_offline_banner(self) -> None:
+        banner = getattr(self, "offline_banner", None)
+        if banner is None:
+            return
+        text = self.offline_message()
+        self.offline_label.setText(text)
+        self.offline_start_btn.setVisible(bool(text) and find_google_drive_app() is not None)
+        if not text:
+            self.offline_start_btn.setEnabled(True)  # ready for the next outage
+        banner.setVisible(bool(text))
+
+    def _start_google_drive(self) -> None:
+        """Launch Google Drive for desktop; the 15s source poll reloads once its
+        drive mounts."""
+        exe = find_google_drive_app()
+        if exe is None:
+            return
+        try:
+            os.startfile(str(exe))  # detached; Windows only, like the app itself
+        except OSError as exc:
+            self._set_status(f"Could not start Google Drive: {errmsg.for_user(exc)}")
+            return
+        self.offline_start_btn.setEnabled(False)
+        self._set_status("Starting Google Drive. The jobs come back once it finishes loading.")
+
     def _refresh_empty_hint(self) -> None:
         """Swap the empty panel between its first-run and its unreadable wording."""
         title = getattr(self, "_empty_title", None)
@@ -322,9 +373,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if title is None or msg is None:
             return
         problem_text = self.unreadable_sources_message()
+        offline_text = self.offline_message()
         if problem_text:
             title.setText(self.EMPTY_UNREADABLE_TITLE)
             msg.setText(problem_text)
+        elif offline_text:
+            title.setText(self.EMPTY_OFFLINE_TITLE)
+            msg.setText(offline_text)
         else:
             title.setText(self.EMPTY_FIRST_RUN[0])
             msg.setText(self.EMPTY_FIRST_RUN[1])
@@ -479,6 +534,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.identity_strip = IdentityStrip()
         vbox.addWidget(self.identity_strip)
         self._last_run_label = ""  # freshness text shared with the status bar
+
+        # Shown while a Drive source's folder is gone (Google Drive not running):
+        # which file, how old the copy on screen is, and a button to start Drive.
+        self.offline_banner = QtWidgets.QFrame()
+        self.offline_banner.setProperty("callout", "warning")
+        ob = QtWidgets.QHBoxLayout(self.offline_banner)
+        self.offline_label = QtWidgets.QLabel("")
+        self.offline_label.setWordWrap(True)
+        ob.addWidget(self.offline_label, 1)
+        self.offline_start_btn = QtWidgets.QPushButton("Start Google Drive")
+        self.offline_start_btn.clicked.connect(self._start_google_drive)
+        ob.addWidget(self.offline_start_btn, 0, QtCore.Qt.AlignmentFlag.AlignTop)
+        vbox.addWidget(self.offline_banner)
+        self.offline_banner.setVisible(False)
 
         self.tabs = QtWidgets.QTabWidget()
         self.tabs.setDocumentMode(True)
@@ -729,7 +798,8 @@ class MainWindow(QtWidgets.QMainWindow):
         on every UI-thread repaint). Touches neither Qt nor the SQLite registry
         (both thread-affine) — those wait for _apply_frames."""
         problems: list[tuple[Path, str]] = []
-        df, id_to_path = load_files(self.csv_paths, problems=problems)
+        offline: list[tuple[Path, float | None, int]] = []
+        df, id_to_path = load_files(self.csv_paths, problems=problems, offline=offline)
         df = drop_blocklisted(df, load_local_blocklist(self.csv_paths))
         stats_df = None
         root = gdrive_root_dir(self.csv_paths)
@@ -740,7 +810,8 @@ class MainWindow(QtWidgets.QMainWindow):
             except (OSError, ValueError, pd.errors.ParserError):
                 stats_df = None
         stale_hours = int(settings.load().get("stale_after_hours", 36) or 36)
-        return LoadedFrames(df, id_to_path, stats_df, stale_hours, tuple(problems))
+        return LoadedFrames(df, id_to_path, stats_df, stale_hours, tuple(problems),
+                            tuple(offline))
 
     def _apply_frames(self, loaded) -> None:
         """The UI-thread half of a reload: overlay the seen registry, install the
@@ -750,10 +821,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self._stats_df = loaded.stats
             self._stale_hours = loaded.stale_hours
             self._load_problems = tuple(loaded.problems or ())
+            self._offline = tuple(loaded.offline or ())
         else:  # bare (df, id_to_path) — older callers/tests
             df, id_to_path = loaded
             self._load_problems = ()
+            self._offline = ()
         self._refresh_empty_hint()
+        self._refresh_offline_banner()
         self._disk_cache = {}   # resume-folder stats may be stale (audit P2-24)
         self.id_to_path = id_to_path
         if not df.empty:
@@ -778,6 +852,8 @@ class MainWindow(QtWidgets.QMainWindow):
         n_bad = len(getattr(self, "_load_problems", ()) or ())
         if n_bad:
             parts.append(f"{n_bad} source file(s) unreadable")
+        if getattr(self, "_offline", ()):
+            parts.append("Google Drive offline")
         return " · ".join(parts)
 
     def _update_identity_counts(self) -> None:

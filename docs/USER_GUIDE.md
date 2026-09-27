@@ -139,6 +139,16 @@ posting collapses to its newest copy the same way. Nothing is marked by this: th
 posting keeps its own status, and the repost simply stays out of the list until the
 window passes. When the filter hides anything, the status bar says so ("N reposts hidden").
 
+**When Google Drive is not running.** Your main job list lives in your Google Drive folder.
+If Google Drive for desktop stops, its drive letter disappears and that list with it. The
+dashboard keeps a copy of the list on this PC, refreshed each time it loads cleanly, and
+shows that copy while Drive is away. An amber banner at the top names the file, says how
+old the copy is and how many jobs it holds, and offers **Start Google Drive**; the status
+bar adds "Google Drive offline". Once Drive is running again the dashboard switches back
+by itself within about 15 seconds. Jobs you mark seen meanwhile are kept on this PC and
+carry over. A Drive folder that is there without the job list (a fresh setup) shows
+nothing from the copy.
+
 Right-click any job to work with it: **Set status →** marks it applied / interviewing /
 rejected / offer from any tab, and the menu also offers **Delete job** (any row) and
 **Edit job…** (for jobs you added by hand). An **Add job by hand** button (High Score /

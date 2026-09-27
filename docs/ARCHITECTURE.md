@@ -234,7 +234,10 @@ through the normal Drive sync. On the viewing side there is exactly one owner of
 local-runs fold: `app.py:_with_local_runs` appends `jobsdata.local_run_files()` to whatever
 sources it was launched with, so local runs show up immediately in EVERY entry point,
 including a watcher-launched window, and `load_files`' id-dedup keeps them from
-double-counting once the merged master syncs back down.
+double-counting once the merged master syncs back down. When Google Drive for desktop is not running the master's folder is gone, so
+`load_files` reads the local copy in `%LOCALAPPDATA%\linkedin_watcher\mirror\` (refreshed
+after every clean read of a source outside the repo, keyed by folder and file name) and
+keeps ids mapped to the Drive path; `MainWindow` shows an amber banner until Drive is back.
 
 ### VM cron pipeline: merge, scrape, score, prune, and retention
 The VM's `run_scraper.sh` (invoked by cron, on the schedule you set) orchestrates the job discovery and scoring

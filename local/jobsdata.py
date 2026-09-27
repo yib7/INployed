@@ -12,6 +12,7 @@ import html
 import logging
 import os
 import re
+import shutil
 import sys
 import tempfile
 import threading
@@ -227,8 +228,107 @@ def add_extracted_date(df: pd.DataFrame,
     return df
 
 
+# The master lives on Google Drive for desktop. When Drive is not running, its
+# whole drive letter is gone and the master with it, and load_files skips an
+# absent path without a word (that is also the first-run state): on 2026-09-26
+# the dashboard went from 29,933 jobs to the 17,360 local ones and said nothing.
+# So every clean read of a source outside the repo refreshes a local copy here,
+# and a source whose folder is gone loads from that copy.
+MIRROR_DIR = APPDATA / "mirror"
+
+
+def _outside_repo(p: Path) -> bool:
+    try:
+        Path(os.path.abspath(p)).relative_to(REPO_ROOT)
+    except ValueError:
+        return True
+    return False
+
+
+def mirror_path(p: Path) -> Path:
+    """Where the local copy of source `p` lives. Keyed by folder and file name, so
+    the same Drive folder mounted under another drive letter finds its copy."""
+    return MIRROR_DIR / f"{Path(p).parent.name}__{Path(p).name}"
+
+
+def _refresh_mirror(p: Path, before: os.stat_result) -> None:
+    """Copy source `p` to its mirror after it parsed cleanly. Best effort: a failed
+    copy keeps the previous one. `before` is the stat taken ahead of the read, so a
+    file Drive rewrote mid-read waits for the next load. copy2 keeps the mtime,
+    which is how an unchanged source skips the copy."""
+    dest = mirror_path(p)
+    try:
+        cur = dest.stat()
+        if cur.st_size == before.st_size and cur.st_mtime_ns == before.st_mtime_ns:
+            return
+    except OSError:
+        pass
+    tmp = None
+    try:
+        MIRROR_DIR.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=MIRROR_DIR, prefix=dest.name + ".", suffix=".tmp")
+        os.close(fd)
+        shutil.copy2(p, tmp)
+        after = os.stat(p)
+        if (after.st_size, after.st_mtime_ns) == (before.st_size, before.st_mtime_ns):
+            replace_with_retry(tmp, dest)
+            tmp = None
+    except OSError:
+        pass
+    finally:
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def _read_offline_copy(p: Path, offline: list | None) -> pd.DataFrame | None:
+    """The saved copy of source `p` when its folder is gone (Drive not running).
+
+    Only when the FOLDER is missing: a folder that exists without the file is a
+    fresh setup, or a master the user removed, and the copy must not bring it
+    back. Each fallback is noted in `offline` as (path, copy mtime or None, rows)
+    so the dashboard can say what it is showing."""
+    if not _outside_repo(p) or p.parent.exists():
+        return None
+    copy = mirror_path(p)
+    try:
+        saved_at = copy.stat().st_mtime
+        df = read_csv_gz(copy)
+        if "job_posting_id" not in df.columns:
+            raise ValueError("no job_posting_id column")
+    except Exception:  # noqa: BLE001 - a copy that cannot be read is no copy
+        if offline is not None:
+            offline.append((p, None, 0))
+        return None
+    if offline is not None:
+        offline.append((p, saved_at, len(df)))
+    return df
+
+
+def find_google_drive_app() -> Path | None:
+    """GoogleDriveFS.exe from Google Drive for desktop, newest version, or None.
+
+    Reads Program Files on the local disk (never the Drive mount), so it is safe
+    to call from the UI thread."""
+    if os.name != "nt":
+        return None
+    base = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Google" / "Drive File Stream"
+
+    def version(exe: Path) -> tuple:
+        return tuple(int(x) if x.isdigit() else 0 for x in exe.parent.name.split("."))
+
+    try:
+        found = [f for f in base.glob("*/GoogleDriveFS.exe") if f.is_file()]
+    except OSError:
+        return None
+    return max(found, key=version) if found else None
+
+
 def load_files(paths: list[Path], *,
                problems: list[tuple[Path, str]] | None = None,
+               offline: list[tuple[Path, float | None, int]] | None = None,
                ) -> tuple[pd.DataFrame, dict[str, Path]]:
     """Load and concatenate CSVs; return (df, id_to_source_path).
 
@@ -240,34 +340,43 @@ def load_files(paths: list[Path], *,
     Pass `problems` to collect `(path, reason)` for every source that EXISTS and
     was skipped anyway, so the caller can say which file and why. A path that is
     simply absent is not a problem — that is the normal first-run state.
+
+    A source outside the repo whose folder is gone (Google Drive not running)
+    loads from its saved copy instead, with ids still mapped to the Drive path so
+    is_seen writes keep targeting it. Pass `offline` to collect those sources.
     """
     frames: list[pd.DataFrame] = []
     id_to_path: dict[str, Path] = {}
     for p in paths:
+        before = None
         if not p.exists():
-            continue
-        try:
-            df = read_csv_gz(p)
-        except Exception as exc:  # noqa: BLE001 - see below; one bad file, not all of them
-            # Deliberately broad. `(OSError, ValueError)` misses the two
-            # commonest ways a synced .csv.gz breaks: a half-written gzip raises
-            # `zlib.error` and a cut-short one raises `EOFError`, and NEITHER is
-            # an OSError or a ValueError. A narrower clause lets the exception
-            # escape the per-file skip, unwind the whole loop, and take every
-            # other source down with it, so one truncated Drive master would stop
-            # the local scrape files loading too. The entire point of this loop is
-            # that one unreadable source costs only that source.
-            if problems is not None:
-                # errmsg.for_user, not str(exc): the caller renders this beside
-                # `Path(p).name` in the dashboard's empty panel, and an OSError
-                # carries the offending path in its OWN message -- so the panel
-                # carefully said "master.csv.gz" and then printed
-                # "[Errno 13] Permission denied: 'C:\\Users\\<name>\\...'" right
-                # after it. A locked master (Excel has it open, an AV scanner is
-                # mid-scan) is the ordinary way to see this, and the string ends
-                # up in screenshots and bug reports.
-                problems.append((p, errmsg.for_user(exc, with_type=True)))
-            continue
+            df = _read_offline_copy(p, offline)
+            if df is None:
+                continue
+        else:
+            try:
+                before = p.stat()
+                df = read_csv_gz(p)
+            except Exception as exc:  # noqa: BLE001 - see below; one bad file, not all of them
+                # Deliberately broad. `(OSError, ValueError)` misses the two
+                # commonest ways a synced .csv.gz breaks: a half-written gzip raises
+                # `zlib.error` and a cut-short one raises `EOFError`, and NEITHER is
+                # an OSError or a ValueError. A narrower clause lets the exception
+                # escape the per-file skip, unwind the whole loop, and take every
+                # other source down with it, so one truncated Drive master would stop
+                # the local scrape files loading too. The entire point of this loop is
+                # that one unreadable source costs only that source.
+                if problems is not None:
+                    # errmsg.for_user, not str(exc): the caller renders this beside
+                    # `Path(p).name` in the dashboard's empty panel, and an OSError
+                    # carries the offending path in its OWN message -- so the panel
+                    # carefully said "master.csv.gz" and then printed
+                    # "[Errno 13] Permission denied: 'C:\\Users\\<name>\\...'" right
+                    # after it. A locked master (Excel has it open, an AV scanner is
+                    # mid-scan) is the ordinary way to see this, and the string ends
+                    # up in screenshots and bug reports.
+                    problems.append((p, errmsg.for_user(exc, with_type=True)))
+                continue
         if "job_posting_id" not in df.columns:
             if problems is not None:
                 problems.append((p, "no job_posting_id column"))
@@ -275,6 +384,8 @@ def load_files(paths: list[Path], *,
         df["job_posting_id"] = df["job_posting_id"].astype(str)
         df["_source"] = str(p)
         frames.append(df)
+        if before is not None and len(df) and _outside_repo(p):
+            _refresh_mirror(p, before)
         for jid in df["job_posting_id"]:
             id_to_path.setdefault(jid, p)
     if not frames:

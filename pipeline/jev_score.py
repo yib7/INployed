@@ -238,8 +238,8 @@ def fitted_state(job_md: str, resume: str, questions: Mapping[str, Any]) -> dict
     return None
 
 
-# Error classes already reported this run: one line per class, never the message
-# (a service error can quote the request, which carries the résumé).
+# Error classes already reported this run, one line per class. The message itself
+# is never printed: a service error can quote the request, which carries the résumé.
 _WARNED: set[str] = set()
 
 

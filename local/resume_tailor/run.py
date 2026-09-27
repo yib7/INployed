@@ -1065,6 +1065,26 @@ def _faith_revert(ctx: PassCtx, gk: str, snapshot: Optional[Dict[str, str]],
     return "dropped"
 
 
+def _fresh_opener(ctx: PassCtx, gk: str, flagged_text: str) -> bool:
+    """At the verb dedupe, give `gk` an opener no other bullet or verbatim block uses,
+    through the dedupe's own in-category swap (`compose._pick_unused_verb`), never the
+    verb Jev flagged. The dedupe's revert target is the text it had to change, so its
+    opener repeats by construction. False when every palette verb is taken; the
+    faithful text then stays as it is."""
+    text = ctx.bullets[gk]
+    verb = compose.leading_verb(text)
+    used = ({compose.leading_verb(t) for other, t in ctx.bullets.items() if other != gk}
+            | set(ctx.reserved))
+    if not verb or verb not in used:
+        return True
+    repl = compose._pick_unused_verb(assets.active_verbs(), verb,
+                                     used | {verb, compose.leading_verb(flagged_text)})
+    if not repl:
+        return False
+    ctx.bullets[gk] = compose._swap_leading_verb(text, repl)
+    return True
+
+
 def _check_faithfulness(ctx: PassCtx, *, stage: str,
                         snapshot: Optional[Dict[str, str]] = None,
                         retrim: bool = False) -> Dict[str, str]:
@@ -1086,7 +1106,9 @@ def _check_faithfulness(ctx: PassCtx, *, stage: str,
          (the revert target at the dedupe itself is the text it had to change),
       5. passes a second faithfulness check; one that cannot run counts as flagged.
     Anything else leaves the bullet flagged, and `_faith_revert` puts it back to its
-    last passing version or drops it.
+    last passing version or drops it. At the verb dedupe a regrounded or reverted
+    bullet whose opener repeats gets the dedupe's swap (`_fresh_opener`); with no
+    verb left, the revert warning says "repeated opener".
 
     Each flagged bullet gets a note with its text, like the gate's rejected-text note;
     a revert or a drop warns, as the gate's do, and a repaired bullet gets a note.
@@ -1099,6 +1121,7 @@ def _check_faithfulness(ctx: PassCtx, *, stage: str,
                if finding and gk in ctx.bullets}
     if not flagged:
         return {}
+    flagged_texts = {gk: ctx.bullets[gk] for gk in flagged}
     rep = ctx.report
     if rep is not None:
         rep.stage(FAITHFULNESS_REGROUND_STAGE)
@@ -1149,6 +1172,8 @@ def _check_faithfulness(ctx: PassCtx, *, stage: str,
             verdict = None if recheck is None else recheck.get(gk)
             if verdict == "":
                 ctx.bullets[gk] = text
+                if stage == VERB_DEDUPE_STAGE:
+                    _fresh_opener(ctx, gk, flagged_texts[gk])
                 if rep is not None:
                     rep.note(KIND_GROUNDING,
                              f"[{stage}] faithfulness: regrounded bullet '{gk}' "
@@ -1159,6 +1184,9 @@ def _check_faithfulness(ctx: PassCtx, *, stage: str,
                 refuse(gk, f"the re-check still flags it: {verdict}", text)
     for gk, why in refused.items():
         action = _faith_revert(ctx, gk, snapshot, stage)
+        if (stage == VERB_DEDUPE_STAGE and gk in ctx.bullets
+                and not _fresh_opener(ctx, gk, flagged_texts[gk])):
+            why += "; repeated opener"
         if rep is not None:
             rep.warn(KIND_GROUNDING,
                      f"[{stage}] faithfulness: {action} bullet '{gk}' ({flagged[gk]}; {why})")

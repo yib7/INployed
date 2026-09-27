@@ -339,14 +339,64 @@ def test_a_reground_the_code_refuses_never_reaches_the_recheck(engine, monkeypat
         f"grounding: [underfull fill] faithfulness: reverted bullet 'h1' ({_INFLATION}; {why})"]
 
 
+# A palette where "wrote" and "led" share a category, so the swap's home category
+# holds the verb Jev flagged and one fresh verb.
+_PALETTE = {"Building": ["Wrote", "Led", "Authored"], "Helping": ["Supported"]}
+
+
 def test_at_the_verb_dedupe_a_shared_opener_is_no_reason_to_revert(engine, monkeypatch):
     """The dedupe's own revert target is the text it had to change, whose opener
-    collided already, so only the later passes hold a reground to a fresh opener."""
+    collided already, so only the later passes refuse a reground for its opener. At
+    the dedupe a shared opener on the regrounded text gets the dedupe's in-category
+    swap, never the verb Jev flagged."""
+    monkeypatch.setattr(assets, "active_verbs", lambda: {k: list(v) for k, v in _PALETTE.items()})
     shared = "Wrote the queue-based billing design with the team."
     _reask(monkeypatch, {"h1": shared})
     ctx = _ctx({"h1": _H1_LED, "h2": _H2}, judge=Flagger("led"))
     _check(ctx, stage=rt_run.VERB_DEDUPE_STAGE, snapshot={"h1": _H1, "h2": _H2})
-    assert ctx.bullets["h1"] == shared and ctx.report.warnings == []
+    assert ctx.bullets["h1"] == "Authored the queue-based billing design with the team."
+    assert ctx.report.warnings == []
+
+
+_WROTE_H1 = "Wrote the queue-based billing design with the team."
+
+
+def test_a_revert_at_the_verb_dedupe_gets_a_fresh_opener(engine, monkeypatch):
+    """The dedupe rewrote h1 because its opener repeated h2's, so the revert target
+    repeats it too. The revert takes the dedupe's in-category swap, skipping the verb
+    Jev flagged."""
+    monkeypatch.setattr(assets, "active_verbs", lambda: {k: list(v) for k, v in _PALETTE.items()})
+    _reask(monkeypatch, {})
+    ctx = _ctx({"h1": _H1_LED, "h2": _H2}, judge=Flagger("led"))
+    _check(ctx, stage=rt_run.VERB_DEDUPE_STAGE, snapshot={"h1": _WROTE_H1, "h2": _H2})
+    assert ctx.bullets == {"h1": "Authored the queue-based billing design with the team.",
+                           "h2": _H2}
+    assert ctx.report.warnings == [
+        f"grounding: [verb dedupe] faithfulness: reverted bullet 'h1' ({_INFLATION}; "
+        "the re-ask returned nothing)"]
+
+
+def test_a_revert_at_the_verb_dedupe_with_no_fresh_verb_names_the_repeat(engine, monkeypatch):
+    """With every palette verb taken, the revert keeps the faithful text and its
+    warning says the opener repeats."""
+    monkeypatch.setattr(assets, "active_verbs", lambda: {"Building": ["Wrote", "Led"]})
+    _reask(monkeypatch, {})
+    ctx = _ctx({"h1": _H1_LED, "h2": _H2}, judge=Flagger("led"))
+    _check(ctx, stage=rt_run.VERB_DEDUPE_STAGE, snapshot={"h1": _WROTE_H1, "h2": _H2})
+    assert ctx.bullets == {"h1": _WROTE_H1, "h2": _H2}
+    assert ctx.report.warnings == [
+        f"grounding: [verb dedupe] faithfulness: reverted bullet 'h1' ({_INFLATION}; "
+        "the re-ask returned nothing; repeated opener)"]
+
+
+def test_a_revert_after_the_verb_dedupe_keeps_its_opener(engine, monkeypatch):
+    """Only the dedupe's revert target is known to repeat an opener; a later pass's
+    snapshot has the dedupe's unique openers, so its revert is left as it was."""
+    monkeypatch.setattr(assets, "active_verbs", lambda: {k: list(v) for k, v in _PALETTE.items()})
+    _reask(monkeypatch, {})
+    ctx = _ctx({"h1": _H1_LED, "h2": _H2}, judge=Flagger("led"))
+    _check(ctx, stage="underfull fill", snapshot={"h1": _WROTE_H1, "h2": _H2}, retrim=True)
+    assert ctx.bullets["h1"] == _WROTE_H1
 
 
 def test_after_the_style_gate_a_reground_may_add_no_style_finding(engine, monkeypatch):

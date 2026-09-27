@@ -2816,8 +2816,9 @@ def test_probe_names_a_missing_key_in_the_start_buttons_words(hermetic_cli, monk
 def test_the_jev_gate_main_asks_passes_a_test_judge_with_no_key_or_sdk(monkeypatch, mode):
     """SP1 review I: the fake and replay judges need neither a key nor the SDK,
     so the gate `main` asks before `drain`, `one` and `probe --judge` passes
-    them while the master switch is on. `drain` and `one` go on to refuse them
-    as fixture-only (cycle 16); the suite drains on them through Runner."""
+    them while the master switch is on. `drain` and `one` refuse them as
+    fixture-only before they reach it (cycle 16); the suite drains on them
+    through Runner."""
     monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
     monkeypatch.setattr(jev_switch, "sdk_installed", lambda: False)
     assert jev_switch.master_on()                 # the sandbox's config file: on

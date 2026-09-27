@@ -705,7 +705,8 @@ def test_the_jobs_jev_cost_is_stored_and_the_total_printed(context, tmp_path, ca
     got = apply_queue.load()["jobs"][0]["difficulty"]
     assert spent["requests"] >= 1
     assert got["jev_usd"] == pytest.approx(spent["usd"])
-    assert f"Jev so far: {spent['requests']} request(s), ${spent['usd']:.4f}" in         capsys.readouterr().out
+    assert f"Jev so far: {spent['requests']} request(s), ${spent['usd']:.4f}" in \
+        capsys.readouterr().out
 
 
 class _Down:
@@ -735,3 +736,319 @@ def test_the_real_judge_reads_a_lever_form(context, tmp_path, jev_judge):
                               judge=jev_judge())
     assert why == "" and got["system"] == "lever"
     _only_entries(rec, [])
+
+
+# === SP6 fix round 1 =======================================================================
+
+UNKNOWN_JUDGE = ("Unknown Auto-apply judge 'typesaf'; tick \"Show advanced settings\" and pick "
+                 "typesafe in Settings > Auto-apply.")
+
+
+def test_the_gate_names_an_unknown_judge_before_the_jev_switch(sdk):
+    # `mode_gate` asks `jev_switch.mode_refusal`, as the drain does
+    for switch in (True, False):
+        cfg = dict(ON, jev_enabled=switch, auto_apply_jev_mode=" TypeSaf ")
+        for env in ({}, KEY):
+            assert aa.refusal(config=cfg, env=env) == UNKNOWN_JUDGE, (switch, env)
+    assert aa.mode_gate("typesaf") == jev_switch.mode_refusal("typesaf") == UNKNOWN_JUDGE
+    assert aa.mode_gate("fake") == jev_switch.FIXTURE_ONLY
+    assert aa.mode_gate("typesafe") == ""
+
+
+def test_main_refuses_an_unknown_judge_first(cli, capsys):
+    _write_switch(dict(ON, jev_enabled=False, auto_apply_jev_mode=" TypeSaf "))
+    assert aa.main(["--all"]) == 2
+    assert capsys.readouterr().err.strip() == UNKNOWN_JUDGE
+
+
+# --- one browser on the profile ----------------------------------------------------------------
+
+class _FakeCtx:
+    def __init__(self):
+        self.handlers = {}
+        self.pages = []
+
+    def on(self, name, fn):
+        self.handlers.setdefault(name, []).append(fn)
+
+    def close(self):
+        for fn in self.handlers.get("close", []):
+            fn(self)
+
+
+class _FakeChromium:
+    def __init__(self, fail=()):
+        self.calls, self.fail = [], set(fail)
+
+    def launch_persistent_context(self, user_data_dir, **kw):
+        self.calls.append((user_data_dir, kw))
+        if kw.get("channel") in self.fail:
+            raise RuntimeError("Chromium distribution 'chrome' is not found")
+        return _FakeCtx()
+
+
+def _fake_playwright(monkeypatch, chromium):
+    import types
+
+    import playwright.sync_api as sync_api
+    pw = types.SimpleNamespace(chromium=chromium)
+
+    class _Starter:
+        def __enter__(self):
+            return pw
+
+        def __exit__(self, *exc):
+            return False
+    monkeypatch.setattr(sync_api, "sync_playwright", lambda: _Starter())
+
+
+@pytest.fixture
+def browser_cli(cli, monkeypatch):
+    pytest.importorskip("playwright")
+    monkeypatch.setattr(jev, "get", lambda mode="": jev.FakeJev())
+    _write_switch(dict(ON, auto_apply_jev_mode="typesafe"))
+    return monkeypatch
+
+
+@pytest.mark.parametrize("holder", ["chrome", "sentinel"])
+def test_main_refuses_while_a_run_holds_the_profile_by_either_sign(browser_cli, capsys, holder):
+    from test_profile_lock import hold_chrome_lock, hold_sentinel
+    chromium = _FakeChromium()
+    _fake_playwright(browser_cli, chromium)
+    profile = aa.default_profile_dir()
+    release = hold_chrome_lock(profile) if holder == "chrome" else hold_sentinel(profile).release
+    try:
+        assert aa.main(["42"]) == 2
+    finally:
+        release()
+    assert capsys.readouterr().err.strip() == aa.PROFILE_BUSY
+    assert chromium.calls == []
+
+
+def test_main_holds_the_sentinel_while_it_checks(browser_cli):
+    import profile_lock
+    chromium = _FakeChromium()
+    _fake_playwright(browser_cli, chromium)
+    seen = []
+    browser_cli.setattr(aa, "run", lambda job_ids, **kw: seen.append(
+        profile_lock.sentinel_held(aa.default_profile_dir())) or 0)
+    assert aa.main(["42"]) == 0
+    assert seen == [True]                       # a drain started now sees the check
+    assert profile_lock.sentinel_held(aa.default_profile_dir()) is False
+
+
+def test_main_opens_chrome_alone_and_refuses_when_it_does_not_start(browser_cli, capsys):
+    # the bundled Chromium leaves no Chrome lock, so the check never opens
+    # the shared profile in it
+    chromium = _FakeChromium(fail={"chrome"})
+    _fake_playwright(browser_cli, chromium)
+    browser_cli.setattr(aa, "run", lambda *a, **kw: pytest.fail("the check ran"))
+    assert aa.main(["42"]) == 2
+    assert [kw.get("channel") for _, kw in chromium.calls] == ["chrome"]
+    assert capsys.readouterr().err.strip() == aa.CHROME_ONLY.format(why="RuntimeError")
+
+
+def test_main_refuses_when_a_browser_takes_the_profile_as_it_starts(browser_cli, capsys):
+    import profile_lock
+    from test_profile_lock import hold_sentinel
+    browser_cli.setattr(profile_lock, "HOLD_WAIT_S", 0)
+    browser_cli.setattr(aa, "profile_busy", lambda profile=None: False)   # free when asked
+    chromium = _FakeChromium()
+    _fake_playwright(browser_cli, chromium)
+    guard = hold_sentinel(aa.default_profile_dir())
+    try:
+        assert aa.main(["42"]) == 2
+    finally:
+        guard.release()
+    assert chromium.calls == []
+    assert capsys.readouterr().err.strip() == aa.PROFILE_BUSY
+
+
+def test_the_checks_busy_sentence_names_every_holder():
+    import profile_lock
+    assert aa.PROFILE_BUSY == profile_lock.BUSY_LEAD + " Check difficulty once that window closes."
+
+
+# --- minors 2 to 4 -----------------------------------------------------------------------------
+
+def test_the_age_shows_past_seven_whole_days():
+    now = datetime(2026, 9, 27, 12, 0)
+    assert aa.age_text("2026-09-19T16:00:00", now) == "7 days old"      # 7 days 20 hours
+    assert aa.age_text("2026-09-20T13:00:00", now) == ""                # 6 days 23 hours
+    assert aa.age_text("2026-09-20T12:00:00", now) == ""                # 7 days to the minute
+
+
+def test_a_required_upload_with_no_file_is_listed_with_the_questions():
+    from apply_form import Field, FormDigest
+    from apply_judge import FillPlan, PlannedField
+    digest = FormDigest("jobs.lever.co", "Apply", "", fields=[
+        Field(0, (0, "#cv"), "Resume/CV", "file", True, help="PDF only"),
+        Field(1, (0, "#why"), "Why this team?", "text", True)])
+    plan = FillPlan(fields=[
+        PlannedField(0, (0, "#cv"), "Resume/CV", True, None, "", None, 0.0, "skip"),
+        PlannedField(1, (0, "#why"), "Why this team?", True, None, "", None, 0.0, "skip")])
+    got = aa.tally(digest, plan, generate=False)
+    assert got.unanswered == 2 == len(got.questions)
+    assert got.questions[0] == {"label": "Resume/CV", "help": "PDF only", "options": [],
+                                "required": True, "type": "file"}
+    assert got.notes == []
+
+
+# --- minor 7: a check that reads nothing leaves a trace ------------------------------------
+
+def test_a_failed_check_is_recorded_and_the_earlier_result_kept(context, tmp_path, capsys):
+    import apply_queue
+    _queue_lever(context, tmp_path)
+    assert aa.run(["42"], judge=jev.FakeJev(), settings={}, context=context) == 0
+    earlier = dict(apply_queue.load()["jobs"][0]["difficulty"])
+    context.unroute("https://jobs.lever.co/**")
+    context.route("https://jobs.lever.co/**", lambda route: route.abort())
+    assert aa.run(["42"], judge=jev.FakeJev(), settings={}, context=context) == 0
+    got = apply_queue.load()["jobs"][0]["difficulty"]
+    assert {k: got[k] for k in earlier} == earlier
+    assert got["last_failed_why"].startswith("the posting did not load")
+    assert datetime.fromisoformat(got["last_failed_at"]) >= \
+        datetime.fromisoformat(earlier["checked_at"])
+    assert "not checked (the posting did not load" in capsys.readouterr().out
+
+
+def test_a_recheck_with_no_saved_page_is_recorded(walk_env):
+    import apply_queue
+    apply_queue.enqueue(apply_queue.new_entry("42", company="Fabrikam", title="Analyst"))
+    assert aa.run(["42"], recheck=True, judge=_NoJudge(), settings={}) == 0
+    got = apply_queue.load()["jobs"][0]["difficulty"]
+    assert got["last_failed_why"] == aa.NO_SAVED_PAGE and "score" not in got
+
+
+def test_the_failure_line_names_its_age():
+    now = datetime(2026, 9, 27, 12, 0)
+    assert aa.failed_text({"last_failed_at": "2026-09-27T09:00:00", "last_failed_why": "x",
+                           "score": 3}, now) == \
+        "Last check failed today: x. Showing the earlier result."
+    assert aa.failed_text({"last_failed_at": "2026-09-26T09:00:00", "last_failed_why": "x"},
+                          now) == "Last check failed yesterday: x."
+    assert aa.failed_text({"last_failed_at": "2026-09-20T09:00:00", "last_failed_why": "x"},
+                          now) == "Last check failed 7 days ago: x."
+    assert aa.failed_text({"score": 3}, now) == ""
+
+
+# --- minors 5 and 6: the walker decides as the drain does ----------------------------------
+
+class _ReadAs(jev.FakeJev):
+    """The fake, reading every page as STATE at CONF."""
+    STATE, CONF = "", 0.0
+
+    def judge(self, state, questions):
+        import apply_harness as h
+        out = super().judge(state, questions)
+        if "page_state" in out:
+            h.read_as(out, self.STATE, self.CONF, {self.STATE: self.CONF})
+        return out
+
+
+def _read_as(state, conf):
+    return type("J", (_ReadAs,), {"STATE": state, "CONF": conf})()
+
+
+def _loop_category(said: str):
+    import re
+    m = re.search(r"click the Apply entry \[(\d+)\]", said)
+    if m:
+        return "entry", int(m.group(1))
+    if "fill the page" in said:
+        return "form", None
+    if "the account step" in said or "the code step" in said:
+        return "account", None
+    if "wait for the person" in said:
+        return "check", None
+    assert "park:" in said, said
+    return "end", None
+
+
+def _walker_category(step):
+    if step.kind == "entry":
+        return "entry", step.button.n
+    if step.kind in ("form", "account", "check"):
+        return step.kind, None
+    assert step.kind in ("stop", "unread"), step
+    return "end", None
+
+
+@pytest.mark.parametrize("where, read", [
+    ("job_posting.html", None), ("ashby_steps.html", None), ("lever_single.html", None),
+    ("login_wall.html", None), ("captcha.html", None), ("confirmation.html", None),
+    ("review_with_next.html", None), ("code_gate.html", None), ("signup.html", None),
+    ("job_posting.html", ("other", 0.30)), ("job_posting.html", ("other", 0.55)),
+    ("job_posting.html", ("other", 0.9)), ("lever_single.html", ("login_wall", 0.90)),
+    ("captcha.html", ("other", 0.55)), ("signup.html", ("login_wall", 0.55)),
+    ("code_gate.html", ("login_wall", 0.35)),
+    # a low-confidence confirmation read: the drain leaves it to the unsure rule
+    ("lever_single.html", ("confirmation", 0.40)), ("confirmation.html", ("confirmation", 0.40)),
+    ("job_posting.html", ("confirmation", 0.40)),
+])
+def test_the_walker_decides_each_page_as_the_drains_loop_does(context, flow_server, tmp_path,
+                                                               where, read):
+    """The walker's decision and `apply_run.loop_step` (what `probe` says the
+    drain's loop does) over the same pages and reads, so a change to the
+    loop's order shows here."""
+    import io
+    import re
+
+    import apply_fill
+    import apply_run
+    judge = _read_as(*read) if read else jev.FakeJev()
+    url = flow_server.url(where)
+    page = context.new_page()
+    page.goto(url)
+    apply_fill.settle(page, 3)
+    out = io.StringIO()
+    apply_run._probe_page(page, 1, judge, out, park_mode=False)
+    said = re.search(r"  the loop would: (.*)", out.getvalue()).group(1)
+    page.close()
+    walker = aa._Walker(context, {"job_posting_id": "42", "company": "", "title": ""}, judge,
+                        __import__("logging").getLogger("test"))
+    walker.page = context.new_page()
+    walker.page.goto(url)
+    apply_fill.settle(walker.page, 3)
+    walker.hosts.add(apply_run._host(url))
+    step = walker._decision(walker._digest())
+    assert _walker_category(step) == _loop_category(said), (said, step)
+
+
+class _GetStarted(jev.FakeJev):
+    """The fake, reading the posting as a posting and its "Get started"
+    button as the Apply entry, as the live judge reads such a posting."""
+
+    def judge(self, state, questions):
+        import apply_harness as h
+        out = super().judge(state, questions)
+        title = str((state.get("page") or {}).get("title") or "")
+        if "page_state" in out and title.startswith("Data Analyst at"):
+            h.read_as(out, "job_posting", 0.95, {"job_posting": 0.95})
+        for b in state.get("buttons") or []:
+            qid = f"button_{b['n']}_role"
+            if qid in out and b.get("text") == "Get started":
+                out[qid] = jev.Answer(kind="choice", choice="apply_entry", confidence=0.95,
+                                      probabilities={"apply_entry": 0.95})
+        return out
+
+
+_GET_STARTED = ("<html><head><title>Data Analyst at Fabrikam</title></head><body><main>"
+                "<h1>Data Analyst</h1><p>Fabrikam is hiring a data analyst to build the "
+                "reports our teams read each week. You will own the pipeline and the "
+                "dashboards.</p><h2>Requirements</h2><ul><li>SQL</li><li>Python</li></ul>"
+                "<a class=\"btn\" href=\"/apply/form\">Get started</a></main></body></html>")
+
+
+def test_the_walker_follows_the_judges_apply_entry(context, tmp_path):
+    """Minor 6: the drain follows the judge's `apply_entry` on a posting
+    (`posting_entry_choice`), so the check does too. "Get started" has no
+    entry word (`apply_judge.entry_worded`), so the text match alone would
+    find no Apply and score the posting a dead end at 10."""
+    import apply_judge
+    assert not apply_judge.entry_worded("Get started")
+    _serve(context, {"/jobs/7": _GET_STARTED, "/apply/form": _form("lever_single.html")})
+    got, why, rec, _ = _check(context, tmp_path, f"{CAREERS}/jobs/7", judge=_GetStarted())
+    assert why == ""
+    assert got["score"] < aa.STOP_SCORE, (got["reasons"], rec.actions)
+    _only_entries(rec, ["Get started"])

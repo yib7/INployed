@@ -18,7 +18,7 @@ import re
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urljoin, urlsplit
@@ -29,6 +29,7 @@ if str(HERE) not in sys.path:
 
 import apply_queue  # noqa: E402
 import jev_switch  # noqa: E402
+import profile_lock  # noqa: E402
 
 # --- DF-3: the score -------------------------------------------------------------------
 
@@ -161,12 +162,12 @@ ENTRY_HOPS_MAX = 4          # Apply entry clicks per job: LinkedIn's, two job bo
 PAGES_MAX = ENTRY_HOPS_MAX + 2
 STALE_DAYS = 7              # a result older than this shows its age
 CACHE_FOLDER = "apply_assess"
-PROFILE_BUSY = ("The auto-apply browser is open: a run or a sign-in holds its profile. "
-                "Check difficulty once that window closes.")
+PROFILE_BUSY = profile_lock.BUSY_LEAD + " Check difficulty once that window closes."
+CHROME_ONLY = ("Google Chrome did not start ({why}). The difficulty check opens the auto-apply "
+               "profile in Chrome alone, so it stops here.")
 NO_SAVED_PAGE = "no saved page for this job; run Check difficulty first"
 ACCOUNT_NOTE = "An account step comes first: its questions show once you sign in"
 CHECK_NOTE = "A bot check comes first: its questions show once it clears"
-UPLOAD_NOTE = "A required upload ({label}) has no file in the job folder"
 MAILTO_NOTE = "The Apply opens an email to {address}"
 SSO_NOTE = "Its only way on signs in with {sites}; the run signs in with no other site"
 _UNSAFE = re.compile(r"[^A-Za-z0-9_.-]")
@@ -174,16 +175,17 @@ _UNSAFE = re.compile(r"[^A-Za-z0-9_.-]")
 
 def mode_gate(mode: str) -> str:
     """The judge mode's own refusal, asked before the Jev gate: a test
-    judge's (`jev_switch.fixture_only`), as the drain asks it. `mode` is a
-    mode `jev_switch.apply_mode` resolved."""
-    return jev_switch.fixture_only(mode)
+    judge's or a mode `jev.get` does not build (`jev_switch.mode_refusal`),
+    as the drain asks it. `mode` is a mode `jev_switch.apply_mode`
+    resolved."""
+    return jev_switch.mode_refusal(mode)
 
 
 def refusal(*, config: Mapping[str, Any] | None = None, env: Mapping[str, str] | None = None,
             mode: str | None = None, saved_key: bool = False) -> str:
     """Why `apply_assess.py` refuses to run, in the sentence it prints and the
     panel's Check difficulty shows; "" when it runs. A test judge first
-    (`mode_gate`, as the drain), then the Jev gate for the
+    or an unknown one (`mode_gate`, as the drain), then the Jev gate for the
     difficulty area (`jev_switch.difficulty_blocked`). `mode` is the judge mode
     (None reads the Auto-apply judge setting); `saved_key` counts a key saved in
     Settings, since the check's console loads `.env` itself."""
@@ -197,47 +199,17 @@ def _appdata() -> Path:
 
 
 def default_profile_dir() -> Path:
-    """The drain's persistent browser profile (`apply_run.default_profile_dir`),
+    """The drain's persistent browser profile (`profile_lock.default_profile_dir`),
     read here without importing the runner, so the dashboard stays light."""
-    return _appdata() / "linkedin_watcher" / "browser_profile"
+    return profile_lock.default_profile_dir()
 
 
 def profile_busy(profile_dir: Path | None = None) -> bool:
-    """Does a running browser hold the auto-apply profile (a drain, a sign-in,
-    or another check)? Chrome locks a profile to one browser: on Windows its
-    `lockfile` stays open for writing, so a second writer is refused; elsewhere
-    `SingletonLock` names the host and the process. A missing profile is
-    free."""
-    folder = Path(profile_dir) if profile_dir else default_profile_dir()
-    lock = folder / "lockfile"
-    if lock.exists():
-        try:
-            fd = os.open(str(lock), os.O_WRONLY)
-        except PermissionError:
-            return True
-        except OSError:
-            return False
-        os.close(fd)
-        return False
-    if os.name == "nt":
-        return False
-    try:
-        target = os.readlink(str(folder / "SingletonLock"))
-    except OSError:
-        return False
-    try:
-        pid = int(target.rsplit("-", 1)[-1])
-    except ValueError:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
+    """Does a browser hold the auto-apply profile (a drain, a sign-in, or
+    another check)? Chrome's own lock, or the sentinel every browser
+    `apply_run.launch_profile` opens takes (`profile_lock.busy`); a missing
+    profile is free."""
+    return profile_lock.busy(profile_dir)
 
 
 def cache_dir() -> Path:
@@ -303,11 +275,33 @@ def age_days(checked_at: str, now: datetime | None = None) -> int | None:
 
 
 def age_text(checked_at: str, now: datetime | None = None) -> str:
-    """"N days old" for a result older than STALE_DAYS, else ""."""
-    days = age_days(checked_at, now)
-    if days is None or days <= STALE_DAYS:
+    """"N days old" (whole days) for a result older than STALE_DAYS to the
+    second, else ""."""
+    try:
+        then = datetime.fromisoformat(str(checked_at))
+    except ValueError:
         return ""
-    return f"{days} days old"
+    now = now or datetime.now()
+    if then.tzinfo is not None and now.tzinfo is None:
+        then = then.replace(tzinfo=None)
+    if now - then <= timedelta(days=STALE_DAYS):
+        return ""
+    return f"{(now - then).days} days old"
+
+
+def failed_text(difficulty: Mapping[str, Any], now: datetime | None = None) -> str:
+    """The line for a check that read nothing (`apply_queue.FAILED_KEYS`):
+    "Last check failed <when>: <why>.", with "Showing the earlier result."
+    when a score from before stays; "" when the last check read its page."""
+    when = str(difficulty.get("last_failed_at") or "")
+    if not when:
+        return ""
+    days = age_days(when, now)
+    ago = ("today" if days == 0 else "yesterday" if days == 1
+           else f"{days} days ago" if days is not None else "")
+    why = str(difficulty.get("last_failed_why") or "no reason noted").rstrip(".")
+    line = f"Last check failed {ago}: {why}." if ago else f"Last check failed: {why}."
+    return line + (" Showing the earlier result." if difficulty.get("score") is not None else "")
 
 
 def system_for(url: str) -> str:
@@ -328,7 +322,13 @@ def past_runs(entries: list[Mapping[str, Any]], system: str, job_id: str = "") -
     """(runs that reached the end, runs that parked) among the queue's other
     jobs on `system` that the drain ran at least once: submitted and
     ready_to_submit reach the end, needs_human parked. (0, 0) for an unknown
-    system."""
+    system.
+
+    The queue is the one record of the drain's outcomes: the drain keeps no
+    run log of system and outcome beyond it (its per-job trace folders and
+    `apply_drain-*.md` reports are for reading), so a job the user removed,
+    or "Clear finished" dropped, no longer counts. Each entry counts once,
+    by its last outcome."""
     if not system:
         return 0, 0
     ends = parks = 0
@@ -340,6 +340,10 @@ def past_runs(entries: list[Mapping[str, Any]], system: str, job_id: str = "") -
         if own != system:
             continue
         status = str(e.get("status") or "")
+        # ready_to_submit reaches the end: the run filled every page up to
+        # the submit gate and stops there for park mode, a CAPTCHA checkbox
+        # or a submit that did not register, none of them a page it could
+        # not do (a park of its own is needs_human)
         if status in ("submitted", "ready_to_submit"):
             ends += 1
         elif status == "needs_human":
@@ -364,6 +368,23 @@ class Walk:
     notes: list[str] = field(default_factory=list)
     clicks: int = 0
     checked_at: str = ""
+
+
+@dataclass
+class Step:
+    """The walk's step on one page (`_Walker._decision`): "entry" (click
+    `button`), "form" (the first application page), "account" (an account
+    step or a code gate first), "check" (a bot check first), "stop" (scored
+    at once as `stop`) or "unread" (nothing to score; `note` says why). A
+    step from the page's kind carries it (`state`), with the digest and
+    facts it was read from."""
+    kind: str
+    state: str = ""
+    stop: str = ""
+    note: str = ""
+    button: Any = None
+    digest: Any = None
+    facts: Any = None
 
 
 class _Walker:
@@ -646,11 +667,52 @@ class _Walker:
         return answers, facts
 
     def _judged(self, digest) -> bool:
+        """The page's step (`_decision`), taken: the Apply entry clicked, the
+        form read, an account step or a bot check noted, or the walk's end."""
+        import apply_form
+        step = self._decision(digest)
+        if step.kind == "unread":
+            return self._unread(step.note)
+        if step.state:
+            self.walk.state = step.state
+            self.walk.url = str(self.page.url or "")
+            self.walk.system = self._system() or (
+                "linkedin" if self._on_linkedin() else "")
+        if step.kind == "stop":
+            return self._stop(step.stop, step.note)
+        if step.kind == "entry":
+            b = step.button
+            return self._click(apply_form.resolve(self.page, b.locator), b.text)
+        if step.kind == "form":
+            return self._form(step.digest, step.facts)
+        if step.kind == "account":
+            import ats_accounts
+            self.walk.account_wall = ats_accounts.lookup(str(self.page.url or "")) is None
+            self.walk.notes.append(ACCOUNT_NOTE)
+            return True
+        self.walk.captcha = True            # "check"
+        self.walk.notes.append(CHECK_NOTE)
+        return True
+
+    def _on_linkedin(self) -> bool:
+        import apply_linkedin
+        return apply_linkedin.is_linkedin(str(self.page.url or ""))
+
+    def _decision(self, digest) -> Step:
+        """What the drain's loop does with this page (`apply_run._JobRun._loop`,
+        in the order `apply_run.loop_step` describes it), as the walk's step:
+        the page read (a read under the floor read once more after a settle),
+        a job the site says was applied to, a sign-in read of form boxes
+        taken as the form, a confirmation read before any submit (one under
+        the floor goes to the unsure rule, as the drain's does), a form step
+        on LinkedIn, a sign-in with another site as the only way on, the
+        unsure and `other` rules, the emailed-link remap, then the page's
+        kind. A posting's Apply entry is chosen over the buttons' mapped
+        roles (`_posting_plan`), as the drain chooses it."""
         import apply_fill
         import apply_judge
         import apply_linkedin
         import apply_run
-        from apply_judge import FillPlan
         answers, facts = self._read(digest)
         state, conf = apply_judge.read_page_state(answers)
         if conf < apply_judge.PAGE_STATE_MIN_CONF:
@@ -660,70 +722,86 @@ class _Walker:
             state, conf = apply_judge.read_page_state(answers)
         url = str(self.page.url or "")
         on_linkedin = apply_linkedin.is_linkedin(url)
+        easy = Step("stop", stop="easy_apply")
         if apply_judge.already_applied(answers, facts, state):
-            return self._unread("the site says this job was applied to before")
+            return Step("unread", note="the site says this job was applied to before")
         if apply_run.remaps_to_form(state, digest, url):
             state = "application_form"
+        unsure = conf < apply_judge.PAGE_STATE_MIN_CONF
         if state == "confirmation" and not facts.link_sent:
             step, detail, then = apply_run.confirmation_step(digest, answers, conf,
                                                              submit_clicked=False)
-            if step != "go_on":
-                return self._unread("the page reads as a confirmation before any submit; "
-                                    "check whether this job was applied to before")
-            state, conf = detail, then
+            if step == "go_on":
+                state, conf = detail, then
+                unsure = conf < apply_judge.PAGE_STATE_MIN_CONF
+            elif not (step == "park" and unsure):
+                return Step("unread", note="the page reads as a confirmation before any "
+                                           "submit; check whether this job was applied to "
+                                           "before")
         if on_linkedin and state in apply_run._LINKEDIN_FORM_STATES:
-            return self._stop("easy_apply")
+            return easy
         if state != "confirmation" and not on_linkedin:
             sites = apply_run.sso_only(digest)
             if sites:
-                return self._stop("dead", SSO_NOTE.format(sites=", ".join(sites)))
-        if conf < apply_judge.PAGE_STATE_MIN_CONF:
-            step, _how = apply_run.unsure_step(state, digest, facts)
-            if step is None:
-                return self._unread(f"unsure what this page is ({state}, {conf:.2f})")
-            state = step
+                return Step("stop", stop="dead", note=SSO_NOTE.format(sites=", ".join(sites)))
+        if unsure:
+            settled, _how = apply_run.unsure_step(state, digest, facts)
+            if settled is None:
+                return Step("unread", note=f"unsure what this page is ({state}, {conf:.2f})")
+            state = settled
         elif state == "other":
             state = apply_run.other_step(facts, digest) or state
         if on_linkedin and state in apply_run._LINKEDIN_FORM_STATES:
-            return self._stop("easy_apply")
+            return easy
         if state in apply_run._LINK_REMAPS and facts.link_sent:
             state = "code_gate"
-        self.walk.state = state
-        self.walk.url = url
-        self.walk.system = self._system() or ("linkedin" if on_linkedin else "")
+        found = dict(state=state, digest=digest, facts=facts)
         if state == "job_posting":
+            plan = self._posting_plan(digest, answers)
             if on_linkedin:
-                return self._stop("dead", apply_linkedin.NO_APPLY_REASON)
-            plan = FillPlan()
+                if digest.fields and apply_run.posting_entry_choice(digest, plan)[0] is None:
+                    return Step("stop", stop="easy_apply", **found)
+                return Step("stop", stop="dead", note=apply_linkedin.NO_APPLY_REASON, **found)
             apart, unclassified, _scan = apply_run.posting_context(self.page, digest, plan)
             n, _how = apply_run.posting_entry_choice(digest, plan, apart=apart,
                                                      unclassified=unclassified)
-            if n is None:
-                if digest.fields:
-                    return self._form(digest, facts)
-                return self._stop("dead", "No Apply button on the posting")
-            import apply_form
-            button = next(b for b in digest.buttons if b.n == n)
-            return self._click(apply_form.resolve(self.page, button.locator), button.text)
+            if n is not None:
+                return Step("entry", button=next(b for b in digest.buttons if b.n == n),
+                            **found)
+            if digest.fields:
+                return Step("form", **found)
+            return Step("stop", stop="dead", note="No Apply button on the posting", **found)
         if state in ("application_form", "review_page"):
-            return self._form(digest, facts)
+            return Step("form", **found)
         if state in ("login_wall", "signup_form", "code_gate"):
-            import ats_accounts
-            self.walk.account_wall = ats_accounts.lookup(url) is None
-            self.walk.notes.append(ACCOUNT_NOTE)
-            return True
+            return Step("account", **found)
         if state == "captcha_or_bot_check":
-            self.walk.captcha = True
-            self.walk.notes.append(CHECK_NOTE)
-            return True
+            return Step("check", **found)
         if state == "payment_request":
-            return self._stop("payment")
+            return Step("stop", stop="payment", **found)
         if apply_judge.closed_posting(answers, facts, state):
-            return self._stop("closed")
+            return Step("stop", stop="closed", **found)
         if state == "error_or_dead":
-            return self._stop("dead")
-        return self._unread(f"the page reads as none of the kinds the check knows "
-                            f"({state}, {conf:.2f})")
+            return Step("stop", stop="dead", **found)
+        return Step("unread", note=f"the page reads as none of the kinds the check knows "
+                                   f"({state}, {conf:.2f})")
+
+    def _posting_plan(self, digest, answers):
+        """The posting's plan with its buttons' roles mapped, as the drain
+        maps a posting (`apply_run._JobRun._map`: the buttons alone on a
+        posting with no field, the fields too on one with fields), over an
+        empty fact catalog: the walk fills nothing, so only the roles count."""
+        import apply_facts
+        import apply_judge
+        catalog = apply_facts.FactCatalog([])
+        merged = dict(answers)
+        requests = [(st, q) for st, q in apply_judge.page_requests(
+            digest, catalog, dict(self.entry), fields=bool(digest.fields)) if q]
+        if requests:
+            merged.update(apply_judge.merge_answers([
+                {k: v for k, v in self.judge.judge(st, q).items() if k in q}
+                for st, q in requests]))
+        return apply_judge.plan(digest, catalog, merged)
 
     def _system(self) -> str:
         """The application system: the page's host, else a frame's (an
@@ -865,9 +943,10 @@ class Tally:
 def tally(digest, plan, *, generate: bool) -> Tally:
     """Count what the screening plan leaves to the user, over the page's
     required fields: a question the answers cannot fill (listed with its
-    label, help, options and type), an essay the drafter would write (with
-    `generate` on; else it is a question), a sensitive field, a password box
-    (an account made inside the form) and an upload with no file (a note)."""
+    label, help, options and type; an upload with no file in the job folder
+    is one, of type "file"), an essay the drafter would write (with
+    `generate` on; else it is a question), a sensitive field and a password
+    box (an account made inside the form)."""
     import apply_facts
     import apply_judge
     by_n = {f.n: f for f in digest.fields}
@@ -890,12 +969,10 @@ def tally(digest, plan, *, generate: bool) -> Tally:
             out.essays += 1
             continue
         out.unanswered += 1
-        if f.type == "file":
-            out.notes.append(UPLOAD_NOTE.format(label=f.label))
-            continue
+        kind = "file" if f.type == "file" else apply_facts.answer_type(f.type, f.options)
         out.questions.append({"label": f.label, "help": f.help or "",
                               "options": list(f.options or []), "required": True,
-                              "type": apply_facts.answer_type(f.type, f.options)})
+                              "type": kind})
     return out
 
 
@@ -1073,6 +1150,11 @@ def run(job_ids: list[str], *, all_queued: bool = False, recheck: bool = False, 
         running = f"Jev so far: {counted.requests} request(s), ${total:.4f}"
         if result is None:
             _say(f"[{i}/{len(chosen)}] {name}: not checked ({why}). {running}")
+            try:
+                # the earlier result stays; the panel shows the failure beside it
+                apply_queue.note_difficulty_failure(jid, why, path=queue_path)
+            except apply_queue.UnknownJobError:
+                pass
             continue
         result["jev_usd"] = round(spent, 6)
         try:
@@ -1087,7 +1169,13 @@ def run(job_ids: list[str], *, all_queued: bool = False, recheck: bool = False, 
 def main(argv: list[str] | None = None, *, context=None) -> int:
     """`python local/apply_assess.py [--all | <id> ...] [--recheck]`. Exit 0,
     1 on an error the check could not go past, 2 when it refuses (Jev off,
-    a test judge, the profile in use, nothing to check)."""
+    a test judge or an unknown one, the profile in use, Chrome not starting,
+    nothing to check).
+
+    The browser is the auto-apply profile in Google Chrome alone
+    (`launch_profile(..., fallback=False)`): the bundled Chromium leaves no
+    Chrome lock on the profile. The sentinel `launch_profile` takes stays
+    held while the check runs, so a drain started meanwhile refuses."""
     import argparse
     import apply_run
     import jev
@@ -1137,9 +1225,16 @@ def main(argv: list[str] | None = None, *, context=None) -> int:
     from playwright.sync_api import sync_playwright
     with sync_playwright() as pw:
         profile.mkdir(parents=True, exist_ok=True)
-        ctx = apply_run.launch_profile(
-            pw, profile, headless=bool(settings.get("auto_apply_headless")) or args.headless,
-            log=log)
+        try:
+            ctx = apply_run.launch_profile(
+                pw, profile, headless=bool(settings.get("auto_apply_headless")) or args.headless,
+                log=log, fallback=False)
+        except profile_lock.ProfileBusy:
+            print(PROFILE_BUSY, file=sys.stderr)        # a browser opened it after the read
+            return 2
+        except Exception as e:      # noqa: BLE001  (Chrome absent or broken: no fallback)
+            print(CHROME_ONLY.format(why=type(e).__name__), file=sys.stderr)
+            return 2
         try:
             return run(list(args.job_ids), context=ctx, **common)
         finally:

@@ -1,20 +1,18 @@
 """The "Add a job by hand" form (PySide6 / Qt).
 
-A thin shell over `manual_add` — it collects input, validates the required fields for
-the chosen action, then hands the values back to the caller (MainWindow) which runs
-the parse -> score -> (tailor) -> append pipeline on a worker thread. All the real
-logic lives in the toolkit-agnostic `manual_add` module (project convention:
-keep Qt-agnostic logic out of widgets).
+A thin shell over `manual_add` — it collects input, validates that every field is
+present, then hands the values back to the caller (MainWindow) which runs the
+parse -> tailor -> append pipeline on a worker thread. All the real logic lives in
+the toolkit-agnostic `manual_add` module (project convention: keep Qt-agnostic
+logic out of widgets).
 
-Two actions on add:
-  * "Just score"     — score the résumé against the job and add it to the dataset
-                       (no tailoring, no cover-letter prompt). Requires title,
-                       company, and a pasted job description (URL optional).
-  * "Score + tailor" — also runs the résumé engine. Requires all four fields
-                       (URL, title, company, description) so tailoring never breaks.
+The user already chose this job (SP5/MA-1), so there is one action: "Add and
+tailor" saves the row and runs the résumé engine on it, no scoring involved.
+That needs all four fields (URL, title, company, description), so tailoring
+never breaks on a thin record.
 
 `edit_mode=True` reuses the same form to fix an existing job's fields (all four
-required); it does NOT re-score or re-tailor — those stay on the table actions.
+required too); it does not re-tailor itself, that stays on the table actions.
 """
 from __future__ import annotations
 
@@ -22,14 +20,13 @@ from PySide6 import QtWidgets
 
 
 class ManualAddDialog(QtWidgets.QDialog):
-    """Collects manual job input. `values()` returns the entered fields + chosen mode."""
+    """Collects manual job input. `values()` returns the entered fields."""
 
     def __init__(self, parent=None, *, edit_mode: bool = False,
                  initial: dict | None = None) -> None:
         super().__init__(parent)
         self._edit_mode = edit_mode
         self._initial = initial or {}
-        self._do_tailor = False
         self.setWindowTitle("Edit job" if edit_mode else "Add a job by hand")
         self.setMinimumWidth(520)
         self._build()
@@ -45,9 +42,8 @@ class ManualAddDialog(QtWidgets.QDialog):
         else:
             intro_text = (
                 "Add a job by hand (for a posting the automatic search didn't surface). "
-                "Paste the job description (sites usually block fetching) or give a URL "
-                "and we'll try a free fetch. It's then scored, and optionally tailored, the "
-                "same way discovered jobs are.")
+                "Fill in the URL and paste the job description; it's saved and tailored "
+                "right away, the same résumé engine discovered jobs use.")
         intro = QtWidgets.QLabel(intro_text)
         intro.setWordWrap(True)
         intro.setProperty("muted", True)
@@ -78,23 +74,20 @@ class ManualAddDialog(QtWidgets.QDialog):
                                   QtWidgets.QDialogButtonBox.ButtonRole.AcceptRole)
             save.setProperty("accent", True)
             save.setDefault(True)
-            save.clicked.connect(lambda: self._on_accept(do_tailor=False))
+            save.clicked.connect(self._on_accept)
         else:
-            self._score_btn = btns.addButton(
-                "Just score", QtWidgets.QDialogButtonBox.ButtonRole.AcceptRole)
-            self._score_btn.clicked.connect(lambda: self._on_accept(do_tailor=False))
             self._tailor_btn = btns.addButton(
-                "Score + tailor", QtWidgets.QDialogButtonBox.ButtonRole.AcceptRole)
+                "Add and tailor", QtWidgets.QDialogButtonBox.ButtonRole.AcceptRole)
             self._tailor_btn.setProperty("accent", True)
             self._tailor_btn.setDefault(True)
-            self._tailor_btn.clicked.connect(lambda: self._on_accept(do_tailor=True))
+            self._tailor_btn.clicked.connect(self._on_accept)
         btns.rejected.connect(self.reject)
         v.addWidget(btns)
 
-    def _on_accept(self, *, do_tailor: bool) -> None:
-        """Validate the fields required for this action, then accept. URL is required
-        for tailoring (and for an edit) so the tailored résumé/links are complete; for
-        a plain score it's optional."""
+    def _on_accept(self) -> None:
+        """Every field is required: a save (edit mode) or an add-and-tailor both
+        need title, company, description and URL so tailoring never breaks on a
+        thin record (MA-5: the intro text no longer implies a URL alone will do)."""
         missing: list[str] = []
         if not self.title.text().strip():
             missing.append("job title")
@@ -102,22 +95,20 @@ class ManualAddDialog(QtWidgets.QDialog):
             missing.append("company")
         if not self.jd.toPlainText().strip():
             missing.append("job description")
-        if (do_tailor or self._edit_mode) and not self.url.text().strip():
+        if not self.url.text().strip():
             missing.append("job URL")
         if missing:
             QtWidgets.QMessageBox.warning(
                 self, self.windowTitle(),
                 "Please fill in: " + ", ".join(missing) + ".")
             return
-        self._do_tailor = do_tailor
         self.accept()
 
     def values(self) -> dict:
-        """The entered fields + chosen mode, ready for `manual_add.add_manual_job`."""
+        """The entered fields, ready for `manual_add.add_manual_job`."""
         return {
             "jd_text": self.jd.toPlainText().strip(),
             "url": self.url.text().strip(),
             "title": self.title.text().strip(),
             "company": self.company.text().strip(),
-            "do_tailor": self._do_tailor,
         }

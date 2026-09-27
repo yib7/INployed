@@ -1006,6 +1006,53 @@ def test_jev_calls_run_in_worker_threads_under_their_own_semaphore(monkeypatch):
     assert live["threads"] == {False}
 
 
+def test_a_jev_request_leaves_the_default_executor_to_the_llm_calls(monkeypatch):
+    """A Jev request, retry sleeps included, holds one of the run's own worker
+    threads, so ClaudePool's calls (asyncio.to_thread, the default executor)
+    never wait behind it."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    sj = _sj()
+    started, release = threading.Event(), threading.Event()
+    names = []
+
+    def held_stage1(judge, job, resume):
+        names.append(threading.current_thread().name)
+        started.set()
+        release.wait(timeout=10)            # a retry sleep in progress
+        return {"score": 4, "reason": "r"}
+
+    monkeypatch.setattr(jev_score, "stage1", held_stage1)
+
+    async def go():
+        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=1))
+        run = sj.JevRun(ScriptedJudge())
+        jev_task = asyncio.ensure_future(run.ask(asyncio.Semaphore(1), 1, {"md": "x"}, RESUME))
+        try:
+            for _ in range(500):
+                if started.is_set():
+                    break
+                await asyncio.sleep(0.01)
+            llm = await asyncio.wait_for(asyncio.to_thread(lambda: "llm answer"), timeout=2)
+        finally:
+            release.set()
+        got = await jev_task
+        run.close()
+        return llm, got
+
+    assert asyncio.run(go()) == ("llm answer", {"score": 4, "reason": "r"})
+    assert names and names[0].startswith("jev")
+
+
+def test_main_lets_the_jev_worker_threads_go_once_the_run_is_done(monkeypatch):
+    sj = _sj()
+    closed = []
+    monkeypatch.setattr(sj.JevRun, "close", lambda self: closed.append(self))
+    seen = _main_stubs(monkeypatch, sj, ScriptedJudge())
+    asyncio.run(sj.main())
+    assert closed == [seen["rescore_jev"]]
+
+
 def test_jev_on_without_an_llm_provider_keeps_error_rows_and_scores_only(monkeypatch):
     sj = _sj()
     monkeypatch.setattr(jev_score, "_WARNED", set())

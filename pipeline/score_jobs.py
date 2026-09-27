@@ -25,6 +25,7 @@ import re
 import sys
 import tempfile
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -665,8 +666,10 @@ def make_jev_judge():
     return judge
 
 
-# SC-5: Jev requests in flight at once. They run in worker threads
-# (asyncio.to_thread) under their own semaphore, beside the LLM stages' own.
+# SC-5: Jev requests in flight at once. They run on the run's own worker threads
+# (JevRun's executor, this many) under their own semaphore, beside the LLM
+# stages' own, so a Jev retry sleep never holds a worker of the default executor
+# that ClaudePool's calls (asyncio.to_thread) take.
 JEV_CONCURRENCY = 8
 # Stage 1's row when Jev could not score a job and there is no LLM provider: an
 # ERROR row, so the rescore pass retries it on a later run.
@@ -679,7 +682,9 @@ class JevRun:
     jobs whose stage Jev composed (`scored`) and those it handed to the LLM
     path (`fallback`); the request count and spend are `jev.usage()` since the
     run began. Once the judge's breaker opens (`jev.Guarded.down`) no further
-    request is made and the outage is reported once."""
+    request is made and the outage is reported once. Its requests run on its
+    own worker threads (`JEV_CONCURRENCY`), built on the first request and let
+    go by `close()`."""
 
     def __init__(self, judge=None):
         self.judge = judge
@@ -689,6 +694,7 @@ class JevRun:
         self.scores_only = 0        # stage 2 skipped: Jev could not and no LLM provider
         self._outage_noted = False
         self._raised: set[str] = set()
+        self._workers: ThreadPoolExecutor | None = None
         self._start = self._usage()
 
     @property
@@ -703,9 +709,22 @@ class JevRun:
     def _down(self) -> str:
         return str(getattr(self.judge, "down", "") or "")
 
+    def _executor(self) -> ThreadPoolExecutor:
+        if self._workers is None:
+            self._workers = ThreadPoolExecutor(max_workers=max(1, JEV_CONCURRENCY),
+                                               thread_name_prefix="jev")
+        return self._workers
+
+    def close(self) -> None:
+        """Let the run's Jev worker threads go; main calls it once the run is done."""
+        if self._workers is not None:
+            self._workers.shutdown(wait=False, cancel_futures=True)
+            self._workers = None
+
     async def ask(self, sem: asyncio.Semaphore, stage: int, job, resume: str):
-        """Stage `stage` (1 or 2: jev_score.stage1 or stage2) for one job in a
-        worker thread under `sem`: its result, or None for the LLM path."""
+        """Stage `stage` (1 or 2: jev_score.stage1 or stage2) for one job on the
+        run's own worker threads under `sem`: its result, or None for the LLM
+        path."""
         if self.judge is None:
             return None
         stage_fn = jev_score.stage1 if stage == 1 else jev_score.stage2
@@ -714,7 +733,8 @@ class JevRun:
             async with sem:
                 if not self._down():        # the breaker may have opened while waiting
                     try:
-                        got = await asyncio.to_thread(stage_fn, self.judge, job, resume)
+                        got = await asyncio.get_running_loop().run_in_executor(
+                            self._executor(), stage_fn, self.judge, job, resume)
                     except Exception as e:  # noqa: BLE001  (a fault here sends the job to the LLM path)
                         kind = type(e).__name__
                         if kind not in self._raised:
@@ -1689,6 +1709,7 @@ async def main() -> None:
 
     rescore_attempted, rescore_scored = await rescore_master_failures(pool, resume,
                                                                       jev_run=jev_run)
+    jev_run.close()     # the run's last Jev request is done
     stats["rescore_attempted"] = rescore_attempted
     stats["rescore_scored"] = rescore_scored
     stats["llm_calls"] = TOKEN_USAGE["calls"]

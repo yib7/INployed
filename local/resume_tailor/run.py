@@ -1190,10 +1190,12 @@ def _check_faithfulness(ctx: PassCtx, *, stage: str,
     bullet whose opener repeats gets the dedupe's swap (`_fresh_opener`), and the
     swapped texts share one more faithfulness request (`_check_fresh_openers`). With
     no verb left, or a swap that request flags or cannot check, the bullet keeps its
-    faithful text and its note or warning says "repeated opener".
+    faithful text and warns with "repeated opener", whether it was regrounded or
+    reverted.
 
     Each flagged bullet gets a note with its text, like the gate's rejected-text note;
-    a revert or a drop warns, as the gate's do, and a repaired bullet gets a note.
+    a revert or a drop warns, as the gate's do, and a repaired bullet gets a note
+    unless its opener repeats.
     """
     if ctx.judge is None:
         return {}
@@ -1281,9 +1283,14 @@ def _check_faithfulness(ctx: PassCtx, *, stage: str,
         repeated |= _check_fresh_openers(ctx, swapped)
     for gk in regrounded:
         if rep is not None:
-            tail = "; repeated opener" if gk in repeated else ""
-            rep.note(KIND_GROUNDING,
-                     f"[{stage}] faithfulness: regrounded bullet '{gk}' ({flagged[gk]}{tail})")
+            # A kept opener that repeats breaks the dedupe's distinct-opener promise,
+            # so it warns, as a revert with a repeated opener does.
+            if gk in repeated:
+                rep.warn(KIND_GROUNDING, f"[{stage}] faithfulness: regrounded bullet "
+                                         f"'{gk}' ({flagged[gk]}; repeated opener)")
+            else:
+                rep.note(KIND_GROUNDING,
+                         f"[{stage}] faithfulness: regrounded bullet '{gk}' ({flagged[gk]})")
     for gk, why in refused.items():
         if gk in repeated:
             why += "; repeated opener"

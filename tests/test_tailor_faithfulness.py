@@ -423,7 +423,13 @@ def test_a_fresh_opener_the_check_does_not_pass_keeps_the_faithful_text(
     assert jev_assist.usage(jev_assist.STEP_FAITHFULNESS)["note"] == note
 
 
+_REGROUNDED_REPEAT = (f"grounding: [verb dedupe] faithfulness: regrounded bullet 'h1' "
+                      f"({_INFLATION}; repeated opener)")
+
+
 def test_a_regrounded_text_keeps_its_opener_when_the_swap_is_flagged(engine, monkeypatch):
+    """Two bullets opening with the same verb break the dedupe's promise, so the
+    kept reground warns, as a revert with a repeated opener does."""
     monkeypatch.setattr(assets, "active_verbs", lambda: {k: list(v) for k, v in _PALETTE.items()})
     _reask(monkeypatch, {"h1": _WROTE_H1})
     judge = Flagger("led", "authored")
@@ -431,9 +437,26 @@ def test_a_regrounded_text_keeps_its_opener_when_the_swap_is_flagged(engine, mon
     _check(ctx, stage=rt_run.VERB_DEDUPE_STAGE, snapshot={"h1": _H1, "h2": _H2})
     assert ctx.bullets["h1"] == _WROTE_H1
     assert judge.requests == [[_H1_LED], [_WROTE_H1], [_AUTHORED_H1]]
-    assert ctx.report.warnings == []
-    assert (f"grounding: [verb dedupe] faithfulness: regrounded bullet 'h1' ({_INFLATION}; "
-            "repeated opener)") in ctx.report.note_lines
+    assert ctx.report.warnings == [_REGROUNDED_REPEAT]
+    assert _REGROUNDED_REPEAT not in ctx.report.note_lines
+
+
+def test_a_regrounded_text_with_no_fresh_verb_warns(engine, monkeypatch):
+    monkeypatch.setattr(assets, "active_verbs", lambda: {"Building": ["Wrote", "Led"]})
+    _reask(monkeypatch, {"h1": _WROTE_H1})
+    ctx = _ctx({"h1": _H1_LED, "h2": _H2}, judge=Flagger("led"))
+    _check(ctx, stage=rt_run.VERB_DEDUPE_STAGE, snapshot={"h1": _H1, "h2": _H2})
+    assert ctx.bullets["h1"] == _WROTE_H1
+    assert ctx.report.warnings == [_REGROUNDED_REPEAT]
+
+
+def test_a_regrounded_text_with_a_unique_opener_is_a_note(engine, monkeypatch):
+    _reask(monkeypatch, {"h1": _H1})
+    ctx = _ctx({"h1": _H1_LED, "h2": _H2}, judge=Flagger("led"))
+    _check(ctx, stage=rt_run.VERB_DEDUPE_STAGE, snapshot={"h1": _WROTE_H1, "h2": _H2})
+    assert ctx.bullets["h1"] == _H1 and ctx.report.warnings == []
+    assert (f"grounding: [verb dedupe] faithfulness: regrounded bullet 'h1' ({_INFLATION})"
+            in ctx.report.note_lines)
 
 
 def test_a_revert_at_the_verb_dedupe_with_no_fresh_verb_names_the_repeat(engine, monkeypatch):

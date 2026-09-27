@@ -1249,6 +1249,61 @@ def test_test_answers_click_checks_the_jev_gate_again(qtbot, tmp_path, monkeypat
     assert ed.status.text() == _JEV_OFF
 
 
+# --- SP1 follow-up 3: a judge mode `jev.get` does not build -------------------------
+
+_UNKNOWN_JUDGE = ("Unknown Auto-apply judge 'typesaf'; tick \"Show advanced settings\" "
+                  "and pick typesafe in Settings > Auto-apply.")
+
+
+@pytest.mark.parametrize("key", [False, True])
+def test_test_answers_is_off_with_the_drains_sentence_for_an_unknown_judge(
+        qtbot, tmp_path, monkeypatch, key):
+    """A hand-edited Auto-apply judge ("typesaf") made the button ask for a
+    key, and with a key it turned on, promised a live run and ended in
+    jev.get's error. The button is off with the drain's sentence for that
+    mode, with or without a key and with the master switch on or off, and a
+    click starts nothing."""
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    monkeypatch.setattr(jev_switch, "sdk_installed", lambda: True)
+    monkeypatch.setattr(at, "_typesafe_key_present", lambda: key)
+    started = []
+    monkeypatch.setattr(at.workers, "run_async",
+                        lambda owner, fn, on_done=None, on_error=None: started.append(fn))
+    ed = _editor(qtbot, store)
+    for switch in ("true", "false"):
+        jev_switch.config_path().write_text(
+            '{"jev_enabled": %s, "auto_apply_jev_mode": "typesaf"}' % switch, encoding="utf-8")
+        assert ed.refresh_test_answers_state() == _UNKNOWN_JUDGE, switch
+        assert ed.test_answers_btn.isEnabled() is False, switch
+        assert ed.test_answers_btn.toolTip() == _UNKNOWN_JUDGE, switch
+        ed._test_answers_clicked()
+        assert started == [], switch
+        assert ed.status.text() == _UNKNOWN_JUDGE, switch
+
+
+def test_test_answers_click_names_a_judge_setting_edited_since_the_last_refresh(
+        qtbot, tmp_path, monkeypatch):
+    """The button is on for the live judge with a key; the setting is then
+    hand-edited to a mode `jev.get` does not build. The click reads the mode
+    again, starts nothing and says why."""
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    monkeypatch.setattr(jev_switch, "sdk_installed", lambda: True)
+    monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
+    started = []
+    monkeypatch.setattr(at.workers, "run_async",
+                        lambda owner, fn, on_done=None, on_error=None: started.append(fn))
+    jev_switch.config_path().write_text('{"auto_apply_jev_mode": "typesafe"}', encoding="utf-8")
+    ed = _editor(qtbot, store)
+    assert ed.test_answers_btn.isEnabled() is True
+    jev_switch.config_path().write_text('{"auto_apply_jev_mode": " TypeSaf "}', encoding="utf-8")
+    ed.test_answers_btn.click()
+    assert started == []
+    assert ed.test_answers_btn.isEnabled() is False
+    assert ed.test_answers_btn.toolTip() == ed.status.text() == _UNKNOWN_JUDGE
+
+
 def test_test_answers_typesafe_mode_without_a_key_stays_disabled(qtbot, tmp_path, monkeypatch):
     store = tmp_path / "apply_answers.json"
     _seed_v2(store, [])

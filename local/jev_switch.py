@@ -24,7 +24,8 @@ builds. The environment's AUTO_APPLY_JEV_MODE is read by none of them.
 `jev_why_off(area)` names the first check that fails, as the one-line reason
 the UI and the logs show. `apply_blocked()` builds the Jev gate's sentence,
 the one `apply_run.py` drain, one and probe --judge print and Test my answers
-shows. `start_blocked()` is the Auto-apply panel's Start gate: it gives the
+shows; the two probes name a mode `jev.get` does not build first
+(`unknown_mode`). `start_blocked()` is the Auto-apply panel's Start gate: it gives the
 drain's refusal of the judge mode first (`mode_refusal`: a test judge is
 `FIXTURE_ONLY`, cycle 16, and a mode `jev.get` does not build is
 `UNKNOWN_MODE`), then `apply_blocked()`, the order the drain checks them in,
@@ -81,7 +82,9 @@ _FIXES = {
 # (cycle 16), and a mode `jev.get` does not build (a hand-edited Auto-apply
 # judge setting, SP1 follow-up 2) with it. The panel's Start gate
 # (`start_blocked`), Check setup and the doctor (`setup_check.auto_apply_warnings`)
-# give the same sentences, through `mode_refusal`. The Auto-apply judge row is
+# give the same sentences, through `mode_refusal`. Test my answers and
+# `probe --judge` give UNKNOWN_MODE (`unknown_mode`) and run the test judges,
+# since they are probes (SP1 follow-up 3). The Auto-apply judge row is
 # advanced, so UNKNOWN_MODE names the disclosure that shows it, in the Settings
 # tab's own words (SP1 follow-up 3).
 FIXTURE_ONLY = "Fake and replay judges are fixture-only; use typesafe for a production queue."
@@ -223,7 +226,9 @@ def fixture_only(mode: str) -> str:
 def unknown_mode(mode: str) -> str:
     """`UNKNOWN_MODE` naming `mode` when `jev.get` does not build it (it raises
     ValueError for any mode outside `jev.MODES`); "" for a mode it builds.
-    `mode` is a mode `apply_mode` resolved."""
+    `mode` is a mode `apply_mode` resolved. Test my answers and `probe
+    --judge` ask it before `apply_blocked`; the drain asks it through
+    `mode_refusal`."""
     return "" if mode in jev.MODES else UNKNOWN_MODE.format(mode=mode)
 
 
@@ -242,8 +247,8 @@ def start_blocked(*, config: Mapping[str, Any] | None = None,
     claims a job, in the sentence it prints; "" when it would run. It asks in
     the drain's order: its refusal of the judge mode (`mode_refusal`), then the
     Jev gate (`apply_blocked`, with the same arguments). Test my answers and
-    `probe --judge` ask `apply_blocked` alone: they are probes, and the test
-    judges run there."""
+    `probe --judge` ask `unknown_mode`, then `apply_blocked`: they are probes,
+    and the test judges run there."""
     cfg = _config() if config is None else config
     resolved = apply_mode(mode, config=cfg)
     return mode_refusal(resolved) or apply_blocked(config=cfg, env=env, mode=resolved,

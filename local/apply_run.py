@@ -9461,7 +9461,8 @@ def _jev_gate(mode: str) -> str:
     it after `_load_env`, so a key saved in `.env` counts. The fake and replay
     judges need neither a key nor the SDK, so only the master switch stops
     them here; `drain` and `one` refuse them as fixture-only before this, and
-    a mode `jev.get` does not build with them (`jev_switch.mode_refusal`)."""
+    a mode `jev.get` does not build with them (`jev_switch.mode_refusal`).
+    `probe --judge` names that mode before this too (`jev_switch.unknown_mode`)."""
     return jev_switch.apply_blocked(mode=mode)
 
 
@@ -9802,7 +9803,10 @@ def main(argv: list[str] | None = None) -> int:
             if args.judge:
                 _load_env()
                 mode = jev_switch.apply_mode(args.jev, config=load_settings())
-                blocked = _jev_gate(mode)       # a judge on every page is a Jev use
+                # A judge on every page is a Jev use. A mode `jev.get` does not
+                # build is named first, in the drain's sentence (SP1 follow-up
+                # 3); the test judges run here, since this is a probe.
+                blocked = jev_switch.unknown_mode(mode) or _jev_gate(mode)
                 if blocked:
                     print(blocked, file=sys.stderr)
                     return 2

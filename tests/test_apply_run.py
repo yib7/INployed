@@ -2896,6 +2896,22 @@ def test_probe_names_a_missing_key_in_the_start_buttons_words(hermetic_cli, monk
     assert capsys.readouterr().err.strip() == _NO_KEY
 
 
+@pytest.mark.parametrize("key", [False, True])
+@pytest.mark.parametrize("switch", [True, False])
+def test_probe_with_a_judge_names_an_unknown_judge_before_the_jev_gate(monkeypatch, capsys,
+                                                                       switch, key):
+    """SP1 follow-up 3: a hand-edited Auto-apply judge ("typesaf") made `probe
+    --judge` ask for a key, and with a key it went on to jev.get's error. It
+    exits 2 with the drain's sentence for that mode before a judge or a
+    browser, whatever the key and the master switch say."""
+    _real_settings_no_key(monkeypatch, {"jev_enabled": switch, "auto_apply_jev_mode": "typesaf"})
+    if key:
+        monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key")
+    _never_past_the_probe_gate(monkeypatch)
+    assert apply_run.main([*_PROBE, "--judge"]) == 2
+    assert capsys.readouterr().err.strip() == _UNKNOWN_JUDGE
+
+
 @pytest.mark.parametrize("mode", ["fake", "replay"])
 def test_the_jev_gate_main_asks_passes_a_test_judge_with_no_key_or_sdk(monkeypatch, mode):
     """SP1 review I: the fake and replay judges need neither a key nor the SDK,

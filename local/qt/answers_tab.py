@@ -158,7 +158,8 @@ def _default_judge_factory():
     factory `local/apply_run.py` calls for a real run. "fake" (and "replay")
     build a key-free judge that makes no live request, safe to construct for
     real; "typesafe" is the only mode whose key and SDK the Jev gate in
-    `refresh_test_answers_state` checks."""
+    `refresh_test_answers_state` checks. A click gets here only once that
+    gate passes, and it names a mode `jev.get` does not build first."""
     return jev.get(_current_jev_mode())
 
 
@@ -915,11 +916,13 @@ class AnswersEditor(QtWidgets.QWidget):
         Auto-apply panel's Start shows for the live judge. Jev switched off
         stops every mode; the key and SDK checks skip the fake and replay
         judges, which run here (a probe) while Start refuses them as the drain
-        does. Returns the sentence, "" when the gate is open."""
+        does. A mode `jev.get` does not build is named first
+        (`jev_switch.unknown_mode`, SP1 follow-up 3), in the drain's sentence.
+        Returns the sentence, "" when the gate is open."""
         mode = _current_jev_mode()
         live = mode not in jev_switch.TEST_MODES
         # The saved-key probe reads the settings files; a test judge skips it.
-        blocked = jev_switch.apply_blocked(
+        blocked = jev_switch.unknown_mode(mode) or jev_switch.apply_blocked(
             mode=mode, saved_key=live and _typesafe_key_present())
         self.test_answers_btn.setEnabled(
             not blocked and not self.load_error and not self._test_running)

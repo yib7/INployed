@@ -1410,6 +1410,34 @@ def test_check_setup_surfaces_a_dead_job_data_token(qtbot, monkeypatch):
     assert "rejected the API token" in captured["msg"]
 
 
+def test_check_setup_runs_the_claude_version_check_on_the_worker(qtbot, monkeypatch):
+    """VL-5: the claude CLI version check starts a subprocess, so it runs inside
+    the worker callable and its line reaches the Check setup dialog from there."""
+    w = _win(qtbot)
+    from resume_tailor import master_validate
+    monkeypatch.setattr(master_validate, "check_setup", lambda: {"master": [], "answers": []})
+    monkeypatch.setattr(mw.setup_check, "engine_problems", lambda: [])
+    monkeypatch.setattr(mw.setup_check, "auto_apply_problems", lambda: [])
+    monkeypatch.setattr(mw.setup_check, "job_data_problems", lambda: [])
+    line = "[Résumé tailor] claude CLI 2.1.207 is older than claude-opus-5-5 needs (2.1.280)"
+    monkeypatch.setattr(mw.setup_check, "claude_version_problems", lambda: [line])
+    on_worker = []
+
+    def run_async(owner, fn, on_done=None, on_error=None):
+        on_worker.append(fn)
+        on_done(fn())
+
+    monkeypatch.setattr(mw.workers, "run_async", run_async)
+    captured = {}
+    monkeypatch.setattr(QtWidgets.QMessageBox, "critical",
+                        staticmethod(lambda *a, **k: captured.setdefault("msg", a[2])))
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information",
+                        staticmethod(lambda *a, **k: captured.setdefault("info", True)))
+    w._check_setup()
+    assert on_worker == [mw.setup_check.worker_problems]
+    assert line in captured["msg"]
+
+
 def test_check_setup_probe_never_invents_a_problem(monkeypatch):
     """setup_check.job_data_problems runs on a worker thread and must swallow
     anything that goes wrong reaching the probe -- Check setup reports only what

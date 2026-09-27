@@ -2928,12 +2928,13 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.critical(self, "Check setup", f"Could not run checks: {errmsg.for_user(exc)}")
             return
         # Everything above is local file reads. The job-data check is a network
-        # call, so it goes to a worker thread — a blocking probe here would freeze
-        # the window, which is exactly the startup bug this dashboard already had.
+        # call and the claude CLI version check starts a subprocess, so both go
+        # to a worker thread. A blocking probe here would freeze the window,
+        # which is exactly the startup bug this dashboard already had.
         self._set_status("Checking setup...")
         self._setup_check_running = True
         workers.run_async(
-            self, setup_check.job_data_problems,
+            self, setup_check.worker_problems,
             on_done=lambda extra: self._show_setup_result(problems + list(extra or [])),
             on_error=lambda _exc: self._show_setup_result(problems))
 

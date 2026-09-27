@@ -10,9 +10,10 @@ Two halves, split by cost rather than by topic:
 - `local_problems()` — file and environment reads only, safe to call inline.
   Raises if the validators themselves fail, because "the checks could not run" is
   a different message from "the checks found something".
-- `job_data_problems()` — one network probe of the job-data account, so it belongs
-  on a worker thread. Free and unbilled, and silent on any failure: a setup check
-  must never report a problem it did not actually observe.
+- `worker_problems()`, for a worker thread. It runs `job_data_problems()` (one
+  network probe of the job-data account) and `claude_version_problems()` (one
+  `claude --version` subprocess). Both are free and unbilled, and silent on any
+  failure: a setup check must never report a problem it did not actually observe.
 
 The two `*_warnings` helpers are pure (all inputs passed in, no I/O) so they can
 be unit-tested exhaustively. They are public here rather than private in
@@ -81,6 +82,20 @@ TAILOR_TAG = "[Résumé tailor]"
 SCORING_TAG = "[Scoring]"
 
 
+def _providers(cfg: dict, stored: dict) -> tuple[str, str]:
+    """(tailor provider, scoring provider), lower-cased.
+
+    Matches the runtime resolvers' env > file precedence
+    (config.tailor_provider() / score_jobs.load_scoring_config()): an exported
+    RESUME_TAILOR_PROVIDER / SCORE_PROVIDER wins at run time, so Check setup
+    must honour it too or its warnings won't match what runs."""
+    tailor = str(os.environ.get("RESUME_TAILOR_PROVIDER")
+                 or cfg.get("tailor_provider") or "gemini").strip().lower()
+    scoring = str(os.environ.get("SCORE_PROVIDER")
+                  or stored.get("provider") or "gemini").strip().lower()
+    return tailor, scoring
+
+
 def engine_problems() -> list[str]:
     """Credential and CLI warnings for the configured tailor + scoring providers.
 
@@ -91,13 +106,7 @@ def engine_problems() -> list[str]:
     try:
         cfg = jobsdata._load_cfg()
         stored = settings.load()
-        # Match the runtime resolvers' env > file precedence
-        # (config.tailor_provider() / score_jobs.load_scoring_config()): an
-        # exported RESUME_TAILOR_PROVIDER / SCORE_PROVIDER wins at run time, so
-        # Check-setup must honour it too or its warnings won't match what runs.
-        tailor_provider = str(
-            os.environ.get("RESUME_TAILOR_PROVIDER")
-            or cfg.get("tailor_provider") or "gemini").strip().lower()
+        tailor_provider, scoring_provider = _providers(cfg, stored)
         problems: list[str] = []
         if tailor_provider != "claude":  # gemini engine warnings only apply on gemini
             auth = cfg.get("gemini_auth", "vertex")
@@ -111,15 +120,111 @@ def engine_problems() -> list[str]:
                 or os.environ.get("GEMINI_API_KEY", "").strip())
             problems.extend(f"{TAILOR_TAG} {w}" for w in
                             engine_credential_warnings(auth, project, has_key, has_pool))
-        scoring_provider = str(
-            os.environ.get("SCORE_PROVIDER")
-            or stored.get("provider") or "gemini").strip().lower()
         cli_found = shutil.which("claude") is not None
         problems.extend(f"{TAILOR_TAG} {w}" for w in claude_cli_warnings(
             tailor_provider, "", cli_found))
         problems.extend(f"{SCORING_TAG} {w}" for w in claude_cli_warnings(
             "", scoring_provider, cli_found))
         return problems
+    except Exception:  # noqa: BLE001
+        return []
+
+
+# --- The claude CLI's version against the models it is asked for (VL-5) ---------
+
+def _claude_cli():
+    """pipeline/claude_cli.py, through the same sys.path hop job_data_problems uses."""
+    p = str(REPO_ROOT / "pipeline")
+    if p not in sys.path:
+        sys.path.insert(0, p)
+    import claude_cli
+    return claude_cli
+
+
+def _version_text(v: tuple[int, ...]) -> str:
+    return ".".join(str(p) for p in v)
+
+
+def claude_version_warnings(installed: tuple[int, ...] | None,
+                            models: Iterable[str]) -> list[str]:
+    """One line per model in `models` that needs a newer CLI than `installed`.
+
+    Pure apart from reading claude_cli's two tables. `installed` None (the CLI
+    is missing, or its version could not be read) gives [], since the missing
+    CLI has its own line and an unread version is nothing observed."""
+    if installed is None:
+        return []
+    cc = _claude_cli()
+    out: list[str] = []
+    for model in dict.fromkeys(models):
+        need = cc.MIN_CLI_VERSION.get(model)
+        if need is None or tuple(installed) >= tuple(need):
+            continue
+        fallback = cc.MODEL_FALLBACKS.get(model)
+        then = f"runs use {fallback}" if fallback else "runs on it fail"
+        out.append(f"claude CLI {_version_text(installed)} is older than {model} needs "
+                   f"({_version_text(need)}); {then} until you run `claude update`.")
+    return out
+
+
+def _setting(stored: dict, key: str, env: str | None = None) -> str:
+    """A setting's effective value: env > saved file > the schema default,
+    the precedence the tailor's config and load_scoring_config both use."""
+    val = os.environ.get(env or key)
+    if val is None or not str(val).strip():
+        val = stored.get(key)
+    if val is None or not str(val).strip():
+        val = next((f.default for f in settings.SETTINGS_SCHEMA if f.key == key), "")
+    return str(val or "").strip()
+
+
+def selected_claude_models(cfg: dict, stored: dict) -> list[tuple[str, str]]:
+    """(tag, model) for every Claude model a run would ask the CLI for.
+
+    The tailor's models count only when its provider is 'claude', resolved as
+    config.claude_model_for does: 'simple' mode with a model named sends every
+    step to that one model, anything else uses the three per-tier models. The
+    scorer's two Claude stage models count only when its provider is 'claude'."""
+    tailor_provider, scoring_provider = _providers(cfg, stored)
+    out: list[tuple[str, str]] = []
+    if tailor_provider == "claude":
+        mode = _setting(stored, "RESUME_TAILOR_CLAUDE_MODEL_MODE").lower()
+        one = _setting(stored, "RESUME_TAILOR_CLAUDE_MODEL_ALL")
+        if mode == "simple" and one:
+            out.append((TAILOR_TAG, one))
+        else:
+            for key in ("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE",
+                        "RESUME_TAILOR_CLAUDE_MODEL_FLASH",
+                        "RESUME_TAILOR_CLAUDE_MODEL_PRO"):
+                out.append((TAILOR_TAG, _setting(stored, key)))
+    if scoring_provider == "claude":
+        for key, env in (("stage1_model_claude", "SCORE_STAGE1_MODEL_CLAUDE"),
+                         ("stage2_model_claude", "SCORE_STAGE2_MODEL_CLAUDE")):
+            out.append((SCORING_TAG, _setting(stored, key, env)))
+    return [(tag, m) for tag, m in out if m]
+
+
+def claude_version_problems() -> list[str]:
+    """A line for each selected Claude model the installed CLI is too old for.
+
+    Starts one `claude --version` subprocess, so it belongs on the worker
+    thread (`worker_problems`), and only when a selected model has a minimum
+    CLI version at all. Each model gets one line, tagged with the first section
+    that selects it. Best-effort like engine_problems: any failure returns []."""
+    try:
+        cc = _claude_cli()
+        pairs = selected_claude_models(jobsdata._load_cfg(), settings.load())
+        tags: dict[str, str] = {}
+        for tag, model in pairs:
+            if model in cc.MIN_CLI_VERSION:
+                tags.setdefault(model, tag)
+        if not tags:
+            return []
+        installed = cc.cli_version()
+        out: list[str] = []
+        for model, tag in tags.items():
+            out.extend(f"{tag} {w}" for w in claude_version_warnings(installed, [model]))
+        return out
     except Exception:  # noqa: BLE001
         return []
 
@@ -313,3 +418,10 @@ def job_data_problems() -> list[str]:
         return [f"[Job data] {w}" for w in scraper.account_problems()]
     except Exception:  # noqa: BLE001
         return []
+
+
+def worker_problems() -> list[str]:
+    """Everything that needs a network call or a subprocess, for the worker
+    thread: the job-data probe, then the claude CLI version check. Each half
+    is silent on its own failures."""
+    return list(job_data_problems()) + list(claude_version_problems())

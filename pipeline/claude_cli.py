@@ -28,7 +28,9 @@ import random
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
+import threading
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -63,7 +65,10 @@ class ClaudeCLIError(RuntimeError):
     'timeout' (subprocess exceeded timeout_s), 'rate_limit' (usage/rate limit
     text detected in stderr or the envelope), 'bad_json' (stdout wasn't a
     parseable JSON envelope, or -- for extract_json_text callers -- the
-    envelope's `result` text wasn't extractable JSON), 'error' (anything else).
+    envelope's `result` text wasn't extractable JSON), 'cli_too_old' (the
+    installed CLI refuses the model until it is updated; run_claude has already
+    tried the model's MODEL_FALLBACKS entry, so never retriable), 'error'
+    (anything else).
     """
 
     def __init__(self, msg: str, *, kind: str = "error"):
@@ -90,6 +95,100 @@ def is_rate_limit_message(text: str | None) -> bool:
     )
 
 
+def is_cli_too_old_message(text: str | None) -> bool:
+    """True if `text` is the CLI refusing a model it is too old to run.
+
+    Claude Code 2.1.207 answers `--model claude-opus-5-5` with "Claude Code
+    2.1.207 does not support this model; version 2.1.280 or newer is required".
+    Both halves must be present, so an ordinary 400 never matches. Checked
+    before is_rate_limit_message, because a required version such as 2.1.429
+    carries "429".
+    """
+    t = (text or "").lower()
+    return "does not support this model" in t and "or newer is required" in t
+
+
+# A model the installed CLI may be too old for, mapped to the model a run uses
+# instead until the user runs `claude update` (VL-5). One hop only: a fallback
+# is never itself swapped.
+MODEL_FALLBACKS: dict[str, str] = {"claude-opus-5-5": "claude-opus-5"}
+
+# The CLI version each model first ran on, for Check setup's warning. The CLI
+# error text is the source: "version 2.1.280 or newer is required".
+MIN_CLI_VERSION: dict[str, tuple[int, int, int]] = {"claude-opus-5-5": (2, 1, 280)}
+
+# Models the installed CLI refused this process, mapped to the fallback in use.
+# Guarded by a lock because ClaudePool runs run_claude on worker threads.
+_SWAP_LOCK = threading.Lock()
+_SWAPPED: dict[str, str] = {}
+_WARNED: set[str] = set()
+
+_REQUIRED_VERSION_RE = re.compile(r"version\s+(\d+(?:\.\d+)+)\s+or newer is required",
+                                  re.IGNORECASE)
+
+
+def reset_model_fallbacks() -> None:
+    """Forget every remembered model swap and warning (for tests)."""
+    with _SWAP_LOCK:
+        _SWAPPED.clear()
+        _WARNED.clear()
+
+
+def _swapped_model(model: str) -> str | None:
+    with _SWAP_LOCK:
+        return _SWAPPED.get(model)
+
+
+def _remember_swap(model: str, fallback: str, cli_text: str) -> None:
+    """Record the swap and print the one warning this process gives for it."""
+    with _SWAP_LOCK:
+        _SWAPPED[model] = fallback
+        if model in _WARNED:
+            return
+        _WARNED.add(model)
+    m = _REQUIRED_VERSION_RE.search(cli_text or "")
+    needs = f" (it needs version {m.group(1)} or newer)" if m else ""
+    stream = sys.stderr
+    if stream is None:  # pythonw: no console, so nowhere to warn
+        return
+    try:
+        print(f"claude CLI does not support {model} yet{needs}; using {fallback}. "
+              "Run `claude update` to use it.", file=stream, flush=True)
+    except (OSError, ValueError):  # a closed or broken stream never fails the run
+        pass
+
+
+def _error_kind(text: str) -> str:
+    if is_cli_too_old_message(text):
+        return "cli_too_old"
+    return "rate_limit" if is_rate_limit_message(text) else "error"
+
+
+_VERSION_RE = re.compile(r"\s*v?(\d+(?:\.\d+)+)")
+
+
+def cli_version(timeout_s: float = 20) -> tuple[int, ...] | None:
+    """The installed CLI's version from `claude --version` ("2.1.207 (Claude
+    Code)" gives (2, 1, 207)), or None when the CLI is missing, the probe fails
+    or the output does not start with a version. Free: no model call."""
+    exe = find_claude()
+    if exe is None:
+        return None
+    try:
+        proc = subprocess.run(
+            [exe, "--version"], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=timeout_s,
+            cwd=tempfile.gettempdir(), creationflags=_NO_WINDOW,
+            env=_child_env(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    m = _VERSION_RE.match(proc.stdout or "")
+    return tuple(int(p) for p in m.group(1).split(".")) if m else None
+
+
 @dataclass
 class CLIResult:
     text: str
@@ -108,15 +207,48 @@ def run_claude(
     allow_websearch: bool = False,
     timeout_s: float = DEFAULT_TIMEOUT_S,
 ) -> CLIResult:
-    """One `claude -p` invocation, no retry (retry policy belongs to each
-    caller -- `_call_claude` in llm.py, `ClaudePool.generate` here).
+    """One `claude -p` invocation, no retry, except the one model fallback
+    (retry policy belongs to each caller -- `_call_claude` in llm.py,
+    `ClaudePool.generate` here).
 
     Prompt rides stdin (`user`), the JSON envelope comes back on stdout.
     `--system-prompt` fully overrides the CLI's default system prompt (no
     repo CLAUDE.md / skills leak in) and is ALSO where the CLI marks its
     prompt-cache breakpoint -- see the module docstring's caching note.
     Runs in a temp cwd so no project files are visible to the child process.
+
+    The model fallback (VL-5): when the installed CLI is too old for `model`
+    (kind 'cli_too_old') and MODEL_FALLBACKS names a fallback, the call runs
+    once more on the fallback. The swap is remembered for the rest of the
+    process, so later calls for `model` go straight to the fallback, and one
+    warning goes to stderr. The fallback's own failure is raised as is; a
+    'cli_too_old' for a model with no fallback is raised as is.
     """
+    kwargs = dict(json_mode=json_mode, allow_websearch=allow_websearch,
+                  timeout_s=timeout_s)
+    swapped = _swapped_model(model)
+    if swapped is not None:
+        return _run_once(system, user, swapped, **kwargs)
+    try:
+        return _run_once(system, user, model, **kwargs)
+    except ClaudeCLIError as exc:
+        fallback = MODEL_FALLBACKS.get(model)
+        if exc.kind != "cli_too_old" or fallback is None:
+            raise
+        _remember_swap(model, fallback, str(exc))
+    return _run_once(system, user, fallback, **kwargs)
+
+
+def _run_once(
+    system: str,
+    user: str,
+    model: str,
+    *,
+    json_mode: bool,
+    allow_websearch: bool,
+    timeout_s: float,
+) -> CLIResult:
+    """The single `claude -p` invocation behind run_claude."""
     exe = find_claude()
     if exe is None:
         raise ClaudeCLIError(
@@ -156,10 +288,10 @@ def run_claude(
         ) from exc
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "")[:400]
-        raise ClaudeCLIError(
-            f"claude exited {proc.returncode}: {err}",
-            kind="rate_limit" if is_rate_limit_message(err) else "error",
-        )
+        kind = _error_kind(err)
+        if kind != "cli_too_old" and is_cli_too_old_message(proc.stdout):
+            kind = "cli_too_old"  # the refusal rode stdout beside unrelated stderr
+        raise ClaudeCLIError(f"claude exited {proc.returncode}: {err}", kind=kind)
     try:
         envelope = json.loads(proc.stdout or "{}")
     except ValueError as exc:
@@ -170,8 +302,7 @@ def run_claude(
     result = str(envelope.get("result") or "")
     if envelope.get("is_error"):
         raise ClaudeCLIError(
-            f"claude reported an error: {result[:300]}",
-            kind="rate_limit" if is_rate_limit_message(result) else "error",
+            f"claude reported an error: {result[:300]}", kind=_error_kind(result),
         )
     if not result.strip():
         raise ClaudeCLIError("empty response", kind="error")
@@ -329,8 +460,8 @@ class ClaudePool:
                 self._claude_calls += 1  # successful generates only
                 return _Resp(text, res.input_tokens, res.output_tokens)
             except ClaudeCLIError as exc:
-                if exc.kind == "not_found":
-                    raise  # never retriable
+                if exc.kind in ("not_found", "cli_too_old"):
+                    raise  # never retriable (run_claude already tried the fallback)
                 if exc.kind == "rate_limit":
                     if rl >= self.RATE_LIMIT_RETRIES:
                         raise  # backoff budget spent -- no transient attempts

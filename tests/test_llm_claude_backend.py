@@ -390,3 +390,32 @@ def test_call_claude_missing_cli_raises_immediately_no_sleeps(monkeypatch, claud
         llm._call_claude("sys", "user", "claude-sonnet-5")
     assert recorded == []
     assert invoke_calls == []
+
+
+def test_call_claude_cli_too_old_fails_fast_with_no_retry(monkeypatch, claude_env):
+    """VL-5: run_claude has already tried the model's one fallback when it
+    raises cli_too_old, so another attempt meets the same installed CLI. The
+    kind must fail at once, never through the timeout ladder, the transient
+    sleeps or the rate-limit backoff, even though its text carries a 400."""
+    recorded, _ = claude_env
+    too_old = ClaudeCLIErrorLike(
+        "claude reported an error: API Error: 400 Claude Code 2.1.207 does not "
+        "support this model; version 2.1.429 or newer is required.",
+        kind="cli_too_old")
+    fake, seen = _invoke_claude_seq([too_old] * 99)
+    monkeypatch.setattr(llm, "_invoke_claude", fake)
+    with pytest.raises(llm.LLMError) as ei:
+        llm._call_claude("sys", "user", "claude-future-9")
+    assert ei.value.kind == "cli_too_old"
+    assert "claude update" in str(ei.value)
+    assert seen == [180]                # one attempt, no escalation
+    assert recorded == []               # no sleeps of any kind
+
+
+def test_cli_too_old_is_not_a_transient_for_the_answer_drafter():
+    """apply_answergen.transient decides whether a draft gets its one retry.
+    A too-old CLI answers the same way ten seconds later."""
+    sys.path.insert(0, str(REPO / "local"))
+    import apply_answergen
+    err = llm.LLMError("Claude CLI too old", kind="cli_too_old")
+    assert apply_answergen.transient(err) is False

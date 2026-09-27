@@ -288,6 +288,23 @@ def _hermetic_outbox_and_vm(tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _forget_claude_model_swaps():
+    """claude_cli remembers, per process, each model the installed CLI refused
+    and the fallback it swapped to (VL-5). A swap one test learns must not
+    decide which model the next test's fake CLI is asked for, so the memory is
+    cleared on both sides of every test. Only when the module is already loaded:
+    importing it here would put pipeline/ on the path for tests that never
+    asked for it."""
+    def reset():
+        mod = sys.modules.get("claude_cli")
+        if mod is not None and hasattr(mod, "reset_model_fallbacks"):
+            mod.reset_model_fallbacks()
+    reset()
+    yield
+    reset()
+
+
+@pytest.fixture(autouse=True)
 def _hermetic_repo_data(tmp_path_factory):
     """No test may read the developer's REAL repo-root config and data files.
 

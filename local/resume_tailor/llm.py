@@ -75,7 +75,9 @@ class LLMError(RuntimeError):
     failure into the 429 branch and sleep out the whole backoff budget.
 
     Kinds: "bad_json" and "empty" (the model answered, the answer was
-    unusable), "config" (missing credentials or provider). None = unclassified.
+    unusable), "config" (missing credentials or provider), "cli_too_old" (the
+    installed `claude` CLI refuses the model and its one fallback already ran;
+    raised at once, never retried). None = unclassified.
     """
 
     def __init__(self, *args, kind: Optional[str] = None):
@@ -715,6 +717,14 @@ def _call_claude(
         except Exception as exc:  # noqa: BLE001
             last_err = exc
             kind = getattr(exc, "kind", "")
+            if kind == "cli_too_old":
+                # run_claude already ran the model's one fallback, and another
+                # attempt meets the same installed CLI. Fail now.
+                raise LLMError(
+                    f"The installed `claude` CLI is too old for {model}. Run "
+                    f"`claude update`, or pick another Claude model in Settings: {exc}",
+                    kind="cli_too_old",
+                ) from exc
             if kind == "timeout" or (not kind and _is_timeout(exc)):
                 timed_out = True
                 log.warning("llm: claude %s timed out at %ss (attempt %d/%d); "

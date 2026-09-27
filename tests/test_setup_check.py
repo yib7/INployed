@@ -437,3 +437,149 @@ def test_module_found_uses_find_spec_without_importing():
     assert setup_check.module_found("json") is True
     assert setup_check.module_found("no_such_module_zzz") is False
     assert "no_such_module_zzz" not in sys.modules
+
+
+# --- claude CLI version against the selected models (VL-5) ----------------------
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
+import claude_cli  # noqa: E402
+
+OLD_LINE = ("claude CLI 2.1.207 is older than claude-opus-5-5 needs (2.1.280); runs use "
+            "claude-opus-5 until you run `claude update`.")
+_CLAUDE_MODEL_ENV = (
+    "RESUME_TAILOR_CLAUDE_MODEL_MODE", "RESUME_TAILOR_CLAUDE_MODEL_ALL",
+    "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "RESUME_TAILOR_CLAUDE_MODEL_FLASH",
+    "RESUME_TAILOR_CLAUDE_MODEL_PRO",
+    "SCORE_STAGE1_MODEL_CLAUDE", "SCORE_STAGE2_MODEL_CLAUDE",
+)
+
+
+def test_claude_version_warnings_old_cli_names_both_versions_and_the_fallback():
+    assert setup_check.claude_version_warnings((2, 1, 207), ["claude-opus-5-5"]) == [OLD_LINE]
+
+
+@pytest.mark.parametrize("installed", [(2, 1, 280), (2, 1, 281), (2, 2, 0), (3,), None])
+def test_claude_version_warnings_silent_for_a_new_or_unknown_cli(installed):
+    assert setup_check.claude_version_warnings(installed, ["claude-opus-5-5"]) == []
+
+
+def test_claude_version_warnings_silent_for_models_with_no_minimum():
+    assert setup_check.claude_version_warnings(
+        (1, 0, 0), ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5"]) == []
+
+
+def _fake_cli(monkeypatch, version_out="2.1.207 (Claude Code)\n", *, on_path=True):
+    """Stub the version probe's subprocess. Returns the list of argv it saw."""
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return type("P", (), {"returncode": 0, "stdout": version_out, "stderr": ""})()
+
+    monkeypatch.setattr(claude_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(claude_cli.shutil, "which",
+                        lambda name: "C:/bin/claude.exe" if on_path else None)
+    for var in _CLAUDE_MODEL_ENV:
+        monkeypatch.delenv(var, raising=False)
+    return calls
+
+
+def _claude_config(monkeypatch, cfg, stored):
+    monkeypatch.setattr(setup_check.jobsdata, "_load_cfg", lambda: cfg)
+    monkeypatch.setattr(setup_check.settings, "load", lambda: stored)
+    for var in ("RESUME_TAILOR_PROVIDER", "SCORE_PROVIDER"):
+        monkeypatch.delenv(var, raising=False)
+
+
+def test_claude_version_problems_flags_the_tailor_default_on_an_old_cli(monkeypatch):
+    calls = _fake_cli(monkeypatch)
+    _claude_config(monkeypatch, {"tailor_provider": "claude"}, {})  # defaults: pro = opus 5.5
+    assert setup_check.claude_version_problems() == [f"{setup_check.TAILOR_TAG} {OLD_LINE}"]
+    assert calls == [["C:/bin/claude.exe", "--version"]]
+
+
+def test_claude_version_problems_flags_a_scoring_stage(monkeypatch):
+    _fake_cli(monkeypatch)
+    _claude_config(monkeypatch, {"tailor_provider": "gemini"},
+                   {"provider": "claude", "stage2_model_claude": "claude-opus-5-5"})
+    assert setup_check.claude_version_problems() == [f"{setup_check.SCORING_TAG} {OLD_LINE}"]
+
+
+def test_claude_version_problems_env_model_beats_the_file(monkeypatch):
+    _fake_cli(monkeypatch)
+    _claude_config(monkeypatch, {"tailor_provider": "gemini"},
+                   {"provider": "claude", "stage2_model_claude": "claude-sonnet-5"})
+    monkeypatch.setenv("SCORE_STAGE1_MODEL_CLAUDE", "claude-opus-5-5")
+    assert setup_check.claude_version_problems() == [f"{setup_check.SCORING_TAG} {OLD_LINE}"]
+
+
+def test_claude_version_problems_one_line_when_both_sides_select_the_model(monkeypatch):
+    _fake_cli(monkeypatch)
+    _claude_config(monkeypatch, {"tailor_provider": "claude"},
+                   {"provider": "claude", "stage2_model_claude": "claude-opus-5-5"})
+    assert setup_check.claude_version_problems() == [f"{setup_check.TAILOR_TAG} {OLD_LINE}"]
+
+
+def test_claude_version_problems_silent_on_a_new_cli(monkeypatch):
+    _fake_cli(monkeypatch, "2.1.280 (Claude Code)\n")
+    _claude_config(monkeypatch, {"tailor_provider": "claude"}, {})
+    assert setup_check.claude_version_problems() == []
+
+
+def test_claude_version_problems_silent_on_a_missing_cli(monkeypatch):
+    calls = _fake_cli(monkeypatch, on_path=False)
+    _claude_config(monkeypatch, {"tailor_provider": "claude"}, {})
+    assert setup_check.claude_version_problems() == []
+    assert calls == []
+
+
+def test_claude_version_problems_silent_on_an_unparsable_version(monkeypatch):
+    _fake_cli(monkeypatch, "Claude Code (dev build)\n")
+    _claude_config(monkeypatch, {"tailor_provider": "claude"}, {})
+    assert setup_check.claude_version_problems() == []
+
+
+def test_claude_version_problems_never_probes_when_no_selected_model_needs_it(monkeypatch):
+    """Gemini on both sides, or a Claude setup with no opus 5.5 anywhere: the
+    CLI is never started."""
+    calls = _fake_cli(monkeypatch)
+    _claude_config(monkeypatch, {"tailor_provider": "gemini"}, {"provider": "gemini"})
+    assert setup_check.claude_version_problems() == []
+    _claude_config(monkeypatch, {"tailor_provider": "claude"},
+                   {"RESUME_TAILOR_CLAUDE_MODEL_MODE": "simple",
+                    "RESUME_TAILOR_CLAUDE_MODEL_ALL": "claude-sonnet-5"})
+    assert setup_check.claude_version_problems() == []
+    assert calls == []
+
+
+def test_claude_version_problems_simple_mode_reads_the_one_model(monkeypatch):
+    _fake_cli(monkeypatch)
+    _claude_config(monkeypatch, {"tailor_provider": "claude"},
+                   {"RESUME_TAILOR_CLAUDE_MODEL_MODE": "simple",
+                    "RESUME_TAILOR_CLAUDE_MODEL_ALL": "claude-opus-5-5",
+                    "RESUME_TAILOR_CLAUDE_MODEL_PRO": "claude-sonnet-5"})
+    assert setup_check.claude_version_problems() == [f"{setup_check.TAILOR_TAG} {OLD_LINE}"]
+
+
+def test_claude_version_problems_is_silent_when_config_cannot_be_read(monkeypatch):
+    def boom():
+        raise OSError("config.json is locked")
+    _fake_cli(monkeypatch)
+    monkeypatch.setattr(setup_check.jobsdata, "_load_cfg", boom)
+    assert setup_check.claude_version_problems() == []
+
+
+def test_engine_problems_never_starts_the_cli(monkeypatch):
+    """engine_problems runs on the UI thread (local_problems is inline-safe),
+    so the version probe lives in the worker half instead."""
+    calls = _fake_cli(monkeypatch)
+    _stub_config(monkeypatch, {"tailor_provider": "claude"}, {"provider": "claude"},
+                 claude_on_path=True)
+    setup_check.engine_problems()
+    assert calls == []
+
+
+def test_worker_problems_adds_the_version_line_to_the_job_data_rows(monkeypatch):
+    monkeypatch.setattr(setup_check, "job_data_problems", lambda: ["[Job data] x"])
+    monkeypatch.setattr(setup_check, "claude_version_problems", lambda: ["[Scoring] y"])
+    assert setup_check.worker_problems() == ["[Job data] x", "[Scoring] y"]

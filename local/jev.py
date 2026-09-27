@@ -165,9 +165,28 @@ def _sized_to_fit(longest: int, whole: int) -> bool:
     return longest <= STATE_TOKENS_MAX * SIZE_MARGIN and whole <= REQUEST_TOKENS_MAX * SIZE_MARGIN
 
 
+# Jev takes at most this many options in one choice (the guide, "Choice"); the
+# service answers a longer one with a 400 and the SDK checks nothing before it
+# sends. VL-3: TL-6 asked one choice over about 360 palette verbs, well under
+# the token limits, and every such request came back 400.
+CHOICE_OPTIONS_MAX = 255
+
+
+def _long_choices(questions: Mapping[str, Any]) -> list[tuple[str, int]]:
+    """(question id, option count) for each choice past `CHOICE_OPTIONS_MAX`."""
+    out = []
+    for qid, q in questions.items():
+        if isinstance(q, Mapping) and q.get("type") == "choice":
+            n = len(q.get("criteria") or ())
+            if n > CHOICE_OPTIONS_MAX:
+                out.append((str(qid), n))
+    return out
+
+
 def request_fits(state: Any, questions: Mapping[str, Any]) -> bool:
-    """Is the request under `SIZE_MARGIN` of both of Jev's limits?"""
-    return _sized_to_fit(*request_size(state, questions))
+    """Is the request under `SIZE_MARGIN` of both of Jev's limits, with no choice
+    past `CHOICE_OPTIONS_MAX` options?"""
+    return _sized_to_fit(*request_size(state, questions)) and not _long_choices(questions)
 
 
 # --- the outage guard (RES-02) ------------------------------------------------------
@@ -285,6 +304,10 @@ class Guarded:
                              "question) and %d in all, past %d%% of the %d and %d limits",
                              longest, whole, round(SIZE_MARGIN * 100), STATE_TOKENS_MAX,
                              REQUEST_TOKENS_MAX)
+        for qid, n in _long_choices(questions):
+            # the service answers it with a 400 (VL-3)
+            self.log.warning("jev choice %s has %d options, past the %d a choice takes",
+                             qid, n, CHOICE_OPTIONS_MAX)
         tries = len(self.delays) + 1
         fault = True            # every try failed with an error the request may cause
         for n in range(tries):

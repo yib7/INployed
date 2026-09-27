@@ -7,6 +7,7 @@ Nothing here reaches the network. `TypeSafeJev` is exercised against a fake
 fixtures against them.
 """
 import json
+import logging
 import sys
 import threading
 import time
@@ -537,3 +538,42 @@ def test_fake_takes_not_settled_whenever_it_is_listed():
     a = jev.FakeJev().judge({"fields": []}, {"q": q})["q"]
     assert (a.choice, a.confidence) == (jev.NOT_SETTLED, 1.0)
     assert a.probabilities == {"Yes": 0.0, "No": 0.0, "not_settled": 1.0}
+
+
+# --- a choice's options (VL-3) --------------------------------------------------------
+
+def _choice(n: int) -> dict:
+    return {"type": "choice", "instructions": "Which option?",
+            "criteria": {f"o{i}": None for i in range(n)}}
+
+
+def test_the_choice_option_limit_is_jevs():
+    assert jev.CHOICE_OPTIONS_MAX == 255
+
+
+def test_a_choice_past_jevs_option_limit_does_not_fit():
+    """VL-3: TL-6 sent about 360 verbs in one choice and the service answered 400.
+    The request was well under the token limits, so only the option count shows it."""
+    state = {"bullet": "Built a sales model."}
+    assert jev.request_fits(state, {"q": _choice(jev.CHOICE_OPTIONS_MAX)})
+    assert not jev.request_fits(state, {"q": _choice(jev.CHOICE_OPTIONS_MAX + 1)})
+    assert not jev.request_fits(state, {"a": _choice(2),
+                                        "q": _choice(jev.CHOICE_OPTIONS_MAX + 1)})
+    _longest, whole = jev.request_size(state, {"q": _choice(jev.CHOICE_OPTIONS_MAX + 1)})
+    assert whole < jev.STATE_TOKENS_MAX * jev.SIZE_MARGIN
+
+
+def test_a_noul_or_a_score_has_no_options_to_count():
+    state = {"bullet": "Built a sales model."}
+    noul = {"type": "noul", "instructions": "Is it?", "criteria": {"true": "yes", "false": "no"}}
+    score = {"type": "score", "instructions": "How much?", "criteria": ["none", "some", "all"]}
+    assert jev.request_fits(state, {"n": noul, "s": score})
+
+
+def test_the_guard_names_a_choice_past_the_option_limit(caplog):
+    judge = jev.Guarded(jev.FakeJev(), sleep=lambda s: None,
+                        logger=logging.getLogger("test_jev.options"))
+    with caplog.at_level(logging.WARNING, logger="test_jev.options"):
+        judge.judge({"bullet": "Built"}, {"verb": _choice(jev.CHOICE_OPTIONS_MAX + 1)})
+    assert [r.getMessage() for r in caplog.records] == [
+        "jev choice verb has 256 options, past the 255 a choice takes"]

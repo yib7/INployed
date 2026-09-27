@@ -26,16 +26,17 @@ code to compose. The LLM still writes every bullet.
                         unused verbs: dedupe_leading_verbs swaps the bullet's first
                         word for a sure pick and keeps its reverb call otherwise.
   best_variant    TL-7  one choice per bullet over its rephrase drafts that pass
-                        the grounding gate and TL-4 (Settings: best of three, off
-                        by default): the draft the run keeps.
+                        the grounding gate and TL-4 (Settings: "Best of 3 bullet
+                        drafts", off by default): the draft the run keeps.
   letter_unsupported
                   TL-8  one noul per cover-letter sentence against the letter's
-                        sources, never the job description (Settings: cover letter
-                        check, off by default): a flagged sentence goes to the
-                        letter's repair call.
+                        sources, never the job description (Settings: "Jev
+                        checks the cover letter's claims", off by default): a
+                        flagged sentence goes to the letter's repair call.
   keyword_meaning TL-9  one noul per ATS keyword against the résumé's text
-                        (Settings: ATS meaning line, off by default): the keywords
-                        the report's meaning-level coverage line counts.
+                        (Settings: "ATS report: coverage by meaning (Jev)", off by
+                        default): the keywords the report's meaning-level coverage
+                        line counts.
 
 Every helper takes `judge=`. Left out, it is `jev_switch.client("tailor")`, which is
 None when Jev is off for the tailor. A helper returns None when Jev is off, when

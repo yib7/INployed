@@ -324,8 +324,8 @@ def _resolve_bullets(jd: str, job_title: str, sel: dict, log: Callable[[str], No
 
 def _resolve_best_of(jd: str, job_title: str, sel: dict, log: Callable[[str], None], *,
                      briefs: Optional[Dict[str, str]], judge: Any) -> Dict[str, str]:
-    """TL-7 (Settings: best of three, with Jev on): one rephrase call for three
-    drafts of every bullet, and one draft kept per bullet.
+    """TL-7 (Settings: "Best of 3 bullet drafts", with Jev on): one rephrase call
+    for three drafts of every bullet, and one draft kept per bullet.
 
     A draft is a candidate when it passes the grounding gate's check
     (`verify.group_unseen`) and TL-4 (`jev_assist.faithfulness`, every draft in one

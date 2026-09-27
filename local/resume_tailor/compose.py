@@ -392,8 +392,8 @@ Return ONLY JSON: {{"briefs": [{{"block": "<block name>", "brief": "<1-2 sentenc
 
 
 # TL-7's additions to the rephrase prompt, sent only when the run asks for drafts
-# (Settings: best of three, with Jev on). Without them the prompt is today's, word
-# for word, which keeps its prompt cache.
+# (Settings: "Best of 3 bullet drafts", with Jev on). Without them the prompt is
+# today's, word for word, which keeps its prompt cache.
 REPHRASE_DRAFTS = 3
 REPHRASE_DRAFTS_RULE = (
     "\nDRAFTS: write three drafts of every bullet. Each draft follows every rule above "

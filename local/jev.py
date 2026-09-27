@@ -172,6 +172,13 @@ def _sized_to_fit(longest: int, whole: int) -> bool:
 CHOICE_OPTIONS_MAX = 255
 
 
+class RequestRejected(ValueError):
+    """A request Jev refuses whatever the moment (a choice past
+    `CHOICE_OPTIONS_MAX`), refused before it is sent. `Guarded` raises it as a
+    service's 400 passes through: never retried, and the breaker stays shut. The
+    message names the question and the count, never the request's text."""
+
+
 def _long_choices(questions: Mapping[str, Any]) -> list[tuple[str, int]]:
     """(question id, option count) for each choice past `CHOICE_OPTIONS_MAX`."""
     out = []
@@ -273,9 +280,10 @@ class Guarded:
     (no wait mends either), and every later request
     raises `JudgeOutage` at once, so the run can hand its job back to the
     queue and stop the drain. Any other error (a request the service
-    rejected, a bug) passes through as it was. `answers` counts the
-    requests answered (the runner sets it to 0 at each drain's start: an
-    outage counts toward a job's cap only after the judge answered in the
+    rejected, a bug) passes through as it was, and a choice past
+    `CHOICE_OPTIONS_MAX` options raises `RequestRejected` before it is sent
+    (VL-3), as its 400 would. `answers` counts the requests answered (the
+    runner sets it to 0 at each drain's start: an outage counts toward a job's cap only after the judge answered in the
     drain, SP8a review R2-I1). `request_fault` says the request itself may
     have caused the outage (`request_fault(e)` on every try, with no
     Retry-After over the cap): only such an outage counts toward the cap
@@ -305,9 +313,11 @@ class Guarded:
                              longest, whole, round(SIZE_MARGIN * 100), STATE_TOKENS_MAX,
                              REQUEST_TOKENS_MAX)
         for qid, n in _long_choices(questions):
-            # the service answers it with a 400 (VL-3)
-            self.log.warning("jev choice %s has %d options, past the %d a choice takes",
-                             qid, n, CHOICE_OPTIONS_MAX)
+            # the service answers it with a 400 every time (VL-3), so it is refused
+            # unsent, the way a 400 passes through below: no retry, the breaker shut
+            why = f"jev choice {qid} has {n} options, past the {CHOICE_OPTIONS_MAX} a choice takes"
+            self.log.warning("%s", why)
+            raise RequestRejected(why)
         tries = len(self.delays) + 1
         fault = True            # every try failed with an error the request may cause
         for n in range(tries):

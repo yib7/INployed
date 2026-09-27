@@ -570,10 +570,30 @@ def test_a_noul_or_a_score_has_no_options_to_count():
     assert jev.request_fits(state, {"n": noul, "s": score})
 
 
-def test_the_guard_names_a_choice_past_the_option_limit(caplog):
-    judge = jev.Guarded(jev.FakeJev(), sleep=lambda s: None,
-                        logger=logging.getLogger("test_jev.options"))
+class _Counting:
+    def __init__(self):
+        self.calls = 0
+
+    def judge(self, state, questions):
+        self.calls += 1
+        return jev.FakeJev().judge(state, questions)
+
+
+def test_the_guard_refuses_a_choice_past_the_option_limit_before_sending(caplog):
+    """The service answers such a request 400 every time, so the guard refuses it
+    unsent, the way a 400 passes through it: no retry, and the breaker stays shut."""
+    inner, sleeps = _Counting(), []
+    judge = jev.Guarded(inner, sleep=sleeps.append, logger=logging.getLogger("test_jev.options"))
     with caplog.at_level(logging.WARNING, logger="test_jev.options"):
-        judge.judge({"bullet": "Built"}, {"verb": _choice(jev.CHOICE_OPTIONS_MAX + 1)})
+        with pytest.raises(jev.RequestRejected) as err:
+            judge.judge({"bullet": "Built"}, {"verb": _choice(jev.CHOICE_OPTIONS_MAX + 1)})
+    assert str(err.value) == "jev choice verb has 256 options, past the 255 a choice takes"
+    assert isinstance(err.value, ValueError) and not isinstance(err.value, jev.JudgeOutage)
+    assert jev.error_kind(err.value) == "RequestRejected"
+    assert inner.calls == 0 and sleeps == []
+    assert (judge.down, judge.refused, judge.request_fault, judge.answers) == ("", False, False, 0)
     assert [r.getMessage() for r in caplog.records] == [
         "jev choice verb has 256 options, past the 255 a choice takes"]
+    # The next request that fits goes out as ever.
+    got = judge.judge({"bullet": "Built"}, {"verb": _choice(jev.CHOICE_OPTIONS_MAX)})
+    assert got["verb"].kind == "choice" and inner.calls == 1 and judge.answers == 1

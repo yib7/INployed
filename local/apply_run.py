@@ -1579,7 +1579,7 @@ class _Accounts:
             if advance is None:
                 return False
             by_n = {pf.n: pf for pf in plan.fields}
-            passwords, emails, others, drafts = [], [], [], []
+            passwords, emails, others, written = [], [], [], []
             password_hosts = {_host(page.url)}
             for field in digest.fields:
                 loc = apply_form.resolve(page, field.locator).first
@@ -1604,7 +1604,7 @@ class _Accounts:
                 else:
                     pf = by_n.get(field.n)
                     if pf is not None and pf.action == "generate":
-                        drafts.append(pf)
+                        written.append(pf)
                     elif pf is not None and pf.action in ("fill", "select", "upload") \
                             and (pf.value or pf.option):
                         others.append(pf)
@@ -1616,13 +1616,17 @@ class _Accounts:
                                               or field.type)
                         raise _Parked("needs_human",
                                       f"required field without an answer: {field.label}")
+                    elif pf is not None and pf.fact_key == "needs_generation":
+                        # an optional open-ended question stays blank
+                        # (`apply_judge.plan`), and only an application asks it
+                        written.append(pf)
             if not passwords and not emails:
                 return False
             # A screen that asks what only an application asks (a profile
             # link, work authorization, a written answer) is the form: the
             # form step writes and verifies the answers, types the password,
             # and clicks its way on or stops at the submit gate.
-            carries = bool(drafts) or any(pf.fact_key not in _ACCOUNT_FACTS for pf in others)
+            carries = bool(written) or any(pf.fact_key not in _ACCOUNT_FACTS for pf in others)
             sends = _sends_application(digest, advance[0], account_only=not others)
             if carries:
                 if sends:

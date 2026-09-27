@@ -73,6 +73,12 @@ def _f(n, label, type_="text", required=False, options=(), ident="", help=""):
                  options=list(options), id_or_name=ident, help=help, secret=type_ == "other")
 
 
+# the Greenhouse page's optional essay: blank, no draft (only a required
+# open-ended question gets one)
+_GREENHOUSE_ESSAY = ("Why are you interested in this role? Please write a short essay about "
+                     "your motivation.")
+
+
 def _greenhouse(consent=""):
     """A 12-field Greenhouse-shaped page; `consent` adds a required checkbox
     with that label as field 12."""
@@ -90,8 +96,7 @@ def _greenhouse(consent=""):
         _f(9, "Will you now or in the future require sponsorship for employment visa status?",
            "select", required=True, options=("Yes", "No")),
         _f(10, "Gender", "select", options=("Male", "Female", "Decline to self-identify")),
-        _f(11, "Why are you interested in this role? Please write a short essay about "
-               "your motivation.", "textarea"),
+        _f(11, _GREENHOUSE_ESSAY, "textarea"),
     ]
     if consent:
         fields.append(_f(12, consent, "checkbox", required=True))
@@ -737,11 +742,29 @@ def test_plan_leave_blank_and_needs_generation(catalog):
     answers = _page_answers(digest, {0: ("leave_blank", 0.9), 1: ("needs_generation", 0.9),
                                      2: ("needs_generation", 0.9)})
     p = apply_judge.plan(digest, catalog, answers)
-    assert [f.action for f in p.fields] == ["skip", "generate", "generate"]
+    # only the required question gets a draft: the optional one stays
+    # blank and flagged, as a leave_blank field does
+    assert [f.action for f in p.fields] == ["skip", "generate", "skip"]
     assert p.park_reason == ""
+    assert [m[0] for m in p.missing] == ["Anything else?", "Why this role?"]
     p2 = apply_judge.plan(digest, catalog, answers, generation_enabled=False)
     assert [f.action for f in p2.fields] == ["skip", "skip", "skip"]
     assert p2.park_reason == "required field without an answer: Why us?"
+
+
+@pytest.mark.parametrize("required, action", [(False, "skip"), (True, "generate")])
+def test_only_a_required_open_ended_question_gets_a_draft(catalog, required, action):
+    """A live run on the Contoso form (2026-09-27) filled this optional question with
+    a line of the sheet about on-site work: an optional open-ended question
+    gets no draft, and a required one still does."""
+    label = "What are you looking for in your next role? What would you like to avoid?"
+    digest = FormDigest(url_host="jobs.ashbyhq.com", title="t", text="",
+                        fields=[_f(0, label, "textarea", required=required)])
+    p = apply_judge.plan(digest, catalog, _page_answers(digest, {0: ("needs_generation", 0.95)}))
+    pf = p.fields[0]
+    assert (pf.fact_key, pf.action, pf.value) == ("needs_generation", action, "")
+    assert p.park_reason == ""
+    assert [m[0] for m in p.missing] == ([] if required else [label])
 
 
 def test_plan_options_and_uploads(catalog):
@@ -1191,8 +1214,10 @@ def test_fake_jev_end_to_end_over_the_greenhouse_digest(catalog):
     # the option picks for the model-mapped selects are only known after the
     # mapping, and the second request resolves them; the Yes / No selects
     # (8, 9) are settled in code by the alias set (moved on purpose, cycle
-    # 18, FM-1), so the first plan waits on the optional Gender alone
-    assert first.park_reason == "" and first.missing == [("Gender", "select")]
+    # 18, FM-1), so the first plan waits on the optional Gender alone and
+    # leaves the optional essay blank
+    assert first.park_reason == "" and first.missing == [("Gender", "select"),
+                                                         (_GREENHOUSE_ESSAY, "textarea")]
     state2, q2 = apply_judge.option_questions(digest, first, catalog=catalog)
     assert set(q2) == {"field_10_pick"}
     answers.update(fake.judge(state2, q2))
@@ -1211,13 +1236,13 @@ def test_fake_jev_end_to_end_over_the_greenhouse_digest(catalog):
         8: ("work_authorized", "select", "Yes"),
         9: ("requires_sponsorship", "select", "No"),
         10: ("gender", "select", "Decline to self-identify"),
-        11: ("needs_generation", "generate", None),
+        11: ("needs_generation", "skip", None),
     }
     values = {f.n: f.value for f in p.fields}
     assert values[0] == "Jane" and values[1] == "Doe"
     assert values[4].endswith("Jane_Doe_Resume.pdf")
     assert values[7] == "https://janedoe.dev"
-    assert p.park_reason == "" and p.missing == []
+    assert p.park_reason == "" and p.missing == [(_GREENHOUSE_ESSAY, "textarea")]
     assert p.buttons["submit"] == (0, 1.0) and p.buttons["back"] == (1, 1.0)
     assert p.flags == {"asks_for_prohibited": 0.1, "requires_account": 0.1,
                        "has_captcha": 0.1}
@@ -1241,14 +1266,15 @@ def test_fake_jev_end_to_end_checks_an_attestation_box_and_parks_a_background_ch
                               "application is accurate"), catalog)
     box = {f.n: f for f in p.fields}[12]
     assert (box.fact_key, box.action, box.option, box.value) ==         ("consent_attest", "select", "checked", "yes")
-    assert p.park_reason == "" and p.missing == []
+    assert p.park_reason == "" and p.missing == [(_GREENHOUSE_ESSAY, "textarea")]
 
     p = _fake_run(_greenhouse("I consent to a background check and drug test"), catalog)
     box = {f.n: f for f in p.fields}[12]
     assert box.fact_key is None and box.action == "skip"
     assert p.park_reason == ("required field without an answer: "
                              "I consent to a background check and drug test")
-    assert [m[0] for m in p.missing] == ["I consent to a background check and drug test"]
+    assert [m[0] for m in p.missing] == [_GREENHOUSE_ESSAY,
+                                         "I consent to a background check and drug test"]
 
 
 def test_fake_jev_flags_a_captcha_page_and_a_login_wall(catalog):

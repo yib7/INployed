@@ -1,7 +1,8 @@
 """Free-text answers for the auto-apply runner, with a grounding gate.
 
-A field the judge maps to `needs_generation` (an open-ended prompt the sheet
-does not answer word for word) gets ONE draft from the flash-lite tier and
+A required field the judge maps to `needs_generation` (an open-ended prompt
+the sheet does not answer word for word; an optional one stays blank,
+`apply_judge.plan`) gets ONE draft from the flash-lite tier and
 ONE Jev grounding request. The draft prompt carries the sheet excerpt, the
 question, the field's character limit and the project's writing rules
 (`aiwriting.RULES_PROMPT`); its instruction is to select and rephrase from the

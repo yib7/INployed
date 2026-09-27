@@ -773,11 +773,13 @@ Auto-apply**:
 
 - **Submit when verified** (`auto_apply_submit`, on): off parks every job at its review
   page instead. `--no-submit` on the command line does the same for one run.
-- **Draft free-text answers** (`auto_apply_generate`, on): an open-ended question
-  ("why this role", "a project you are proud of") gets one flash-lite draft from your
-  apply sheet, and Jev checks each sentence against the sheet; a draft with an
-  unsupported sentence is dropped and the field is left for you. At most three drafts
-  per job. Off leaves every such field for you.
+- **Draft free-text answers** (`auto_apply_generate`, on): a required open-ended
+  question ("why this role", "a project you are proud of") gets one flash-lite draft
+  from your apply sheet, and Jev checks each sentence against the sheet; a draft with
+  an unsupported sentence is dropped and the field is left for you. An optional
+  open-ended question ("What are you looking for in your next role?") is always left
+  blank, since none of your saved answers holds its answer. At most three drafts per
+  job. Off leaves every such field for you.
 - **Hide the browser window** (`auto_apply_headless`, off): on runs Chrome with no
   window. Leave it off to watch the run and step in when it parks.
 - **Auto-apply judge** (`auto_apply_jev_mode`, `typesafe`): `fake` is a test-only judge

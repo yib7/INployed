@@ -463,26 +463,23 @@ def _generator(text):
     return apply_answergen.Generator(llm_call=fake_call), calls
 
 
-def test_a_rejected_draft_leaves_an_optional_field_blank_and_flags_it_in_the_record(
+def test_an_optional_open_ended_question_gets_no_draft_and_is_left_blank(
         context, fixture_url, job_folder, catalog_builder, tmp_path):
+    """A live run on the Contoso form (2026-09-27) filled the optional "What are you
+    looking for in your next role? What would you like to avoid?" with a line
+    of the sheet about on-site work: an optional open-ended question gets no
+    draft, and the form goes with it blank and named in the record."""
     _enqueue(job_folder, fixture_url("essays_four.html"))
     runner = _runner(context, tmp_path)
-    runner.answergen, calls = _generator(_UNGROUNDED_DRAFT)
+    runner.answergen, calls = _generator(_GROUNDED_DRAFT)
     out = runner.drain(cap=1)[0]
     assert out.status == "submitted", out
-    assert len(calls) == apply_run.GENERATE_MAX          # one draft per field, three at most
-    assert all(t == "flash_lite" for _, t in calls)
-    page = next(p for p in context.pages if not p.is_closed()) if any(
-        not p.is_closed() for p in context.pages) else None
-    assert page is None                                   # submitted: the tab was closed
-    record = Path(out.record_path).read_text(encoding="utf-8")
-    assert "- Generated answers:" in record
-    for label in _ESSAYS_FOUR[:3]:
-        assert _rejected_line(label, record) < apply_judge.GROUNDING_MIN, record
-    assert f"  - {_ESSAYS_FOUR[3]}: rejected (generation budget exhausted)" in record
-    assert "(generated)" not in record
-    assert "- Generated answers used: 0" in record
+    assert calls == []
     assert out.jev_usage["generated"] == 0
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    assert "- Generated answers:" not in record
+    assert _GROUNDED_DRAFT not in record
+    assert "- Generated answers used: 0" in record
     questions = [m["question"] for m in _entry()["missing_answers"]]
     assert questions == list(_ESSAYS_FOUR)
 
@@ -509,17 +506,18 @@ def test_a_rejected_draft_parks_a_required_field_with_the_grounding_note(
 
 def test_at_most_three_drafts_per_job_and_generated_answers_are_marked(
         context, fixture_url, job_folder, catalog_builder, tmp_path):
-    _enqueue(job_folder, fixture_url("essays_four.html"))
+    _enqueue(job_folder, fixture_url("essays_four_required.html"))
     runner = _runner(context, tmp_path)
     runner.answergen, calls = _generator(_GROUNDED_DRAFT)
     out = runner.drain(cap=1)[0]
-    assert out.status == "submitted", out
+    assert out.status == "needs_human", out
+    assert out.reason == (f"required field without an answer: {_ESSAYS_FOUR[3]}; "
+                          "generation budget exhausted"), out.reason
     assert len(calls) == 3
     assert out.jev_usage["generated"] == 3
     record = Path(out.record_path).read_text(encoding="utf-8")
     for label in _ESSAYS_FOUR[:3]:
-        assert f"  - {label}: {_GROUNDED_DRAFT} (generated)" in record, record
-        assert f"  - {label}: generated (" in record
+        assert f"  - {label}: generated (" in record, record
     assert f"  - {_ESSAYS_FOUR[3]}: rejected (generation budget exhausted)" in record
     assert "- Generated answers used: 3" in record
     assert [m["question"] for m in _entry()["missing_answers"]] == [_ESSAYS_FOUR[3]]
@@ -1277,15 +1275,18 @@ __EXTRA__
 _COMBINED_URL = "https://careers.fabrikam.example/apply/42"
 
 
-def _serve_combined(context, button, resume=False, html=_COMBINED, extra=False):
+def _serve_combined(context, button, resume=False, html=_COMBINED, extra=False, essay=False):
     """`html` at the application's URL. `resume` adds a required resume box
     (the page is then the form); `extra` a required question only an
-    application asks (a LinkedIn profile)."""
+    application asks (a LinkedIn profile); `essay` an optional open-ended
+    one."""
     body = html.replace("__BUTTON__", button).replace(
         "__RESUME__", '<label>Resume * <input type="file" name="resume" required></label>'
         if resume else "").replace(
-        "__EXTRA__", '<label>LinkedIn profile * <input type="url" name="linkedin" required>'
-                     '</label>' if extra else "")
+        "__EXTRA__", ('<label>LinkedIn profile * <input type="url" name="linkedin" required>'
+                      '</label>' if extra else "")
+        + (f'<label>{_ESSAYS_FOUR[0]} <textarea name="essay"></textarea></label>'
+           if essay else ""))
     context.route("https://careers.fabrikam.example/**",
                   lambda route: route.fulfill(body=body, content_type="text/html"))
 
@@ -1354,6 +1355,31 @@ def test_a_plain_account_button_on_the_application_form_is_an_advance(
     out = runner.drain(cap=1)[0]
     assert typed == [1], out
     assert "Create account (advance)" in Path(out.record_path).read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("submit_on", [False, True])
+def test_an_optional_open_ended_question_on_a_sign_up_makes_it_the_form(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch, submit_on):
+    # an optional open-ended question gets no draft and stays blank, and it
+    # still marks the page as the application: the form step types the
+    # password and the gate sends it or parks it. Before the question went
+    # blank it counted as a draft; left out, the page read as a sign-up whose
+    # button sends the application, and parked
+    typed = _count_password_fills(monkeypatch)
+    _serve_combined(context, "Create account and apply", essay=True)
+    _enqueue(job_folder, _COMBINED_URL)
+    runner = _runner(context, tmp_path, auto_apply_submit=submit_on)
+    runner.jev = type("Judge", (_FormAsAccountJudge,), {"STATE": "signup_form", "CONF": 0.9})()
+    out = runner.drain(cap=1)[0]
+    assert typed == [1], out
+    assert [m["question"] for m in _entry()["missing_answers"]] == [_ESSAYS_FOUR[0]]
+    if submit_on:
+        assert out.status == "submitted", out
+        return
+    page = next(p for p in context.pages if not p.is_closed())
+    assert page.locator("body[data-submitted]").count() == 0, out
+    assert page.locator("[name=essay]").input_value() == ""
+    assert (out.status, out.reason) == ("ready_to_submit", "auto_apply_submit is off"), out
 
 
 _ACCOUNT_ONLY = """<!doctype html><html><head><title>Sign up</title></head><body>

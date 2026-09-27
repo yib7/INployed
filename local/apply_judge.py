@@ -1833,8 +1833,9 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
     of every name source that types the same words, `pooled_confidence`),
     and when the field is required the plan carries
     `park_reason` and a `missing` entry (an optional skip is a `missing` entry
-    only); `needs_generation` is `generate` when generation is enabled, else
-    the same rule; an option pick below `OPTION_MIN_CONF` or `no_match` follows
+    only); `needs_generation` is `generate` for a required field when
+    generation is enabled, else the same rule, so an optional open-ended
+    question stays blank; an option pick below `OPTION_MIN_CONF` or `no_match` follows
     the same rule; `signature_today` fills today's date for a date control or
     a label with `date` / `dated` / `today` as a whole word, else the typed
     name; `consent_attest` (a checkbox's attestation, privacy or contact
@@ -1959,7 +1960,14 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
                       f.n, f.label, fact_key)
             fact_key, pf.fact_key = None, None
         elif fact_key == "needs_generation":
-            pf.action = "generate" if generation_enabled else "skip"
+            # only a required question gets a draft: an optional one goes
+            # blank, since no saved answer holds what it asks. The user's
+            # Contoso run (2026-09-27) filled the optional "What are you
+            # looking for in your next role? What would you like to avoid?"
+            # with a line of the sheet about on-site work. The grounding
+            # gate passed it: the gate checks that each sentence is true, and
+            # a true sentence can leave the question unanswered.
+            pf.action = "generate" if generation_enabled and f.required else "skip"
         elif fact_key == "consent_attest":
             pf.action, pf.option, pf.value = "select", "checked", "yes"
         elif fact_key == "signature_today":

@@ -1032,11 +1032,13 @@ class SettingsForm(QtWidgets.QWidget):
             self._widgets[f.key] = cb
             return cb
         if f.type == "choice":
+            choices = [str(c) for c in f.choices]
             combo = QtWidgets.QComboBox()
-            combo.addItems([str(c) for c in f.choices])
-            self._set_combo(combo, value)
+            combo.addItems(choices)
+            self._set_combo(combo, value, choices, f.default)
             self._getters[f.key] = combo.currentText
-            self._setters[f.key] = lambda v, c=combo: self._set_combo(c, v)
+            self._setters[f.key] = (
+                lambda v, c=combo, ch=choices, d=f.default: self._set_combo(c, v, ch, d))
             self._widgets[f.key] = combo
             return combo
         if f.type == "editable_choice":
@@ -1078,35 +1080,56 @@ class SettingsForm(QtWidgets.QWidget):
         return edit
 
     @staticmethod
-    def _match_choice(choices, value) -> str:
-        """`value` as the choice it names: the exact entry, else the entry it
-        matches ignoring case and surrounding spaces, else the stripped text.
+    def _match_choice(choices, value, default) -> str:
+        """`value` as the choice it names: the exact entry, else `default` for a
+        blank, else the entry it matches ignoring case and surrounding spaces,
+        else the stripped text.
 
         Cycle 19's ST-7. The old setter fell back to index 0, so a hand-edited
         `"gemini_auth": "Api_Key"` opened as vertex billing and the next Save
         wrote vertex over the user's choice. A value that matches no entry in any
         case comes back as typed, so the dropdown shows what the file says and
-        Save names it (`settings.field_problem`) until the user picks one."""
+        Save names it (`settings.field_problem`) until the user picks one.
+
+        A blank (a hand-written `KEY=` line, a JSON "" or null) reads as the
+        field's default, the way the code that reads these settings treats a
+        blank: shown as typed, it was an option `field_problem` refuses, so
+        every Save failed on a value the user never chose (SP1 review C)."""
         text = "" if value is None else str(value)
         if text in choices:
             return text
         folded = text.strip().casefold()
+        if not folded:
+            return str(default)
         for choice in choices:
             if choice.casefold() == folded:
                 return choice
         return text.strip()
 
     @classmethod
-    def _set_combo(cls, combo: QtWidgets.QComboBox, value) -> None:
-        """Select `value` in a fixed-choice dropdown (`_match_choice`), adding it
-        as an extra entry when it matches none of them."""
-        items = [combo.itemText(i) for i in range(combo.count())]
-        text = cls._match_choice(items, value)
-        i = combo.findText(text)
-        if i < 0:
+    def _set_combo(cls, combo: QtWidgets.QComboBox, value, choices, default) -> None:
+        """Select `value` in a fixed-choice dropdown (`_match_choice`).
+
+        `choices` are the listed entries, which fill the dropdown's first rows.
+        A value that matches none of them takes ONE extra row after them, reused
+        by the next unknown value and dropped once the dropdown holds a listed
+        value again, so Revert or Restore defaults leaves only the options the
+        setting accepts. The listed entry is selected before the extra row goes,
+        so the dropdown never passes through a value nobody set."""
+        choices = [str(c) for c in choices]
+        base = len(choices)
+        text = cls._match_choice(choices, value, default)
+        if text in choices:
+            combo.setCurrentIndex(choices.index(text))
+        elif combo.count() > base:
+            combo.setItemText(base, text)
+            combo.setCurrentIndex(base)
+        else:
             combo.addItem(text)
-            i = combo.count() - 1
-        combo.setCurrentIndex(i)
+            combo.setCurrentIndex(base)
+        keep = base if text in choices else base + 1
+        while combo.count() > keep:
+            combo.removeItem(combo.count() - 1)
 
     @staticmethod
     def _as_int(value, default: int) -> int:
@@ -1603,12 +1626,13 @@ class SettingsForm(QtWidgets.QWidget):
         because `_coerce` does not speak them (`_field_value` reaches them through
         their own branches), and a secret because .env values are already text.
         A fixed choice goes through `_match_choice`, the reading `_set_combo`
-        gives the dropdown: a stored "Api_Key" opens clean as api_key.
+        gives the dropdown: a stored "Api_Key" opens clean as api_key, and a
+        blank one clean as the default.
         """
         if f.secret or f.type in ("multichoice", "list"):
             return raw
         if f.type == "choice":
-            return cls._match_choice([str(c) for c in f.choices], raw)
+            return cls._match_choice([str(c) for c in f.choices], raw, f.default)
         return cls._coerce(f, raw)[0]
 
     @classmethod

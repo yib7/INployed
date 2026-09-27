@@ -207,8 +207,8 @@ CLAUDE_MODELS = ("claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude
 #
 # Index 0 is 'tiers', the default, because it is the mode that reproduces what
 # every install did before this setting existed. A stored value in another case
-# ('Simple') reads as its match; any other stored value stays on screen as typed
-# and Save flags it (settings_tab._set_combo).
+# ('Simple') reads as its match and a blank one as 'tiers'; any other stored
+# value stays on screen as typed and Save flags it (settings_tab._set_combo).
 MODEL_MODE_TIERS = "tiers"
 MODEL_MODE_SIMPLE = "simple"
 MODEL_MODES = (MODEL_MODE_TIERS, MODEL_MODE_SIMPLE)
@@ -224,10 +224,10 @@ ARCHIVE_KEEP_ALL = "Keep everything"
 ARCHIVE_KEEP_20 = "Keep newest 20"
 ARCHIVE_KEEP_100 = "Keep newest 100"
 ARCHIVE_OFF = "Off"
-# Index 0 is the default, the mode that deletes nothing. A hand-edited value that
-# matches none of them stays on screen as typed and Save flags it
-# (settings_tab._set_combo), so a typo changes no snapshots until the user picks
-# one of these four.
+# Index 0 is the default, the mode that deletes nothing. A blank reads as that
+# default; a hand-edited value that matches none of them stays on screen as typed
+# and Save flags it (settings_tab._set_combo), so a typo changes no snapshots
+# until the user picks one of these four.
 ARCHIVE_MODES = (ARCHIVE_KEEP_ALL, ARCHIVE_KEEP_20, ARCHIVE_KEEP_100, ARCHIVE_OFF)
 
 
@@ -891,9 +891,10 @@ def is_visible(field: Field, values: Mapping[str, Any]) -> bool:
     resolvers (`resume_tailor.config`, `score_jobs._active_scoring`) which
     normalise. Through the form the two agree on every choice the resolvers
     know: `settings_tab._set_combo` reads a hand-edited `"provider": "Claude"` as
-    the "claude" choice before `_gate_values` hands it here. A value matching no
-    choice in any case stays on screen as typed, so it hides every field gated
-    on it here and in the form alike, and Save flags it.
+    the "claude" choice before `_gate_values` hands it here, and a blank one as
+    the field's default. A value matching no choice in any case stays on screen
+    as typed, so it hides every field gated on it here and in the form alike,
+    and Save flags it.
 
     Raises on a broken graph rather than degrading quietly, matching the posture
     of `settings_tab._set_field_visible` (KeyError) and `_connect_gate_signals`

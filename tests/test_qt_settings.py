@@ -2851,22 +2851,83 @@ def test_the_six_claude_dropdowns_offer_opus_5_5(qtbot, tmp_path):
     assert form._widgets["RESUME_TAILOR_CLAUDE_MODEL_PRO"].currentText() == "claude-opus-5-5"
 
 
-def test_set_combo_matches_another_case_and_keeps_an_unknown_value(qtbot):
+def test_set_combo_matches_another_case_and_keeps_one_unknown_value(qtbot):
     """ST-7 at the unit: c18's U1 read a hand-edited "Api_Key" as index 0 (vertex
     billing); it now reads as api_key, and a value matching nothing in any case
-    is added and shown as typed."""
+    is added and shown as typed. SP1 review C: a blank reads as the field's
+    default, the dropdown holds one such extra entry at most, and a listed value
+    takes it away again."""
+    choices = ("vertex", "api_key", "pool")
     combo = QtWidgets.QComboBox()
     qtbot.addWidget(combo)
-    combo.addItems(["vertex", "api_key", "pool"])
-    SettingsForm._set_combo(combo, "Api_Key")
+    combo.addItems(choices)
+    SettingsForm._set_combo(combo, "Api_Key", choices, "vertex")
     assert combo.currentText() == "api_key" and combo.count() == 3
-    SettingsForm._set_combo(combo, " POOL ")
+    SettingsForm._set_combo(combo, " POOL ", choices, "vertex")
     assert combo.currentText() == "pool" and combo.count() == 3
-    SettingsForm._set_combo(combo, "keyring")
+    for blank in ("", "   ", None):
+        SettingsForm._set_combo(combo, "pool", choices, "vertex")
+        SettingsForm._set_combo(combo, blank, choices, "vertex")
+        assert combo.currentText() == "vertex" and combo.count() == 3, repr(blank)
+    SettingsForm._set_combo(combo, "keyring", choices, "vertex")
     assert combo.currentText() == "keyring" and combo.count() == 4
-    SettingsForm._set_combo(combo, "vertex")
-    assert combo.currentText() == "vertex" and combo.count() == 4
-    SettingsForm._set_combo(combo, "KEYRING")
+    SettingsForm._set_combo(combo, "vault", choices, "vertex")
+    assert combo.currentText() == "vault" and combo.count() == 4
+    assert [combo.itemText(i) for i in range(3)] == list(choices)
+    SettingsForm._set_combo(combo, "api_key", choices, "vertex")
+    assert combo.currentText() == "api_key" and combo.count() == 3
+
+
+def test_a_blank_choice_opens_on_its_default_and_saves(qtbot, tmp_path, monkeypatch):
+    """SP1 review C: a hand-written `RESUME_TAILOR_MODEL_MODE=` line (or a blank
+    `"gemini_auth": ""`) opened as a blank extra entry that
+    `settings.field_problem` refuses, so every Save failed until the user picked
+    an option. A blank reads as the field's default, the way the tailor reads a
+    blank model mode, and a Save writes that default."""
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    targets = _targets(tmp_path)
+    targets["env"].write_text("RESUME_TAILOR_MODEL_MODE=\n", encoding="utf-8")
+    targets["config"].write_text(json.dumps({"gemini_auth": ""}), encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    for key in ("RESUME_TAILOR_MODEL_MODE", "gemini_auth"):
+        combo = form._widgets[key]
+        assert combo.currentText() == by_key[key].default, key
+        assert combo.count() == len(by_key[key].choices), key
+        assert key not in form._dirty, key
+    _no_modals(monkeypatch)
+    assert form.save() is True
+    assert envfile.read(targets["env"])["RESUME_TAILOR_MODEL_MODE"] == \
+        by_key["RESUME_TAILOR_MODEL_MODE"].default
+    assert json.loads(targets["config"].read_text("utf-8"))["gemini_auth"] == \
+        by_key["gemini_auth"].default
+
+
+def test_revert_takes_back_the_unknown_choice_a_snapshot_added(qtbot, tmp_path):
+    """SP1 review C: an unknown value joins the dropdown as an extra entry, so
+    the form shows what the file says. Revert to a listed value takes the entry
+    away again, so the list offers only what the setting accepts; Revert to a
+    file that holds the unknown value brings it back."""
+    targets = _targets(tmp_path)
+    targets["config"].write_text(json.dumps({"gemini_auth": "keyring"}), encoding="utf-8")
+    snap = settings_archive.snapshot(targets)
+    targets["config"].write_text(json.dumps({"gemini_auth": "api_key"}), encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    combo = form._widgets["gemini_auth"]
+    form.load_from_snapshot(snap)
+    assert combo.currentText() == "keyring" and combo.count() == 4
+    form.revert()
+    assert combo.currentText() == "api_key" and combo.count() == 3
+    assert "gemini_auth" not in form._dirty
+
+    targets["config"].write_text(json.dumps({"gemini_auth": "keyring"}), encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    combo = form._widgets["gemini_auth"]
+    form.restore_defaults()
+    assert combo.currentText() == "vertex" and combo.count() == 3
+    form.revert()
     assert combo.currentText() == "keyring" and combo.count() == 4
 
 

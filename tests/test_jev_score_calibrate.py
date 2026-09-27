@@ -272,6 +272,19 @@ def test_the_sample_is_stratified_seeded_and_round_robin():
     assert calib.stratified_sample({1: [], 2: []}, 10, seed=7) == []
 
 
+def test_a_master_that_gained_jobs_keeps_the_sample_it_had():
+    """A rerun after a scrape reads its answers from the cache: only a new job
+    can take a sampled job's place."""
+    old = {s: [f"{s}-{i}" for i in range(100)] for s in calib.SCORES}
+    new = {s: ids + [f"{s}-new{i}" for i in range(100)] for s, ids in old.items()}
+    before = set(calib.stratified_sample(old, 40, seed=19))
+    after = set(calib.stratified_sample(new, 40, seed=19))
+    assert all("new" in i for i in after - before)
+    assert len(before - after) == len(after - before)
+    backwards = {s: ids[::-1] for s, ids in new.items()}     # the master's row order never matters
+    assert calib.stratified_sample(backwards, 40, seed=19) == calib.stratified_sample(new, 40, seed=19)
+
+
 def test_spearman():
     assert calib.spearman([1, 2, 3, 4], [2, 4, 6, 8]) == pytest.approx(1.0)
     assert calib.spearman([1, 2, 3, 4], [4, 3, 2, 1]) == pytest.approx(-1.0)

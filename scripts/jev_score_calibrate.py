@@ -30,9 +30,9 @@ a bad --cap-usd or --sample); 3 stopped early by the spend cap or an outage
 from __future__ import annotations
 
 import argparse
+import hashlib
 import math
 import os
-import random
 import sys
 import time
 from dataclasses import dataclass
@@ -161,15 +161,20 @@ def eligible_ids(master: Path) -> dict[int, list[str]]:
     return strata
 
 
+def _rank(seed: int, job_id: str) -> str:
+    return hashlib.sha256(f"{seed}:{job_id}".encode("utf-8")).hexdigest()
+
+
 def stratified_sample(strata: dict[int, list[str]], n: int, seed: int) -> list[str]:
     """Up to `n` ids: an equal share per score, and a score with too few ids
-    leaves its share to the others. Seeded, so a rerun draws the same sample
-    (and reads its answers from the cache). Ordered round robin across the
-    scores, so a run the cap stops early still covers every score."""
-    rng = random.Random(seed)
-    pools = {score: sorted(ids) for score, ids in strata.items() if ids}
-    for ids in pools.values():
-        rng.shuffle(ids)
+    leaves its share to the others. Within a score the ids with the lowest
+    hash of the seed and the id come first, so a rerun draws the same sample
+    (and reads its answers from the cache), and a master that gained jobs
+    since changes it only where a new id ranks among the lowest. Ordered round
+    robin across the scores, so a run the cap stops early still covers every
+    score."""
+    pools = {score: sorted(ids, key=lambda job_id: _rank(seed, job_id))
+             for score, ids in strata.items() if ids}
     take = dict.fromkeys(pools, 0)
     left = min(n, sum(len(ids) for ids in pools.values()))
     while left > 0:

@@ -1471,13 +1471,20 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame, *,
     return _restore_reused_scores(merged, reused_snapshot)
 
 
+# MA-3: a hand-added job (local/manual_add.py) keeps blank score columns on
+# purpose, so the rescore pass skips it. Keep IDENTICAL to
+# prune_master.MANUAL_ID_PREFIX.
+MANUAL_ID_PREFIX = "manual-"
+
+
 def rows_needing_rescore(master: pd.DataFrame) -> pd.DataFrame:
     """Master rows whose scoring previously failed or never happened.
 
     score NaN + not mechanically filtered = never scored (crash, spend cap, or
     a swallowed Stage-1 exception); reason/recommendation starting with ERROR:
     = an explicit failed call. Without this, one transient 429 permanently
-    hides a job from the High-Score tab.
+    hides a job from the High-Score tab. A hand-added row (MANUAL_ID_PREFIX)
+    is never picked, even with an ERROR marker (MA-3).
     """
     if "score" in master.columns:
         score = pd.to_numeric(master["score"], errors="coerce")
@@ -1495,7 +1502,9 @@ def rows_needing_rescore(master: pd.DataFrame) -> pd.DataFrame:
     reason = master.get("reason", pd.Series("", index=master.index)).fillna("").astype(str)
     reco = master.get("recommendation", pd.Series("", index=master.index)).fillna("").astype(str)
     err = reason.str.startswith("ERROR:") | reco.str.startswith("ERROR:")
-    return master[(score.isna() & ~filtered) | err]
+    manual = (master.get("job_posting_id", pd.Series("", index=master.index))
+              .fillna("").astype(str).str.strip().str.startswith(MANUAL_ID_PREFIX))
+    return master[((score.isna() & ~filtered) | err) & ~manual]
 
 
 def _load_rows_by_id(master_csv, ids) -> pd.DataFrame:

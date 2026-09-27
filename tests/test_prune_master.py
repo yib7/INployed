@@ -117,3 +117,71 @@ def test_main_reports_one_line_on_a_shape_surprise(tmp_path, capsys, monkeypatch
     err = capsys.readouterr().err
     assert rc == 1
     assert "prune_master: cannot process" in err and "AttributeError" in err
+
+
+# MA-3: hand-added jobs (manual- ids, local/manual_add.py) keep blank score
+# columns on purpose. The rescore pass (score_jobs.rows_needing_rescore) and the
+# prune's park step (_needs_rescore) both skip them, and the two readers agree
+# row for row on rows without an ERROR marker.
+_RESCORE_ROWS = [
+    {"job_posting_id": "1", "score": "", "filtered_out": ""},              # never scored
+    {"job_posting_id": "2", "score": "4", "filtered_out": ""},             # scored
+    {"job_posting_id": "3", "score": "", "filtered_out": "True "},         # filtered
+    {"job_posting_id": "4", "score": "", "filtered_out": "1.0"},           # filtered
+    {"job_posting_id": "5", "score": "nan", "filtered_out": "False"},      # never scored
+    {"job_posting_id": "manual-1a2b", "score": "", "filtered_out": ""},    # hand-added
+    {"job_posting_id": " manual-3c4d ", "score": "", "filtered_out": "False"},
+    {"job_posting_id": "manual-5e6f", "score": "3", "filtered_out": ""},
+    {"job_posting_id": "", "score": "", "filtered_out": ""},               # no id
+    {"job_posting_id": "manualx-9", "score": "", "filtered_out": ""},      # not the prefix
+]
+
+
+def _both_reads(tmp_path, rows):
+    p = tmp_path / "rescore.csv"
+    pd.DataFrame(rows).to_csv(p, index=False)
+    return (pd.read_csv(p, dtype=str, keep_default_na=False),      # how prune reads
+            pd.read_csv(p, dtype={"job_posting_id": str}))         # how the rescore pass reads
+
+
+def test_needs_rescore_agrees_with_rows_needing_rescore_and_skips_manual_rows(tmp_path):
+    import score_jobs
+    for frame in _both_reads(tmp_path, _RESCORE_ROWS):
+        prune_mask = pm._needs_rescore(frame).tolist()
+        rescore_mask = frame.index.isin(score_jobs.rows_needing_rescore(frame).index).tolist()
+        assert prune_mask == rescore_mask
+        picked = frame.loc[prune_mask, "job_posting_id"].fillna("").tolist()
+        assert picked == ["1", "5", "", "manualx-9"]
+
+
+def test_the_rescore_pass_skips_a_manual_row_even_with_an_error_marker():
+    import score_jobs
+    master = pd.DataFrame({"job_posting_id": ["manual-1a2b", "7", "manual-3c4d"],
+                           "score": [None, None, 4.0],
+                           "filtered_out": [False, False, False],
+                           "reason": ["ERROR: old failure", "ERROR: old failure", ""],
+                           "recommendation": ["", "", "ERROR: old failure"]})
+    assert score_jobs.rows_needing_rescore(master)["job_posting_id"].tolist() == ["7"]
+
+
+def test_a_master_without_ids_reads_every_blank_score_as_needing_a_rescore():
+    import score_jobs
+    frame = pd.DataFrame({"score": ["", "4"], "filtered_out": ["", ""]})
+    assert pm._needs_rescore(frame).tolist() == [True, False]
+    assert score_jobs.rows_needing_rescore(frame).index.tolist() == [0]
+
+
+def test_the_manual_prefix_is_the_one_manual_add_writes():
+    import manual_add
+    import score_jobs
+    assert pm.MANUAL_ID_PREFIX == score_jobs.MANUAL_ID_PREFIX == manual_add._MANUAL_ID_PREFIX
+
+
+def test_prune_never_parks_an_aged_hand_added_row(tmp_path):
+    row = {**BASE, "job_posting_id": "manual-1a2b", "score": "", "filtered_out": "",
+           "reason": ""}
+    p = _write(tmp_path, [row])
+    r = pm.prune(p, retention_days=3, now=NOW)
+    df = pd.read_csv(p, dtype=str, keep_default_na=False)
+    assert r["parked"] == 0
+    assert (df.loc[0, "filtered_out"], df.loc[0, "reason"]) == ("", "")

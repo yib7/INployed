@@ -44,6 +44,11 @@ def _aged_mask(chunk: pd.DataFrame, cutoff) -> pd.Series:
     cutoff_ts = pd.Timestamp(cutoff, tz="UTC")
     return dt.notna() & (dt < cutoff_ts)
 
+# MA-3: a hand-added job (local/manual_add.py) keeps blank score columns on
+# purpose, so its blank score never reads as "needs scoring". Keep IDENTICAL to
+# score_jobs.MANUAL_ID_PREFIX.
+MANUAL_ID_PREFIX = "manual-"
+
 def _needs_rescore(chunk: pd.DataFrame) -> pd.Series:
     score = pd.to_numeric(_column(chunk, "score", None), errors="coerce")
     # Accept the historical float-upcast ("1.0") and trailing-space ("True ")
@@ -53,7 +58,9 @@ def _needs_rescore(chunk: pd.DataFrame) -> pd.Series:
     filtered = (_column(chunk, "filtered_out", False)
                 .fillna(False).astype(str).str.strip().str.lower()
                 .isin(("true", "1", "1.0", "yes")))
-    return score.isna() & ~filtered
+    manual = (_column(chunk, "job_posting_id", "")
+              .fillna("").astype(str).str.strip().str.startswith(MANUAL_ID_PREFIX))
+    return score.isna() & ~filtered & ~manual
 
 def prune(master_csv: Path, *, retention_days=RETENTION_DAYS, now=None,
           strip_summary=False, dry_run=False) -> dict:

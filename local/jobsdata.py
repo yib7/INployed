@@ -1333,14 +1333,23 @@ def suppress_reposts(df: pd.DataFrame, marked_at: dict[str, str], window_days: i
     return final, step3 + step4
 
 
-def _is_manual_row(ids: pd.Series) -> pd.Series:
-    """True where job_posting_id is a hand-added job (SP5/MA-3): those are never
-    scored, so a score-based filter must not hide them regardless of min_score."""
+def is_manual_job_id(job_posting_id: object) -> bool:
+    """True for a hand-added job's id (SP5/MA-3): manual_add's own `is_manual_id`,
+    or the documented "manual-" prefix if manual_add cannot be imported (import is
+    lazy so a standalone pipeline run never needs the Qt-adjacent manual_add module
+    just to filter). This is the ONE place the fallback lives: qt/jobs_tab.py and
+    qt/jobs_model.py both call this instead of keeping their own copy."""
     try:
         from manual_add import is_manual_id
     except Exception:  # noqa: BLE001 - fall back to the documented id prefix
-        return ids.astype(str).str.startswith("manual-")
-    return ids.astype(str).map(is_manual_id)
+        return isinstance(job_posting_id, str) and job_posting_id.startswith("manual-")
+    return is_manual_id(job_posting_id)
+
+
+def _is_manual_row(ids: pd.Series) -> pd.Series:
+    """Vectorized `is_manual_job_id` (SP5/MA-3): those rows are never scored, so a
+    score-based filter must not hide them regardless of min_score."""
+    return ids.astype(str).map(is_manual_job_id)
 
 
 def filter_high_unseen_with_count(
@@ -1349,9 +1358,16 @@ def filter_high_unseen_with_count(
         window_days: int = 0,
         today: date | None = None) -> tuple[pd.DataFrame, int]:
     """`filter_high_unseen`, also reporting how many rows the repost window hid."""
-    if df.empty or "score" not in df.columns:
+    if df.empty:
         return df.iloc[0:0], 0
-    score = pd.to_numeric(df["score"], errors="coerce").fillna(0)
+    # A completely missing "score" column (e.g. the very first hand-added job on a
+    # fresh install, before any scored run has ever landed) must behave exactly
+    # like a present-but-blank one: every score reads as 0, so a normal row still
+    # needs min_score <= 0 to pass, but a manual row is exempt either way (MA-3).
+    if "score" in df.columns:
+        score = pd.to_numeric(df["score"], errors="coerce").fillna(0)
+    else:
+        score = pd.Series(0.0, index=df.index)
     is_seen = (df["is_seen"].astype(str) if "is_seen" in df.columns
                else pd.Series("no", index=df.index))
     manual = (_is_manual_row(df["job_posting_id"]) if "job_posting_id" in df.columns

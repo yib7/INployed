@@ -685,3 +685,25 @@ def test_the_derived_description_says_it_answers_unrestricted_work_authorization
 def test_asks_willingness_reads_every_question_sentence_for_an_anchor(key, label, help_text,
                                                                       asks):
     assert apply_facts.asks_willingness(key, label, help_text) is asks
+
+
+@pytest.mark.parametrize("label, keys", [
+    # the question sentence names the move; the sentence before it, the office
+    ("We work 5 days on-site in NYC. If you're not local, are you willing to relocate?",
+     ("willing_to_relocate",)),
+    ("Are you open to working on-site in our Denver office?", ("onsite_ok",)),
+    ("Are you willing to work on-site or relocate to Austin, TX?",
+     ("willing_to_relocate", "onsite_ok")),
+    # with no "?", the sentences that name the subject
+    ("Willing to relocate to NYC", ("willing_to_relocate",)),
+    # a plan to move, a job move, where the candidate lives, a fact with no
+    # anchors
+    ("Are you relocating to the job location?", ()),
+    ("Are you open to a job move?", ()),
+    ("We work 5 days on-site in NYC. Do you live in New York?", ()),
+    ("Are you willing to work in the US?", ()),
+])
+def test_asks_about_reads_the_subject_of_the_question_sentence(label, keys):
+    asked = tuple(k for k in ("willing_to_relocate", "onsite_ok", "work_authorized",
+                              "requires_sponsorship") if apply_facts.asks_about(k, label))
+    assert asked == keys

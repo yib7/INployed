@@ -3653,6 +3653,69 @@ def test_the_contoso_questions_are_asked_and_a_sure_read_fills_them(tmp_path, la
     assert p.park_reason == ""
 
 
+@pytest.mark.parametrize("mapped", [
+    ("onsite_ok", 0.95),                # the first read took the office sentence
+    ("onsite_ok", 0.45),                # or split between the two
+    ("willing_to_relocate", 0.40),
+    ("willing_to_relocate", 0.95),
+])
+def test_the_contoso_relocation_question_is_read_against_the_relocation_answer_whatever_its_mapping(
+        tmp_path, mapped):
+    """A live run on the Contoso form (2026-09-27) parked on it: its question
+    sentence asks the move, so the relocation answer is read when the first
+    request mapped the field to relocation or on-site work, at any
+    confidence."""
+    cat = apply_facts.build(tmp_path, answers=standard_bank(), today=date(2026, 9, 26))
+    digest = _field_with(_CONTOSO_RELOCATE, options=("Yes", "No"))
+    answers = _page_answers(digest, {0: mapped})
+    first = apply_judge.plan(digest, cat, answers)
+    _, questions = apply_judge.settle_questions(digest, first, answers, cat)
+    assert list(questions) == ["field_0_settle"]
+    assert questions["field_0_settle"]["instructions"]["saved_question"] == (
+        apply_facts.DESCRIPTIONS["willing_to_relocate"])
+    answers["field_0_settle"] = _SURE_YES
+    p = apply_judge.plan(digest, cat, answers)
+    assert (p.fields[0].action, p.fields[0].option, p.fields[0].fact_key) == (
+        "select", "Yes", "willing_to_relocate")
+    assert p.park_reason == ""
+
+
+@pytest.mark.parametrize("mapped", [("onsite_ok", 0.95), ("leave_blank", 0.95),
+                                    ("willing_to_relocate", 0.95)])
+def test_for_a_candidate_who_will_not_relocate_the_contoso_relocation_question_is_not_asked(
+        tmp_path, mapped):
+    """A No to relocating leaves "if you're not local" open, and an on-site
+    Yes says nothing of where the candidate lives."""
+    bank = standard_bank(willing_to_relocate="No")
+    cat = apply_facts.build(tmp_path, answers=bank, today=date(2026, 9, 26))
+    digest = _field_with(_CONTOSO_RELOCATE, options=("Yes", "No"))
+    answers = _page_answers(digest, {0: mapped})
+    first = apply_judge.plan(digest, cat, answers)
+    _, questions = apply_judge.settle_questions(digest, first, answers, cat)
+    assert questions == {}
+    answers["field_0_settle"] = _SURE_NO
+    p = apply_judge.plan(digest, cat, answers)
+    assert (p.fields[0].action, p.fields[0].option) == ("skip", None)
+
+
+@pytest.mark.parametrize("label, mapped", [
+    # the recording's first read: remote work first, the office at 0.27
+    ("Would you rather work remotely than in the office?", ("remote_only", 0.47)),
+    ("Would you rather work remotely than in the office?", ("leave_blank", 0.95)),
+    (_CONTOSO_RELOCATE, ("leave_blank", 0.95)),
+])
+def test_a_field_mapped_to_another_fact_or_none_keeps_its_mapping(tmp_path, label, mapped):
+    cat = apply_facts.build(tmp_path, answers=standard_bank(), today=date(2026, 9, 26))
+    digest = _field_with(label, options=("Yes", "No"))
+    answers = _page_answers(digest, {0: mapped})
+    first = apply_judge.plan(digest, cat, answers)
+    _, questions = apply_judge.settle_questions(digest, first, answers, cat)
+    assert questions == {}
+    answers["field_0_settle"] = _SURE_YES
+    p = apply_judge.plan(digest, cat, answers)
+    assert (p.fields[0].action, p.fields[0].option) == ("skip", None)
+
+
 def test_a_settle_question_carries_the_authorization_statement(tmp_path):
     bank = standard_bank(authorization_statement=_STATEMENT)
     cat, _, _, questions, _ = _held_back_plan(tmp_path, label=_CONTOSO_AUTH,

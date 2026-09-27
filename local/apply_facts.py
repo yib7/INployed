@@ -1078,6 +1078,27 @@ def asks_willingness(fact_key: str | None, label: str, help_text: str = "", *,
     return _asked_willing(_sentences(_phrased(label, help_text, company)), spec)
 
 
+def asks_about(fact_key: str | None, label: str, help_text: str = "", *,
+               company: str = "") -> bool:
+    """Does every question sentence of a field (with none, every sentence
+    naming the fact's subject) name `fact_key`'s subject and ask the
+    candidate's willingness (`asks_willingness`), whatever its other words?
+    "We work 5 days on-site in NYC. If you're not local, are you willing to
+    relocate?" asks about relocating: its one question sentence names the
+    move, and the sentence before it the office. A form of another question
+    (`refuse`: "a job move") never is, nor is a fact with no anchors."""
+    spec = OWN_QUESTIONS.get(fact_key or "")
+    if spec is None or not spec.anchors:
+        return False
+    text = _phrased(label, help_text, company)
+    if spec.refuse is not None and spec.refuse.search(" ".join(_TOKEN.findall(text))):
+        return False
+    sentences = _sentences(text)
+    asked = [words for words, question in sentences if question]
+    return (all(set(words) & spec.topic[0] for words in asked)
+            and _asked_willing(sentences, spec))
+
+
 def answers_question(fact_key: str | None, value: str, label: str,
                      help_text: str = "", partial: bool = False, *, company: str = "") -> bool:
     """Does `value` of `fact_key` answer the field's question? Its own

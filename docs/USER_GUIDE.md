@@ -576,7 +576,9 @@ work in the office in New York?" or "Do you require visa sponsorship? This inclu
 sponsorship for CPT, OPT or other visa types", Jev reads your saved answers, with your work
 authorization statement, and fills the field only when it is sure (0.85 or more, far ahead of
 every other choice) that anyone with those answers would pick that option. Otherwise the field
-stops the job as before. Some questions always stop the job, since none of your answers says
+stops the job as before. The question itself says which answer Jev reads: "We work 5 days on-site
+in NYC. If you're not local, are you willing to relocate?" asks about moving, so your relocation
+answer settles it even when the office sentence comes first. Some questions always stop the job, since none of your answers says
 them: another country, whether you are employed now, a visa or sponsor you hold now, your
 employer's needs, relocation help you ask for, commuting or where you live. If you need
 sponsorship, so do questions about now alone, about restrictions, about one visa type such as

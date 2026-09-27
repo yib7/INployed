@@ -70,7 +70,7 @@ from urllib.parse import urlsplit
 # are no number, cycle 18 FM-5) and the yes and no forms are the own-question
 # gate's too, so both read one list (final review C1)
 from apply_facts import (DESCRIPTIONS, NO_FORMS, PLAIN_NUMBER, STORED_YES_NO_KEYS, YES_FORMS,
-                         YES_NO_KEYS, FactCatalog, answers_question, asks_willingness,
+                         YES_NO_KEYS, FactCatalog, answers_question, asks_about, asks_willingness,
                          noun_phrase, question_tokens, quick_map)
 # the own-question gate's other names, re-exported for the judge's callers
 from apply_facts import asks_own_question as asks_own_question
@@ -1926,24 +1926,28 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
             # lands in one
             fact_key, pf.fact_key = None, None
             pf.action = PASSWORD_ACTION
-        elif fact_key and not catalog.answers_field(
+        elif not fact_key or not catalog.answers_field(
                 fact_key, f.label, f.help,
                 partial=bool(getattr(f, "label_partial", False)), company=company):
-            # the fact answers another question than the field's, a
-            # narrower form its value does not settle, or a cut label; a
-            # custom yes / no or number answer another question than its
-            # saved one (cycle 18, SP6c): no value from it, so a required
-            # field parks and an optional one stays blank, unless the judge
-            # is sure the saved answer settles the question as worded here
-            # (`settled_pick`, never for work authorization or sponsorship)
-            pick = settled_pick(answers, f, fact_key, catalog)
+            # no fact, or one that answers another question than the
+            # field's, a narrower form its value does not settle, or a cut
+            # label; a custom yes / no or number answer another question
+            # than its saved one (cycle 18, SP6c): no value from it, so a
+            # required field parks and an optional one stays blank, unless
+            # the judge is sure the saved answer of the fact the field's
+            # question names, else of its mapped fact, settles the question
+            # as worded here (`settle_key`, `settled_pick`)
+            key = settle_key(f, answers, catalog, company)
+            pick = settled_pick(answers, f, key, catalog) if key else None
             if pick is not None:
                 log.debug("field %d %r: %s settles it by the judge's read: %r",
-                          f.n, f.label, fact_key, pick)
-                pf.value, pf.action, pf.option = catalog.value(fact_key), "select", pick
+                          f.n, f.label, key, pick)
+                fact_key, pf.fact_key = key, key
+                pf.value, pf.action, pf.option = catalog.value(key), "select", pick
             else:
-                log.debug("field %d %r: %s does not answer its question; no value",
-                          f.n, f.label, fact_key)
+                if fact_key:
+                    log.debug("field %d %r: %s does not answer its question; no value",
+                              f.n, f.label, fact_key)
                 fact_key, pf.fact_key = None, None
         elif fact_key and catalog.has(fact_key) and _yes_no_fact(catalog, fact_key) \
                 and noun_phrase(f.label) and code_pick(catalog.value(fact_key), f.options) is None:
@@ -2081,6 +2085,16 @@ def option_questions(digest: FormDigest, fill_plan: FillPlan,
 # them wrong at up to 0.92.
 SETTLE_KEYS = frozenset(("willing_to_relocate", "onsite_ok", "work_authorized",
                          "requires_sponsorship", "authorized_without_sponsorship"))
+# Relocation and on-site work, the pair a first read takes one for the
+# other: when it maps a field to either, at any confidence, the facts the
+# question's own words name (`apply_facts.asks_about`) are read first. The
+# live run on the Contoso form (2026-09-27) parked on "We work 5 days on-site in
+# NYC. If you're not local, are you willing to relocate?" after the first
+# read took it for on-site work, whose saved answer says nothing of where
+# the candidate lives. A field mapped to another fact or to none keeps its
+# mapping: "Would you rather work remotely than in the office?" names the
+# office beside a willingness word and asks something else.
+SUBJECT_KEYS = ("willing_to_relocate", "onsite_ok")
 # The questions no saved answer settles, whatever the fact: a conviction, a
 # background or drug check or a security clearance; the candidate's present
 # job or employer ("Are you currently legally employed in the United
@@ -2226,7 +2240,7 @@ def _settle_ok(f, key: str, catalog: FactCatalog) -> bool:
     on something the saved answers do not say (`_unsaid`) or never
     answered?"""
     return (bool(f.options) and _action_for(f) == "select"
-            and not getattr(f, "label_partial", False)
+            and not getattr(f, "label_partial", False) and not getattr(f, "refused", "")
             and key in SETTLE_KEYS and catalog.has(key)
             and not is_sensitive_field(f.label, f.id_or_name) and not password_box(f)
             and not _unsaid(f, key, catalog))
@@ -2251,30 +2265,38 @@ def settled_pick(answers: Mapping[str, Answer], f, key: str,
     return choice
 
 
-def _held_back(f, answers: Mapping[str, Answer], catalog: FactCatalog,
-               company: str) -> str | None:
-    """The fact `plan` took for field `f` (its `quick_map` hit with a value,
-    else the judge's mapping at `FIELD_MAP_MIN_CONF` or more) when the
-    own-question gate held its answer back and the judge may read it
-    (`_settle_ok`); None otherwise."""
+def settle_key(f, answers: Mapping[str, Answer], catalog: FactCatalog,
+               company: str = "") -> str | None:
+    """The fact whose saved answer the third request reads field `f`
+    against: the first that the own-question gate holds back and the judge
+    may read (`_settle_ok`) of the fact `plan` mapped it to (its `quick_map`
+    hit with a value, else the judge's mapping at `FIELD_MAP_MIN_CONF` or
+    more), with the facts its question names by its own words ahead of it
+    when the mapping is relocation or on-site work at any confidence
+    (`SUBJECT_KEYS`, `apply_facts.asks_about`); None when none is. The same
+    field and answers give the same fact, so `plan` reads the settle answer
+    against the fact it was asked for."""
     quick = quick_map(f.label, f.id_or_name, f.type)
     if quick and catalog.has(quick):
-        key = quick
+        mapped, conf = quick, 1.0
     else:
-        key, conf = _choice_of(answers, f"field_{f.n}_source")
-        if key in (None, "leave_blank") or conf < FIELD_MAP_MIN_CONF:
-            return None
-    if not _settle_ok(f, key, catalog) or catalog.answers_field(
-            key, f.label, f.help, partial=bool(getattr(f, "label_partial", False)),
-            company=company):
-        return None
-    return key
+        mapped, conf = _choice_of(answers, f"field_{f.n}_source")
+    keys = [k for k in SUBJECT_KEYS
+            if mapped in SUBJECT_KEYS and asks_about(k, f.label, f.help or "", company=company)]
+    if mapped not in (None, "leave_blank") and conf >= FIELD_MAP_MIN_CONF:
+        keys.append(mapped)
+    partial = bool(getattr(f, "label_partial", False))
+    for key in dict.fromkeys(keys):
+        if _settle_ok(f, key, catalog) and not catalog.answers_field(
+                key, f.label, f.help, partial=partial, company=company):
+            return key
+    return None
 
 
 def settle_questions(digest: FormDigest, fill_plan: FillPlan, answers: Mapping[str, Answer],
                      catalog: FactCatalog, *, company: str = "") -> tuple[dict, dict]:
     """The third request: each field the plan left blank because the
-    own-question gate held back its fact's saved answer (`_held_back`) is
+    own-question gate held back its fact's saved answer (`settle_key`) is
     asked whether that answer, with its note, the other yes / no lines and
     the authorization statement (`_settle_answer_text`), settles the field's
     question as worded there (`SETTLE_QUESTION`, escape `not_settled`).
@@ -2287,7 +2309,7 @@ def settle_questions(digest: FormDigest, fill_plan: FillPlan, answers: Mapping[s
         f = by_n.get(pf.n)
         if f is None or pf.action != "skip" or pf.fact_key:
             continue
-        key = _held_back(f, answers, catalog, company)
+        key = settle_key(f, answers, catalog, company)
         if key is None:
             continue
         i = len(state["fields"])

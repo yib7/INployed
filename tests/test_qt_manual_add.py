@@ -52,6 +52,17 @@ def test_dialog_collects_values(qtbot):
                     "title": "ML Engineer", "company": "Globex"}
 
 
+def test_dialog_intro_requires_description_no_url_only_promise(qtbot):
+    """MA-5: the intro text must say a description is required, and must not
+    promise that a URL alone is enough to add the job."""
+    dlg = ManualAddDialog()
+    qtbot.addWidget(dlg)
+    text = dlg.intro.text().lower()
+    assert "description" in text
+    assert "or give a url" not in text
+    assert "we'll try a free fetch" not in text
+
+
 def test_dialog_add_and_tailor_requires_all_fields(qtbot, monkeypatch):
     dlg = ManualAddDialog()
     qtbot.addWidget(dlg)
@@ -240,6 +251,21 @@ def test_finish_manual_add_records_resume_and_reloads(qtbot, monkeypatch):
     w.registry.record_resume.assert_called_once_with("manual-1", "/tmp/Generated/Acme")
     assert reloaded == [True] and w._manual_adding is False
     assert "Acme" in w.statusBar().currentMessage()
+
+
+def test_finish_manual_add_failed_tailor_tells_user_how_to_retry(qtbot, monkeypatch):
+    """MA-4: a saved-but-not-tailored job must say how to retry, naming the
+    actual row action (detail_card.py's "Tailor résumé" button)."""
+    w = _win(qtbot)
+    monkeypatch.setattr(mw.jobsdata, "local_run_files", lambda *a, **k: [])
+    monkeypatch.setattr(w, "reload_data_async", lambda: None)
+    w._finish_manual_add({
+        "record": {"job_posting_id": "manual-1", "job_title": "DA",
+                   "company_name": "Acme", "source": "manual"},
+        "resume_dir": None, "appended": True})
+    msg = w.statusBar().currentMessage()
+    assert "saved" in msg.lower() and "failed" in msg.lower()
+    assert "Tailor résumé" in msg
 
 
 def test_finish_manual_add_merges_manual_source(qtbot, monkeypatch, tmp_path):

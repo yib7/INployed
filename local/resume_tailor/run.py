@@ -1004,9 +1004,10 @@ def _faith_entries(ctx: PassCtx, texts: Dict[str, str]) -> List[Dict[str, Any]]:
 
 
 def _faith_refusal(ctx: PassCtx, gk: str, text: str, flagged_text: str, *, stage: str,
-                   openers: FrozenSet[str] = frozenset()) -> str:
+                   openers: FrozenSet[str] = frozenset(), max_lines: int = 0) -> str:
     """Why regrounded `text` may not replace `flagged_text`, or "" when it goes on to
-    Jev's re-check. `openers` holds the opening verbs it must not reuse."""
+    Jev's re-check. `openers` holds the opening verbs it must not reuse, and a
+    non-zero `max_lines` the printed lines it may not run past (the sweep's)."""
     if not text:
         return "the re-ask returned nothing"
     if text == flagged_text:
@@ -1023,6 +1024,11 @@ def _faith_refusal(ctx: PassCtx, gk: str, text: str, flagged_text: str, *, stage
     verb = compose.leading_verb(text)
     if verb and verb in openers:
         return f"the re-ask's text opens with '{verb}', which another bullet already uses"
+    if max_lines:
+        lines = measure.line_count(text)
+        if lines > max_lines:
+            return (f"the re-ask's text runs to {lines} printed lines, past the "
+                    f"{max_lines} the bullet had before the sweep")
     return ""
 
 
@@ -1102,6 +1108,7 @@ def _check_faithfulness(ctx: PassCtx, *, stage: str,
       1. is non-empty and differs from the flagged text,
       2. passes the grounding gate's own check (`verify.group_unseen`),
       3. adds no style finding, at the style gate and the sweep (`_LATE_STAGES`),
+         and at the sweep runs to no more printed lines than the bullet had before it,
       4. opens with a verb no other bullet uses, on the passes after the verb dedupe
          (the revert target at the dedupe itself is the text it had to change),
       5. passes a second faithfulness check; one that cannot run counts as flagged.
@@ -1160,8 +1167,11 @@ def _check_faithfulness(ctx: PassCtx, *, stage: str,
                 {compose.leading_verb(t) for other, t in ctx.bullets.items() if other != gk}
                 | {compose.leading_verb(t) for t in candidates.values()}
                 | set(ctx.reserved))
+        max_lines = 0
+        if stage == AIWRITING_SWEEP_STAGE and snapshot is not None and gk in snapshot:
+            max_lines = measure.line_count(snapshot[gk])
         why = failed or _faith_refusal(ctx, gk, text, ctx.bullets[gk], stage=stage,
-                                       openers=openers)
+                                       openers=openers, max_lines=max_lines)
         if why:
             refuse(gk, why, text)
         else:
@@ -1203,7 +1213,10 @@ def _check_faithfulness(ctx: PassCtx, *, stage: str,
 # per item on the structural tells only it can see. And the sweep commits a rewrite only
 # when that rewrite fits its own printed-line budget, which makes the pass's total line
 # count non-increasing; a stage placed after it could re-lengthen a bullet and take that
-# guarantee away, so there is nothing after it.
+# guarantee away, so no pass follows it. The one step after the sweep is its own
+# faithfulness check (TL-4, with Jev on), and it keeps the guarantee: at the sweep it
+# refuses a regrounded text that runs past the bullet's pre-sweep printed lines, and a
+# revert goes back to that pre-sweep text.
 _BULLET_PASSES = (
     Pass(VERB_DEDUPE_STAGE, _pass_dedupe_verbs),
     Pass("verbatim + trim", _pass_merge_verbatim, verify=False),

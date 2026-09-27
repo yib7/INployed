@@ -410,6 +410,31 @@ def test_after_the_style_gate_a_reground_may_add_no_style_finding(engine, monkey
     assert "the re-ask's text adds hollow intensifier" in warning
 
 
+_H1_LONG = ("Helped the team move the billing service to a queue-based design, one "
+            "service at a time with the team, until the billing service ran on the "
+            "queue-based design.")
+
+
+@pytest.mark.parametrize("stage", [rt_run.AIWRITING_SWEEP_STAGE, rt_run.STYLE_GATE_STAGE])
+def test_at_the_sweep_a_reground_may_not_outgrow_the_bullet(engine, monkeypatch, stage):
+    """The sweep keeps the pass's printed lines from growing, and nothing after it
+    trims, so at the sweep a regrounded text longer than the bullet's pre-sweep text
+    is refused and the bullet reverts. The style gate's line budget is the target the
+    re-trim enforces, so there the same text stands."""
+    assert measure.line_count(_H1) == 1 and measure.line_count(_H1_LONG) == 2
+    _reask(monkeypatch, {"h1": _H1_LONG})
+    ctx = _ctx({"h1": _H1_LED, "h2": _H2}, judge=Flagger("led"))
+    _check(ctx, stage=stage, snapshot={"h1": _H1, "h2": _H2}, retrim=True)
+    if stage == rt_run.STYLE_GATE_STAGE:
+        assert ctx.bullets["h1"] == _H1_LONG and ctx.report.warnings == []
+    else:
+        assert ctx.bullets["h1"] == _H1
+        assert ctx.report.warnings == [
+            f"grounding: [{stage}] faithfulness: reverted bullet 'h1' ({_INFLATION}; "
+            "the re-ask's text runs to 2 printed lines, past the 1 the bullet had "
+            "before the sweep)"]
+
+
 def test_a_recheck_that_cannot_run_counts_as_flagged(engine, monkeypatch):
     _reask(monkeypatch, {"h1": _H1})
     ctx = _ctx({"h1": _H1_LED, "h2": _H2}, judge=Flagger("led", answers=1))

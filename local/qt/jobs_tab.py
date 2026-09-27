@@ -664,12 +664,9 @@ class JobsTab(QtWidgets.QWidget):
 
     @staticmethod
     def _is_manual(jid: str) -> bool:
-        """A manually-added job (its id carries the 'manual-' prefix)."""
-        try:
-            from manual_add import is_manual_id
-            return is_manual_id(jid)
-        except Exception:  # noqa: BLE001 - fall back to the documented prefix
-            return str(jid).startswith("manual-")
+        """A manually-added job (its id carries the 'manual-' prefix). Shares its
+        fallback logic with jobsdata.is_manual_job_id (the one place it lives)."""
+        return jobsdata.is_manual_job_id(jid)
 
     def _context_menu(self, pos) -> None:
         ids = self._ids_at(pos)

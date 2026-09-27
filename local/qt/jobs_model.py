@@ -14,7 +14,7 @@ from __future__ import annotations
 import pandas as pd
 from PySide6 import QtCore
 
-from jobsdata import COLUMN_LABELS
+from jobsdata import COLUMN_LABELS, is_manual_job_id
 from qt import theme
 from qt.delegates import TAG_ROLE
 
@@ -44,12 +44,9 @@ _HEADER_RIGHT = frozenset({
 
 def _manual_mask(ids: list[str]) -> list[bool]:
     """True where an id is a hand-added job (SP5/MA-3): those are never scored,
-    so the Score cell reads "hand-added" instead of a blank value."""
-    try:
-        from manual_add import is_manual_id
-    except Exception:  # noqa: BLE001 - fall back to the documented id prefix
-        return [str(i).startswith("manual-") for i in ids]
-    return [is_manual_id(i) for i in ids]
+    so the Score cell reads "hand-added" instead of a blank value. Shares its
+    fallback logic with jobsdata.is_manual_job_id (the one place it lives)."""
+    return [is_manual_job_id(i) for i in ids]
 
 
 class JobsTableModel(QtCore.QAbstractTableModel):

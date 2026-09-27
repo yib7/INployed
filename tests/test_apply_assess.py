@@ -1052,3 +1052,94 @@ def test_the_walker_follows_the_judges_apply_entry(context, tmp_path):
     assert why == ""
     assert got["score"] < aa.STOP_SCORE, (got["reasons"], rec.actions)
     _only_entries(rec, ["Get started"])
+
+
+
+class _AccountEntry(jev.FakeJev):
+    """A noisy read of a posting: the posting read as a posting and the
+    account link in its body (`account`) read as the Apply entry at 0.99,
+    every other button read as the fake reads it, with any other Apply entry
+    read as `other`."""
+
+    def __init__(self, account: str):
+        super().__init__()
+        self.account = account
+
+    def judge(self, state, questions):
+        import apply_harness as h
+        out = super().judge(state, questions)
+        title = str((state.get("page") or {}).get("title") or "")
+        if "page_state" in out and title.startswith("Data Analyst at"):
+            h.read_as(out, "job_posting", 0.95, {"job_posting": 0.95})
+        for b in state.get("buttons") or []:
+            qid = f"button_{b['n']}_role"
+            if qid not in out:
+                continue
+            if b.get("text") == self.account:
+                out[qid] = jev.Answer(kind="choice", choice="apply_entry", confidence=0.99,
+                                      probabilities={"apply_entry": 0.99})
+            elif out[qid].choice == "apply_entry":
+                out[qid] = jev.Answer(kind="choice", choice="other", confidence=0.95,
+                                      probabilities={"other": 0.95})
+        return out
+
+
+def _account_posting(account: str, *, apply: bool = True) -> str:
+    entry = "<a class=\"btn\" href=\"/apply/form\">Apply now</a>" if apply else ""
+    return ("<html><head><title>Data Analyst at Fabrikam</title></head><body><main>"
+            "<h1>Data Analyst</h1><p>Fabrikam is hiring a data analyst to build the "
+            "reports our teams read each week. Talent network members hear first: "
+            f"<a class=\"btn\" href=\"/signup\">{account}</a></p><h2>Requirements</h2>"
+            f"<ul><li>SQL</li><li>Python</li></ul>{entry}</main></body></html>")
+
+
+_ACCOUNT_LINKS = ("Create an account", "Sign in", "Sign up", "Log in", "Next")
+
+
+@pytest.mark.parametrize("account", _ACCOUNT_LINKS)
+def test_a_judged_entry_that_reads_as_an_account_link_is_never_clicked(context, tmp_path,
+                                                                       account):
+    """DF-2: a confident judged `apply_entry` on a sign-in, sign-up, log-in
+    or Next link in the posting body is refused, and the walker takes the
+    text choice, the posting's own "Apply now"."""
+    _serve(context, {"/jobs/7": _account_posting(account),
+                     "/apply/form": _form("lever_single.html")})
+    got, why, rec, _ = _check(context, tmp_path, f"{CAREERS}/jobs/7",
+                              judge=_AccountEntry(account))
+    assert why == ""
+    assert got["score"] < aa.STOP_SCORE, (got["reasons"], rec.actions)
+    _only_entries(rec, ["Apply now"])
+
+
+@pytest.mark.parametrize("account", ("Create an account", "Sign in", "Log in"))
+def test_an_account_link_alone_on_a_posting_is_never_clicked(context, tmp_path, account):
+    """DF-2: with no Apply beside it, the refused account link leaves the
+    walk with no click at all."""
+    _serve(context, {"/jobs/7": _account_posting(account, apply=False)})
+    _got, _why, rec, _ = _check(context, tmp_path, f"{CAREERS}/jobs/7",
+                                judge=_AccountEntry(account))
+    _only_entries(rec, [])
+
+
+def test_a_sign_in_to_apply_link_is_an_account_step_not_a_click(context, tmp_path):
+    """DF-2: "Sign in to apply" is Apply-worded, so the text choice finds it;
+    it signs in all the same, so the walk notes the account step and does
+    not click it."""
+    _serve(context, {"/jobs/7": _account_posting("Sign in to apply", apply=False)})
+    got, why, rec, _ = _check(context, tmp_path, f"{CAREERS}/jobs/7",
+                              judge=_AccountEntry("Sign in to apply"))
+    _only_entries(rec, [])
+    assert why == ""
+    assert aa.ACCOUNT_NOTE in got["reasons"], got["reasons"]
+
+
+@pytest.mark.parametrize("seed", (1, 2, 3, 4))
+def test_a_noisy_judge_never_clicks_an_account_link_in_the_posting(context, tmp_path, seed):
+    _serve(context, {"/jobs/7": _account_posting("Create an account"),
+                     "/apply/form": _form("lever_single.html")})
+    got, _why, rec, _ = _check(context, tmp_path, f"{CAREERS}/jobs/7",
+                               judge=jev.NoisyJev(_AccountEntry("Create an account"),
+                                                  seed=seed))
+    assert {a.kind for a in rec.actions} <= _READ_ONLY, rec.actions
+    assert [a.text.strip() for a in rec.actions] in ([], ["Apply now"]), rec.actions
+    assert got is None or 1 <= got["score"] <= 10

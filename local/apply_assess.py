@@ -173,6 +173,21 @@ SSO_NOTE = "Its only way on signs in with {sites}; the run signs in with no othe
 _UNSAFE = re.compile(r"[^A-Za-z0-9_.-]")
 
 
+def account_worded(text: str) -> bool:
+    """Does a posting's control read as a way into an account (DF-2: the
+    walk never clicks a sign-in or a sign-up): a
+    sign-in or log-in (`apply_judge.SIGN_IN_WORDS`), a sign-up or a new
+    account (`apply_run._CREATE_ACCOUNT`), or a Next or Continue with no Apply
+    word (`apply_judge.entry_worded`). "Sign in to apply" is one; "Continue
+    to apply" is not."""
+    import apply_judge
+    import apply_run
+    text = " ".join(str(text or "").split())
+    if apply_judge.SIGN_IN_WORDS.search(text) or apply_run._CREATE_ACCOUNT.search(text):
+        return True
+    return bool(apply_run._NEXT_WORDS.search(text)) and not apply_judge.entry_worded(text)
+
+
 def mode_gate(mode: str) -> str:
     """The judge mode's own refusal, asked before the Jev gate: a test
     judge's or a mode `jev.get` does not build (`jev_switch.mode_refusal`),
@@ -708,7 +723,10 @@ class _Walker:
         on LinkedIn, a sign-in with another site as the only way on, the
         unsure and `other` rules, the emailed-link remap, then the page's
         kind. A posting's Apply entry is chosen over the buttons' mapped
-        roles (`_posting_plan`), as the drain chooses it."""
+        roles (`_posting_plan`), as the drain chooses it, with one exception
+        for DF-2: an entry that reads as a sign-in or a sign-up
+        (`account_worded`) is never clicked. A judged one gives way to the
+        text choice, and a text choice that reads so is an account step."""
         import apply_fill
         import apply_judge
         import apply_linkedin
@@ -763,8 +781,15 @@ class _Walker:
                     return Step("stop", stop="easy_apply", **found)
                 return Step("stop", stop="dead", note=apply_linkedin.NO_APPLY_REASON, **found)
             apart, unclassified, _scan = apply_run.posting_context(self.page, digest, plan)
-            n, _how = apply_run.posting_entry_choice(digest, plan, apart=apart,
-                                                     unclassified=unclassified)
+            n, how = apply_run.posting_entry_choice(digest, plan, apart=apart,
+                                                    unclassified=unclassified)
+            if how == "judged_apply_entry" and self._account_entry(digest, n):
+                text_only = dataclasses.replace(plan, buttons={
+                    role: held for role, held in plan.buttons.items() if role != "apply_entry"})
+                n, how = apply_run.posting_entry_choice(digest, text_only, apart=apart,
+                                                        unclassified=unclassified)
+            if n is not None and self._account_entry(digest, n):
+                return Step("account", **found)
             if n is not None:
                 return Step("entry", button=next(b for b in digest.buttons if b.n == n),
                             **found)
@@ -785,6 +810,16 @@ class _Walker:
             return Step("stop", stop="dead", **found)
         return Step("unread", note=f"the page reads as none of the kinds the check knows "
                                    f"({state}, {conf:.2f})")
+
+    def _account_entry(self, digest, n: int) -> bool:
+        """Is button `n` a way into an account (`account_worded`) by the text
+        it was read with or by its live text now (`apply_form.live_text`)."""
+        import apply_form
+        button = next(b for b in digest.buttons if b.n == n)
+        if account_worded(button.text):
+            return True
+        live = apply_form.live_text(apply_form.resolve(self.page, button.locator))
+        return account_worded(str(live.get("text") or ""))
 
     def _posting_plan(self, digest, answers):
         """The posting's plan with its buttons' roles mapped, as the drain

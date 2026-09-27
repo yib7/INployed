@@ -332,8 +332,10 @@ def _resolve_best_of(jd: str, job_title: str, sel: dict, log: Callable[[str], No
     check); a TL-4 check that cannot run leaves the gate alone, as it does for every
     bullet. Jev picks among a bullet's candidates (`jev_assist.best_variant`); a
     bullet with one candidate keeps it, and a pick that fails keeps the first. A
-    bullet with no candidate keeps its first draft, which is what the rephrase gave
-    before TL-7, and the prologue gate and TL-4 then treat it as any bullet. A drafts
+    bullet with no candidate keeps its first draft the grounding gate passes, else
+    its first draft, which is what the rephrase gave before TL-7; the prologue gate
+    and TL-4 then treat it as any bullet. The caller skips this with the breaker
+    open, since nothing could judge the drafts. A drafts
     answer with no bullet in it falls back to today's rephrase call. Every text kept
     is one the rephrase wrote."""
     drafts = compose.rephrase_drafts(jd, job_title, sel, briefs=briefs)
@@ -362,7 +364,8 @@ def _resolve_best_of(jd: str, job_title: str, sel: dict, log: Callable[[str], No
     for gk, texts in drafts.items():
         ok = passing.get(gk) or []
         n = picks.get(gk, (1, 0.0))[0]
-        bullets[gk] = ok[n - 1] if 1 <= n <= len(ok) else (ok[0] if ok else texts[0])
+        bullets[gk] = (ok[n - 1] if 1 <= n <= len(ok)
+                       else (ok or grounded.get(gk) or texts)[0])
     total = sum(len(texts) for texts in drafts.values())
     log(f"rephrased {len(bullets)} bullet(s) from {total} draft(s); Jev picked among the "
         f"passing drafts of {len(groups)}")
@@ -1390,7 +1393,12 @@ def tailor(
     briefs = compose.block_briefs(jd, job_title, sel)
     report.stage("rephrase")
     if judge is not None and config.best_of_n():
-        bullets = _resolve_best_of(jd, job_title, sel, log, briefs=briefs, judge=judge)
+        # TL-7 pays for three drafts before Jev's first request, so an open breaker
+        # (an earlier step met an outage) keeps the single rephrase call (JS-3).
+        if jev_assist.breaker_open(jev_assist.STEP_BEST_OF, judge):
+            bullets = _resolve_bullets(jd, job_title, sel, log, briefs=briefs)
+        else:
+            bullets = _resolve_best_of(jd, job_title, sel, log, briefs=briefs, judge=judge)
         report.jev_step(jev_assist.STEP_BEST_OF)
     else:
         bullets = _resolve_bullets(jd, job_title, sel, log, briefs=briefs)

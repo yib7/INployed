@@ -145,13 +145,21 @@ def test_jev_picks_among_the_drafts_that_pass_the_gate_and_tl4(engine, monkeypat
                     "passing drafts of 1"]
 
 
-def test_with_no_draft_passing_the_first_draft_goes_on(engine, monkeypatch):
-    """The rephrase's first draft is what the run would have had with the option
-    off; the prologue gate and TL-4 then treat it as they treat any bullet."""
+def test_with_no_draft_passing_a_grounded_draft_goes_on(engine, monkeypatch):
+    """No draft passes both checks: the first draft the grounding gate passes goes on,
+    else the rephrase's first draft, which is what the run would have had with the
+    option off. The prologue gate and TL-4 then treat it as they treat any bullet."""
     judge = Judge("led", "wrote")
     got, _logs = _best_of(monkeypatch, {"h1": [_H1_LED], "h2": [_H2_KAFKA, _H2]}, judge)
-    assert got == {"h1": _H1_LED, "h2": _H2_KAFKA}
+    assert got == {"h1": _H1_LED, "h2": _H2}
     assert judge.choice_requests == []
+
+
+def test_with_no_grounded_draft_the_first_draft_goes_on(engine, monkeypatch):
+    judge = Judge()
+    kafka_2 = "Wrote 40 Kafka integration tests for the billing service."
+    got, _logs = _best_of(monkeypatch, {"h1": [_H1], "h2": [_H2_KAFKA, kafka_2]}, judge)
+    assert got == {"h1": _H1, "h2": _H2_KAFKA}
 
 
 def test_a_pick_that_fails_keeps_the_first_passing_draft(engine, monkeypatch):
@@ -219,6 +227,25 @@ def test_with_jev_off_the_option_asks_for_no_drafts(pinned_engine, stub_template
     tailor_jev._run_tailor(monkeypatch, tmp_path)
     assert _drafts_asked(calls) == [] and stages.count("rephrase") == 1
     assert "jev best of three" not in tailor_jev._report(tmp_path)
+
+
+def test_with_the_breaker_open_the_run_asks_for_one_draft(pinned_engine, stub_template_head,
+                                                         tmp_path, monkeypatch):
+    """JS-3: one outage moves the rest of the run to the LLM path. The breaker opens
+    at the first Jev step, before the rephrase, so drafts nothing could judge are
+    never paid for: with all three options on, every call and pinned prompt is the
+    Jev-off recording's, the rephrase prompt among them."""
+    for env in tailor_jev.JEV_OPTION_ENVS:
+        monkeypatch.setenv(env, "1")
+    down = tailor_jev._DownAfter(answers=0)
+    tailor_jev._jev_on(monkeypatch, down)
+    got = tailor_jev._record_jev_off(monkeypatch, tmp_path)
+    want = json.loads(tailor_jev.PROMPTS.read_text(encoding="utf-8"))
+    assert got["prompts"]["rephrase"] == want["prompts"]["rephrase"]
+    assert got == want
+    assert down.calls == len(jev.RETRY_DELAYS_S) + 1
+    assert ("  jev best of three: 0 requests, 0 tokens (estimated), $0.000000; fell back "
+            "to the LLM path (JudgeOutage ServiceDown 503)") in tailor_jev._report(tmp_path)
 
 
 def test_the_option_getters_default_off(monkeypatch):

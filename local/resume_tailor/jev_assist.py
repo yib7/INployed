@@ -236,6 +236,21 @@ def usage(step: str) -> Dict[str, Any]:
             "usd": jev.usd_for(counts["tokens"]), "note": counts["note"]}
 
 
+def breaker_open(step: str, judge: Any, *, fallback: str = LLM_PATH) -> bool:
+    """True when `judge`'s breaker is open (`jev.Guarded.down`), for a step whose
+    caller pays for work before Jev's first request (TL-7's drafts). The step's note
+    then names the outage as a request that met it would, and the caller keeps the
+    path it has without Jev (JS-3)."""
+    down = getattr(judge, "down", "") if judge is not None else ""
+    if not isinstance(down, str) or not down:
+        return False
+    counts = _step_counts(step)
+    counts["note"] = counts["note"] or f"fell back to {fallback} (JudgeOutage {down})"
+    log.warning("jev_assist: jev %s skipped, the breaker is open (%s); %s runs",
+                step, down, fallback)
+    return True
+
+
 def usage_line(step: str) -> str:
     """The run report's line for `step`, e.g. "jev shortlist: 1 request, 812 tokens
     (estimated), $0.000034", with "; <note>" after it when the step has one."""

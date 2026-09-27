@@ -102,7 +102,7 @@ def parse_resume_bullets(md_text: str) -> List[str]:
     return bullets
 
 
-# One `- **label:** value` line is ONE line, and apply_playwright.parse_apply_md
+# One `- **label:** value` line is ONE line, and apply_sheet.parse_apply_md
 # reads this file line by line to decide what gets typed into a real application
 # form. So every value that lands in a structured line has its whitespace runs
 # collapsed to single spaces first. Without that, a value carrying a newline --
@@ -360,7 +360,7 @@ def _cover_letter_section(cover_body: str) -> str:
 def _md_text(value: Any) -> str:
     """`value` as one line with each `*` escaped as `\\*`, so a question or an
     answer that holds a star keeps its line's bold span intact
-    (`apply_playwright.parse_apply_md` reads `\\*` back as `*`)."""
+    (`apply_sheet.parse_apply_md` reads `\\*` back as `*`)."""
     return _one_line(value).replace("*", "\\*")
 
 

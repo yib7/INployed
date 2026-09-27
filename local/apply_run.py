@@ -4179,8 +4179,8 @@ def _control_words(row: Mapping[str, Any]) -> str:
 def hold_until_closed(ctx, *, sleep: Callable[[float], None] = time.sleep,
                       log: logging.Logger | None = None) -> None:
     """Keep the process alive until the user closes the window: every page
-    closed, or the context's close event (the idea `apply_playwright._hold`
-    uses for its parked tab)."""
+    closed, or the context's close event (the idea the old Playwright
+    driver's parked-tab hold used)."""
     logger = log if log is not None else logging.getLogger("apply_run")
     closed: list[bool] = []
     try:

@@ -1,7 +1,7 @@
 """The fact catalog: what the candidate can truthfully put on a form.
 
 `build(folder)` reads the job folder's `apply.md` (through
-`apply_playwright.parse_apply_md` for the Candidate and signature blocks, plus
+`apply_sheet.parse_apply_md` for the Candidate and signature blocks, plus
 a small section reader here for Education, the first Work experience entry and
 the Cover letter), takes every answer and the mailing address from the answer
 store through `apply_answers.fact_value` (the sheet's Standard answers and
@@ -31,7 +31,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Iterable
 
 from apply_form import FIELD_TYPES
-from apply_playwright import parse_apply_md, split_name
+from apply_sheet import parse_apply_md, split_name
 from resume_tailor.answer_tables import COUNTRIES, US_STATES
 
 KINDS = ("text", "bool", "choice_text", "file", "date")

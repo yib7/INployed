@@ -14,7 +14,7 @@ gets ISO `YYYY-MM-DD`, converted from the common US shapes); a `select` picks
 by option label, case-insensitively; a radio group checks the radio whose
 label equals the option; a checkbox checks on `"checked"`; a combobox or
 listbox opens and clicks the option text; a file input takes
-`set_input_files` through its frame, the same call `apply_driver._set_files`
+`set_input_files` through its frame, the same call the old Playwright driver
 proved on Greenhouse. A file control gets no click. A field the extractor
 read as a widget (`PlannedField.widget`, SP5) is acted on its own way: a
 custom radio group, Yes / No buttons and a question's tick boxes by clicking

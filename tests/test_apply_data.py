@@ -22,7 +22,7 @@ sys.path.insert(0, str(REPO / "local"))
 
 from answer_bank import confirmed_bank, custom, standard_bank, unconfirmed  # noqa: E402
 from resume_tailor import apply_answers, apply_config, apply_data, assets, output  # noqa: E402
-import apply_playwright  # noqa: E402  (local/ is on sys.path above; stdlib-only module)
+import apply_sheet  # noqa: E402  (local/ is on sys.path above; stdlib-only module)
 
 
 _MASTER = {
@@ -438,7 +438,7 @@ def test_refresh_answer_sections_rewrites_only_the_answers_and_the_address(tmp_p
     assert "Springfield" in after[addr_a:edu_a].decode().splitlines()[1]    # the Full line
     assert "- **How did you hear about us?** Referral from a friend" in answers
     assert "- **Are you legally authorized to work in the US?** No" in answers
-    assert apply_playwright.parse_apply_md(after.decode())["address"]["city"] == "Springfield"
+    assert apply_sheet.parse_apply_md(after.decode())["address"]["city"] == "Springfield"
 
 
 def test_refresh_answer_sections_skips_the_write_when_nothing_changed(tmp_path, monkeypatch):
@@ -673,7 +673,7 @@ def test_standard_answers_render_from_fact_value():
                      "Street address"):
         assert left_out not in text, left_out
     # a note stays with its answer: the parser reads no answer from it
-    parsed = apply_playwright.parse_apply_md(text)["standard_answers"]
+    parsed = apply_sheet.parse_apply_md(text)["standard_answers"]
     assert ("Are you legally authorized to work in the US?", "Yes") in parsed
     assert ("Are you willing to relocate?", "Yes") in parsed
     assert not [q for q, _ in parsed if "Note" in q]
@@ -692,7 +692,7 @@ def test_a_question_with_a_star_or_a_trailing_colon_round_trips():
         custom("bold", "Anything **else**?", "No **thanks**")]
     md = apply_data.build_markdown(_MASTER, _JOB, bank)
     assert "- **Rate your SQL skill from 1 to 5 \\*** 4 \\* strong\n" in md
-    answers = dict(apply_playwright.parse_apply_md(md)["standard_answers"])
+    answers = dict(apply_sheet.parse_apply_md(md)["standard_answers"])
     assert answers["Rate your SQL skill from 1 to 5 *"] == "4 * strong"
     assert answers["Pronouns:"] == "she/her"
     assert answers["Anything **else**?"] == "No **thanks**"
@@ -710,7 +710,7 @@ def test_address_renders_from_fact_value_only(tmp_path, monkeypatch):
     assert "- **Street:**" not in md and "- **City:**" not in md and "Anytown" not in md
     assert "- **State / Province:** California\n" in md
     assert "- **Full:** California 12345, United States\n" in md
-    assert apply_playwright.parse_apply_md(md)["address"] == {
+    assert apply_sheet.parse_apply_md(md)["address"] == {
         "full": "California 12345, United States", "state / province": "California",
         "zip / postal": "12345", "country": "United States"}
 
@@ -918,10 +918,10 @@ def test_cover_letter_body_cannot_forge_a_second_candidate_section(tmp_path):
 
     parse_apply_md switches sections on any `##` line and used to take the LAST
     value for each key, so a `## Candidate` block reproduced inside the letter
-    replaced the real email address -- and apply_playwright.fill_identity types
-    that value into a live application form. Asserted end to end: the writer
-    must not emit the heading, and the parser must not honour it if it somehow
-    appears.
+    replaced the real email address -- and that forged value is what a live
+    application form gets typed from (apply_facts.py's fact catalog reads
+    this same apply.md). Asserted end to end: the writer must not emit the
+    heading, and the parser must not honour it if it somehow appears.
     """
     hostile = NL.join([
         "Dear hiring team,",
@@ -943,7 +943,7 @@ def test_cover_letter_body_cannot_forge_a_second_candidate_section(tmp_path):
     assert "Sincerely, Test Person" in text
 
     # parser: the real address is what a form fill would type
-    parsed = apply_playwright.parse_apply_md(text)
+    parsed = apply_sheet.parse_apply_md(text)
     assert parsed["candidate"]["email"] == "t@example.com"
     assert parsed["candidate"].get("phone") != "+1 555 000 0000"
 
@@ -958,7 +958,7 @@ def test_a_newline_in_a_scraped_title_cannot_open_a_section(tmp_path):
                            skill_lines=_SKILLS)
     text = out.read_text(encoding="utf-8")
     assert _heading_lines(text, "## Candidate") == 1
-    parsed = apply_playwright.parse_apply_md(text)
+    parsed = apply_sheet.parse_apply_md(text)
     assert parsed["candidate"]["email"] == "t@example.com"
 
 
@@ -971,4 +971,4 @@ def test_parse_apply_md_ignores_a_repeated_section(tmp_path):
                   "hello",
                   "## Candidate",
                   "- **Email:** evil@example.com"])
-    assert apply_playwright.parse_apply_md(md)["candidate"]["email"] == "real@example.com"
+    assert apply_sheet.parse_apply_md(md)["candidate"]["email"] == "real@example.com"

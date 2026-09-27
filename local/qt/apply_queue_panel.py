@@ -36,7 +36,6 @@ from PySide6 import QtCore, QtWidgets
 import apply_queue
 import ats_accounts
 import errmsg
-import jev
 import jev_switch
 import osopen
 from qt import theme
@@ -174,15 +173,11 @@ def _default_password_exists() -> bool:
 def _default_jev_blocked() -> str:
     """Panel seam for the Jev gate (JS-5): why a run cannot start, in the words
     `jev_switch.apply_blocked` gives the Start button and `apply_run.py drain`
-    alike, or "" when it can. A key saved in Settings counts: the drain's
-    console loads `.env` itself, so the key reaches it before the dashboard
-    restarts."""
-    try:
-        import settings
-        saved = bool(settings.secret_status().get(jev.KEY_ENV))
-    except Exception:  # noqa: BLE001 - an unreadable settings file counts as no saved key
-        saved = False
-    return jev_switch.apply_blocked(saved_key=saved)
+    alike, or "" when it can. The drain Start launches has no --jev flag, so
+    the gate reads the mode that drain reads (`jev_switch.apply_mode`). A key
+    saved in Settings counts (`jev_switch.key_saved`): the drain's console
+    loads `.env` itself, so the key reaches it before the dashboard restarts."""
+    return jev_switch.apply_blocked(saved_key=jev_switch.key_saved())
 
 
 def _run_inline(fn: Callable[[], Any],

@@ -1134,6 +1134,20 @@ def test_test_answers_fake_mode_builds_the_fake_judge_and_skips_the_key_check(
     assert key_checks == []   # the key is never checked for a non-live mode
 
 
+def test_test_answers_reads_the_mode_and_the_saved_key_where_the_drain_does(monkeypatch):
+    """SP1 review B: one reader for each. The mode is `jev_switch.apply_mode`
+    (the setting, else typesafe; never AUTO_APPLY_JEV_MODE) and the saved key
+    is `jev_switch.key_saved`, the probes the Auto-apply panel's Start uses."""
+    import jev_switch
+    monkeypatch.setattr(jev_switch, "apply_mode", lambda flag=None, *, config=None: "replay")
+    assert at._current_jev_mode() == "replay"
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.setattr(jev_switch, "key_saved", lambda: True)
+    assert at._typesafe_key_present() is True
+    monkeypatch.setattr(jev_switch, "key_saved", lambda: False)
+    assert at._typesafe_key_present() is False
+
+
 def test_test_answers_typesafe_mode_without_a_key_stays_disabled(qtbot, tmp_path, monkeypatch):
     store = tmp_path / "apply_answers.json"
     _seed_v2(store, [])

@@ -57,10 +57,9 @@ def test_the_defaults_are_on_when_the_config_holds_no_switch(sdk):
 @pytest.mark.parametrize("mode", ["typesafe", "fake", "replay"])
 def test_the_master_switch_off_turns_every_area_off_in_every_mode(sdk, mode):
     cfg = dict(ON, jev_enabled=False, auto_apply_jev_mode=mode)
-    for env in (KEY, dict(KEY, AUTO_APPLY_JEV_MODE=mode)):
-        for area in jev_switch.AREAS:
-            assert _on(area, cfg, env) is False, (area, env)
-            assert _why(area, cfg, env) == "Jev is switched off in Settings", area
+    for area in jev_switch.AREAS:
+        assert _on(area, cfg) is False, area
+        assert _why(area, cfg) == "Jev is switched off in Settings", area
 
 
 def test_master_on_is_the_master_switch_alone():
@@ -126,12 +125,25 @@ def test_fake_and_replay_skip_the_key_and_sdk_for_apply_and_difficulty(sdk, mode
     """The test judges need neither, so the suite runs keyless; scoring and the
     tailor always use the live judge and still need both."""
     sdk(False)
-    for env, cfg in (({"AUTO_APPLY_JEV_MODE": mode}, ON),
-                     ({}, dict(ON, auto_apply_jev_mode=mode))):
-        assert _on("apply", cfg, env) is True
-        assert _on("difficulty", cfg, env) is True
-        assert _why("scoring", cfg, env) == "no TypeSafe API key"
-        assert _why("tailor", cfg, env) == "no TypeSafe API key"
+    cfg = dict(ON, auto_apply_jev_mode=mode)
+    assert _on("apply", cfg, {}) is True
+    assert _on("difficulty", cfg, {}) is True
+    assert _why("scoring", cfg, {}) == "no TypeSafe API key"
+    assert _why("tailor", cfg, {}) == "no TypeSafe API key"
+
+
+@pytest.mark.parametrize("mode", ["fake", "replay"])
+def test_an_exported_test_mode_opens_nothing(sdk, monkeypatch, mode):
+    """SP1 review B: the drain never reads AUTO_APPLY_JEV_MODE, so the gate does
+    not either. A shell's fake judge leaves a keyless live setup off, and
+    client() builds nothing for it."""
+    monkeypatch.setenv("AUTO_APPLY_JEV_MODE", mode)
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    for area in ("apply", "difficulty"):
+        assert jev_switch.jev_why_off(area, config=ON) == "no TypeSafe API key", area
+        assert jev_switch.client(area) is None, area
+    assert jev_switch.apply_blocked(config=ON) == \
+        "Auto-apply runs on Jev. Add the TypeSafe API key in Settings > Jev."
 
 
 def test_the_difficulty_switch_still_applies_in_a_test_mode(sdk):
@@ -242,20 +254,54 @@ def test_the_sdk_probe_asks_find_spec_for_typesafe_sdk(monkeypatch):
 
 # --- the auto-apply mode ------------------------------------------------------------
 
-def test_apply_mode_reads_the_environment_then_the_setting_then_typesafe():
-    assert jev_switch.apply_mode(config={}, env={}) == "typesafe"
-    assert jev_switch.apply_mode(config={"auto_apply_jev_mode": "fake"}, env={}) == "fake"
-    assert jev_switch.apply_mode(config={"auto_apply_jev_mode": "fake"},
-                                 env={"AUTO_APPLY_JEV_MODE": "replay"}) == "replay"
-    assert jev_switch.apply_mode(config={"auto_apply_jev_mode": " TypeSafe "},
-                                 env={"AUTO_APPLY_JEV_MODE": "  "}) == "typesafe"
+def test_apply_mode_reads_the_flag_then_the_setting_then_typesafe(monkeypatch):
+    """SP1 review B: the drain's own order, its --jev flag, else the Auto-apply
+    judge setting, else typesafe, stripped and lower-cased. A blank setting reads
+    as typesafe, and the environment's AUTO_APPLY_JEV_MODE is never read."""
+    monkeypatch.setenv("AUTO_APPLY_JEV_MODE", "replay")
+    fake = {"auto_apply_jev_mode": "fake"}
+    assert jev_switch.apply_mode(config={}) == "typesafe"
+    assert jev_switch.apply_mode(config=fake) == "fake"
+    assert jev_switch.apply_mode("typesafe", config=fake) == "typesafe"
+    assert jev_switch.apply_mode(" Fake ", config={}) == "fake"
+    assert jev_switch.apply_mode("  ", config={"auto_apply_jev_mode": " TypeSafe "}) == \
+        "typesafe"
+    for blank in ("", "   ", None):
+        assert jev_switch.apply_mode(config={"auto_apply_jev_mode": blank}) == "typesafe"
 
 
 def test_apply_mode_reads_the_setting_from_the_config_file(monkeypatch):
-    monkeypatch.delenv("AUTO_APPLY_JEV_MODE", raising=False)
+    monkeypatch.setenv("AUTO_APPLY_JEV_MODE", "replay")
     jev_switch.config_path().write_text(json.dumps({"auto_apply_jev_mode": "fake"}),
                                         encoding="utf-8")
     assert jev_switch.apply_mode() == "fake"
+
+
+def test_the_default_mode_is_the_settings_default():
+    """A config with no judge setting reads as the Settings row's default here and
+    in `apply_run.load_settings` alike."""
+    schema = {f.key: f.default for f in settings.SETTINGS_SCHEMA}
+    assert jev_switch.DEFAULT_MODE == schema[jev_switch.MODE_KEY] == "typesafe"
+
+
+# --- the saved key ------------------------------------------------------------------
+
+def test_key_saved_is_the_presence_of_the_key_in_the_settings_env_file():
+    """Presence only, through `settings.secret_status`: the panel's Start gate
+    and Test my answers share this one probe."""
+    assert jev_switch.key_saved() is False
+    settings.target_path("env").write_text("TYPESAFE_API_KEY=not-a-real-key\n",
+                                           encoding="utf-8")
+    assert jev_switch.key_saved() is True
+    settings.target_path("env").write_text("TYPESAFE_API_KEY=\n", encoding="utf-8")
+    assert jev_switch.key_saved() is False
+
+
+def test_key_saved_reads_a_broken_settings_backend_as_no_key(monkeypatch):
+    def broken():
+        raise OSError("unreadable env file")
+    monkeypatch.setattr(settings, "secret_status", broken)
+    assert jev_switch.key_saved() is False
 
 
 # --- the blocked-Start sentence (JS-5) ------------------------------------------------
@@ -282,11 +328,11 @@ def test_apply_blocked_counts_a_key_saved_in_settings(sdk):
 
 
 def test_apply_blocked_uses_the_mode_the_run_will_use(sdk):
-    """`apply_run.py` resolves its own mode (the --jev flag, then the setting)
-    and passes it in, so an exported test mode cannot wave a live run through."""
-    env = {"AUTO_APPLY_JEV_MODE": "fake"}
-    assert jev_switch.apply_blocked(config=ON, env=env) == ""
-    assert jev_switch.apply_blocked(config=ON, env=env, mode="typesafe") == \
+    """`apply_run.py` passes the mode its --jev flag names; with no flag the
+    gate reads the setting, as the drain does."""
+    fake = dict(ON, auto_apply_jev_mode="fake")
+    assert jev_switch.apply_blocked(config=fake, env={}) == ""
+    assert jev_switch.apply_blocked(config=fake, env={}, mode="typesafe") == \
         "Auto-apply runs on Jev. Add the TypeSafe API key in Settings > Jev."
     assert jev_switch.apply_blocked(config=ON, env={}, mode="fake") == ""
 
@@ -323,7 +369,8 @@ def test_client_is_none_while_the_area_is_off_and_builds_nothing(sdk, monkeypatc
 def test_client_for_scoring_and_tailor_is_a_guarded_typesafe_judge(sdk, monkeypatch):
     monkeypatch.setattr(jev, "TypeSafeJev", _StubTypeSafe)
     monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key")
-    monkeypatch.setenv("AUTO_APPLY_JEV_MODE", "fake")     # never reaches these two
+    jev_switch.config_path().write_text(json.dumps({"auto_apply_jev_mode": "fake"}),
+                                        encoding="utf-8")      # never reaches these two
     for area in ("scoring", "tailor"):
         judge = jev_switch.client(area)
         assert isinstance(judge, jev.Guarded), area
@@ -331,22 +378,25 @@ def test_client_for_scoring_and_tailor_is_a_guarded_typesafe_judge(sdk, monkeypa
 
 
 @pytest.mark.parametrize("area", ["apply", "difficulty"])
-def test_client_for_apply_and_difficulty_is_the_auto_apply_modes_judge(sdk, monkeypatch, area):
+def test_client_for_apply_and_difficulty_is_the_auto_apply_judge_settings_judge(
+        sdk, monkeypatch, area):
     sdk(False)
     monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
-    monkeypatch.setenv("AUTO_APPLY_JEV_MODE", "fake")
+    jev_switch.config_path().write_text(json.dumps({"auto_apply_jev_mode": "fake"}),
+                                        encoding="utf-8")
     judge = jev_switch.client(area)
     assert isinstance(judge, jev.Guarded)
     assert isinstance(judge.inner, jev.FakeJev)
 
 
-def test_client_reads_the_auto_apply_judge_setting_when_the_env_is_unset(sdk, monkeypatch):
-    monkeypatch.delenv("AUTO_APPLY_JEV_MODE", raising=False)
-    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
-    jev_switch.config_path().write_text(json.dumps({"auto_apply_jev_mode": "fake"}),
-                                        encoding="utf-8")
-    judge = jev_switch.client("difficulty")
-    assert isinstance(judge, jev.Guarded) and isinstance(judge.inner, jev.FakeJev)
+def test_client_builds_the_settings_judge_whatever_the_shell_exports(sdk, monkeypatch):
+    """With a key, the live setting builds the live judge though the shell
+    exports AUTO_APPLY_JEV_MODE=fake: the drain would build that one too."""
+    monkeypatch.setattr(jev, "TypeSafeJev", _StubTypeSafe)
+    monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key")
+    monkeypatch.setenv("AUTO_APPLY_JEV_MODE", "fake")
+    judge = jev_switch.client("apply")
+    assert isinstance(judge, jev.Guarded) and isinstance(judge.inner, _StubTypeSafe)
 
 
 def test_client_is_none_when_the_judge_cannot_be_built(sdk, monkeypatch, caplog):

@@ -14,15 +14,20 @@ before: the dashboard's environment is its startup snapshot of `.env`):
 4. the `typesafe_sdk` package importable.
 
 For apply and difficulty the key and SDK checks follow the auto-apply judge
-mode (`apply_mode`): the fake and replay judges need neither, so the suite
-runs keyless. The master switch turns those modes off too.
+mode: the fake and replay judges need neither, so the suite runs keyless. The
+master switch turns those modes off too. `apply_mode` is the one reader of
+that mode, in the drain's order (its --jev flag, else the Auto-apply judge
+setting, else typesafe), so the panel's Start button, Test my answers,
+`apply_run.py probe --judge` and the drain all ask about the judge the drain
+builds. The environment's AUTO_APPLY_JEV_MODE is read by none of them.
 
 `jev_why_off(area)` names the first check that fails, as the one-line reason
 the UI and the logs show. `apply_blocked()` builds the sentence the Auto-apply
 panel's Start button and `apply_run.py drain` both show, so the two cannot
-drift. `client(area)` returns a `jev.Guarded` judge, or None when the area is
-off or the judge cannot be built; a caller outside auto-apply keeps its LLM
-path on None.
+drift; `key_saved()` is the saved-key probe the dashboard passes it.
+`client(area)` returns a `jev.Guarded` judge, or None when the area is off or
+the judge cannot be built; a caller outside auto-apply keeps its LLM path on
+None.
 
 The switches are read with `is not False`, the spelling
 `resume_tailor/config.py` uses for every default-on toggle, so a stray
@@ -86,20 +91,36 @@ def _config() -> dict[str, Any]:
         return {}
 
 
-def apply_mode(*, config: Mapping[str, Any] | None = None,
-               env: Mapping[str, str] | None = None) -> str:
-    """The auto-apply judge mode: `AUTO_APPLY_JEV_MODE` in the environment, else
-    the Auto-apply judge setting, else "typesafe", stripped and lower-cased the
-    way `jev.get` reads it. The Auto-apply panel's Start button (through
-    `apply_blocked`) and `client("apply")` / `client("difficulty")` read the
-    mode here; `apply_run.py drain` passes its own (the --jev flag, else the
-    setting)."""
-    env = os.environ if env is None else env
-    raw = str(env.get(jev.MODE_ENV) or "").strip()
+def apply_mode(flag: str | None = None, *,
+               config: Mapping[str, Any] | None = None) -> str:
+    """The auto-apply judge mode a run uses, in the drain's order: `flag` (the
+    --jev flag, or a mode already resolved here), else the Auto-apply judge
+    setting in `config` (default: the config file, read on every call), else
+    "typesafe"; stripped and lower-cased. A blank reads as the next source.
+
+    The one reader of the mode: the panel's Start gate, Test my answers,
+    `client("apply")` / `client("difficulty")`, the doctor, Check setup, and
+    `apply_run.py` drain, one and probe all resolve it here, so the gate asks
+    about the judge the drain it launches builds. AUTO_APPLY_JEV_MODE is not
+    read: `jev.get` falls back to it only when handed no mode, and every
+    caller here hands it one."""
+    raw = str(flag or "").strip()
     if not raw:
         cfg = _config() if config is None else config
         raw = str(cfg.get(MODE_KEY) or "").strip()
     return (raw or DEFAULT_MODE).lower()
+
+
+def key_saved() -> bool:
+    """Is a TypeSafe API key saved in Settings (the `.env` file)? Presence only,
+    through `settings.secret_status`, so the value never leaves that module.
+    False when the settings files cannot be read. The Auto-apply panel's Start
+    gate and Test my answers pass it to `apply_blocked` as `saved_key`."""
+    try:
+        import settings
+        return bool(settings.secret_status().get(jev.KEY_ENV))
+    except Exception:       # noqa: BLE001  (an unreadable settings file counts as no saved key)
+        return False
 
 
 def sdk_installed() -> bool:
@@ -132,10 +153,8 @@ def _check(area: str, config: Mapping[str, Any] | None, env: Mapping[str, str] |
     area_key = AREA_KEYS.get(area)
     if area_key is not None and cfg.get(area_key, True) is False:
         return "switch", f"Jev is switched off for {_AREA_WORDS[area]} in Settings"
-    if area in _MODE_AREAS:
-        run_mode = (mode or apply_mode(config=cfg, env=env)).strip().lower()
-        if run_mode in TEST_MODES:
-            return "", ""
+    if area in _MODE_AREAS and apply_mode(mode, config=cfg) in TEST_MODES:
+        return "", ""
     if not (saved_key or str(env.get(jev.KEY_ENV) or "").strip()):
         return "key", REASON_KEY
     if not sdk_installed():
@@ -167,11 +186,11 @@ def apply_blocked(*, config: Mapping[str, Any] | None = None,
     """Why an auto-apply run cannot start, as the sentence the panel's Start
     button and `apply_run.py drain` both show; "" when it can.
 
-    `mode` is the judge mode the run will use (the drain passes its own, from
-    the --jev flag or the setting); None reads `apply_mode()`. `saved_key`
-    counts a key saved in Settings: the drain runs in a child process that
-    loads `.env` itself, so such a key reaches it before the dashboard
-    restarts."""
+    `mode` is the drain's --jev flag or a mode `apply_mode` resolved; None
+    reads the setting (`apply_mode`), as a drain with no flag does. `saved_key`
+    counts a key saved in Settings (`key_saved`): the drain runs in a child
+    process that loads `.env` itself, so such a key reaches it before the
+    dashboard restarts."""
     kind, _reason = _check("apply", config, env, mode=mode, saved_key=saved_key)
     return blocked_sentence(kind) if kind else ""
 

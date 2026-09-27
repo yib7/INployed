@@ -9460,8 +9460,9 @@ def _settings_from_args(args: argparse.Namespace) -> dict[str, Any]:
         cfg["auto_apply_submit"] = False
     if getattr(args, "headless", False):
         cfg["auto_apply_headless"] = True
-    if getattr(args, "jev", None):
-        cfg["auto_apply_jev_mode"] = args.jev
+    # The one judge-mode reader (SP1 review B): the --jev flag, else the
+    # setting, else typesafe, the order the panel's Start gate reads it in
+    cfg["auto_apply_jev_mode"] = jev_switch.apply_mode(getattr(args, "jev", None), config=cfg)
     if getattr(args, "cap", None) is not None:
         cfg["auto_apply_batch_cap"] = int(args.cap)
     return cfg
@@ -9476,12 +9477,12 @@ def doctor(profile_dir: Path | None = None, out=None) -> int:
     try:
         import settings
         stored = settings.load()
-        mode = str(stored.get("auto_apply_jev_mode") or "typesafe").strip().lower()
+        mode = jev_switch.apply_mode(config=stored)
         has_key = bool(settings.secret_status().get("TYPESAFE_API_KEY")) or bool(
             os.environ.get(jev.KEY_ENV, "").strip())
         jev_on = jev_switch.master_on(config=stored)
     except Exception:       # noqa: BLE001
-        mode, has_key = "typesafe", bool(os.environ.get(jev.KEY_ENV, "").strip())
+        mode, has_key = jev_switch.apply_mode(), bool(os.environ.get(jev.KEY_ENV, "").strip())
         jev_on = jev_switch.master_on()
     sdk = setup_check.module_found("typesafe_sdk")
     playwright_found = setup_check.module_found("playwright")
@@ -9786,7 +9787,7 @@ def main(argv: list[str] | None = None) -> int:
             judge = None
             if args.judge:
                 _load_env()
-                mode = args.jev or load_settings()["auto_apply_jev_mode"]
+                mode = jev_switch.apply_mode(args.jev, config=load_settings())
                 try:
                     judge = jev.get(mode)
                 except (jev.JevUnavailable, ValueError) as e:

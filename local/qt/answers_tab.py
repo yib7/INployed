@@ -22,9 +22,9 @@ these" dismisses it and saves.
 
 "Test my answers" (`ED-9`, SP6) runs the shipped screening set
 (`apply_screening.run_screening`) over the saved, confirmed answers on disk
-with the judge the Auto-apply judge setting names (`_current_jev_mode`, the
-same `auto_apply_jev_mode` key `local/apply_run.py`'s own `load_settings()`
-reads), on a worker thread (`qt.workers.run_async`), and shows the picks in
+with the judge the Auto-apply judge setting names (`_current_jev_mode`, read by
+`jev_switch.apply_mode`, the reader `local/apply_run.py` uses), on a worker
+thread (`qt.workers.run_async`), and shows the picks in
 `TestAnswersDialog` with the mode named in the result line. The key check that
 disables the button only applies to the "typesafe" (live) mode; a "fake" or
 "replay" mode leaves it enabled and skips the key. The button stays off while
@@ -45,6 +45,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 import apply_facts
 import errmsg
 import jev
+import jev_switch
 from qt import theme, workers
 from resume_tailor import apply_answers
 
@@ -131,29 +132,20 @@ def _number_validator(parent=None) -> QtGui.QRegularExpressionValidator:
 # --- ED-9: "Test my answers" -------------------------------------------------------
 
 def _typesafe_key_present() -> bool:
-    """Whether `jev.KEY_ENV` (TYPESAFE_API_KEY) is set: presence only, the
-    value itself is never read, printed or logged here."""
-    try:
-        import settings
-        if bool(settings.secret_status().get(jev.KEY_ENV)):
-            return True
-    except Exception:      # noqa: BLE001 - a broken settings backend must not crash the tab
-        pass
-    return bool(os.environ.get(jev.KEY_ENV, "").strip())
+    """Whether `jev.KEY_ENV` (TYPESAFE_API_KEY) is saved in Settings
+    (`jev_switch.key_saved`, the probe the Auto-apply panel's Start uses) or
+    set in the environment: presence only, the value itself is never read,
+    printed or logged here."""
+    return jev_switch.key_saved() or bool(os.environ.get(jev.KEY_ENV, "").strip())
 
 
 def _current_jev_mode() -> str:
-    """The Auto-apply judge setting (`local/settings.py`'s
-    `auto_apply_jev_mode` field), the same key and "typesafe" fallback
-    `local/apply_run.py`'s own `load_settings()` reads. It mirrors that
-    function's two-line settings read: importing `apply_run.py` would pull in
-    the whole auto-apply module graph (`apply_form`, `apply_queue`,
-    `apply_trace`, `ats_accounts`, Playwright-adjacent code) to read one key."""
-    try:
-        import settings
-        return str(settings.load().get("auto_apply_jev_mode") or "typesafe").strip().lower()
-    except Exception:      # noqa: BLE001 - a broken settings backend must not crash the tab
-        return "typesafe"
+    """The Auto-apply judge mode, read by `jev_switch.apply_mode`, the one
+    reader the Auto-apply panel's Start and `local/apply_run.py` use: the
+    setting (`auto_apply_jev_mode`), else "typesafe". Importing `apply_run.py`
+    here would pull in the whole auto-apply module graph (`apply_form`,
+    `apply_queue`, `apply_trace`, `ats_accounts`, Playwright-adjacent code)."""
+    return jev_switch.apply_mode()
 
 
 def _default_judge_factory():

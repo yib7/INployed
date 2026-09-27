@@ -116,9 +116,9 @@ for _leaked in (
     "RESUME_TAILOR_REGROUND", "RESUME_TAILOR_AIWRITING_SWEEP",
     "RESUME_TAILOR_SWEEP_P2",
     # cycle 19: the tailor's three Jev options, read the same way, and the
-    # auto-apply judge mode, which jev_switch reads before the Auto-apply setting:
-    # a shell export of `fake` would open the Auto-apply panel's Jev gate and
-    # hand `client("apply")` a fake judge in every test that expects neither.
+    # auto-apply judge mode, which `jev.get()` falls back to when it is handed
+    # no mode: a shell export of `fake` would hand a fake judge to every test
+    # that builds one that way and expects the keyless typesafe refusal.
     "RESUME_TAILOR_BEST_OF_N", "RESUME_TAILOR_COVER_LETTER_JEV_CHECK",
     "RESUME_TAILOR_ATS_MEANING", "AUTO_APPLY_JEV_MODE",
 ):

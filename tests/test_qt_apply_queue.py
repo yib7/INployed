@@ -1006,10 +1006,10 @@ def test_the_default_gate_is_jev_switch_with_a_saved_key_counted(monkeypatch):
 
 
 def test_a_test_judge_starts_a_run_with_no_key_or_sdk(qtbot, tmp_path, monkeypatch):
-    """The fake and replay judges (AUTO_APPLY_JEV_MODE) need neither, so the
-    suite runs keyless; the master switch still stops them."""
+    """The fake and replay judges (the Auto-apply judge setting) need neither,
+    so the suite runs keyless; the master switch still stops them."""
     monkeypatch.setattr(jev_switch, "sdk_installed", lambda: False)
-    monkeypatch.setenv("AUTO_APPLY_JEV_MODE", "fake")
+    jev_switch.config_path().write_text('{"auto_apply_jev_mode": "fake"}', encoding="utf-8")
     qfile = _qfile(tmp_path)
     apply_queue.enqueue(apply_queue.new_entry("1", company="Acme", title="A"), path=qfile)
     spy = []
@@ -1019,10 +1019,23 @@ def test_a_test_judge_starts_a_run_with_no_key_or_sdk(qtbot, tmp_path, monkeypat
     assert p.start_run_btn.isEnabled() and p.jev_notice.isHidden()
     p.start_run_btn.click()
     assert spy == [True]
-    jev_switch.config_path().write_text('{"jev_enabled": false}', encoding="utf-8")
+    jev_switch.config_path().write_text(
+        '{"jev_enabled": false, "auto_apply_jev_mode": "fake"}', encoding="utf-8")
     p.refresh()
     assert not p.start_run_btn.isEnabled()
     assert p.start_run_btn.toolTip() == _JEV_OFF
+
+
+def test_an_exported_test_mode_leaves_start_off(qtbot, tmp_path, monkeypatch):
+    """SP1 review B: the drain Start launches has no --jev flag and never reads
+    AUTO_APPLY_JEV_MODE, so the shell's fake judge does not open the gate for a
+    keyless live setting."""
+    monkeypatch.setattr(jev_switch, "sdk_installed", lambda: True)
+    monkeypatch.setenv("AUTO_APPLY_JEV_MODE", "fake")
+    p = _panel(qtbot, _qfile(tmp_path), jev_blocked=None)     # the real gate
+    assert not p.start_run_btn.isEnabled()
+    assert p.start_run_btn.toolTip() == (
+        "Auto-apply runs on Jev. Add the TypeSafe API key in Settings > Jev.")
 
 
 def test_a_settings_save_checks_the_jev_gate_again(qtbot, monkeypatch, tmp_path):

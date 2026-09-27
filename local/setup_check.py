@@ -252,7 +252,7 @@ def auto_apply_problems() -> list[str]:
     """
     try:
         stored = settings.load()
-        jev_mode = str(stored.get("auto_apply_jev_mode") or "typesafe").strip().lower()
+        jev_mode = jev_switch.apply_mode(config=stored)
         has_key = settings.secret_status().get("TYPESAFE_API_KEY", False) or bool(
             os.environ.get("TYPESAFE_API_KEY", "").strip())
         playwright_found = module_found("playwright")

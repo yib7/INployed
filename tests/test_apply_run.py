@@ -2731,6 +2731,52 @@ def test_the_drain_gate_asks_about_the_judge_the_drain_builds(hermetic_cli, monk
         "Auto-apply runs on Jev. Add the TypeSafe API key in Settings > Jev.")
 
 
+_NO_KEY = "Auto-apply runs on Jev. Add the TypeSafe API key in Settings > Jev."
+
+
+def _real_settings_no_key(monkeypatch, config):
+    """The drain as the panel launches it: the sandbox's config file read for
+    real (`load_settings`), no key in the environment or the sandbox's .env,
+    the SDK found, and the shell exporting AUTO_APPLY_JEV_MODE=fake."""
+    monkeypatch.setattr(apply_run, "_load_env", lambda: None)
+    monkeypatch.setattr(jev_switch, "sdk_installed", lambda: True)
+    monkeypatch.setenv("AUTO_APPLY_JEV_MODE", "fake")
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    jev_switch.config_path().write_text(json.dumps(config), encoding="utf-8")
+    _past_the_jev_gate_fails(monkeypatch)
+
+
+def test_the_panel_gate_and_the_drain_gate_give_one_answer(monkeypatch, capsys):
+    """SP1 review B: Start predicts the drain it launches (no --jev flag). The
+    shell exports AUTO_APPLY_JEV_MODE=fake, the Auto-apply judge setting says
+    typesafe and no key is saved: both gates name the missing key."""
+    from qt import apply_queue_panel
+    _real_settings_no_key(monkeypatch, {"auto_apply_jev_mode": "typesafe"})
+    panel = apply_queue_panel._default_jev_blocked()
+    assert apply_run.main(["drain"]) == 2
+    assert panel == capsys.readouterr().err.strip() == _NO_KEY
+
+
+@pytest.mark.parametrize("stored", ["", "   ", None])
+def test_a_blank_judge_setting_drains_on_typesafe_whatever_the_shell_exports(
+        monkeypatch, capsys, stored):
+    """SP1 review B: a blank setting reads as typesafe, its default. The drain
+    used to hand the blank to the gate and to `jev.get`, which both fell back
+    to AUTO_APPLY_JEV_MODE, so a shell's fake judge ran a production queue past
+    the fixture-only refusal."""
+    _real_settings_no_key(monkeypatch, {"auto_apply_jev_mode": stored})
+    assert apply_run.main(["drain"]) == 2
+    assert capsys.readouterr().err.strip() == _NO_KEY
+
+
+def test_a_judge_setting_in_another_case_is_refused_as_fixture_only(monkeypatch, capsys):
+    """A hand-edited "Fake" is the fake judge: the drain refuses it as
+    fixture-only, where it used to slip past that check and build FakeJev."""
+    _real_settings_no_key(monkeypatch, {"auto_apply_jev_mode": "Fake"})
+    assert apply_run.main(["drain"]) == 2
+    assert "fixture-only" in capsys.readouterr().err
+
+
 def test_the_drain_reads_the_key_its_own_env_file_loads(hermetic_cli, monkeypatch, capsys):
     """The gate runs after `_load_env`: a key saved in Settings (the `.env` the
     drain loads) counts before the dashboard that launched it restarts."""

@@ -1216,7 +1216,8 @@ def _check_faithfulness(ctx: PassCtx, *, stage: str,
     failed = ""
     try:
         answers = compose.reground(ctx.jd, ctx.job_title, ctx.sel,
-                                   {gk: [] for gk in flagged}, findings=flagged)
+                                   {gk: [] for gk in flagged}, findings=flagged,
+                                   printed=set(ctx.bullets) | set(ctx.verbatim))
     except Exception as exc:  # noqa: BLE001 - the re-ask is advisory; the flag stands
         ctx.log(f"faithfulness re-ask failed ({exc})")
         answers, failed = {}, "the re-ask failed"

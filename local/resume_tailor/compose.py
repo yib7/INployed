@@ -22,7 +22,7 @@ import json
 import logging
 import re
 from math import ceil
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Collection, Dict, List, Optional, Tuple
 
 # The bullet stages do not use `ats`/`layout`. `compose.ats` and `compose.layout` are
 # still part of this module's public surface (call sites read and monkeypatch them), so
@@ -559,7 +559,8 @@ REGROUND_FINDING_RULE = (
 
 def reground(jd: str, job_title: str, sel: Dict[str, Any],
              dropped: Dict[str, List[str]],
-             findings: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+             findings: Optional[Dict[str, str]] = None,
+             printed: Optional[Collection[str]] = None) -> Dict[str, str]:
     """One bounded re-ask for bullets the PROLOGUE grounding gate had to DELETE.
 
     That gate is the only fallback-less one — it runs on rephrase's first output, so a
@@ -581,13 +582,19 @@ def reground(jd: str, job_title: str, sel: Dict[str, Any],
     through this same call, at any stage, with no banned tokens and its finding in
     `findings`. A finding rides in its bullet's item with the bullet's `role` in its
     block, and REGROUND_FINDING_RULE explains both once in the system prompt, so a
-    flagged detail bullet stays a detail. With no finding the prompt is the one above,
-    word for word."""
+    flagged detail bullet stays a detail. `printed` holds the gkeys that print (TL-4
+    passes the run's bullets): a block's opener is its first group in that set, since
+    a group the prologue dropped for good stays in `sel`. With no finding the prompt
+    is the one above, word for word."""
     gm = group_map(sel)
     targets = bullet_line_targets(sel)
     findings = findings or {}
-    # A flagged bullet's place in its block: the first bullet opens it.
-    openers = {gkeys[0] for _name, gkeys in _blocks_in_order(sel) if gkeys}
+    # A flagged bullet's place in its block: the first bullet that prints opens it.
+    openers = set()
+    for _name, gkeys in _blocks_in_order(sel):
+        live = [gk for gk in gkeys if printed is None or gk in printed]
+        if live:
+            openers.add(live[0])
     payload = []
     for gk, tokens in dropped.items():
         if gk not in gm:

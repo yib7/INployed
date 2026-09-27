@@ -126,6 +126,17 @@ def test_only_a_bullet_with_a_finding_carries_a_role(engine, monkeypatch):
     assert "role" not in sent["h1"] and sent["h2"]["role"] == "detail"
 
 
+def test_the_opening_role_goes_to_the_first_bullet_that_prints(engine, monkeypatch):
+    """The prologue dropped h1 for good, and its group stays in the selection: h2
+    now opens the block, so a finding on h2 carries the opening role."""
+    rec = _reask(monkeypatch, {})
+    h2_led = "Led 40 integration tests for the billing service."
+    ctx = _ctx({"h2": h2_led}, judge=Flagger("led"))
+    _check(ctx)
+    (item,) = _sent(rec.users[0])
+    assert (item["gkey"], item["role"]) == ("h2", "opening")
+
+
 def test_the_finding_rule_tells_the_model_to_keep_the_bullets_role():
     rule = compose.REGROUND_FINDING_RULE
     assert "'role'" in rule

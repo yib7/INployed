@@ -435,8 +435,10 @@ def test_start_blocked_refuses_an_unknown_mode_before_the_jev_gate(sdk):
 
 # --- the difficulty check's gate (SP6, DF-6, JS-5) ---------------------------------------
 
+# the switch is an advanced field, so the sentence names the disclosure that shows
+# it (final review C M-6)
 DIFFICULTY_OFF = ("The difficulty check is switched off. Turn on Jev difficulty check in "
-                  "Settings > Jev.")
+                  "Settings > Jev (tick Show advanced settings).")
 
 
 def test_difficulty_blocked_is_empty_while_jev_is_on(sdk):

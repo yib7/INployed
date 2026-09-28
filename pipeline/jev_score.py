@@ -99,7 +99,7 @@ _TRUE = ("1", "true", "yes", "on")
 SWITCH_ON_WORDS = frozenset(("true", "yes", "on", "1"))
 
 # The reasons `jev_switch.jev_why_off("scoring")` gives, word for word, so the
-# dashboard and the scorer name a switched-off Jev the same way.
+# scorer and `jev_switch` name a switched-off Jev the same way.
 REASON_SWITCH = "Jev is switched off in Settings"
 REASON_AREA = "Jev is switched off for scoring in Settings"
 REASON_KEY = "no TypeSafe API key"
@@ -190,11 +190,11 @@ def use_jev(env: Any = None) -> tuple[bool, str]:
 
 def make_judge() -> Any:
     """The run's judge: a `jev.Guarded` TypeSafe judge with the short retries
-    `jev_switch.client("scoring")` gives (`jev.QUICK_RETRY_DELAYS_S`), so an
+    `jev_switch.client` gives the tailor (`jev.QUICK_RETRY_DELAYS_S`), so an
     outage reaches the LLM path in seconds, and whose breaker opens after it so
     the rest of the run takes that path (SC-5). The scorer builds it here: it
     reads its own switch (`use_jev`) and also runs on the VM, which has no
-    dashboard config for `jev_switch.client` to read. None, with one warning
+    `jev_switch` and no dashboard config. None, with one warning
     naming the error's class only, when it cannot be built."""
     try:
         jev = _jev_module()

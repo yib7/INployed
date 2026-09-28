@@ -21,8 +21,9 @@ setting, else typesafe), so the panel's Start button, Test my answers,
 `apply_run.py probe --judge` and the drain all ask about the judge the drain
 builds. The environment's AUTO_APPLY_JEV_MODE is read by none of them.
 
-`jev_why_off(area)` names the first check that fails, as the one-line reason
-the UI and the logs show. `apply_blocked()` builds the Jev gate's sentence,
+`jev_why_off(area)` names the first check that fails, in one line (the
+scorer's `pipeline/jev_score.py` gives the same words for scoring; the
+dashboard shows the gate sentences below). `apply_blocked()` builds the Jev gate's sentence,
 the one `apply_run.py` drain, one and probe --judge print and Test my answers
 shows; the two probes name a mode `jev.get` does not build first
 (`unknown_mode`). `start_blocked()` is the Auto-apply panel's Start gate: it gives the
@@ -35,9 +36,12 @@ panel's Check difficulty shows after the same mode refusal, and
 `switched_off(area)` reads the switches alone, so the panel hides that button
 while a switch turns it off. `key_saved()` is the saved-key probe the
 dashboard passes the gates. `client(area)` returns a `jev.Guarded` judge, or None when the area is
-off or the judge cannot be built; a caller outside auto-apply keeps its LLM
-path on None, and its judge retries briefly (`jev.QUICK_RETRY_DELAYS_S`), so
-an outage reaches that path in seconds.
+off or the judge cannot be built. Its one production caller is the tailor
+(`jev_assist`), which keeps its LLM path on None; that judge retries briefly
+(`jev.QUICK_RETRY_DELAYS_S`), so an outage reaches that path in seconds. The
+scorer builds its own judge (`jev_score.make_judge`, since the VM has no
+`jev_switch`), and the drain and the difficulty check build theirs with
+`jev.get`.
 
 A switch reads by `settings.switch_on`, the rule the Settings checkbox
 shows it by (SP1 follow-up 3): a missing key is on (the default), a bool is
@@ -99,7 +103,7 @@ UNKNOWN_MODE = ("Unknown Auto-apply judge {mode!r}; tick \"Show advanced setting
 # What `apply_assess.py` prints while the difficulty check's own switch is off
 # (`difficulty_blocked`); the Auto-apply panel hides Check difficulty then.
 DIFFICULTY_OFF = ("The difficulty check is switched off. Turn on Jev difficulty check in "
-                  "Settings > Jev.")
+                  "Settings > Jev (tick Show advanced settings).")
 
 
 def config_path() -> Path:
@@ -127,7 +131,7 @@ def apply_mode(flag: str | None = None, *,
     "typesafe"; stripped and lower-cased. A blank reads as the next source.
 
     The one reader of the mode: the panel's Start gate, Test my answers,
-    `client("apply")` / `client("difficulty")`, the doctor, Check setup, and
+    the difficulty check, the doctor, Check setup, and
     `apply_run.py` drain, one and probe all resolve it here, so the gate asks
     about the judge the drain it launches builds. AUTO_APPLY_JEV_MODE is not
     read: `jev.get` falls back to it only when handed no mode, and every
@@ -317,11 +321,13 @@ def start_blocked(*, config: Mapping[str, Any] | None = None,
 
 def client(area: str) -> Any:
     """The judge for `area`, or None when Jev is off for it or the judge cannot
-    be built. Scoring and the tailor get a guarded TypeSafe judge that retries
-    briefly (`jev.QUICK_RETRY_DELAYS_S`): their callers fall back to their LLM
-    path, so an outage costs them seconds. Apply and the difficulty check get
-    the auto-apply mode's judge (`jev.get`) with the run's retries
-    (`jev.RETRY_DELAYS_S`), since auto-apply has no fallback. A build failure
+    be built. The tailor (`jev_assist`, the one production caller) and
+    scoring get a guarded TypeSafe judge that retries briefly
+    (`jev.QUICK_RETRY_DELAYS_S`): the tailor falls back to its LLM path, so
+    an outage costs it seconds. Apply and the difficulty check get the
+    auto-apply mode's judge (`jev.get`) with the run's retries
+    (`jev.RETRY_DELAYS_S`); the drain and `apply_assess` build theirs the
+    same way without this function. A build failure
     is logged by its type only, since its message can carry request detail.
     An unknown area raises ValueError (`_check`)."""
     cfg = _config()

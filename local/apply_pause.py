@@ -526,7 +526,9 @@ def save_answer(question: Mapping[str, Any], value: str, company: str, *,
     answers.append({"id": apply_answers.new_id(text, taken), "question": text, "type": etype,
                     "answer": answer, "note": note, "confirmed": True, "status": "active"})
     try:
-        apply_answers.save(answers, path)
+        # the store's review list goes back as read: a version 1 file
+        # migrated in memory keeps its migration review (final review A I-3)
+        apply_answers.save(answers, path, review=store["review"])
     except (ValueError, apply_answers.AnswerStoreError, OSError) as e:
         return str(e) if isinstance(e, ValueError) else type(e).__name__
     return ""

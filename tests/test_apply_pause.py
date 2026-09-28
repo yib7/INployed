@@ -576,6 +576,23 @@ def test_every_resume_reads_the_answer_store_again(pauses_on, boxes):
     assert jr.reloads == 1
 
 
+def test_a_save_keeps_the_review_list_of_a_version_1_store(tmp_path):
+    # final review A I-3: a store still version 1 on disk migrates in memory
+    # with its review list; the pause's save keeps that list
+    path = tmp_path / "apply_answers.json"
+    path.write_text(json.dumps({"answers": [
+        {"id": "work_authorized", "question": apply_answers.BUILTINS["work_authorized"].question,
+         "answer": "Yes, I am a US citizen", "kind": "open-ended", "status": "active"}]}),
+        encoding="utf-8")
+    review = apply_answers.load_store(path)["review"]
+    assert len(review) == 1
+    assert apply_pause.save_answer(_question(label="Favourite colour"), "teal", "Fabrikam",
+                                   path=path) == ""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["version"] == 2 and data["review"] == review
+    assert "Favourite colour" in {e["question"] for e in data["answers"]}
+
+
 def test_a_request_names_the_runs_process_and_its_minutes():
     path = apply_pause.write_request(_JOB, _URL, "r", [], minutes=7)
     data = json.loads(path.read_text(encoding="utf-8"))

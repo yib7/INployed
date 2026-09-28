@@ -599,7 +599,7 @@ class Pauser:
     """The pauses of one job run (`apply_run._JobRun`): `jr` gives the page,
     the settings, the clock and the run's own steps; `parked` is the run's
     park exception, raised with the park's reason when the window closes
-    during a wait."""
+    during a wait and the run gives no park of its own (`_closed`)."""
 
     def __init__(self, jr, parked: type[Exception]):
         self.jr = jr
@@ -915,10 +915,14 @@ class Pauser:
         """Did the page move on from the one the run paused on (`before`,
         its print)? Its whole address changed (a hash-routed app's
         `#/step2` too), any of its labelled fields is gone, or it cannot be
-        read (then or now). A single-page app whose address never changes
-        shows its next step as the paused step's fields gone, even when that
-        step repeats the asked field (final fix review Important 1). A field
-        the person's browser edit removed costs one more pause for the same
+        read (then or now). On a single-page app whose address never
+        changes, a next step that lacks any of the paused step's labelled
+        fields reads as moved, even when it repeats the asked field (final
+        fix review Important 1). A next step that re-shows every one of them
+        (the same labels and types, more added) does not: its box with the
+        asked field's id and label takes the answer, which is the person's
+        answer to that same question (an accepted residual). A field the
+        person's browser edit removed costs one more pause for the same
         question at most."""
         after = self._print()
         if before is None or after is None:

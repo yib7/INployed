@@ -106,8 +106,9 @@ and the old Claude-in-Chrome auto-apply is gone.
   a pause, on any page, parks as possibly sent with the check-whether note and is never
   offered a Re-queue: the person may have clicked through and sent it first. A card answer
   goes only into its field on the page the run paused on; a page whose address changed or
-  that lost any field it had at the pause moved on, so a same-address app's next step
-  never takes it. **Save for future runs** keeps a version 1 store's migration review list.
+  that lost any field it had at the pause (a same-address app's next step that lacks one)
+  moved on and gets none of it. **Save for future runs** keeps a version 1 store's
+  migration review list.
 - **Tailor résumé on a hand-added job** (and queueing one for auto-apply), and its cover
   letter, interview prep, Ask AI and Apply, read the job's full description from the local
   master on the worker thread; the dashboard row carries only its first 1,000 characters.

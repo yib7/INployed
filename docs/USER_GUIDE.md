@@ -1091,7 +1091,9 @@ against the job's own time limit. One job can pause at most five times.
   browser and may have clicked on and sent the application before the close, so the job
   parks as possibly sent: "check whether the application went through: the run stopped
   after the pause (the browser window was closed)", or "(the job's tab was closed)", then
-  what the paused page showed and what the run had reached. It is never re-queued, and
+  what the paused page showed and what the run had reached. A wait that fails with the page
+  still open (the browser stopped responding) ends the same way, with "(the job's page
+  stopped answering during the wait)". It is never re-queued, and
   **Answer now** offers no **Re-queue**: check that job. A closed window also stops the
   run; a closed tab ends only that job.
 - The page moved on while it waited. A new "thank you" message parks the job as possibly
@@ -1099,8 +1101,10 @@ against the job's own time limit. One job can pause at most five times.
   run reads the new page and goes on, and the answers you gave in the card for the page it
   left go into no field. The run counts the page as moved on when its address changed or
   any field it had when the run paused is gone, even when the next step repeats the field
-  you answered. A new request for a question you just answered means the page moved on
-  during the wait (a link inside the page can change the address too): answer it again.
+  you answered. A next step at the same address that shows every field of the paused page
+  again (plus new ones) still reads as the same page, and your answer goes into the box
+  with the same label there. A new request for a question you just answered means the page
+  moved on during the wait (a link inside the page can change the address too): answer it again.
   From a page that could send the application, a new address or the send button or the
   form gone parks the job as possibly sent, and it is never re-queued: check that job.
 

@@ -8072,18 +8072,17 @@ class _JobRun:
 
     def _pause_closed(self, buttons: tuple = ()) -> None:
         """The window or the tab closed during a pause's wait (final review
-        A I-2). The person had the browser: on a page with a send-worded
-        button (`buttons`, the pause's read) they may have sent it before the
-        close, and after going on from an earlier step (`_person_moved_on`)
-        they may have sent it on a later one. Either way the job may have
-        been sent (`_pause_sent`): it ends with the check-whether note and is
-        never offered a Re-queue."""
+        A I-2). The person had the browser, and every application step has a
+        way on: they may have clicked through and sent it before the close,
+        from any page (final fix review Important 2). The job may have been
+        sent (`_pause_sent`): it ends with the check-whether note and is
+        never offered a Re-queue. `buttons` (the pause's read) only words
+        the decision."""
         sends = [t for t, _loc in buttons if _send_worded(t)]
-        if not sends and not self._person_moved_on:
-            return
         self._pause_sent = True
         what = (f"its {_cap(' '.join(str(sends[0]).split()), 60)!r} button was on the page"
-                if sends else "you had gone on to another step")
+                if sends else "you had gone on to another step" if self._person_moved_on
+                else "you had the browser and may have gone on in it")
         self._decide("pause_closed", f"the browser closed during the pause ({what}): the "
                                      "application may have been sent in the browser")
 

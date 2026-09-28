@@ -997,9 +997,39 @@ def test_a_close_during_a_pause_after_the_person_moved_on_may_have_been_sent():
     assert run._pause_sent and run.decided == ["pause_closed"]
 
 
-def test_a_close_during_a_pause_on_a_page_that_cannot_send_stays_a_closed_window():
+def test_a_close_during_a_pause_on_a_page_that_cannot_send_may_have_been_sent_too():
+    # final fix review Important 2: the person had the browser, and a Next
+    # leads on to a Submit; they may have clicked through and sent it before
+    # the close, so any close during a pause is possibly sent
     run = _closed(_NEXT)
-    assert not run._pause_sent and run.decided == []
+    assert run._pause_sent and run.decided == ["pause_closed"]
+
+
+def test_a_tab_closed_during_a_pause_on_a_next_only_step_is_never_offered_a_requeue(
+        _browser, flow_server, tmp_path, monkeypatch):
+    # final fix review Important 2: the pause_wizard_next step shows only its
+    # disabled Next; the person closes the job's tab during the wait. The job
+    # ends with the check-whether note, and Answer now offers no Re-queue
+    import apply_pause
+    import apply_queue
+
+    def _closes(page, job_id, minutes, **kw):
+        page.close()
+        raise apply_pause.PageClosed()
+    monkeypatch.setattr(apply_pause, "wait_for_answer", _closes)
+    r = h.run_flow(h.flow("pause_wizard_next"), jev.FakeJev(), "fake", browser=_browser,
+                   server=flow_server, workdir=tmp_path)
+    assert not r.breaks, r.breaks
+    assert r.status == "needs_human", (r.status, r.reason)
+    assert r.reason.startswith(f"{apply_run.CHECK_SENT_REASON}: the run stopped after the "
+                               "pause ("), r.reason
+    assert "pause_closed" in [d["what"] for d in _decisions(r)]
+    queue = Path(r.trace).parents[2] / "queue.json"
+    jobs = {e["job_posting_id"]: e for e in json.loads(queue.read_text(encoding="utf-8"))["jobs"]}
+    entry = jobs[h.JOB_ID]
+    assert entry["status"] == "needs_human", entry
+    assert entry["tab_note"] == apply_run.CHECK_SENT_NOTE, entry
+    assert apply_queue.possibly_sent(entry)
 
 
 class _Busy529(Exception):

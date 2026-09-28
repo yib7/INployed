@@ -5397,14 +5397,18 @@ class _JobRun:
         goes back to the queue (`_requeued`), unless the person went on from
         a page with no send button during a pause (`_person_moved_on`, SP7
         review N5). They may have sent it on a later step, so the job parks
-        with the check-whether note and is never re-queued on its own."""
+        with the check-whether note and is never re-queued on its own. The
+        judge is still down, so the drain stops (`Outcome.judge_down`, set
+        here whatever `_finish` reads of the breaker, review N8)."""
         if not self._person_moved_on:
             return self._requeued(step)
         at = f" at {step}" if step else ""
-        return self._finish("needs_human", f"{CHECK_SENT_REASON}: the run stopped after the "
-                                           f"pause ({JUDGE_DOWN_REASON}: {self._judge_down()}"
-                                           f"{at}); you went on to another step in the "
-                                           "browser during the pause", CHECK_SENT_NOTE)
+        out = self._finish("needs_human", f"{CHECK_SENT_REASON}: the run stopped after the "
+                                          f"pause ({JUDGE_DOWN_REASON}: {self._judge_down()}"
+                                          f"{at}); you went on to another step in the "
+                                          "browser during the pause", CHECK_SENT_NOTE)
+        out.judge_down = True
+        return out
 
     def _requeued(self, step: str) -> Outcome:
         """RES-02: the judge went down under the job before anything could

@@ -984,17 +984,33 @@ def test_a_judge_down_after_the_person_moved_on_parks_and_is_never_requeued(
     # review N5: the person clicked through a page with no send button during
     # the pause and may have sent it on a later step; the judge goes down on
     # the replan's read. The job parks with the check-whether note and is
-    # never handed back to the queue on its own
+    # never handed back to the queue on its own. The judge is still down, so
+    # the drain stops (review N8): a second queued job is never claimed
+    import apply_queue
     judge = _DownAfterTheWait()
     real = apply_run._JobRun._pause_moved
+    real_drain = apply_run.Runner.drain
+    drained: list[list] = []
 
     def _moved(self, *a, **kw):
         out = real(self, *a, **kw)
         judge.down = True
         return out
+
+    def _drain(self, cap=None):
+        apply_queue.enqueue(apply_queue.new_entry("43", company="Fabrikam B",
+                                                  title="Analytics Engineer",
+                                                  apply_url="https://jobs.example/43"),
+                            path=self.queue_path)
+        out = real_drain(self, cap=2)
+        drained.append(out)
+        return out
     monkeypatch.setattr(apply_run._JobRun, "_pause_moved", _moved)
+    monkeypatch.setattr(apply_run.Runner, "drain", _drain)
     r = h.run_flow(h.flow("pause_wizard_next"), judge, "fake", browser=_browser,
                    server=flow_server, workdir=tmp_path)
+    (outcomes,) = drained
+    assert [(o.job_id, o.judge_down) for o in outcomes] == [(h.JOB_ID, True)], outcomes
     assert judge.failed, "the judge never went down after the move"
     assert not r.breaks, r.breaks
     assert r.status == "needs_human" and r.policy is True, (r.status, r.reason)
@@ -1004,9 +1020,10 @@ def test_a_judge_down_after_the_person_moved_on_parks_and_is_never_requeued(
     assert "pause_moved_on" in decided, decided
     # the queue entry (the run's queue sits beside the job folder) keeps the
     # note, and the dashboard reads it as possibly sent (no Re-queue offered)
-    import apply_queue
     queue = Path(r.trace).parents[2] / "queue.json"
-    (entry,) = json.loads(queue.read_text(encoding="utf-8"))["jobs"]
+    jobs = {e["job_posting_id"]: e for e in json.loads(queue.read_text(encoding="utf-8"))["jobs"]}
+    entry, other = jobs[h.JOB_ID], jobs["43"]
+    assert (other["status"], other["attempts"]) == ("queued", 0), other
     assert entry["status"] == "needs_human" and entry.get("outages", 0) == 0, entry
     assert entry["tab_note"] == apply_run.CHECK_SENT_NOTE, entry
     assert apply_queue.possibly_sent(entry)

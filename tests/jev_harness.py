@@ -34,10 +34,14 @@ the real model judges the fixtures differently from the fake.
 `replay` mode with `AUTO_APPLY_JEV_PRUNE=1` (SP8, `-Prune` on
 `scripts/jev_record.ps1`): at session finish, every key the run's shared
 `ReplayJev` served (`used_keys`) is written to `used_keys.json` beside
-`outcomes.jsonl` (`write_used_keys`), and, once the run had 0 replay misses
-and 0 test failures, the cache is rewritten to keep only those keys
-(`prune_if_asked`, `jev.prune_cache`); a miss or a failure refuses instead of
-risking a key some other test still needs.
+`outcomes.jsonl` (`write_used_keys`), and the cache is rewritten to keep only
+those keys (`prune_if_asked`, `jev.prune_cache`) once the run had 0 replay
+misses, 0 test failures, and was the whole `RUNNER_TESTS` set with no
+`-k`/`-m` filter, no deselected test and no node id narrower than a file
+(`runner_narrowed_reason`, checked in `conftest_jev.pytest_sessionfinish`
+against pytest's own session and config); any of those refuses instead,
+naming the reason, and leaves the cache as it was -- a partial run's
+`used_keys` may not cover every key a clean pass would reach.
 
 `Session` holds the per-run state; `conftest_jev` wires it into pytest as the
 `jev_judge` fixture. `judge()` is the module-level factory the test helpers
@@ -50,7 +54,7 @@ import os
 import shutil
 import sys
 import tempfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -175,14 +179,51 @@ def write_used_keys(session: Session) -> Path:
     return path
 
 
-def prune_if_asked(session: Session, testsfailed: int) -> str:
+def runner_narrowed_reason(*, collected_files: set[str], keyword: str, markexpr: str,
+                           deselected: int, args: Sequence[str]) -> str:
+    """Why this pytest run is not the whole `RUNNER_TESTS` set, or "" when it
+    is (SP8 review: a partial run's `used_keys` only ever covers what it
+    touched, so pruning on one could drop a key some left-out test still
+    needs).
+
+    `collected_files` are the file part of every collected item's nodeid
+    (`item.nodeid.split("::", 1)[0]`, forward-slashed and relative to the
+    rootdir, same as `RUNNER_TESTS`' own entries); `keyword`/`markexpr` are
+    `config.option.keyword`/`markexpr` (a `-k`/`-m` filter); `deselected` is
+    how many items a filter actually dropped (`pytest_deselected`, which also
+    fires for `--deselect`); `args` is `config.args`, the file/dir/node-id
+    positional arguments pytest was given -- any entry with `::` in it names
+    a single test or class rather than a whole file, narrower than
+    `RUNNER_TESTS` asks for even when every file is still represented."""
+    missing = sorted(set(RUNNER_TESTS.split()) - set(collected_files))
+    if missing:
+        return f"the whole runner set did not run; missing {', '.join(missing)}"
+    if keyword:
+        return f"-k {keyword!r} narrows which tests ran"
+    if markexpr:
+        return f"-m {markexpr!r} narrows which tests ran"
+    if deselected:
+        return f"{deselected} test(s) were deselected"
+    node_ids = sorted(a for a in args if "::" in a)
+    if node_ids:
+        return f"a node id narrows a file to part of it: {', '.join(node_ids)}"
+    return ""
+
+
+def prune_if_asked(session: Session, testsfailed: int, *, narrowed_reason: str = "") -> str:
     """When `session.prune`, prune `session.cache_path` down to the keys this
     session's replay used (`jev.prune_cache`, gated on the replay's own miss
-    count and `testsfailed`, the run's pytest failure count). Returns the
-    refusal's reason, or a line naming what was kept; "" when pruning was not
-    asked for."""
+    count and `testsfailed`, the run's pytest failure count). `narrowed_reason`,
+    when given (`runner_narrowed_reason`, computed from pytest's own session
+    and config, which this module knows nothing about), refuses immediately
+    with it, before touching the cache: a run that was not the whole
+    `RUNNER_TESTS` set may not have reached every key a clean pass would.
+    Returns the refusal's reason, or a line naming what was kept; "" when
+    pruning was not asked for."""
     if not session.prune:
         return ""
+    if narrowed_reason:
+        return f"jev prune refused: {narrowed_reason}"
     replay = session.replay
     used = set(replay.used_keys) if replay is not None else set()
     misses = replay.misses if replay is not None else 0

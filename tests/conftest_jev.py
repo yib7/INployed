@@ -27,10 +27,16 @@ Hooks, active in `record` and `replay` mode only:
   divergence; either way the test's record goes to `outcomes.jsonl`.
 - terminal summary: replay hits and misses, live requests and spend, the
   outcomes path, and the cap stop if it happened.
-- session finish: the shared replay's used keys are written to
-  `jev_harness.used_keys_path` (SP8, gitignored); in `replay` mode, when
-  `AUTO_APPLY_JEV_PRUNE` is set, the cache is then pruned to those keys, or
-  refused with a reason (`jev_harness.prune_if_asked`, `jev.prune_cache`).
+- session finish: when `AUTO_APPLY_JEV_PRUNE` is set, the shared replay's used
+  keys are written to `jev_harness.used_keys_path` (SP8, gitignored), and the
+  cache is pruned to them, or refused with a reason
+  (`jev_harness.prune_if_asked`, `jev.prune_cache`) -- including a refusal
+  when this run was not the whole `RUNNER_TESTS` set (`_narrowed_reason`,
+  below: a `-k`/`-m` filter, a deselected test, a missing file or a node id
+  narrower than a file).
+- deselected: `pytest_deselected` counts every item a `-k`, `-m` or
+  `--deselect` filter drops, on the config's own stash -- the count
+  `_narrowed_reason` reads at session finish.
 """
 from __future__ import annotations
 
@@ -40,6 +46,7 @@ import jev
 import jev_harness
 
 SESSION_KEY = pytest.StashKey[jev_harness.Session]()
+DESELECTED_KEY = pytest.StashKey[int]()
 
 
 def _xdist_active(config) -> bool:
@@ -203,20 +210,49 @@ def pytest_terminal_summary(terminalreporter, config):
         terminalreporter.write_line(session.stopped)
 
 
+def pytest_deselected(items):
+    """Pytest's own hookspec (no `config` parameter): every `-k`, `-m` or
+    `--deselect` filter that drops items calls this, possibly more than once,
+    with the items it dropped. Tallied on the config's own stash so
+    `pytest_sessionfinish` can refuse a prune over a narrowed run (SP8
+    review): a filtered run's `used_keys` only ever covers what it kept, and
+    pruning on it could drop a key one of the dropped items still needed."""
+    if not items:
+        return
+    config = items[0].config
+    config.stash[DESELECTED_KEY] = config.stash.get(DESELECTED_KEY, 0) + len(items)
+
+
+def _narrowed_reason(session) -> str:
+    """`jev_harness.runner_narrowed_reason` fed from pytest's own `session`
+    (its collected `items`, for the files this run actually touched) and
+    `config` (`-k`/`-m`, the deselected tally, and the raw file/node-id
+    arguments); "" when this run is the whole `RUNNER_TESTS` set."""
+    config = session.config
+    files = {it.nodeid.split("::", 1)[0] for it in session.items}
+    return jev_harness.runner_narrowed_reason(
+        collected_files=files, keyword=config.option.keyword or "",
+        markexpr=config.option.markexpr or "",
+        deselected=config.stash.get(DESELECTED_KEY, 0), args=config.args)
+
+
 def pytest_sessionfinish(session, exitstatus):
-    """SP8: write the shared replay's used keys beside `outcomes.jsonl`
-    (`jev_harness.write_used_keys`), then, in `replay` mode with
-    `AUTO_APPLY_JEV_PRUNE` set, prune the cache to them or print the refusal
-    (`jev_harness.prune_if_asked`). `session.testsfailed` is the run's own
-    failure count: a replay miss that is not marked `jev_unrecorded` already
-    turned its test's report into a failure above, so it counts here too.
-    (`session` here is pytest's own `Session`, the hookspec's name for it --
-    not `jev_harness.Session`, which `_session(session.config)` returns.)"""
+    """SP8: in `replay` mode with `AUTO_APPLY_JEV_PRUNE` set, write the shared
+    replay's used keys beside `outcomes.jsonl` (`jev_harness.write_used_keys`),
+    then prune the cache to them or print the refusal
+    (`jev_harness.prune_if_asked`), which also refuses a run that was not the
+    whole `RUNNER_TESTS` set (`_narrowed_reason`). `session.testsfailed` is
+    the run's own failure count: a replay miss that is not marked
+    `jev_unrecorded` already turned its test's report into a failure above,
+    so it counts here too. (`session` here is pytest's own `Session`, the
+    hookspec's name for it -- not `jev_harness.Session`, which
+    `_session(session.config)` returns.)"""
     jsession = _session(session.config)
-    if jsession is None or not jsession.soft:
+    if jsession is None or not jsession.soft or not jsession.prune:
         return
     jev_harness.write_used_keys(jsession)
-    line = jev_harness.prune_if_asked(jsession, session.testsfailed)
+    line = jev_harness.prune_if_asked(jsession, session.testsfailed,
+                                      narrowed_reason=_narrowed_reason(session))
     if not line:
         return
     reporter = session.config.pluginmanager.get_plugin("terminalreporter")

@@ -39,6 +39,12 @@
 # and leaves the cache as it was. Over time a cache picks up keys no test
 # replays any more (a fixture changed, a test was removed); -Prune drops
 # them. It never runs in -Mode record: a recording's cache is meant to grow.
+# -Prune also refuses together with -Flows (SP8 review): a narrowed matrix run
+# never touches the left-out flows' requests, so their keys would look unused
+# and be dropped even though a full run still needs them. The runner target
+# refuses the same way at session finish when the run was not the whole
+# RUNNER_TESTS set (a -k/-m filter, a deselected item, or a node id narrower
+# than a file).
 #
 # Pure ASCII on purpose (PowerShell 5.1).
 param(
@@ -64,6 +70,10 @@ if ($Prune -and $Target -eq "captures") {
 }
 if ($Prune -and $Dry) {
     Write-Host "-Prune is not valid with -Dry: a dry run estimates a recording, it replays nothing."
+    exit 2
+}
+if ($Prune -and $Flows) {
+    Write-Host "-Prune refuses together with -Flows: a narrowed matrix run never touches the flows left out, so their keys would look unused and be dropped."
     exit 2
 }
 

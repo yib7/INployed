@@ -43,7 +43,11 @@ make, with no key.
 keep only the keys this run served (`jev.prune_cache`), once the run had 0
 replay misses in the real column and 0 failures; otherwise it refuses and
 names the reason, leaving the cache as it was. The keys a parallel run's
-workers used are folded together in `main` before the prune runs.
+workers used are folded together in `main` before the prune runs. A `--flows`
+run never prunes (SP8 review): the flows left out never got a chance to use
+their keys, so a stale key one of them still needs would look unused and be
+dropped -- `--real-prune` refuses outright, before anything runs, unless
+`--flows` names the whole registry (`_flows_narrowed`).
 
 Exit 0 when no run broke an invariant and every worker finished, 1 when a
 run broke one or a worker crashed or hung, 2 when the browser could not
@@ -303,6 +307,15 @@ def _run_parallel(flows, seeds: tuple, fast: bool, jobs: int, flow_timeout: floa
 
 # --- the real judge's recording ----------------------------------------------------------------
 
+def _flows_narrowed(flows, all_flows) -> bool:
+    """True when `flows` (what `--flows` selected, or the whole registry when
+    it was not given) leaves any flow out of `all_flows`. A `--real-prune` run
+    over a narrowed `flows` never touches the left-out flows' requests, so
+    their keys would look unused and be dropped even though a full run still
+    needs them; `main` refuses `--real-prune` outright when this is true."""
+    return {f.name for f in flows} != {f.name for f in all_flows}
+
+
 def _recorded_now(h, results) -> list[str]:
     """The flows a recording ran to its end (`results`) that the registry
     still marks `recorded=False`: the flags to flip, or the replay keeps
@@ -403,9 +416,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="the real judge's cache (default "
                          "tests/fixtures/jev_cache/matrix_cache.json)")
     ap.add_argument("--real-prune", action="store_true",
-                    help="with --real replay: once the run has 0 replay misses and 0 "
-                         "failures, rewrite --real-cache to keep only the keys this run "
-                         "used (jev.prune_cache); refuses otherwise, naming the reason")
+                    help="with --real replay over the whole registry (no --flows): once the "
+                         "run has 0 replay misses and 0 failures, rewrite --real-cache to "
+                         "keep only the keys this run used (jev.prune_cache); refuses "
+                         "otherwise, naming the reason")
     args = ap.parse_args(argv)
     if args.real_prune and args.real != "replay":
         print("apply_matrix: --real-prune only applies with --real replay", file=sys.stderr)
@@ -419,6 +433,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.flows:
             wanted = {n.strip() for n in args.flows.split(",") if n.strip()}
             flows = tuple(f for f in h.FLOWS if f.name in wanted)
+        if args.real_prune and _flows_narrowed(flows, h.FLOWS):
+            print(f"apply_matrix: --real-prune refuses a --flows-narrowed run "
+                  f"({len(flows)} of {len(h.FLOWS)} flow(s) selected): the flows left out "
+                  f"never got a chance to use their keys, so pruning could drop one they "
+                  f"still need. Rerun the whole matrix (drop --flows) before pruning.",
+                  file=sys.stderr)
+            return 2
         real_cache = Path(args.real_cache) if args.real_cache else h.REAL_CACHE
         if args.real in ("record", "dry"):
             return _record_real(h, flows, args.real, real_cache, tmp_path,

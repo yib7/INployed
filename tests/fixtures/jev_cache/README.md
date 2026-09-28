@@ -72,27 +72,37 @@ changed shape, a test was removed, a flow was renamed. `-Prune` on
 `scripts/jev_record.ps1` (`-Mode replay` only, `-Target runner` or `matrix`)
 rewrites the target's cache to keep only the keys that replay actually served.
 
-It is safe by construction: the replay's shared `ReplayJev` records every key
-it serves (`local/jev.py`, `used_keys`), and the rewrite (`jev.prune_cache`)
-refuses, naming the reason, unless the run had 0 replay misses and 0 test
-failures. A miss or a failure means the run may not have reached every key a
-clean pass would, and pruning on it could drop one a passing test still
-needs -- so nothing is written, and the cache is left exactly as it was.
+The replay's shared `ReplayJev` records every key it serves (`local/jev.py`,
+`used_keys`), and the rewrite (`jev.prune_cache`) drops every other key. A
+partial run's `used_keys` only ever covers what it touched, so pruning on one
+can drop a key some other test still needs; each of the following makes the
+rewrite refuse, naming the reason, and leave the cache exactly as it was:
+
+- any replay miss, or any test failure, in the run (`jev.prune_cache`'s own
+  gate: 0 misses and 0 failures only)
+- for the runner target: the run was not the whole `RUNNER_TESTS` set -- a
+  file left out, a `-k` or `-m` filter, a deselected test, or a node id
+  narrower than a file (`conftest_jev.pytest_sessionfinish`,
+  `jev_harness.runner_narrowed_reason`)
+- for the matrix target: `--flows` named fewer than the whole registry
+  (`apply_matrix._flows_narrowed`) -- the flows left out never got a chance
+  to use their keys, so a key one of them still needs would look unused
 
 For the runner target, the shared replay lives for the whole pytest process
 (one process covers every file in `RUNNER_TESTS`), so its `used_keys` already
-covers all four modules; at session finish (`conftest_jev.pytest_sessionfinish`)
-the keys are written to `used_keys.json` beside `outcomes.jsonl` (gitignored),
-and, when `-Prune` set `AUTO_APPLY_JEV_PRUNE`, the cache is pruned there and
-then. For the matrix target, `--jobs` runs one worker process per flow, so
+covers all four modules on a full run; at session finish
+(`conftest_jev.pytest_sessionfinish`) the keys are written to
+`used_keys.json` beside `outcomes.jsonl` (gitignored), and, when `-Prune` set
+`AUTO_APPLY_JEV_PRUNE`, the cache is pruned there and then, or the refusal is
+printed. For the matrix target, `--jobs` runs one worker process per flow, so
 each worker's real judge (`apply_harness.real_judge("replay", ...)`) reports
 its own `used_keys` back on its "done" message; `scripts/apply_matrix.py`
 folds every worker's keys together before `--real-prune` (which the `.ps1`
-switch passes through) rewrites `--real-cache`.
+switch passes through) checks the flow selection and rewrites `--real-cache`.
 
 Prune after a live recording, never instead of one: it only ever removes
 keys, so run it once the new flows are recorded and every test that should
-replay does.
+replay does, over the whole set (no `-k`, `-m`, node id or `-Flows`).
 
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/jev_record.ps1 -Mode replay -Prune
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/jev_record.ps1 -Target matrix -Mode replay -Prune

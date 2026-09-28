@@ -298,11 +298,18 @@ def test_real_prune_only_applies_with_real_replay(capsys):
     assert apply_matrix.main(["--real-prune", "--real", "dry"]) == 2
 
 
-def test_real_prune_keeps_only_the_keys_a_clean_run_used(tmp_path, monkeypatch, capsys):
-    # the workers report their real judge's used keys back on the "done"
-    # message (`_run_flow_worker`); `_run_parallel`'s `real_used` kwarg folds
-    # them together, so a fake standing in for it must do the same to prove
-    # `main` wires the two together correctly
+def test_flows_narrowed_is_false_only_for_the_whole_registry():
+    assert apply_matrix._flows_narrowed(h.FLOWS, h.FLOWS) is False
+    assert apply_matrix._flows_narrowed(h.FLOWS[:1], h.FLOWS) is True
+    assert apply_matrix._flows_narrowed((), h.FLOWS) is True
+
+
+def test_real_prune_refuses_a_flows_narrowed_run_and_leaves_the_cache_as_it_was(
+        tmp_path, monkeypatch, capsys):
+    # SP8 review: a --flows run's used_keys only ever covers the flows it
+    # ran, so a stale key belonging to a left-out flow would look unused and
+    # get dropped even though a full run still needs it; --real-prune must
+    # refuse a narrowed run outright, before it runs anything
     cache = tmp_path / "matrix_cache.json"
     cache.write_text(json.dumps({"used-key": {"a": {"kind": "noul", "noul": 0.9}},
                                  "stale-key": {"a": {"kind": "noul", "noul": 0.1}}}),
@@ -316,6 +323,29 @@ def test_real_prune_keeps_only_the_keys_a_clean_run_used(tmp_path, monkeypatch, 
     monkeypatch.setattr(apply_matrix, "_isolate", lambda *a, **k: None)
     code = apply_matrix.main(["--flows", "post_form", "--seeds", "0", "--jobs", "2",
                               "--real", "replay", "--real-cache", str(cache), "--real-prune"])
+    out, err = capsys.readouterr()
+    assert code == 2, err
+    assert "--real-prune refuses" in err and "flows" in err
+    assert "apply_matrix: pruned" not in out
+    assert set(json.loads(cache.read_text(encoding="utf-8"))) == {"used-key", "stale-key"}
+
+
+def test_real_prune_prunes_a_full_flow_clean_run(tmp_path, monkeypatch, capsys):
+    cache = tmp_path / "matrix_cache.json"
+    cache.write_text(json.dumps({"used-key": {"a": {"kind": "noul", "noul": 0.9}},
+                                 "stale-key": {"a": {"kind": "noul", "noul": 0.1}}}),
+                     encoding="utf-8")
+
+    def fake_run_parallel(*a, real_used=None, **k):
+        if real_used is not None:
+            real_used.add("used-key")
+        return [_row("fake", True), _row("real", True)]
+    monkeypatch.setattr(apply_matrix, "_run_parallel", fake_run_parallel)
+    monkeypatch.setattr(apply_matrix, "_isolate", lambda *a, **k: None)
+    # no --flows: the whole registry, so _flows_narrowed is False and the
+    # prune runs
+    code = apply_matrix.main(["--seeds", "0", "--jobs", "2", "--real", "replay",
+                              "--real-cache", str(cache), "--real-prune"])
     out, err = capsys.readouterr()
     assert code == 0, err
     assert "apply_matrix: pruned" in out and "kept 1 of 2 key(s)" in out
@@ -334,11 +364,35 @@ def test_real_prune_refuses_after_a_replay_miss_and_leaves_the_cache_as_it_was(
         return [_row("fake", True), real_miss]
     monkeypatch.setattr(apply_matrix, "_run_parallel", fake_run_parallel)
     monkeypatch.setattr(apply_matrix, "_isolate", lambda *a, **k: None)
-    code = apply_matrix.main(["--flows", "post_form", "--seeds", "0", "--jobs", "2",
+    code = apply_matrix.main(["--seeds", "0", "--jobs", "2",
                               "--real", "replay", "--real-cache", str(cache), "--real-prune"])
     out, err = capsys.readouterr()
     assert code == 1, err
     assert "apply_matrix: prune refused:" in err and "miss" in err
+    assert set(json.loads(cache.read_text(encoding="utf-8"))) == {"used-key", "stale-key"}
+
+
+def test_real_prune_refuses_after_a_crashed_worker_row(tmp_path, monkeypatch, capsys):
+    # a crashed or hung worker's rows count as failures (`_failures` ->
+    # "run(s) lost to a crashed or hung worker"); --real-prune must refuse on
+    # them exactly like any other test failure, leaving the cache untouched
+    cache = tmp_path / "matrix_cache.json"
+    cache.write_text(json.dumps({"used-key": {}, "stale-key": {}}), encoding="utf-8")
+    crashed_row = h.RunResult("post_form", h.REAL, "failed",
+                              f"{apply_matrix._CRASH_MARK}post_form's worker failed: boom",
+                              False, [], 0, 0, 0.0)
+
+    def fake_run_parallel(*a, real_used=None, **k):
+        if real_used is not None:
+            real_used.add("used-key")
+        return [_row("fake", True), crashed_row]
+    monkeypatch.setattr(apply_matrix, "_run_parallel", fake_run_parallel)
+    monkeypatch.setattr(apply_matrix, "_isolate", lambda *a, **k: None)
+    code = apply_matrix.main(["--seeds", "0", "--jobs", "2",
+                              "--real", "replay", "--real-cache", str(cache), "--real-prune"])
+    out, err = capsys.readouterr()
+    assert code == 1, err
+    assert "apply_matrix: prune refused:" in err and "failure" in err
     assert set(json.loads(cache.read_text(encoding="utf-8"))) == {"used-key", "stale-key"}
 
 

@@ -146,6 +146,64 @@ def test_prune_if_asked_with_no_replay_refuses_with_no_keys(tmp_path):
     assert set(json.loads(cache.read_text(encoding="utf-8"))) == {"used"}
 
 
+def test_prune_if_asked_refuses_on_a_narrowed_reason_before_touching_the_cache(tmp_path):
+    # SP8 review: a caller-supplied narrowed_reason (a run that was not the
+    # whole RUNNER_TESTS set) refuses immediately, even on an otherwise clean
+    # replay with keys to spare -- jev.prune_cache is never reached
+    cache = tmp_path / "cache.json"
+    _seed(cache, {"used": {}, "stale": {}})
+    s = jev_harness.Session("replay", cache, prune=True)
+    s.replay = jev.ReplayJev(None, cache)
+    s.replay.used_keys = {"used"}
+    line = jev_harness.prune_if_asked(s, 0, narrowed_reason="-k 'foo' narrows which tests ran")
+    assert line == "jev prune refused: -k 'foo' narrows which tests ran"
+    assert set(json.loads(cache.read_text(encoding="utf-8"))) == {"used", "stale"}
+
+
+# --- runner_narrowed_reason: the whole RUNNER_TESTS set, no -k/-m/deselect/node id ------------
+
+def test_runner_narrowed_reason_is_empty_for_a_clean_full_run(monkeypatch):
+    monkeypatch.setattr(jev_harness, "RUNNER_TESTS", "a.py b.py")
+    assert jev_harness.runner_narrowed_reason(
+        collected_files={"a.py", "b.py"}, keyword="", markexpr="", deselected=0, args=()) == ""
+
+
+def test_runner_narrowed_reason_names_a_missing_file(monkeypatch):
+    monkeypatch.setattr(jev_harness, "RUNNER_TESTS", "a.py b.py")
+    reason = jev_harness.runner_narrowed_reason(
+        collected_files={"a.py"}, keyword="", markexpr="", deselected=0, args=())
+    assert "did not run" in reason and "b.py" in reason
+
+
+def test_runner_narrowed_reason_names_a_keyword_filter(monkeypatch):
+    monkeypatch.setattr(jev_harness, "RUNNER_TESTS", "a.py")
+    reason = jev_harness.runner_narrowed_reason(
+        collected_files={"a.py"}, keyword="test_one", markexpr="", deselected=0, args=())
+    assert "-k" in reason and "test_one" in reason
+
+
+def test_runner_narrowed_reason_names_a_mark_filter(monkeypatch):
+    monkeypatch.setattr(jev_harness, "RUNNER_TESTS", "a.py")
+    reason = jev_harness.runner_narrowed_reason(
+        collected_files={"a.py"}, keyword="", markexpr="slow", deselected=0, args=())
+    assert "-m" in reason and "slow" in reason
+
+
+def test_runner_narrowed_reason_names_a_deselected_count(monkeypatch):
+    monkeypatch.setattr(jev_harness, "RUNNER_TESTS", "a.py")
+    reason = jev_harness.runner_narrowed_reason(
+        collected_files={"a.py"}, keyword="", markexpr="", deselected=3, args=())
+    assert "3" in reason and "deselected" in reason
+
+
+def test_runner_narrowed_reason_names_a_node_id(monkeypatch):
+    monkeypatch.setattr(jev_harness, "RUNNER_TESTS", "a.py")
+    reason = jev_harness.runner_narrowed_reason(
+        collected_files={"a.py"}, keyword="", markexpr="", deselected=0,
+        args=("a.py::test_one",))
+    assert "node id" in reason and "a.py::test_one" in reason
+
+
 # --- the fixture and hooks, through an inner pytest ---------------------------------------
 
 _INNER = '''
@@ -179,6 +237,9 @@ def test_a_clean_replay_prunes_stale_keys_from_the_cache(pytester, monkeypatch, 
     monkeypatch.setenv(jev_harness.MODE_ENV, "replay")
     monkeypatch.setenv(jev.CACHE_ENV, str(cache))
     monkeypatch.setenv(jev_harness.PRUNE_ENV, "1")
+    # the whole RUNNER_TESTS set here is this one inner file (_inner's own
+    # "test_inner.py"), so the full-run check passes
+    monkeypatch.setattr(jev_harness, "RUNNER_TESTS", "test_inner.py")
     _inner(pytester)
     result = pytester.runpytest_inprocess("-q", "-p", "no:cacheprovider")
     result.assert_outcomes(passed=1)
@@ -194,6 +255,7 @@ def test_a_replay_miss_refuses_to_prune(pytester, monkeypatch, tmp_path):
     monkeypatch.setenv(jev_harness.MODE_ENV, "replay")
     monkeypatch.setenv(jev.CACHE_ENV, str(cache))
     monkeypatch.setenv(jev_harness.PRUNE_ENV, "1")
+    monkeypatch.setattr(jev_harness, "RUNNER_TESTS", "test_inner.py")
     _inner(pytester)
     result = pytester.runpytest_inprocess("-q", "-p", "no:cacheprovider")
     result.assert_outcomes(failed=1)
@@ -217,3 +279,131 @@ def test_prune_never_fires_without_the_env_var(pytester, monkeypatch, tmp_path):
     result.assert_outcomes(passed=1)
     assert "jev prune" not in result.stdout.str()
     assert set(json.loads(cache.read_text(encoding="utf-8"))) == {used_key, "stale-key"}
+
+
+# --- SP8 review: pruning refuses unless the whole RUNNER_TESTS set ran (no -k/-m, no ------------
+# --- deselection, no missing file, no node id narrower than a file) -----------------------------
+
+_INNER_A = '''
+import jev, jev_harness
+pytest_plugins = ["conftest_jev"]
+
+STATE = {STATE!r}
+QUESTIONS = {QUESTIONS!r}
+
+def test_one(jev_judge):
+    answers = jev_judge().judge(STATE, QUESTIONS)
+    assert answers["page_state"].choice == "application_form"
+'''
+
+_INNER_B = '''
+import jev, jev_harness
+pytest_plugins = ["conftest_jev"]
+
+STATE = {STATE!r}
+QUESTIONS = {QUESTIONS!r}
+
+def test_one(jev_judge):
+    answers = jev_judge().judge(STATE, QUESTIONS)
+    assert answers["page_state"].choice == "application_form"
+
+def test_two():
+    assert True
+'''
+
+
+def _two_files(pytester):
+    pytester.syspathinsert(TESTS)
+    pytester.syspathinsert(REPO / "local")
+    pytester.makepyfile(test_inner_a=_INNER_A.format(STATE=STATE, QUESTIONS=QUESTIONS),
+                        test_inner_b=_INNER_B.format(STATE=STATE, QUESTIONS=QUESTIONS))
+
+
+def _seed_used_and_stale(cache):
+    used_key = jev.ReplayJev.key_for(STATE, QUESTIONS)
+    _seed(cache, {used_key: {"page_state": {"kind": "choice", "choice": "application_form",
+                                            "probabilities": {"application_form": 1.0,
+                                                              "other": 0.0},
+                                            "confidence": 1.0}},
+                 "stale-key": {"page_state": {"kind": "choice", "choice": "other",
+                                              "probabilities": {}, "confidence": 1.0}}})
+    return used_key
+
+
+def _two_file_env(monkeypatch, cache):
+    monkeypatch.setenv(jev_harness.MODE_ENV, "replay")
+    monkeypatch.setenv(jev.CACHE_ENV, str(cache))
+    monkeypatch.setenv(jev_harness.PRUNE_ENV, "1")
+    monkeypatch.setattr(jev_harness, "RUNNER_TESTS", "test_inner_a.py test_inner_b.py")
+
+
+def test_a_full_run_of_both_runner_files_prunes(pytester, monkeypatch, tmp_path):
+    cache = tmp_path / "cache.json"
+    used_key = _seed_used_and_stale(cache)
+    _two_file_env(monkeypatch, cache)
+    _two_files(pytester)
+    result = pytester.runpytest_inprocess("-q", "-p", "no:cacheprovider")
+    result.assert_outcomes(passed=3)      # test_inner_a::test_one, _b::test_one, _b::test_two
+    result.stdout.fnmatch_lines(["*jev prune: kept 1 of 2 key(s)*"])
+    assert set(json.loads(cache.read_text(encoding="utf-8"))) == {used_key}
+
+
+def test_a_single_file_run_refuses_to_prune(pytester, monkeypatch, tmp_path):
+    # only test_inner_a.py ran: RUNNER_TESTS also names test_inner_b.py, so
+    # this run's used_keys never had a chance to cover it
+    cache = tmp_path / "cache.json"
+    _seed_used_and_stale(cache)
+    _two_file_env(monkeypatch, cache)
+    _two_files(pytester)
+    result = pytester.runpytest_inprocess("-q", "-p", "no:cacheprovider", "test_inner_a.py")
+    result.assert_outcomes(passed=1)
+    result.stdout.fnmatch_lines(["*jev prune refused:*did not run*test_inner_b.py*"])
+    assert set(json.loads(cache.read_text(encoding="utf-8"))) == {
+        jev.ReplayJev.key_for(STATE, QUESTIONS), "stale-key"}
+
+
+def test_a_keyword_filtered_run_refuses_to_prune(pytester, monkeypatch, tmp_path):
+    # -k test_one still collects both files but deselects test_inner_b::test_two
+    cache = tmp_path / "cache.json"
+    _seed_used_and_stale(cache)
+    _two_file_env(monkeypatch, cache)
+    _two_files(pytester)
+    result = pytester.runpytest_inprocess("-q", "-p", "no:cacheprovider", "-k", "test_one")
+    result.assert_outcomes(passed=2, deselected=1)
+    result.stdout.fnmatch_lines(["*jev prune refused:*-k*test_one*"])
+    assert set(json.loads(cache.read_text(encoding="utf-8"))) == {
+        jev.ReplayJev.key_for(STATE, QUESTIONS), "stale-key"}
+
+
+_INNER_UNRECORDED_PRUNE = '''
+import pytest
+pytest_plugins = ["conftest_jev"]
+
+STATE = {STATE!r}
+QUESTIONS = {QUESTIONS!r}
+
+@pytest.mark.jev_unrecorded
+def test_marked(jev_judge):
+    jev_judge().judge(STATE, QUESTIONS)
+'''
+
+
+def test_an_unrecorded_skip_blocks_the_prune(pytester, monkeypatch, tmp_path):
+    # SP8 review: a jev_unrecorded miss turns the test's own report into a
+    # skip (conftest_jev.pytest_runtest_makereport), never a failure, so
+    # testsfailed stays 0 -- the miss itself, not the failure count, is what
+    # must still block the prune (jev.prune_cache's own misses gate)
+    cache = tmp_path / "cache.json"       # no cache file: the one request misses
+    monkeypatch.setenv(jev_harness.MODE_ENV, "replay")
+    monkeypatch.setenv(jev.CACHE_ENV, str(cache))
+    monkeypatch.setenv(jev_harness.PRUNE_ENV, "1")
+    monkeypatch.setattr(jev_harness, "RUNNER_TESTS", "test_inner.py")
+    pytester.syspathinsert(TESTS)
+    pytester.syspathinsert(REPO / "local")
+    pytester.makepyfile(test_inner=_INNER_UNRECORDED_PRUNE.format(STATE=STATE,
+                                                                  QUESTIONS=QUESTIONS))
+    result = pytester.runpytest_inprocess("-q", "-rs", "-p", "no:cacheprovider",
+                                          "-W", "error::pytest.PytestUnknownMarkWarning")
+    result.assert_outcomes(skipped=1)
+    result.stdout.fnmatch_lines(["*jev prune refused:*miss*"])
+    assert not cache.exists()

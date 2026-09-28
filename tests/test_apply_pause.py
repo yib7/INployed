@@ -576,6 +576,79 @@ def test_every_resume_reads_the_answer_store_again(pauses_on, boxes):
     assert jr.reloads == 1
 
 
+# -- a page that moved on during the wait (final review A I-1) ---------------------------------
+
+def _moves_on(jr, step_two):
+    """What the person does in the browser during the wait: goes on to the
+    next step, whose own "Please explain" box sits at the same path."""
+    def then():
+        jr.page.url = _URL + "?step=2"
+        jr.digest = step_two
+    return then
+
+
+def test_a_card_answer_is_dropped_when_the_page_moved_on_at_a_disabled_way_on(pauses_on,
+                                                                             boxes):
+    # the person answered in the card, then clicked Next in the browser: the
+    # answer belongs to step 1's box and never goes in step 2's box
+    one = _field(1, "Please explain", required=False, id_or_name="explain")
+    two = _field(5, "Please explain", required=False, id_or_name="explain")
+    step_one, step_two = _digest(one), _digest(two)
+    page = _Page(_Clock())
+    jr = _Jr(page, digest=step_one)
+    page.on_wait = _answers_with("fill", {"1": "step one answer"},
+                                 then=_moves_on(jr, step_two))
+    p = apply_pause.Pauser(jr, RuntimeError)
+    with pytest.raises(apply_pause.Replan):
+        p.at_disabled(step_one, FillPlan(fields=[_pf(one)]), "disabled")
+    assert p.pending == {}
+    plan = FillPlan(fields=[_pf(two)])
+    p.apply_pending(step_two, plan)
+    assert [(pf.action, pf.value) for pf in plan.fields] == [("skip", "")]
+
+
+def test_a_card_answer_is_dropped_when_the_page_moved_on_at_a_required_field(pauses_on,
+                                                                           boxes):
+    one = _field(1, "Please explain", id_or_name="explain")
+    two = _field(5, "Please explain", id_or_name="explain")
+    step_one, step_two = _digest(one), _digest(two)
+    page = _Page(_Clock())
+    jr = _Jr(page, digest=step_one)
+    page.on_wait = _answers_with("fill", {"1": "step one answer"},
+                                 then=_moves_on(jr, step_two))
+    p = apply_pause.Pauser(jr, RuntimeError)
+    with pytest.raises(apply_pause.Replan):
+        p.at_plan(step_one, FillPlan(fields=[_pf(one)], park_reason="required field without "
+                                                                     "an answer: Please explain"))
+    plan = FillPlan(fields=[_pf(two)])
+    p.apply_pending(step_two, plan)
+    assert [(pf.action, pf.value) for pf in plan.fields] == [("skip", "")]
+
+
+def test_a_card_answer_is_keyed_by_the_page_the_run_paused_on(pauses_on, boxes):
+    # a page that grew during the wait (a new box, the asked one still there)
+    # keeps the answer, keyed by the paused page's own path
+    one = _field(1, "Please explain", id_or_name="explain")
+    extra = _field(2, "Portfolio URL", required=False, id_or_name="portfolio")
+    step_one, grown = _digest(one), _digest(one, extra)
+    page = _Page(_Clock())
+    jr = _Jr(page, digest=step_one)
+
+    def grow():
+        jr.digest = grown
+    page.on_wait = _answers_with("fill", {"1": "my answer"}, then=grow)
+    p = apply_pause.Pauser(jr, RuntimeError)
+    with pytest.raises(apply_pause.Replan):
+        p.at_plan(step_one, FillPlan(fields=[_pf(one)], park_reason="required field without "
+                                                                    "an answer: Please explain"))
+    assert list(p.pending.values()) == ["my answer"]
+    assert {key[0] for key in p.pending} == {"ats.example/apply/1"}
+    plan = FillPlan(fields=[_pf(one), _pf(extra)])
+    p.apply_pending(grown, plan)
+    assert [(pf.action, pf.value) for pf in plan.fields] == [("fill", "my answer"),
+                                                             ("skip", "")]
+
+
 def test_a_save_keeps_the_review_list_of_a_version_1_store(tmp_path):
     # final review A I-3: a store still version 1 on disk migrates in memory
     # with its review list; the pause's save keeps that list

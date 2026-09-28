@@ -28,6 +28,9 @@
   the disabled control a Next, and the person's click moves the address on
   to a review step with its own Submit (review N1: the run plans the new
   step, then the gate sends).
+  Final review A I-1: with ?wizard=1, ?again=1 gives the review step its own
+  optional "Referral code" box, named as the first step's: an answer the
+  person gave in the card for the first step never goes in it.
 -->
 <form id="application" onsubmit="return false">
   <label>Full name * <input name="name" type="text" required></label>
@@ -46,6 +49,7 @@
 <section id="review" hidden>
   <h2>Review your details</h2>
   <p>Check your answers before you send them.</p>
+  <label id="again" hidden>Referral code <input name="referral" type="text"></label>
   <button type="button" id="btn-final">Submit application</button>
 </section>
 <script>
@@ -90,6 +94,7 @@
     if (params.get('wizard')) {
       history.pushState({}, '', location.pathname + location.search + '&step=2');
       document.getElementById('review').hidden = false;
+      if (params.get('again')) document.getElementById('again').hidden = false;
       return;
     }
     document.body.setAttribute(person ? 'data-person-submitted' : 'data-submitted', '1');

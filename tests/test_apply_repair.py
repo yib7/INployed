@@ -902,6 +902,19 @@ def test_a_next_the_person_clicks_during_a_pause_is_planned_again(
     assert "pause_moved_on" in decided and "pause_moved" not in decided, decided
 
 
+def test_a_card_answer_never_goes_in_a_box_on_the_step_the_person_moved_on_to(
+        _browser, flow_server, tmp_path):
+    # final review A I-1: the person answers the referral code in the card and
+    # also clicks Next in the browser; the review step's own Referral code box
+    # (the same name, the same path) never takes the card's answer
+    r = h.run_flow(h.flow("pause_wizard_fill"), jev.FakeJev(), "fake", browser=_browser,
+                   server=flow_server, workdir=tmp_path)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    assert not [a for a in r.actions if a.user == "CARD-7 (user)"], r.actions
+    decided = [d["what"] for d in _decisions(r)]
+    assert "pause_moved_on" in decided and "pause_answer_dropped" in decided, decided
+
+
 class _Moved:
     """A job run double for `_JobRun._pause_moved`: the page's text now, the
     pause's read of the page after the wait, and every decision kept."""

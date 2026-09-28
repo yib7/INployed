@@ -1548,6 +1548,14 @@ FLOWS: tuple[Flow, ...] = (
          covers="a Next disabled after the fill; the person fixes the page and clicks Next "
                 "during the pause, and the address moves on to a review step: a page with no "
                 "send button that moved on is planned again, and the gate sends (review N1)"),
+    # cycle 19 final review A I-1: added after the last recording
+    Flow("pause_wizard_fill", "pause_disabled.html?click=1&wizard=1&again=1", True,
+         "submitted", _SUBMITTED, confirm="#thanks:visible", wrap=PauseLeftBlank,
+         pause=PauseSpec("fill", (("referral code", "CARD-7 (user)"),)), recorded=False,
+         covers="a Next disabled after the fill; the person answers the referral code in the "
+                "card and also clicks Next in the browser, and the review step has its own "
+                "Referral code box: the card's answer goes nowhere on the step it moved on to "
+                "(final review A I-1)"),
 )
 
 

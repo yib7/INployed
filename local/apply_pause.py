@@ -27,7 +27,8 @@ value in its own field (source `USER_SOURCE`, the exact value, a choice only
 as one of the live options); a field the person filled in the browser stays
 as it is (`KEPT`). A page that changed meanwhile, and every "browser"
 answer, reads and plans the page again (`Replan`), and the answers apply on
-that plan. A sensitive field is never typed by code: its value in an answer
+that plan, on the page the run paused on only: a page that moved on during
+the wait drops them. A sensitive field is never typed by code: its value in an answer
 file is ignored.
 
 A value whose "save" flag is set goes to the answer store as a confirmed
@@ -773,10 +774,10 @@ class Pauser:
         asked = [fields[pf.n] for pf in plan.fields
                  if pf.action == "skip" and pf.label and pf.n in fields]
         typed = self._typed_now(digest, plan)
-        answer, _before = self._wait(f"{reason}; fix it in the browser, then continue", asked)
+        answer, before = self._wait(f"{reason}; fix it in the browser, then continue", asked)
         if answer is None:
             return
-        self._keep_for_replan(digest, asked, answer, typed)
+        self._keep_for_replan(digest, asked, answer, before, typed)
         raise Replan("the way on was disabled")
 
     # -- the wait and the resume
@@ -895,19 +896,40 @@ class Pauser:
                 self.saved.append(q["label"])
                 self.jr._decide("pause_saved", f"{q['label']!r} saved for future runs")
 
-    def _keep_for_replan(self, digest, asked: list, answer: dict,
+    def _moved_on(self, before: tuple | None) -> bool:
+        """Did the page move on from the one the run paused on (`before`,
+        its print)? Its address changed, none of its labelled fields is
+        left, or it cannot be read (then or now): the checks
+        `apply_run._JobRun._pause_moved` makes."""
+        after = self._print()
+        if before is None or after is None:
+            return True
+        was = {row for row in before[1] if row[0]}
+        return str(after[0]) != str(before[0]) or (bool(was) and not was & set(after[1]))
+
+    def _keep_for_replan(self, digest, asked: list, answer: dict, before: tuple | None,
                          typed: Mapping[tuple, str] | None = None) -> None:
         """What the next plan takes (`apply_pending`): the card's values and
-        the asked fields by their own keys (`field_keys`), and what each box
-        the run filled read before the wait."""
-        keys = field_keys(digest.fields, _path_of(self._url()))
+        the asked fields by their own keys (`field_keys`) on the page the run
+        paused on (`before`, its print), and what each box the run filled
+        read before the wait. The card's values go only into the fields they
+        answer on that page (final review A I-1): a page that moved on during
+        the wait (`_moved_on`, a wizard's Next the person clicked) drops them,
+        and the asked fields are still read back there."""
+        url = before[0] if before is not None else self._url()
+        keys = field_keys(digest.fields, _path_of(url))
+        drop = answer["mode"] == "fill" and self._moved_on(before)
+        if drop and any(answer["values"].get(str(f.n)) for f in asked):
+            self.jr._decide("pause_answer_dropped", "the page moved on during the wait: the "
+                                                    "answers you gave for the page it paused on "
+                                                    "go nowhere else")
         for f in asked:
             key = keys.get(f.n)
             if key is None:
                 continue
             self.asked.add(key)
             value = answer["values"].get(str(f.n))
-            if answer["mode"] == "fill" and value and widget_for(f) != W_BROWSER:
+            if answer["mode"] == "fill" and value and widget_for(f) != W_BROWSER and not drop:
                 self.pending[key] = value
         self.typed.update(typed or {})
 
@@ -920,11 +942,11 @@ class Pauser:
         the wait, raises `Replan` with the answers kept for the new plan.
         Returns the plan fields that took a value."""
         if answer["mode"] == "browser":
-            self._keep_for_replan(digest, asked, answer, typed)
+            self._keep_for_replan(digest, asked, answer, before, typed)
             raise Replan("filled in the browser")
         after = self._print()
         if before is None or after != before:
-            self._keep_for_replan(digest, asked, answer, typed)
+            self._keep_for_replan(digest, asked, answer, before, typed)
             self.jr._decide("pause_page_changed", "the page changed during the wait: it is "
                                                   "read and planned again before any fill")
             raise Replan("the page changed")

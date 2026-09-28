@@ -12,6 +12,7 @@
 
 Headless Chromium through the module-scoped test browser; no network, no
 judge but `FakeJev` or a scripted one."""
+import json
 import sys
 from pathlib import Path
 
@@ -954,6 +955,61 @@ def test_a_page_with_no_send_button_that_moved_on_is_planned_again():
     run = _Moved(_URL1 + "?step=2", (("cover note", "textarea"),), _SUBMIT)
     assert _moved(run, _URL1, _NEXT) is None
     assert not run._pause_sent and run.decided == ["pause_moved_on"]
+
+
+class _Busy529(Exception):
+    """An overloaded service the way the SDK raises one: the judge's guard
+    retries it, then opens its breaker (the judge down)."""
+    status = 529
+
+
+class _DownAfterTheWait:
+    """The fake judge until `down` is set (once the pause's wait ends): then
+    the service is overloaded, request after request."""
+
+    def __init__(self):
+        self.inner = jev.FakeJev()
+        self.down = False
+        self.failed = 0
+
+    def judge(self, state, questions):
+        if self.down:
+            self.failed += 1
+            raise _Busy529("529: overloaded")
+        return self.inner.judge(state, questions)
+
+
+def test_a_judge_down_after_the_person_moved_on_parks_and_is_never_requeued(
+        _browser, flow_server, tmp_path, monkeypatch):
+    # review N5: the person clicked through a page with no send button during
+    # the pause and may have sent it on a later step; the judge goes down on
+    # the replan's read. The job parks with the check-whether note and is
+    # never handed back to the queue on its own
+    judge = _DownAfterTheWait()
+    real = apply_run._JobRun._pause_moved
+
+    def _moved(self, *a, **kw):
+        out = real(self, *a, **kw)
+        judge.down = True
+        return out
+    monkeypatch.setattr(apply_run._JobRun, "_pause_moved", _moved)
+    r = h.run_flow(h.flow("pause_wizard_next"), judge, "fake", browser=_browser,
+                   server=flow_server, workdir=tmp_path)
+    assert judge.failed, "the judge never went down after the move"
+    assert not r.breaks, r.breaks
+    assert r.status == "needs_human" and r.policy is True, (r.status, r.reason)
+    assert r.reason.startswith(f"{apply_run.CHECK_SENT_REASON}: the run stopped after the "
+                               f"pause ({apply_run.JUDGE_DOWN_REASON}: "), r.reason
+    decided = [d["what"] for d in _decisions(r)]
+    assert "pause_moved_on" in decided, decided
+    # the queue entry (the run's queue sits beside the job folder) keeps the
+    # note, and the dashboard reads it as possibly sent (no Re-queue offered)
+    import apply_queue
+    queue = Path(r.trace).parents[2] / "queue.json"
+    (entry,) = json.loads(queue.read_text(encoding="utf-8"))["jobs"]
+    assert entry["status"] == "needs_human" and entry.get("outages", 0) == 0, entry
+    assert entry["tab_note"] == apply_run.CHECK_SENT_NOTE, entry
+    assert apply_queue.possibly_sent(entry)
 
 
 def test_received_words_park_as_possibly_sent_on_any_page():

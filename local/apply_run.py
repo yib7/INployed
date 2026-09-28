@@ -4614,6 +4614,11 @@ class _JobRun:
         # the page moved on while the run waited for the person (SP7 review
         # I1): they may have sent it in the browser (`_pause_moved`)
         self._pause_sent = False
+        # the person went on from a page with no send button during a pause
+        # (`_pause_moved`, SP7 review N1): they may have sent it on a later
+        # step, so a judge down afterwards never hands the job back to the
+        # queue (`_requeue_unless_moved_on`, review N5). Read nowhere else
+        self._person_moved_on = False
         # a send that never reached the site and nothing else left (`_Unsent`):
         # what the watch saw is no possible send (final review A-M4)
         self._unsent = False
@@ -5255,7 +5260,7 @@ class _JobRun:
                     if self._judge_down() and not self._maybe_sent():
                         # a park reached after the judge went down (a step
                         # that noted the error and went on) is no answer
-                        return self._requeued("")
+                        return self._requeue_unless_moved_on("")
                 return self._finish(p.status, p.reason, p.tab_note)
             except Exception as e:      # noqa: BLE001  (the entry must leave in_progress)
                 # the context or the browser gone is a closed window; a closed
@@ -5280,7 +5285,7 @@ class _JobRun:
                                    "\n  ".join(frames))
                 down = "" if closed or tab else self._judge_down()
                 if down and not self._maybe_sent():
-                    return self._requeued(step)
+                    return self._requeue_unless_moved_on(step)
                 done = self._confirmed_elsewhere() if tab else None
                 if done is not None:
                     return done
@@ -5386,6 +5391,20 @@ class _JobRun:
             return True
         watch = self._send_watch
         return bool(watch is not None and not self._unsent and watch.any())
+
+    def _requeue_unless_moved_on(self, step: str) -> Outcome:
+        """The judge went down with nothing the run knows of sent: the job
+        goes back to the queue (`_requeued`), unless the person went on from
+        a page with no send button during a pause (`_person_moved_on`, SP7
+        review N5). They may have sent it on a later step, so the job parks
+        with the check-whether note and is never re-queued on its own."""
+        if not self._person_moved_on:
+            return self._requeued(step)
+        at = f" at {step}" if step else ""
+        return self._finish("needs_human", f"{CHECK_SENT_REASON}: the run stopped after the "
+                                           f"pause ({JUDGE_DOWN_REASON}: {self._judge_down()}"
+                                           f"{at}); you went on to another step in the "
+                                           "browser during the pause", CHECK_SENT_NOTE)
 
     def _requeued(self, step: str) -> Outcome:
         """RES-02: the judge went down under the job before anything could
@@ -8028,6 +8047,7 @@ class _JobRun:
                 elif form_gone:
                     what = "the form it paused on is gone"
             elif url_moved or form_gone:
+                self._person_moved_on = True
                 self._decide("pause_moved_on", "the page moved on to another step while the "
                                                "run waited for you, from a page with no send "
                                                "button: it is read and planned again")

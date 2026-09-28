@@ -728,6 +728,10 @@ def test_enter_and_escape_that_send_nothing_break_nothing():
                     "'Submit application' button is gone); the run had reached: x", True),
     ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the page moved on during the pause (its "
                     "address changed); the run had reached: x", True),
+    # SP7 review N5: the judge down after the person went on to another step
+    ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the run stopped after the pause "
+                    f"({apply_run.JUDGE_DOWN_REASON}: _Busy529 529 at read); you went on to "
+                    "another step in the browser during the pause", True),
     ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the run stopped after the pause (the "
                     "browser window was closed); the run had reached: x", True),
     ("needs_human", f"no submit button (the page says '{apply_run.CHECK_SENT_REASON}: the page "

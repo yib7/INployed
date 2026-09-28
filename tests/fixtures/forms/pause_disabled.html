@@ -30,7 +30,9 @@
   step, then the gate sends).
   Final review A I-1: with ?wizard=1, ?again=1 gives the review step its own
   optional "Referral code" box, named as the first step's: an answer the
-  person gave in the card for the first step never goes in it.
+  person gave in the card for the first step never goes in it. The script
+  adds the box on the click, so a page without ?again=1 reads as before and
+  its recorded replay keys still match.
 -->
 <form id="application" onsubmit="return false">
   <label>Full name * <input name="name" type="text" required></label>
@@ -49,7 +51,6 @@
 <section id="review" hidden>
   <h2>Review your details</h2>
   <p>Check your answers before you send them.</p>
-  <label id="again" hidden>Referral code <input name="referral" type="text"></label>
   <button type="button" id="btn-final">Submit application</button>
 </section>
 <script>
@@ -94,7 +95,12 @@
     if (params.get('wizard')) {
       history.pushState({}, '', location.pathname + location.search + '&step=2');
       document.getElementById('review').hidden = false;
-      if (params.get('again')) document.getElementById('again').hidden = false;
+      if (params.get('again')) {
+        const again = document.createElement('label');
+        again.id = 'again';
+        again.innerHTML = 'Referral code <input name="referral" type="text">';
+        document.getElementById('btn-final').before(again);
+      }
       return;
     }
     document.body.setAttribute(person ? 'data-person-submitted' : 'data-submitted', '1');

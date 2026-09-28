@@ -29,6 +29,14 @@ def _envelope(result, *, is_error=False, usage=None):
     return json.dumps(body)
 
 
+def _system_prompt_of(argv):
+    """The system prompt run_claude handed the CLI. It rides the temp file named
+    by --system-prompt-file, so a fake run must read it during the call: the
+    file is removed once the call returns."""
+    path = Path(argv[argv.index("--system-prompt-file") + 1])
+    return path.read_bytes().decode("utf-8")
+
+
 # --------------------------------------------------------------------------
 # find_claude / is_rate_limit_message
 # --------------------------------------------------------------------------
@@ -78,6 +86,7 @@ def test_run_claude_argv_shape_and_call_kwargs(monkeypatch, fake_exe):
     def fake_run(argv, **kwargs):
         captured["argv"] = argv
         captured["kwargs"] = kwargs
+        captured["sys"] = _system_prompt_of(argv)
         return _proc(stdout=_envelope("hi", usage={"input_tokens": 1, "output_tokens": 2}))
 
     monkeypatch.setattr(claude_cli.subprocess, "run", fake_run)
@@ -88,7 +97,8 @@ def test_run_claude_argv_shape_and_call_kwargs(monkeypatch, fake_exe):
     assert "-p" in argv
     assert argv[argv.index("--output-format") + 1] == "json"
     assert argv[argv.index("--model") + 1] == "claude-sonnet-5"
-    assert argv[argv.index("--system-prompt") + 1] == "sys prompt"
+    assert captured["sys"] == "sys prompt"
+    assert "--system-prompt" not in argv
     assert "--exclude-dynamic-system-prompt-sections" in argv
 
     kwargs = captured["kwargs"]
@@ -111,13 +121,13 @@ def test_run_claude_json_mode_appends_only_json_suffix(monkeypatch, fake_exe):
     captured = {}
 
     def fake_run(argv, **kwargs):
-        captured["argv"] = argv
+        captured["sys"] = _system_prompt_of(argv)
         return _proc(stdout=_envelope("{}"))
 
     monkeypatch.setattr(claude_cli.subprocess, "run", fake_run)
     claude_cli.run_claude("sys", "user", "claude-haiku-4-5", json_mode=True)
 
-    sys_prompt = captured["argv"][captured["argv"].index("--system-prompt") + 1]
+    sys_prompt = captured["sys"]
     assert sys_prompt.startswith("sys")
     assert "ONLY valid JSON" in sys_prompt
 
@@ -126,12 +136,62 @@ def test_run_claude_json_mode_false_leaves_system_prompt_untouched(monkeypatch, 
     captured = {}
 
     def fake_run(argv, **kwargs):
-        captured["argv"] = argv
+        captured["sys"] = _system_prompt_of(argv)
         return _proc(stdout=_envelope("hi"))
 
     monkeypatch.setattr(claude_cli.subprocess, "run", fake_run)
     claude_cli.run_claude("sys prompt", "user", "claude-haiku-4-5", json_mode=False)
-    assert captured["argv"][captured["argv"].index("--system-prompt") + 1] == "sys prompt"
+    assert captured["sys"] == "sys prompt"
+
+
+def test_run_claude_long_system_prompt_rides_a_file_and_the_command_line_stays_short(
+        monkeypatch, fake_exe):
+    """On Windows `claude` resolves to npm's claude.cmd shim, which runs through
+    cmd.exe, and cmd.exe refuses a command line over 8,191 characters with "The
+    command line is too long." A résumé plus a JSON schema passes that, so the
+    system prompt must never ride argv. The file keeps it byte for byte:
+    newlines stay \\n and non-ASCII stays UTF-8, so the prompt cache sees the
+    same text on every call."""
+    captured = {}
+    system = ("Résumé line with 100% \"quotes\" & ^carets\n" * 600)[:20_000]
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        captured["sys"] = _system_prompt_of(argv)
+        return _proc(stdout=_envelope("hi"))
+
+    monkeypatch.setattr(claude_cli.subprocess, "run", fake_run)
+    claude_cli.run_claude(system, "user", "claude-sonnet-5")
+
+    argv = captured["argv"]
+    assert captured["sys"] == system
+    assert "--system-prompt" not in argv
+    assert len(claude_cli.subprocess.list2cmdline(argv)) < 1_000
+    assert not any("Résumé" in a for a in argv)
+
+
+@pytest.mark.parametrize("outcome", ["ok", "exit_1", "timeout"])
+def test_run_claude_removes_the_system_prompt_file(monkeypatch, fake_exe, outcome):
+    """The temp file holds the résumé, so it is removed however the call ends."""
+    import subprocess as real_subprocess
+    seen = {}
+
+    def fake_run(argv, **kwargs):
+        seen["path"] = Path(argv[argv.index("--system-prompt-file") + 1])
+        assert seen["path"].exists()
+        if outcome == "timeout":
+            raise real_subprocess.TimeoutExpired(cmd=argv, timeout=1)
+        if outcome == "exit_1":
+            return _proc(returncode=1, stderr="boom")
+        return _proc(stdout=_envelope("hi"))
+
+    monkeypatch.setattr(claude_cli.subprocess, "run", fake_run)
+    if outcome == "ok":
+        claude_cli.run_claude("sys", "user", "m")
+    else:
+        with pytest.raises(claude_cli.ClaudeCLIError):
+            claude_cli.run_claude("sys", "user", "m")
+    assert not seen["path"].exists()
 
 
 def test_run_claude_websearch_flag_adds_allowed_tools(monkeypatch, fake_exe):
@@ -171,7 +231,7 @@ def test_run_claude_never_lifts_the_permission_gate_and_runs_outside_the_repo(mo
     assert "--permission-mode" not in joined and "bypassPermissions" not in joined
     assert "--allowedTools" in argv and argv[argv.index("--allowedTools") + 1] == "WebSearch"
     assert argv.count("--allowedTools") == 1
-    assert "-p" in argv and "--system-prompt" in argv
+    assert "-p" in argv and "--system-prompt-file" in argv
     assert "--exclude-dynamic-system-prompt-sections" in argv
     kw = captured["kwargs"]
     assert kw["cwd"] == claude_cli.tempfile.gettempdir()

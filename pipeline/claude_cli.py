@@ -10,8 +10,8 @@ Gemini unconditionally; see keypool.py / score_jobs.py). Consumers:
   `keypool.KeyPool.generate(model=, contents=, config=)` so call sites don't
   change).
 
-Caching note: the `claude` CLI marks a prompt-cache breakpoint on
-`--system-prompt`. Callers MUST put stable, byte-identical-across-calls
+Caching note: the `claude` CLI marks a prompt-cache breakpoint on the system
+prompt (`--system-prompt-file`). Callers MUST put stable, byte-identical-across-calls
 content in `system` and volatile per-item content in `user` (stdin) --
 putting per-item data in the system prompt defeats caching and can even
 increase cost (a changed system prompt is a fresh, uncached breakpoint).
@@ -198,6 +198,16 @@ def cli_version(timeout_s: float = 20) -> tuple[int, ...] | None:
     return tuple(int(p) for p in m.group(1).split(".")) if m else None
 
 
+def _write_system_prompt(text: str) -> str:
+    """Write `text` to a new temp file for --system-prompt-file and return its
+    path. newline='' keeps the text byte for byte (no \\r\\n on Windows), so the
+    prompt cache sees the same system prompt on every call."""
+    fd, path = tempfile.mkstemp(prefix="claude-system-", suffix=".txt")
+    with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+        fh.write(text)
+    return path
+
+
 @dataclass
 class CLIResult:
     text: str
@@ -224,7 +234,7 @@ def run_claude(
     `ClaudePool.generate` here).
 
     Prompt rides stdin (`user`), the JSON envelope comes back on stdout.
-    `--system-prompt` fully overrides the CLI's default system prompt (no
+    `--system-prompt-file` fully overrides the CLI's default system prompt (no
     repo CLAUDE.md / skills leak in) and is ALSO where the CLI marks its
     prompt-cache breakpoint -- see the module docstring's caching note.
     Runs in a temp cwd so no project files are visible to the child process.
@@ -274,16 +284,15 @@ def _run_once(
             "\n\nRespond with ONLY valid JSON -- no prose, no markdown, "
             "no code fences."
         )
-    # KNOWN LIMIT (audit P2-17): the system prompt (the full résumé + schema)
-    # rides in argv, so it is visible in local process listings for the life of
-    # each call, and a very large prompt risks the ~32k Windows command-line
-    # cap. Accepted: local-machine exposure only (no secrets in the résumé
-    # text), and the CLI offers no stdin/file channel for the system prompt —
-    # the user prompt already rides stdin below. Revisit if the CLI grows a
-    # --system-prompt-file flag.
+    # The system prompt (the full résumé + schema) rides a temp file, never
+    # argv. On Windows `claude` is usually npm's claude.cmd shim, which runs
+    # through cmd.exe, and cmd.exe refuses any command line over 8,191
+    # characters ("The command line is too long."). The file also keeps the
+    # résumé out of process listings (audit P2-17).
+    sys_path = _write_system_prompt(sys_prompt)
     argv = [
         exe, "-p", "--output-format", "json", "--model", model,
-        "--system-prompt", sys_prompt, "--exclude-dynamic-system-prompt-sections",
+        "--system-prompt-file", sys_path, "--exclude-dynamic-system-prompt-sections",
     ]
     if allow_websearch:
         argv += ["--allowedTools", "WebSearch"]
@@ -298,6 +307,11 @@ def _run_once(
         raise ClaudeCLIError(
             f"claude timed out after {timeout_s:.0f}s ({model})", kind="timeout"
         ) from exc
+    finally:
+        try:
+            os.remove(sys_path)
+        except OSError:  # already gone, or still held open: leave it in the temp folder
+            pass
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "")[:400]
         kind = _error_kind(err)

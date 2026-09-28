@@ -3,6 +3,7 @@
 Pure argv builders. No real gcloud ever runs (the runner is
 mocked); no secret is read — only non-secret connection identifiers.
 """
+import functools
 import os
 import sys
 import types
@@ -387,12 +388,81 @@ def test_set_vm_secret_refuses_an_unconfigured_target():
 # the box that runs the cron, or a success message over a credential that never
 # took effect.
 
-def _bash_or_skip():
+def _is_wsl_launcher(path: str) -> bool:
+    """System32\\bash.exe (and the WindowsApps alias) start WSL, not bash.
+
+    With no distro installed it dies with `execvpe(/bin/bash) failed`; with one,
+    it would get Windows paths it cannot open. Either way it is not usable here."""
+    p = os.path.normcase(os.path.abspath(path))
+    roots = [os.environ.get("SystemRoot") or os.environ.get("WINDIR") or r"C:\Windows"]
+    if os.environ.get("LOCALAPPDATA"):
+        roots.append(os.path.join(os.environ["LOCALAPPDATA"], "Microsoft", "WindowsApps"))
+    return any(p.startswith(os.path.join(os.path.normcase(os.path.abspath(r)), ""))
+               for r in roots)
+
+
+def _bash_runs(bash: str) -> bool:
+    import subprocess
+    try:
+        res = subprocess.run([bash, "-c", "printf ok"], capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return res.returncode == 0 and res.stdout == "ok"
+
+
+def _windows_bash_candidates():
+    """Git for Windows' bash, in order: the fixed install dirs, then the install
+    that the `git` on PATH belongs to (found via `git --exec-path`)."""
+    import subprocess
+    for var in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
+        if os.environ.get(var):
+            yield Path(os.environ[var]) / "Git" / "bin" / "bash.exe"
+    yield Path(r"C:\Program Files\Git\bin\bash.exe")
+    if os.environ.get("LOCALAPPDATA"):
+        yield Path(os.environ["LOCALAPPDATA"]) / "Programs" / "Git" / "bin" / "bash.exe"
+    try:
+        exec_path = subprocess.run(["git", "--exec-path"], capture_output=True, text=True,
+                                   encoding="utf-8", errors="replace",
+                                   timeout=30).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        exec_path = ""
+    if exec_path:
+        # e.g. C:/Program Files/Git/mingw64/libexec/git-core -> C:/Program Files/Git
+        for parent in Path(exec_path).parents:
+            yield parent / "bin" / "bash.exe"
+
+
+@functools.lru_cache(maxsize=None)
+def _find_bash() -> str | None:
+    """A bash that actually runs a script, or None.
+
+    From PowerShell, PATH resolves `bash` to the WSL launcher in System32, so on
+    Windows that one is passed over in favour of Git for Windows' bash."""
     import shutil
-    bash = shutil.which("bash")
+    found = shutil.which("bash")
+    if os.name != "nt":
+        return found if found and _bash_runs(found) else None
+    candidates = []
+    if found and not _is_wsl_launcher(found):
+        candidates.append(found)
+    candidates += [str(c) for c in _windows_bash_candidates()]
+    seen = set()
+    for c in candidates:
+        key = os.path.normcase(os.path.abspath(c))
+        if key in seen:
+            continue
+        seen.add(key)
+        if os.path.isfile(c) and not _is_wsl_launcher(c) and _bash_runs(c):
+            return c
+    return None
+
+
+def _bash_or_skip():
+    bash = _find_bash()
     if not bash:
-        import pytest
-        pytest.skip("no bash available to run the remote script")
+        pytest.skip("no working bash to run the remote script (PATH has none or only "
+                    "the WSL launcher, and no Git for Windows bin\\bash.exe was found)")
     return bash
 
 

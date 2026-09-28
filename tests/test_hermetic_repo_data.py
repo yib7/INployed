@@ -65,6 +65,11 @@ def test_dashboard_config_paths_are_sandboxed():
         assert _is_sandboxed(path), f"settings target {tid!r} is not sandboxed: {path}"
 
 
+def test_the_dashboard_master_csv_is_sandboxed():
+    import jobsdata
+    assert _is_sandboxed(jobsdata.MASTER_CSV), jobsdata.MASTER_CSV
+
+
 def test_the_scorer_reads_the_sandboxed_dashboard_config():
     """jev_score.CONFIG_PATH is the scorer's own binding to local/config.json
     (the VM copy has no settings module), so the settings redirect never

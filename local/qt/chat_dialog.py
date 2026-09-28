@@ -32,13 +32,17 @@ from qt import workers
 
 class JobChatDialog(QtWidgets.QDialog):
     """A chat window scoped to one job. `job` is a dashboard row payload (or the
-    apply panel's marker dict); `on_closed` lets the owner drop its reference."""
+    apply panel's marker dict); `on_closed` lets the owner drop its reference.
+    `prepare` completes the job on the worker thread before its context is
+    built (the main window's master-CSV description for a hand-added job)."""
 
     def __init__(self, job: dict, parent: Optional[QtWidgets.QWidget] = None,
-                 on_closed: Optional[Callable[[], None]] = None) -> None:
+                 on_closed: Optional[Callable[[], None]] = None,
+                 prepare: Optional[Callable[[dict], dict]] = None) -> None:
         super().__init__(parent)
         self._job: Dict = dict(job or {})
         self._on_closed = on_closed or (lambda: None)
+        self._prepare: Callable[[dict], dict] = prepare or (lambda job: job)
         self._closed = False
         self._busy = False
         self._context: str = ""                    # built once, reused every turn
@@ -130,7 +134,7 @@ class JobChatDialog(QtWidgets.QDialog):
         """
         from resume_tailor import chat  # local import: keeps the engine off the UI import path
 
-        context = self._context or chat.context_for_job(self._job)
+        context = self._context or chat.context_for_job(self._prepare(dict(self._job)))
         return context, chat.ask(context, history, question), question
 
     def _finish_turn(self, result) -> None:

@@ -484,6 +484,97 @@ def test_tailor_keeps_a_payload_that_carries_its_description(qtbot, monkeypatch,
     assert threads == []
 
 
+# ── the sibling workers on a hand-added job (final fix review Minor 3) ────────
+
+def _on_worker(fn):
+    """`fn` on a thread of its own, as `workers.run_async` runs a worker body."""
+    import threading
+    out: list = []
+    t = threading.Thread(target=lambda: out.append(fn()))
+    t.start()
+    t.join(30)
+    assert out, "the worker body raised or never finished"
+    return out[0]
+
+
+def test_cover_letter_regenerate_reads_the_full_description_on_the_worker(
+        qtbot, monkeypatch, tmp_path):
+    import threading
+
+    import resume_tailor.run as run_mod
+    w = _win(qtbot)
+    threads = _master_on_threads(monkeypatch)
+    seen: list = []
+    monkeypatch.setattr(run_mod, "generate_cover_letter",
+                        lambda job, folder, **k: seen.append(dict(job)) or folder / "c.pdf")
+    _on_worker(lambda: w._cover_work(_summary_payload(), tmp_path, "professional"))
+    (job,) = seen
+    assert job["job_description_formatted"] == _FULL_JD
+    assert threads and threading.main_thread() not in threads
+
+
+def test_interview_prep_reads_the_full_description_on_the_worker(qtbot, monkeypatch, tmp_path):
+    import threading
+
+    import resume_tailor.prep as prep_mod
+    w = _win(qtbot)
+    threads = _master_on_threads(monkeypatch)
+    seen: list = []
+    monkeypatch.setattr(prep_mod, "generate_prep_sheet",
+                        lambda job, out_dir: seen.append(dict(job)) or tmp_path / "prep.md")
+    _on_worker(lambda: w._prep_work(_summary_payload(), tmp_path))
+    (job,) = seen
+    assert job["job_description_formatted"] == _FULL_JD
+    assert threads and threading.main_thread() not in threads
+
+
+def test_apply_reads_the_full_description_on_the_worker(qtbot, monkeypatch, tmp_path):
+    import threading
+
+    import resume_tailor.apply as apply_mod
+    w = _win(qtbot)
+    threads = _master_on_threads(monkeypatch)
+    seen: list = []
+    monkeypatch.setattr(apply_mod, "resolve_generated_dir",
+                        lambda job_id=None, job=None: seen.append(dict(job)) or tmp_path)
+    monkeypatch.setattr(apply_mod, "build_apply_context", lambda folder: {"apply_url": ""})
+    _on_worker(lambda: w._apply_work("manual-abc", _summary_payload(), open_url=False))
+    (job,) = seen
+    assert job["job_description_formatted"] == _FULL_JD
+    assert threads and threading.main_thread() not in threads
+
+
+def test_ask_ai_reads_the_full_description_on_the_chat_worker(qtbot, monkeypatch):
+    import threading
+
+    from resume_tailor import chat
+    w = _win(qtbot)
+    monkeypatch.setattr(w, "_job_payload", lambda jid: _summary_payload(jid))
+    threads = _master_on_threads(monkeypatch)
+    w._ask_ai_for("manual-abc")     # the UI thread: the dialog opens, no master read
+    assert threads == []
+    dlg = w._chat_dialogs["manual-abc"]
+    seen: list = []
+    monkeypatch.setattr(chat, "context_for_job", lambda job: seen.append(dict(job)) or "CTX")
+    monkeypatch.setattr(chat, "ask", lambda context, history, question: "answer")
+    _on_worker(lambda: dlg._work("why this role?", []))
+    (job,) = seen
+    assert job["job_description_formatted"] == _FULL_JD
+    assert threads and threading.main_thread() not in threads
+
+
+def test_the_sibling_workers_keep_a_payload_with_no_master_row(qtbot, monkeypatch, tmp_path):
+    # a job the local master does not hold: the payload goes on unchanged
+    import resume_tailor.prep as prep_mod
+    w = _win(qtbot)
+    monkeypatch.setattr(mw.jobsdata, "master_row", lambda jid, **k: None)
+    seen: list = []
+    monkeypatch.setattr(prep_mod, "generate_prep_sheet",
+                        lambda job, out_dir: seen.append(dict(job)) or tmp_path / "prep.md")
+    w._prep_work(_summary_payload(), tmp_path)
+    assert seen == [_summary_payload()]
+
+
 def test_edit_manual_job_prefills_and_updates_keeping_id(qtbot, monkeypatch):
     w = _win(qtbot)
     monkeypatch.setattr(mw.jobsdata, "master_row",

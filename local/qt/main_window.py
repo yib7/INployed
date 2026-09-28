@@ -2228,6 +2228,10 @@ class MainWindow(QtWidgets.QMainWindow):
         behaviour. With it off the sheet still carries the posting URL, so nothing is
         lost — the browser just doesn't take over the screen."""
         from resume_tailor import apply as apply_mod
+        if payload:
+            # a hand-added job's full description, for an apply sheet the
+            # resolver backfills (final fix review Minor 3; worker thread)
+            payload = _with_master_jd(payload)
         folder = apply_mod.resolve_generated_dir(job_id=jid, job=payload)
         ctx = apply_mod.build_apply_context(folder)
         url = ctx.get("apply_url", "")
@@ -2869,6 +2873,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _cover_work(self, job: dict, folder, tone: str):
         from resume_tailor.run import generate_cover_letter
+        # a hand-added job's payload holds only its summary: the full
+        # description comes from the master here, on the worker (final fix
+        # review Minor 3)
+        job = _with_master_jd(job)
         # Re-check on the worker: the folder may have been deleted between the
         # menu click and this thread starting.
         if not folder or not Path(folder).is_dir():
@@ -2929,8 +2937,11 @@ class MainWindow(QtWidgets.QMainWindow):
         payload = self._payload_with_master_fallback(jid) or {"job_posting_id": jid}
         self._apply_auth_env()        # the chat calls the engine, same as tailor/cover
         # Parented to this window and self-removing on close — see qt/chat_dialog.py.
+        # `prepare` runs on the chat's worker: a hand-added job's full
+        # description from the master (final fix review Minor 3)
         dlg = JobChatDialog(payload, parent=self,
-                            on_closed=lambda: self._chat_dialogs.pop(jid, None))
+                            on_closed=lambda: self._chat_dialogs.pop(jid, None),
+                            prepare=_with_master_jd)
         self._chat_dialogs[jid] = dlg
         dlg.show()
         title = payload.get("job_title") or payload.get("title") or "this job"
@@ -3087,6 +3098,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _prep_work(self, job: dict, resume_dir):
         from resume_tailor.prep import generate_prep_sheet
+        job = _with_master_jd(job)      # the full description, on the worker (Minor 3)
         out_dir = Path(resume_dir) if resume_dir and Path(resume_dir).exists() else None
         return generate_prep_sheet(job, out_dir)
 

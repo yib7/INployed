@@ -1551,7 +1551,7 @@ FLOWS: tuple[Flow, ...] = (
     # cycle 19 final review A I-1: added after the last recording
     Flow("pause_wizard_fill", "pause_disabled.html?click=1&wizard=1&again=1", True,
          "submitted", _SUBMITTED, confirm="#thanks:visible", wrap=PauseLeftBlank,
-         pause=PauseSpec("fill", (("referral code", "CARD-7 (user)"),)), recorded=False,
+         pause=PauseSpec("fill", (("referral code", "CARD-7 (user)"),)),
          covers="a Next disabled after the fill; the person answers the referral code in the "
                 "card and also clicks Next in the browser, and the review step has its own "
                 "Referral code box: the card's answer goes nowhere on the step it moved on to "

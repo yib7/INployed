@@ -1866,6 +1866,17 @@ class _Unsent(_Parked):
     review M7): it stands as raised, never read as a possible send."""
 
 
+class _PauseClosed(_Parked):
+    """The window or the tab closed during a pause's wait
+    (`_JobRun._pause_closed`): already the check-whether end with its note,
+    so the run's handler finishes it as raised. `window` says the whole
+    window went (the drain stops)."""
+
+    def __init__(self, status: str, reason: str, tab_note: str = "", *, window: bool = False):
+        super().__init__(status, reason, tab_note)
+        self.window = window
+
+
 class _SentSeen(_Parked):
     """A "submitted (unconfirmed)" end whose only evidence is a request the
     submit's watch saw go to the application's sites (`SendWatch.sent`).
@@ -5241,6 +5252,12 @@ class _JobRun:
                     done = self._confirmed_elsewhere()
                     if done is not None:
                         return done
+                if isinstance(p, _PauseClosed):
+                    # a close during a pause's wait is its own check-whether
+                    # end, whatever is found of the window now (final fix
+                    # review Minor 2); a closed window still stops the drain
+                    self.browser_closed = p.window or self._window_closed()
+                    return self._finish(p.status, p.reason, p.tab_note)
                 if p.status != "submitted":
                     # whatever the loop made of it, the window or the tab went
                     # away under it
@@ -7104,6 +7121,8 @@ class _JobRun:
             self._last_answers = {**self._last_answers, **answers}
             try:
                 more_verification = self._fill_and_verify(sub, more, rec)
+            except _PauseClosed:
+                raise
             except _Parked as p:
                 n = next((pf.n for pf in more.fields if pf.label and pf.label in p.reason), None)
                 said = f" (the form says: {says[n]})" if n in says and says[n] else ""
@@ -8070,14 +8089,16 @@ class _JobRun:
                                       f"({what}); the run had reached: {_cap(reason, 200)}",
                        CHECK_SENT_NOTE)
 
-    def _pause_closed(self, buttons: tuple = ()) -> None:
+    def _pause_closed(self, buttons: tuple = (), reason: str = "") -> _Parked:
         """The window or the tab closed during a pause's wait (final review
         A I-2). The person had the browser, and every application step has a
         way on: they may have clicked through and sent it before the close,
         from any page (final fix review Important 2). The job may have been
-        sent (`_pause_sent`): it ends with the check-whether note and is
-        never offered a Re-queue. `buttons` (the pause's read) only words
-        the decision."""
+        sent (`_pause_sent`), and the park returned already carries the
+        check-whether reason and note (`_PauseClosed`, final fix review
+        Minor 2), so it is never offered a Re-queue whatever the run's
+        handler finds of the window. `buttons` (the pause's read) only words
+        the decision; `reason` is what the pause asked about."""
         sends = [t for t, _loc in buttons if _send_worded(t)]
         self._pause_sent = True
         what = (f"its {_cap(' '.join(str(sends[0]).split()), 60)!r} button was on the page"
@@ -8085,6 +8106,13 @@ class _JobRun:
                 else "you had the browser and may have gone on in it")
         self._decide("pause_closed", f"the browser closed during the pause ({what}): the "
                                      "application may have been sent in the browser")
+        window = self._window_closed()
+        why = (CLOSED_REASON if window else TAB_CLOSED_REASON if self._tab_closed()
+               else "the job's page stopped answering during the wait")
+        return _PauseClosed("needs_human", f"{CHECK_SENT_REASON}: the run stopped after the "
+                                           f"pause ({why}); {what}; the run had reached: "
+                                           f"{_cap(reason, 200)}", CHECK_SENT_NOTE,
+                            window=window)
 
     def _pause_reload(self) -> None:
         """After every resume from a pause (PR-6, SP7 review M2: an answer the

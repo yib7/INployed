@@ -26,6 +26,7 @@ sys.path.insert(0, str(REPO / "local"))
 import apply_fill  # noqa: E402
 import apply_form  # noqa: E402
 import apply_harness as h  # noqa: E402
+import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
 import jev  # noqa: E402
 from apply_judge import FillPlan, PlannedField  # noqa: E402
@@ -924,9 +925,16 @@ class _Moved:
         self._pause_sent = False
         self.decided: list[str] = []
         self.pause = type("P", (), {"_read": lambda _self: ((url, rows), buttons)})()
+        self.window = self.tab = False          # what `_pause_closed` finds closed
 
     def _page_text(self) -> str:
         return self.text
+
+    def _window_closed(self) -> bool:
+        return self.window
+
+    def _tab_closed(self) -> bool:
+        return self.tab
 
     def _decide(self, what: str, *a, **kw) -> None:
         self.decided.append(what)
@@ -1005,13 +1013,85 @@ def test_a_close_during_a_pause_on_a_page_that_cannot_send_may_have_been_sent_to
     assert run._pause_sent and run.decided == ["pause_closed"]
 
 
+@pytest.mark.parametrize("window,tab,why", [
+    (True, False, apply_run.CLOSED_REASON),
+    (False, True, apply_run.TAB_CLOSED_REASON),
+    (False, False, "the job's page stopped answering during the wait")])
+def test_a_close_during_a_pause_returns_its_own_check_whether_park(window, tab, why):
+    # final fix review Minor 2: the park already carries the check-whether
+    # reason and note, whatever the run's handler finds of the window later
+    run = _Moved(_URL1, _ROWS, _NEXT)
+    run._person_moved_on = False
+    run.window, run.tab = window, tab
+    park = apply_run._JobRun._pause_closed(run, _NEXT, "the Next button stays disabled")
+    assert isinstance(park, apply_run._PauseClosed), park
+    assert park.status == "needs_human" and park.tab_note == apply_run.CHECK_SENT_NOTE
+    assert park.reason.startswith(f"{apply_run.CHECK_SENT_REASON}: the run stopped after the "
+                                  f"pause ({why}); "), park.reason
+    assert park.reason.endswith("the run had reached: the Next button stays disabled")
+    assert park.window is window
+    assert apply_queue.possibly_sent({"status": "needs_human", "notes": park.reason,
+                                      "tab_note": park.tab_note})
+
+
+def _flow_entry(r) -> dict:
+    """The flow's queue entry (the run's queue sits beside the job folder)."""
+    queue = Path(r.trace).parents[2] / "queue.json"
+    jobs = {e["job_posting_id"]: e for e in json.loads(queue.read_text(encoding="utf-8"))["jobs"]}
+    return jobs[h.JOB_ID]
+
+
+def test_a_failed_wait_with_the_tab_still_open_ends_possibly_sent(
+        _browser, flow_server, tmp_path, monkeypatch):
+    # final fix review Minor 2: `wait_for_answer` reads any failed wait as a
+    # close; the run's handler then finds neither the window nor the tab
+    # closed. The end still carries the check-whether note (it was a plain
+    # finish of the pause's own reason, with a Re-queue offered)
+    import apply_pause
+
+    def _fails(page, job_id, minutes, **kw):
+        raise apply_pause.PageClosed()
+    monkeypatch.setattr(apply_pause, "wait_for_answer", _fails)
+    r = h.run_flow(h.flow("pause_wizard_next"), jev.FakeJev(), "fake", browser=_browser,
+                   server=flow_server, workdir=tmp_path)
+    assert not r.breaks, r.breaks
+    assert r.status == "needs_human", (r.status, r.reason)
+    assert r.reason.startswith(f"{apply_run.CHECK_SENT_REASON}: the run stopped after the "
+                               "pause (the job's page stopped answering during the wait); "), \
+        r.reason
+    entry = _flow_entry(r)
+    assert entry["tab_note"] == apply_run.CHECK_SENT_NOTE, entry
+    assert apply_queue.possibly_sent(entry)
+
+
+def test_a_tab_closed_after_the_waits_last_poll_ends_possibly_sent(
+        _browser, flow_server, tmp_path, monkeypatch):
+    # final fix review Minor 2: the answer lands and the tab closes before
+    # the run reads the page again; that close is the pause's too
+    import apply_pause
+
+    def _answers_then_closes(page, job_id, minutes, **kw):
+        page.close()
+        return {"mode": "browser", "values": {}, "save": {}}
+    monkeypatch.setattr(apply_pause, "wait_for_answer", _answers_then_closes)
+    r = h.run_flow(h.flow("pause_wizard_next"), jev.FakeJev(), "fake", browser=_browser,
+                   server=flow_server, workdir=tmp_path)
+    assert not r.breaks, r.breaks
+    assert r.status == "needs_human", (r.status, r.reason)
+    assert r.reason.startswith(f"{apply_run.CHECK_SENT_REASON}: the run stopped after the "
+                               f"pause ({apply_run.TAB_CLOSED_REASON}); "), r.reason
+    assert "pause_closed" in [d["what"] for d in _decisions(r)]
+    entry = _flow_entry(r)
+    assert entry["tab_note"] == apply_run.CHECK_SENT_NOTE, entry
+    assert apply_queue.possibly_sent(entry)
+
+
 def test_a_tab_closed_during_a_pause_on_a_next_only_step_is_never_offered_a_requeue(
         _browser, flow_server, tmp_path, monkeypatch):
     # final fix review Important 2: the pause_wizard_next step shows only its
     # disabled Next; the person closes the job's tab during the wait. The job
     # ends with the check-whether note, and Answer now offers no Re-queue
     import apply_pause
-    import apply_queue
 
     def _closes(page, job_id, minutes, **kw):
         page.close()
@@ -1024,9 +1104,7 @@ def test_a_tab_closed_during_a_pause_on_a_next_only_step_is_never_offered_a_requ
     assert r.reason.startswith(f"{apply_run.CHECK_SENT_REASON}: the run stopped after the "
                                "pause ("), r.reason
     assert "pause_closed" in [d["what"] for d in _decisions(r)]
-    queue = Path(r.trace).parents[2] / "queue.json"
-    jobs = {e["job_posting_id"]: e for e in json.loads(queue.read_text(encoding="utf-8"))["jobs"]}
-    entry = jobs[h.JOB_ID]
+    entry = _flow_entry(r)
     assert entry["status"] == "needs_human", entry
     assert entry["tab_note"] == apply_run.CHECK_SENT_NOTE, entry
     assert apply_queue.possibly_sent(entry)

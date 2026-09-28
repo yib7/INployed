@@ -785,9 +785,9 @@ class Pauser:
     def _wait(self, reason: str, asked: list) -> tuple[dict | None, tuple | None]:
         """Write the request, give the notice, wait. Returns (the answer,
         the page's print at the start), the answer None on a timeout or
-        "Park it". A window closed during the wait parks with `reason`,
-        after the run reads the page's buttons from before the wait
-        (`_pause_closed`): a page that could send may have been sent.
+        "Park it". A window or tab closed during the wait, or found closed
+        once it ends, raises the run's park (`_closed`): the person may have
+        clicked through and sent it, from any page.
 
         A headless run whose questions only the browser takes parks at once
         (review M4). After the wait the run reads the page against its print,
@@ -830,21 +830,18 @@ class Pauser:
                                      clock=jr.r.clock, sleep=jr.r.sleep)
         except PageClosed:
             clear(jr.job_id)
-            # the person had the browser: on a page that could send it they
-            # may have sent it before the close (final review A I-2)
-            closed = getattr(jr, "_pause_closed", None)
-            if callable(closed):
-                closed(buttons)
-            raise self.parked("needs_human", reason) from None
+            raise self._closed(buttons, reason) from None
         finally:
             jr.deadline += max(0.0, jr.r.clock() - start)
         clear(jr.job_id)
-        if not _page_closed(jr.page):
-            outline(jr.page, asked, False)
-            moved = getattr(jr, "_pause_moved", None)
-            park = moved(before, text, reason, buttons=buttons) if callable(moved) else None
-            if park is not None:
-                raise park
+        if _page_closed(jr.page):
+            # a close after the wait's last poll (final fix review Minor 2)
+            raise self._closed(buttons, reason)
+        outline(jr.page, asked, False)
+        moved = getattr(jr, "_pause_moved", None)
+        park = moved(before, text, reason, buttons=buttons) if callable(moved) else None
+        if park is not None:
+            raise park
         if answer is None:
             jr._decide("pause_timeout", f"no answer in {minutes} min: the job parks as before")
             return None, before
@@ -860,6 +857,17 @@ class Pauser:
         if callable(reload):
             reload()
         return answer, before
+
+    def _closed(self, buttons: tuple, reason: str) -> Exception:
+        """The park for a window or tab closed during the wait, before or
+        after its last poll. The person had the browser and may have clicked
+        through and sent it before the close (final review A I-2, final fix
+        review Important 2): the run's own park (`_pause_closed`, the
+        check-whether end) when it gives one, else the plain park with
+        `reason`."""
+        hook = getattr(self.jr, "_pause_closed", None)
+        park = hook(buttons, reason) if callable(hook) else None
+        return park if isinstance(park, Exception) else self.parked("needs_human", reason)
 
     def _text(self) -> str:
         read = getattr(self.jr, "_page_text", None)

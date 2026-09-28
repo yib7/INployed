@@ -694,22 +694,69 @@ def test_a_card_answer_is_keyed_by_the_page_the_run_paused_on(pauses_on, boxes):
                                                              ("skip", "")]
 
 
-def test_a_close_during_the_wait_hands_the_run_the_paused_pages_buttons(pauses_on, boxes):
-    # final review A I-2: the run reads the buttons the pause saw
-    # (`_JobRun._pause_closed`) before the park, so a page that could send
-    # ends with the check-whether note
+class _ClosedPark(Exception):
+    """What the run's `_pause_closed` returns: its check-whether park."""
+
+
+def _closing_hook(jr) -> list:
+    """`jr._pause_closed` as the run gives it: each call kept, its own park
+    returned."""
+    seen: list = []
+
+    def hook(buttons, reason):
+        seen.append((buttons, reason))
+        return _ClosedPark(reason)
+    jr._pause_closed = hook
+    return seen
+
+
+def test_a_close_during_the_wait_raises_the_runs_own_park(pauses_on, boxes):
+    # final review A I-2, final fix review Minor 2: the run reads the buttons
+    # the pause saw (`_JobRun._pause_closed`) and its park, already the
+    # check-whether end, is the one raised
     f = _field(1, "Please explain", id_or_name="explain")
     digest = _digest(f)
     digest.buttons.append(SimpleNamespace(text="Submit application", locator=(0, "#go")))
     jr = _Jr(_Page(_Clock(), closed_after=1), digest=digest)
-    seen: list = []
-    jr._pause_closed = seen.append
+    seen = _closing_hook(jr)
     p = apply_pause.Pauser(jr, RuntimeError)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(_ClosedPark):
         p.at_plan(digest, FillPlan(fields=[_pf(f)], park_reason="required field without an "
                                                                 "answer: Please explain"))
-    assert seen == [(("Submit application", (0, "#go")),)]
+    assert seen == [((("Submit application", (0, "#go")),),
+                     "required field without an answer: Please explain")]
     assert apply_pause.pending_requests() == []
+
+
+def test_a_close_after_the_waits_last_poll_raises_the_runs_own_park(pauses_on, boxes):
+    # final fix review Minor 2: the answer lands, then the tab closes before
+    # the run reads the page again; the close is still the pause's
+    class _ClosesOnThirdLook(_Page):
+        looks = 0
+
+        def is_closed(self):
+            self.looks += 1
+            return self.looks >= 3      # the wait's two polls, then the check after it
+    f = _field(1, "Referral code", required=False, id_or_name="referral")
+    digest = _digest(f)
+    page = _ClosesOnThirdLook(_Clock(), on_wait=_answers_with("fill", {"1": "X"}))
+    jr = _Jr(page, digest=digest)
+    seen = _closing_hook(jr)
+    p = apply_pause.Pauser(jr, RuntimeError)
+    with pytest.raises(_ClosedPark):
+        p.at_disabled(digest, FillPlan(fields=[_pf(f)]), "disabled")
+    assert len(seen) == 1 and jr.moved_calls == []
+    assert p.pending == {} and "pause_resume" not in jr.decided
+
+
+def test_a_close_with_no_run_hook_parks_with_the_pauses_reason(pauses_on, boxes):
+    f = _field(1, "Please explain", id_or_name="explain")
+    digest = _digest(f)
+    jr = _Jr(_Page(_Clock(), closed_after=1), digest=digest)
+    p = apply_pause.Pauser(jr, RuntimeError)
+    with pytest.raises(RuntimeError, match="required field without an answer"):
+        p.at_plan(digest, FillPlan(fields=[_pf(f)], park_reason="required field without an "
+                                                                "answer: Please explain"))
 
 
 def test_a_save_keeps_the_review_list_of_a_version_1_store(tmp_path):

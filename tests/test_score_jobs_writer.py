@@ -23,8 +23,9 @@ def _resp(text):
 
 # --- prompt pins -------------------------------------------------------------
 
-def test_writer_system_flags_the_job_description_as_untrusted():
+def test_writer_system_flags_the_job_description_and_findings_as_untrusted():
     low = sj.WRITER_SYSTEM.lower()
+    assert "job description" in low and "requirement lines" in low and "findings" in low
     assert "untrusted data" in low
     assert "ignore any instructions" in low
 
@@ -95,6 +96,15 @@ def test_writer_findings_reads_none_for_an_empty_section():
 def test_writer_findings_uses_jev_score_labels(score, label):
     row = {"deep_score": 1, "recommendation": "skip", "findings": _findings()}
     assert f"({label})" in sj.writer_findings(score, row)
+
+
+def test_writer_findings_omits_the_parenthetical_for_a_score_with_no_label():
+    """M2: SCORE_LABELS[score] raised KeyError for a score outside 1-5. .get()
+    leaves the parenthetical out instead of crashing."""
+    row = {"deep_score": 8, "recommendation": "apply", "findings": _findings()}
+    block = sj.writer_findings(7, row)
+    assert block.startswith("Fit score: 7 of 5\n")
+    assert "(" not in block.splitlines()[0]
 
 
 # --- write_notes ---------------------------------------------------------------
@@ -182,6 +192,57 @@ def test_write_notes_returns_none_on_no_strengths():
     pool2 = FakeWriterPool(_ok_json(strengths=["   "]))
     out2 = asyncio.run(sj.write_notes(pool2, asyncio.Semaphore(1), RESUME, "J1", "job md", "block"))
     assert out2 is None
+
+
+# --- M9: one failure report per reason, no message or job text ----------------
+
+def test_write_notes_reports_the_exception_class_once_per_class(monkeypatch, capsys):
+    monkeypatch.setattr(sj, "_WRITER_WARNED", set())
+    pool = FakeWriterPool(exc=RuntimeError("kaboom, quotes the resume and the job"))
+    asyncio.run(sj.write_notes(pool, asyncio.Semaphore(1), RESUME, "J1", "job md", "block"))
+    asyncio.run(sj.write_notes(pool, asyncio.Semaphore(1), RESUME, "J2", "job md", "block"))
+    out = capsys.readouterr().out
+    assert out.count("Jev writer: call failed (RuntimeError); keeping Jev's code text.") == 1
+    assert "kaboom" not in out and "resume" not in out and "job" not in out
+
+
+def test_write_notes_reports_a_different_exception_class_separately(monkeypatch, capsys):
+    monkeypatch.setattr(sj, "_WRITER_WARNED", set())
+    asyncio.run(sj.write_notes(FakeWriterPool(exc=RuntimeError("x")), asyncio.Semaphore(1),
+                               RESUME, "J1", "job md", "block"))
+    asyncio.run(sj.write_notes(FakeWriterPool(exc=ValueError("y")), asyncio.Semaphore(1),
+                               RESUME, "J2", "job md", "block"))
+    out = capsys.readouterr().out
+    assert "Jev writer: call failed (RuntimeError); keeping Jev's code text." in out
+    assert "Jev writer: call failed (ValueError); keeping Jev's code text." in out
+
+
+def test_write_notes_reports_bad_json_once(monkeypatch, capsys):
+    monkeypatch.setattr(sj, "_WRITER_WARNED", set())
+    asyncio.run(sj.write_notes(FakeWriterPool("not json at all"), asyncio.Semaphore(1),
+                               RESUME, "J1", "job md", "block"))
+    asyncio.run(sj.write_notes(FakeWriterPool("still not json"), asyncio.Semaphore(1),
+                               RESUME, "J2", "job md", "block"))
+    out = capsys.readouterr().out
+    assert out.count("Jev writer: bad JSON; keeping Jev's code text.") == 1
+
+
+def test_write_notes_reports_a_blank_reason_once(monkeypatch, capsys):
+    monkeypatch.setattr(sj, "_WRITER_WARNED", set())
+    pool = FakeWriterPool(_ok_json(reason="   "))
+    asyncio.run(sj.write_notes(pool, asyncio.Semaphore(1), RESUME, "J1", "job md", "block"))
+    asyncio.run(sj.write_notes(pool, asyncio.Semaphore(1), RESUME, "J2", "job md", "block"))
+    out = capsys.readouterr().out
+    assert out.count("Jev writer: a blank reason; keeping Jev's code text.") == 1
+
+
+def test_write_notes_reports_no_strengths_once(monkeypatch, capsys):
+    monkeypatch.setattr(sj, "_WRITER_WARNED", set())
+    pool = FakeWriterPool(_ok_json(strengths=[]))
+    asyncio.run(sj.write_notes(pool, asyncio.Semaphore(1), RESUME, "J1", "job md", "block"))
+    asyncio.run(sj.write_notes(pool, asyncio.Semaphore(1), RESUME, "J2", "job md", "block"))
+    out = capsys.readouterr().out
+    assert out.count("Jev writer: no strengths; keeping Jev's code text.") == 1
 
 
 def test_write_notes_on_claude_puts_the_resume_in_the_system_instruction(monkeypatch):
@@ -323,3 +384,104 @@ def test_summary_line_omits_the_writer_suffix_when_nothing_happened(monkeypatch)
     run = sj.JevRun(ScriptedJudge())
     asyncio.run(sj.run_scoring(pool, RESUME, _jobs_df("JOB-A"), jev_run=run))
     assert "Jev writer" not in run.summary_line()
+
+
+# --- M2: a stage 1 score with no label never crashes the gather ----------------
+
+class RefusesStage1(ScriptedJudge):
+    """Raises for a stage 1 request (no `deep_fit` among the questions), so
+    stage 1 falls back to the LLM path; answers stage 2 normally."""
+
+    def judge(self, state, questions):
+        if "deep_fit" not in questions:
+            raise RuntimeError("no stage 1 answer for this one")
+        return super().judge(state, questions)
+
+
+class Stage1FallbackAndWriterPool:
+    """The one LLM provider seen by both the stage 1 fallback (an odd score of
+    7, out of Jev's own 1-5 range) and the writer's own call: both ride
+    STAGE1_MODELS, told apart by which schema the request asks for."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def generate(self, *, model, contents, config):
+        self.calls.append((model, contents, config))
+        if config.response_schema == sj.STAGE1_SCHEMA:
+            return _resp(json.dumps({"score": 7, "reason": "odd fallback score"}))
+        return _resp(_ok_json(reason="Writer reason.", strengths=["Writer strength"]))
+
+
+def test_a_stage_one_score_with_no_label_does_not_crash_run_scoring():
+    pool = Stage1FallbackAndWriterPool()
+    run = sj.JevRun(RefusesStage1())
+    merged = asyncio.run(sj.run_scoring(pool, RESUME, _jobs_df("JOB-A"), jev_run=run)
+                        ).set_index("job_posting_id")
+    assert merged.loc["job-a", "score"] == 7
+    assert merged.loc["job-a", "reason"] == "Writer reason."   # the writer still ran
+    assert run.writer == {"written": 1, "kept": 0}
+
+
+# --- I2: the writer stops after WRITER_FAIL_LIMIT failures in a row -----------
+
+def test_three_writer_failures_in_a_row_stop_it_for_the_rest_of_the_run(monkeypatch, capsys):
+    monkeypatch.setattr(sj, "JEV_CONCURRENCY", 1)   # deterministic order, see test_jev_score.py
+    tags = [f"JOB-{c}" for c in "ABCDE"]
+    pool = WriterPool(exc=RuntimeError("boom"))
+    run = sj.JevRun(ScriptedJudge())
+    asyncio.run(sj.run_scoring(pool, RESUME, _jobs_df(*tags), jev_run=run))
+    assert len(pool.calls) == sj.WRITER_FAIL_LIMIT      # the later jobs made no call at all
+    assert run.writer == {"written": 0, "kept": len(tags)}
+    out = capsys.readouterr().out
+    assert out.count("Jev writer: stopped after 3 failures in a row; the remaining jobs keep "
+                     "Jev's code text.") == 1
+
+
+class PerJobOutcomePool:
+    """The writer's LLM provider, keyed by which job tag is in the contents:
+    success text, or the given exception, per `outcomes`."""
+
+    def __init__(self, outcomes: dict):
+        self.outcomes = outcomes
+        self.calls = []
+
+    async def generate(self, *, model, contents, config):
+        self.calls.append((model, contents, config))
+        tag = next(t for t in self.outcomes if t in contents)
+        outcome = self.outcomes[tag]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return _resp(_ok_json(reason=f"{tag} reason.", strengths=[f"{tag} strength"]))
+
+
+def test_a_success_between_failures_resets_the_streak(monkeypatch, capsys):
+    monkeypatch.setattr(sj, "JEV_CONCURRENCY", 1)
+    tags = ["JOB-A", "JOB-B", "JOB-C", "JOB-D", "JOB-E", "JOB-F"]
+    outcomes = {"JOB-A": RuntimeError("x"), "JOB-B": RuntimeError("x"), "JOB-C": "ok",
+                "JOB-D": RuntimeError("x"), "JOB-E": RuntimeError("x"), "JOB-F": RuntimeError("x")}
+    pool = PerJobOutcomePool(outcomes)
+    run = sj.JevRun(ScriptedJudge())
+    merged = asyncio.run(sj.run_scoring(pool, RESUME, _jobs_df(*tags), jev_run=run)
+                        ).set_index("job_posting_id")
+    assert len(pool.calls) == 6      # C's success reset the streak, so F still got a call
+    assert run.writer == {"written": 1, "kept": 5}
+    assert merged.loc["job-c", "reason"] == "JOB-C reason."
+    out = capsys.readouterr().out
+    assert out.count("Jev writer: stopped after 3 failures in a row; the remaining jobs keep "
+                     "Jev's code text.") == 1
+
+
+# --- M8: each job in a multi-job run keeps its own writer outcome -------------
+
+def test_run_scoring_writer_gives_each_job_its_own_notes_and_keeps_a_failed_jobs_code_text():
+    pool = PerJobOutcomePool({"JOB-A": "ok", "JOB-B": RuntimeError("boom")})
+    run = sj.JevRun(ScriptedJudge())
+    merged = asyncio.run(sj.run_scoring(pool, RESUME, _jobs_df("JOB-A", "JOB-B"), jev_run=run)
+                        ).set_index("job_posting_id")
+    assert merged.loc["job-a", "reason"] == "JOB-A reason."
+    assert merged.loc["job-a", "strengths"] == "JOB-A strength"
+    assert merged.loc["job-b", "reason"] == (
+        "Strong match: no experience bar, and the skills, tools and field line up.")
+    assert merged.loc["job-b", "strengths"].startswith("Python and SQL")
+    assert run.writer == {"written": 1, "kept": 1}

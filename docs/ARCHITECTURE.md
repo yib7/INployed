@@ -71,7 +71,65 @@ A two-stage Gemini filter. Stage 1 (cheap flash-lite) does a fast relevance pass
 stage 2 (flash) deep-scores the survivors. A deterministic `min_required_years`
 regex pre-filter drops over-senior roles *before* any LLM sees them (the highest-risk
 function here, and the most heavily tested; see `tests/test_min_required_years.py`).
-Locally the scorer can also run through the Claude Code CLI (Settings → Scoring provider); the VM always scores with Gemini.
+Locally the scorer can also run through the Claude Code CLI (Settings → Scoring provider); the VM
+always scores with Gemini. A `claude` provider that falls back to Gemini now also switches the
+stage model chains to the Gemini models (SC-6), so the fallback never sends a Claude id to Gemini.
+
+**Jev scoring** (`pipeline/jev_score.py`, cycle 19). When Jev is on, `score_jobs.py` asks Jev
+first for each job's stage, and the LLM stage runs only for the jobs Jev returned `None` on.
+Jev answers typed questions and writes no text, so `jev_score.stage1` and `stage2` each send one
+request about `{candidate, resume, job}` and compose the same columns the LLM path writes:
+
+- **Stage 1** reads domain, experience and skills fit, then applies the stage 1 prompt's
+  rubric in code: `SKILLS_FOR_5` (0.75) and `SKILLS_FOR_4` (0.45) set the in-domain score,
+  `YEARS_CAPS` / `EXPERIENCE_LABEL_CAPS` cap it by the years code found, and the off-domain
+  band gives 1 or 2.
+- **Stage 2** splits the description into requirement lines (a job with fewer than
+  `MIN_REQUIREMENT_LINES` goes to the LLM) and asks per line whether the résumé meets it and
+  whether it is a must-have. Code drops work-arrangement, travel and immigration lines before
+  asking. The deep score is `DEEP_BASE + DEEP_SPAN * mix` (3 + 8 x mix), where the mix weighs
+  must-have and nice-to-have coverage and three fits by `DEEP_WEIGHTS`. `RECOMMEND_APPLY` (7)
+  and `RECOMMEND_CONSIDER` (5) turn it into the recommendation.
+
+The scorer is its own process and runs on the VM, so it decides Jev use itself (JS-4):
+`SCORE_USE_JEV` in the environment, else `jev_enabled` and `jev_scoring` from `local/config.json`
+beside the repo when that file exists, else off. A missing key, SDK or `local/jev.py` prints one
+line naming the reason and the run stays on the LLM path. The dashboard passes `SCORE_USE_JEV`
+to a scorer it launches: `0` when a Settings switch turns Jev scoring off
+(`jev_switch.switched_off("scoring")`), else `1`, leaving the key and SDK checks to the scorer,
+which loads `.env` itself. The judge retries briefly, with the short delays `jev_switch.client`
+gives scoring, and Jev requests run on the run's own worker threads (`JEV_CONCURRENCY`, 8). The
+per-process usage counter is lock-guarded.
+
+`run_stats.csv` gains `jev_stage1_scored`, `jev_stage2_scored`, `jev_requests`, `jev_usd`,
+`jev_stage1_fallback` and `jev_stage2_fallback` (a job both the fresh and the rescore pass see
+counts once per stage), and the run prints `Jev scored stage 1: N, stage 2: M (R requests, $X);
+LLM fallback stage 1: K, stage 2: L`.
+
+Hand-added jobs (`manual-*` ids, MA-3) are never scored: `rows_needing_rescore` skips them, and
+`prune_master.py` keeps their description past the retention window.
+
+**Operator note: VM redeploy.** Hand-added rows reach the VM master through the outbox. The
+VM's older `score_jobs.py` reads their blank scores as rescore candidates (billed calls) and its
+older `prune_master.py` blanks their description after 3 days. Before the next cron run after
+this release, copy the new `pipeline/score_jobs.py` and `pipeline/prune_master.py` to the VM.
+`pipeline/jev_score.py` is optional there: `score_jobs.py` wraps its import and prints "Jev
+scoring off (jev_score.py is not beside score_jobs.py)." without it, and the VM has no
+`local/jev.py` or `local/config.json`, so it stays on Gemini either way. Never wholesale-copy
+`scripts/run_scraper.sh` over the VM's copy, which carries VM-only edits. The new
+`run_stats.csv` columns self-heal on the first run that writes them.
+
+**Operator note: Stage 2 calibration.** `scripts/jev_score_calibrate.py --live [--cap-usd 1.00]
+[--sample 400] [--seed 19] [--master PATH] [--resume PATH]` compares Jev's scores against the
+Gemini scores already in a master. It spends money (it refuses without `--live`), caches answers
+under `%LOCALAPPDATA%\INployed\jev_calibration\` and prints aggregates only. The Drive master
+cannot calibrate stage 2: the 3-day retention prune leaves only `job_summary` on older rows,
+and in the VL-2 run 397 of 400 sampled rows had no full description. Calibrate stage 2 on the
+local master (`--master`) or on rows younger than 3 days. The VL-2 holdout (151 local jobs)
+moved the deep score to 3 + 8 x mix, which raised recommendation agreement with Gemini from 55%
+to 82%. The tunables are `DEEP_BASE`, `DEEP_SPAN`, `DEEP_WEIGHTS`, `MET_YES` / `MUST_YES` and
+`RECOMMEND_APPLY` / `RECOMMEND_CONSIDER` in `pipeline/jev_score.py`; stage 1's are
+`SKILLS_FOR_5` / `SKILLS_FOR_4`.
 
 **Repost score reuse** (`reuse_repost_scores`, gated by `SCORE_REPOST_REUSE_DAYS` / Settings
 → Scoring → "Repost score reuse window (days)", default 30) runs before either LLM stage.
@@ -144,8 +202,9 @@ data/config logic is toolkit-agnostic (`local/jobsdata.py`, `local/chrome_launch
 Heavy operations (scrape, tailor, prep-sheet, resume.md) run on Qt worker threads
 (`local/qt/workers.py`) and marshal results back via signals, so the window never
 freezes. Tailoring a multi-job selection fans the jobs out **concurrently** on a
-`ThreadPoolExecutor` (the work is I/O- + `pdflatex`-bound, so threads overlap); per-job failures are captured and reported in one aggregate dialog, registry
-writes happen back on the UI thread (the SQLite connection is thread-affine), and a
+`ThreadPoolExecutor` (the work is I/O- + `pdflatex`-bound, so threads overlap); per-job failures
+are captured and reported in one aggregate dialog, registry writes happen back on the UI thread (the
+SQLite connection is thread-affine), and a
 warning precedes very large batches. Tailoring streams live per-job progress to the status bar
 via a `MainWindow.tailor_progress` Qt signal (the engine's `on_status` callback, queued cross-thread
 from the pool workers). See `MainWindow._tailor_work`/`_finish_tailor`. The
@@ -183,8 +242,9 @@ and is safe inline, while `worker_problems()` belongs on a worker thread: it run
 Claude model has a minimum CLI version in `pipeline/claude_cli.py`'s `MIN_CLI_VERSION`).
 `MainWindow` owns only the presentation: which half runs where, and which dialog it lands in.
 Its two `*_warnings` helpers take every input as an argument and do no I/O, so the whole
-matrix is unit-tested with no `QApplication` (`tests/test_setup_check.py`). **`local/errmsg.py`** is the single renderer for exception text a
-*user* will see: `for_user` keeps the exception class and its message and reduces every absolute
+matrix is unit-tested with no `QApplication` (`tests/test_setup_check.py`).
+**`local/errmsg.py`** is the single renderer for exception text a *user* will see: `for_user` keeps
+the exception class and its message and reduces every absolute
 path inside it to a bare file name. `PermissionError: [Errno 13] Permission denied:
 'C:\Users\<name>\My Drive\linkedin_jobs_master.csv.gz'` is what an antivirus scanner or an
 open Excel window produces, and that string names the person, often their employer, and travels
@@ -194,15 +254,18 @@ keep their full paths, because a log on the user's own disk is exactly where a p
 
 The **batch auto-apply queue** is the one dashboard feature driven from outside the process.
 `local/apply_queue.py` is an atomic JSON store beside `seen.db` (every mutation under a sidecar
-byte lock) plus the queue CLI (`claim` / `finish` / `add_missing`); the dashboard enqueues while
-the tailor runs, and the **Auto-apply** tab (`local/qt/apply_queue_panel.py`) is a read-only,
-file-watched mirror of it with the few human controls (re-queue, remove, the sign-in and the
-kickoff command). The drain is `local/apply_run.py`, code-owned and Jev-judged, launched by the
+byte lock) plus a small queue CLI (`list` / `stats` / `enqueue` / `remove` / `requeue` /
+`refresh-answers`); the dashboard enqueues while the tailor runs, and the **Auto-apply** tab
+(`local/qt/apply_queue_panel.py`) is a read-only, file-watched mirror of it with the few human
+controls (re-queue, remove, the sign-in, the kickoff command, the difficulty check and the
+**Waiting for you** card, `local/qt/apply_pause_card.py`). Start stays off, with the reason beside
+it, while Jev cannot run (`jev_switch.apply_blocked`) or a browser holds the profile. The drain is
+`local/apply_run.py`, code-owned and Jev-judged, launched by the
 tab's Start button as `python local/apply_run.py drain` in a new console. Its module map:
 
 | Module | Role |
 | --- | --- |
-| `local/jev.py` | The judge client. `TypeSafeJev` sends raw question dicts (`noul` / `choice` / `score`) to TypeSafe's System One model (`jev-1.13.0`, imported lazily, usage metered at $0.042 per million input tokens); `FakeJev` answers from word overlap so every test runs with no key; `ReplayJev` caches answers by the sha256 of the request for the fixture replay; `get(mode)` picks one from the argument, `AUTO_APPLY_JEV_MODE`, else `typesafe`. |
+| `local/jev.py` | The judge client. `TypeSafeJev` sends raw question dicts (`noul` / `choice` / `score`) to TypeSafe's System One model (`jev-1.13.0`, imported lazily, usage metered at $0.042 per million input tokens); `FakeJev` answers from word overlap so every test runs with no key; `ReplayJev` caches answers by the sha256 of the request for the fixture replay; `get(mode)` picks one from the argument, `AUTO_APPLY_JEV_MODE`, else `typesafe`. Since cycle 19 it serves scoring, the tailor and the difficulty check too, through `jev_switch.client`. `Guarded` adds the retries and the breaker. Two lock-guarded process counters: `usage()` (per run, zeroed by `reset_usage()`) and `total_usage()` (lifetime, never reset). |
 | `local/apply_form.py` | The page digest: one `evaluate` per frame lists every visible enabled control as a `Field` (label from `label[for]`, aria, legend or preceding text; required; options; help incl. a `maxlength`), every `Button` with a submit / advance / back hint, and the page text capped at `PAGE_TEXT_CAP`. `resolve` turns a `(frame, selector)` locator back into a Playwright locator. |
 | `local/apply_facts.py` | The fact catalog Jev chooses from: `apply.md` (candidate, address, education, current job, signature, cover letter) plus the answer bank as `answer_<id>` facts, each with a label-shaped description; `to_criteria()` sends keys and descriptions only; the values stay on this side. `quick_map` is the deterministic label table that wins over the judge for the obvious fields. The own-question gate (`OWN_QUESTIONS`, `question_fit`, `answers_question`) lets a saved yes / no or years answer settle a field only when every content word of its label and help is that fact's own question (a narrower form only for the value that answers every narrower form); a custom answer holding a yes / no or a number settles only its saved question word for word (`same_question`), and two derived facts answer "authorized without sponsorship" and "remote only". |
 | `local/apply_judge.py` | Every question and every threshold in one place, with a header block that records the live Jev distribution behind every threshold: `page_questions` (page kind, per-field source with `leave_blank` and `needs_generation` always present, per-field option, per-button role, the prohibited / account / CAPTCHA nouls), `option_questions`, `settle_questions` (a relocation, on-site, work authorization or sponsorship answer the own-question gate held back, asked whether it settles the field's reworded question, filled only when the judge is sure; `_unsaid` keeps out a question whose right option turns on something the saved answers do not say, such as another country, the present job or a visa held now; `settle_key` reads a question whose own sentence asks the move against the relocation answer when the first read took it for on-site work; a relocation or on-site read ends with where the candidate lives now, `where_they_live` giving the confirmed mailing address's city and state or else the résumé location, so an option such as "I am in NYC" is read against it), `verify_questions`, `inbox_questions`, `code_pick_questions`, `grounding_questions`, and the readers that turn answers into a `FillPlan`, a `VerifyResult` list, an inbox pick or a grounding verdict. |
@@ -212,14 +275,48 @@ tab's Start button as `python local/apply_run.py drain` in a new console. Its mo
 | `local/apply_inbox.py` | Emailed verification codes: lists the newest rows of Outlook web or Gmail web in a tab of the same profile, asks Jev which message is the code mail, extracts the candidates with `apply_verify.extract_code`, and asks Jev to pick; three polls inside a three-minute budget, the inbox tab closed in a `finally`, every exception swallowed because a browser error can quote private mail. |
 | `local/apply_answergen.py` | Free-text answers for a required open-ended question (an optional one stays blank, `apply_judge.plan`): one flash-lite draft from the sheet excerpt under the résumé engine's AI-writing rules, `sentences` split, then `grounded` asks Jev whether each sentence is supported by the sheet; a draft with one unsupported sentence is dropped and the field is left for the user. `GENERATE_MAX` attempts per job. |
 | `local/ats_accounts.py` | The per-portal account ledger: one master password in the Windows Credential Manager, a JSON ledger that records email and method and rejects any password-shaped field on write, `fill_password` (typed into a `type=password` control only, compared by length after the fill, absent from every log line) and the clipboard as the password's other exit. |
-| `local/apply_queue.py` | The store above, plus `build_context()` (batch cap, signup email, inbox URL by email domain) and `infer_ats`. |
+| `local/apply_queue.py` | The store above, plus `build_context()` (batch cap, signup email, inbox URL by email domain) and `infer_ats`. Each entry can carry the difficulty check's result (`set_difficulty`), and `note_difficulty_failure` keeps an earlier result beside when and why a later check read nothing. |
+| `local/apply_sheet.py` | The `apply.md` parser (`parse_apply_md`, `split_name`), moved here from the removed `apply_playwright.py`; `apply_facts.py` is its one production caller. |
+| `local/jev_switch.py` | One answer to "does Jev run here?" for the four areas (`scoring`, `tailor`, `difficulty`, `apply`): the `jev_enabled` master switch and the `jev_scoring` / `jev_tailor` / `jev_difficulty` area switches (all default on, read from `config.json` at call time), `TYPESAFE_API_KEY` and an importable `typesafe_sdk`. `client(area)` builds the judge or returns None with the reason ("Jev is switched off in Settings", "no TypeSafe API key", "typesafe-sdk is not installed"); scoring and the tailor get short retry delays so an outage falls back fast. Auto-apply has no area switch and no LLM fallback: `apply_blocked` gives the "Auto-apply runs on Jev. ..." sentence Start, the drain, `one`, Check setup, the doctor, Test my answers and `probe --judge` show. `difficulty_blocked` gates the difficulty check, and `mode_refusal` / `unknown_mode` name a test judge or an unknown judge mode. |
+| `local/apply_pause.py` | Park and resume (SP7, PR-1 to PR-8). A required field with no answer, an option tie, a required sensitive field and a way on still disabled after the fill pause the job instead of parking it; every other park stays immediate, and no pause starts once something may have been sent. The run writes `<job id>.json` into `%LOCALAPPDATA%\linkedin_watcher\apply_pause\` and waits (off the job clock, up to `auto_apply_pause_minutes`, at most `MAX_PAUSES` = 5 per job) for `<job id>.answer.json` in mode `fill`, `browser` or `park`. `Pauser` puts a `fill` value in its own field (`USER_SOURCE`), keeps a field the person filled in the browser (`KEPT`) and replans a page that changed. A timeout or `park` parks with the earlier reason, a closed window parks `needs_human`, and `apply_run._pause_moved` parks a send page that moved on as possibly sent while a Next the person clicked is planned again. `save_answer` keeps a flagged value as a confirmed custom answer ("Saved from <company> on <date>"), refused as Add answer refuses it; the store is reloaded after each resume. `NEVER_WAIT` (`INPLOYED_PAUSE_NEVER_WAIT`, set by the conftest) keeps the suite from pausing. |
+| `local/profile_lock.py` | Who holds the auto-apply profile: Chrome's own lock (`lockfile` on Windows, `SingletonLock` elsewhere) or the sentinel `browser_profile.inuse` beside the profile, a `locks.SingleInstance` that `apply_run.launch_profile` holds for every browser it opens there (drain, `one`, sign-in, a probe on the profile, the difficulty check). `busy` is either sign; the panel, the drain, `one`, `login` and `apply_assess.py` refuse with "The auto-apply browser is open: a run, a sign-in or a difficulty check holds its profile." |
+| `local/apply_assess.py` | The difficulty check (DF-1 to DF-6): `python local/apply_assess.py [--all \| <id> ...] [--recheck] [--headless] [--queue PATH] [--profile DIR] [--verbose]` (exit 0 ok, 1 error, 2 refused). It opens each posting on the auto-apply profile, clicks only the Apply entry (never one Jev reads as a sign-in, sign-up or Next), and reads the first application page with the drain's own questions, typing nothing; the page is cached under `%LOCALAPPDATA%\linkedin_watcher\apply_assess\` for `--recheck`, which screens it again with no browser. DF-3's score is code: a base by system (`SYSTEM_BASE`: Greenhouse / Lever / Ashby 2, Workable / SmartRecruiters / Jobvite / BambooHR 3, unknown 4, Workday / iCIMS 6, Taleo / SuccessFactors / Oracle 7) plus 1.5 per unanswered required question (cap 5), 0.5 per required essay (cap 2), 3 for a sensitive field, 2 for a CAPTCHA, 1 for an account wall, and +1 / -1 from this system's past runs (parked twice / finished twice with no park), rounded half up and clamped to 1-10. Easy Apply, a closed posting, a dead end and a payment page are `STOP_SCORE` 10. `BANDS`: 1-3 "Queue it", 4-6 "May need an answer or two", 7-10 "Do it yourself"; a result older than `STALE_DAYS` (7) shows its age. About 2 to 4 Jev requests per job. |
 
-The older Playwright helpers stay for the portals the loop cannot serve: `local/apply_driver.py`,
-a file-driven headed browser REPL whose `paste` action issues a Ctrl+V keystroke and reports only
-a length, and `local/apply_playwright.py`, the Greenhouse-family filler (`parse_apply_md`,
-`split_name` and the upload path are reused by the loop) with `local/apply_verify.py`'s
-code-gate handshake. The `auto-apply` Claude skill under `.claude/skills/` is the manual
-fallback for a job the drain parked; the dashboard no longer launches it.
+Cycle 19 removed the Claude-in-Chrome auto-apply. `local/apply_driver.py` (the file-driven
+browser REPL), `local/apply_playwright.py` (the Greenhouse-family filler) and
+`tests/test_apply_driver.py` are gone; the `apply.md` parser moved to `local/apply_sheet.py` and
+its tests to `tests/test_apply_sheet.py`. `ats_accounts.py` dropped its `clip-password` and
+`clip-clear` verbs, and `apply_queue.py` dropped the skill-only `claim`, `update`, `add-missing`,
+`finish` and `context` verbs. The local `auto-apply` skill and `job-applier` agent were
+archived out of `.claude/`. `local/apply_verify.py` stays: the drain types codes with its
+`fill_code` and `apply_inbox.py` finds them with its `extract_code`. A job the drain parks is
+finished by hand, or through the **Apply** panel's
+Claude-in-Chrome prompt over `apply.md`, which is unchanged.
+
+**The Jev replay caches** (`tests/fixtures/jev_cache/README.md` has the full procedure). Two
+committed caches hold the real judge's answers over synthetic fixtures: `cache.json` for the
+runner tests (`RUNNER_TESTS` in `tests/jev_harness.py`: `test_apply_run.py`,
+`test_apply_run_boundaries.py`, `test_screening.py`, `test_apply_assess.py`) and
+`matrix_cache.json` for the flow matrix's real column. `scripts/jev_record.ps1` records
+(`-Cap` required, the key loaded into that one process) or replays (`-Mode replay`, no key, no
+network) either target.
+
+- **Prune** (SP8): `jev_record.ps1 -Mode replay -Prune`, with `-Target runner` or `matrix`,
+  rewrites the cache to the keys the replay served (`ReplayJev.used_keys`, then
+  `jev.prune_cache`). It refuses, and leaves the cache as it was, together with record mode,
+  `-Dry` or `-Flows`, or with the `captures` target; on any replay miss or test failure; for
+  the runner, on a run narrower than the whole `RUNNER_TESTS` set (a file left out, `-k`, `-m`,
+  a deselected test, a node id narrower than a file) or a `jev_judge` test skipped for a reason
+  the harness does not account for; for the matrix, on a narrowed `--flows` or a flow still
+  marked `recorded=False` in `tests/apply_harness.py`.
+- **Spend cap:** `jev.SpendCap` measures its spend, request count and failed requests as a
+  delta of the lifetime counter `total_usage()`, which `reset_usage()` never touches. Before
+  commit 3d0ea37 it read `usage()`, so a runner test that called `reset_usage()` inside a live
+  recording clamped the spend to 0 and raised the cap by everything spent before it; the
+  recording summary undercounted the same way (9 live requests reported as 2). The recording
+  summary (`jev_harness.Session.live_usage`), `apply_matrix --real` and the capture reads now
+  read `total_usage()` too. `usage()` and `reset_usage()` keep their per-run meaning for the
+  per-run reports (the difficulty check, the drain, the dashboard, the scorer).
 
 **Local scrapes feed the VM master** (the outbox/incoming bridge): a dashboard "Find new
 jobs" run or manual add writes its new full master rows to `<repo>/outbox/local_rows_*.csv.gz`
@@ -236,8 +333,9 @@ through the normal Drive sync. On the viewing side there is exactly one owner of
 local-runs fold: `app.py:_with_local_runs` appends `jobsdata.local_run_files()` to whatever
 sources it was launched with, so local runs show up immediately in EVERY entry point,
 including a watcher-launched window, and `load_files`' id-dedup keeps them from
-double-counting once the merged master syncs back down. When Google Drive for desktop is not running the master's folder is gone, so
-`load_files` reads the local copy in `%LOCALAPPDATA%\linkedin_watcher\mirror\` (refreshed
+double-counting once the merged master syncs back down. When Google Drive for desktop is not
+running the master's folder is gone, so `load_files` reads the local copy in
+`%LOCALAPPDATA%\linkedin_watcher\mirror\` (refreshed
 after every clean read of a source outside the repo, keyed by folder and file name) and
 keeps ids mapped to the Drive path; `MainWindow` shows an amber banner until Drive is back.
 
@@ -306,8 +404,9 @@ A few **durability/visibility** affordances: the Tracker tab can **Export / Impo
 warns when `resume.md` has drifted behind `master_experience.yaml` (`resume_md.resume_md_stale`,
 mtime compare) with a one-click Regenerate; the rebuild (`local/resume_md.py`, injected Gemini call;
 tests never spend a credit) deterministically re-appends any `concepts_and_methodologies` item the
-model dropped (`_ensure_concepts`), so the scorer always matches against the full concepts pool. It also carries a collapsible **Resume Layout** editor
-(`ResumeDataEditor._layout_block`) for the per-bullet line targets; it reads/writes config.json's
+model dropped (`_ensure_concepts`), so the scorer always matches against the full concepts pool.
+It also carries a collapsible **Resume Layout** editor (`ResumeDataEditor._layout_block`) for the
+per-bullet line targets; it reads/writes config.json's
 `resume_layout` (sections) and `project_layout` (projects) maps, the very ones the tailor reads via
 `resume_tailor/config.py:block_targets`/`project_targets`; row names are pulled from the master so
 they match the engine's lookups. A master toggle, `resume_layout_enabled` (default on), gates both
@@ -439,7 +538,7 @@ bullet must be traceable to a fact ("atom") the user wrote in
 | `selection.py` | Stage 1. `select` asks the model which atoms to use and how to group them, then makes the answer safe deterministically: `_normalize_selection` drops ids the model invented, `_ensure_required_blocks` forces the yaml's `tailor.required` blocks to render, `_order_fixed_blocks` restores template order, and `_enforce_fixed_counts` / `_cap_projects` / `_resize_to_count` pin each block to its configured bullet count. Also owns `bullet_line_targets`. |
 | `compose.py` | The bullet stages: `block_briefs` (one cohesion brief per block), `rephrase`, `lead_with_overview`, `dedupe_leading_verbs` / `reverb` (no opener reused across the page), `fill_underfull`, and `enforce_style`. |
 | `skills.py` | The four technical-skills lines and the optional 5th "Methods" concepts line. `compress_skills` ranks each category's pool against the JD; the anchoring layer (`_anchored`, `_base_anchors`, `_merged_members`, `_complete_to_count`, `_cap_items`) is what stops a skill the user does not own from reaching the page. `methods_line` prints concepts from the master's `concepts_and_methodologies` pool that the JD actually references, in the JD's own spelling on an alias hit. |
-| `jev_assist.py` | The tailor's Jev requests (TL-1 to TL-3). Jev answers typed questions and writes no text, so each helper returns data for code to compose: `skills_pick` rates each skill in the user's pools against the job (one noul per skill) and picks `skill_focus`, and each skills line fills in probability order within `compress_skills`' count and width; `atom_relevance` rates each atom's `what` (one noul per atom, batched to fit) for the shortlist `select` sees; `lead_group` picks each project's overview bullet (a choice over its numbered groups, where a confidence under 0.5 keeps file order). Each takes `judge=` (default `jev_switch.client("tailor")`) and returns `None` when Jev is off or the request fails, so its caller keeps its LLM path; `run.tailor` hands one judge to every step, so an outage moves the rest of the run to the LLM path. `usage_line(step)` is the run report's line per step (requests, estimated tokens, USD). |
+| `jev_assist.py` | The tailor's Jev requests (TL-1 to TL-9). Jev answers typed questions and writes no text, so each helper returns data for code to compose, and the LLM still writes every bullet. On whenever Jev runs for the tailor: TL-1 `skills_pick` rates each skill in the user's pools against the job (one noul per skill) and picks `skill_focus`, and each skills line fills in probability order within `compress_skills`' count and width; TL-2 `atom_relevance` rates each atom's `what` (one noul per atom, batched to fit) for the shortlist `select` sees; TL-3 `lead_group` picks each project's overview bullet (a choice over its numbered groups, where a confidence under 0.5 keeps file order); TL-4 `faithfulness` asks per bullet whether it is `supported` by its atoms and whether it `inflates` or `adds_claim`, and a flagged bullet (a sure "unsupported" or "contradicted", or `inflates`) gets one reground call with the finding before it is reverted or dropped; TL-5 `sweep_flags` reads each entry for the banned tells (`SWEEP_QUESTIONS`), so the AI-writing sweep calls the model only for an entry with a tell or a detector finding; TL-6 `pick_verb` picks a repeated opener's palette category, then a verb among its unused ones (at most 60). Settings options, off by default and shown only while `jev_tailor` is on (`config.py`: env, then `config.json` `is True`, then False): TL-7 `best_variant` ("Best of 3 bullet drafts (Jev picks)", `tailor_best_of_n` / `RESUME_TAILOR_BEST_OF_N`) keeps one of three rephrase drafts that pass the grounding gate and TL-4; TL-8 `letter_unsupported` ("Jev checks the cover letter's claims", `cover_letter_jev_check` / `RESUME_TAILOR_COVER_LETTER_JEV_CHECK`) sends each flagged letter sentence to the letter's repair, which goes back through the style gate; TL-9 `keyword_meaning` ("ATS report: coverage by meaning (Jev)", `tailor_ats_meaning` / `RESUME_TAILOR_ATS_MEANING`) adds a meaning-level coverage line to `ats_report.txt`. Each takes `judge=` (default `jev_switch.client("tailor")`) and returns `None` when Jev is off or the request fails, so its caller keeps its pre-Jev path (TL-4's is the deterministic grounding gate alone); `run.tailor` hands one judge to every step, so an outage moves the rest of the run to the LLM path. `usage_line(step)` is the run report's line per step (requests, estimated tokens, USD), counted per thread since the dashboard tailors several jobs at once. |
 | `layout.py` | The count spec: best-N items per skill line (`skill_targets`, env-overridable) and the leadership per-entry line budget. Printed-line *widths* are `measure.py`'s job. |
 | `measure.py` | Width-aware line measurement: per-character Times-Roman advance widths greedily wrapped against the calibrated column capacity, so a bullet's printed line count is modeled from the actual render, not a flat character count. `char_budget` converts that width budget back into the character ceiling the prompt has to state; `FULL_LINE_FILL` / `LAST_LINE_FILL` / `UNDERFULL_FILL` are the fill fractions (see "The length budget"). |
 | `render.py` | Assembles the `.tex`: header + Education + body, all generated from the yaml. The header's LinkedIn and GitHub fields render as `\href` links in the template's link colour, a project's `repo` becomes a link whenever it is shaped like a host address (any host with a dot in it, github.com included), and `_education` lays each entry out for an ATS parser as much as a reader: school and location on one row, the degree on its own row, GPA and honors on a third, because a GPA glued to the date column extracted as `GPAAugust 2021` and a location at the end of the degree row was read as part of the degree. |
@@ -478,10 +577,12 @@ re-check against the atoms, reverting to the last grounded text when there is on
 flowchart TD
     R["rephrase: the first draft"] --> G{"grounding gate<br/>(_prologue_gate)"}
     G -->|grounded| B["bullets"]
-    G -->|ungrounded| RA["reground: one re-ask from the same atoms,<br/>the unsupported term banned"] --> G2{"the same gate again"}
+    G -->|ungrounded| RA["reground: one re-ask from the same atoms,<br/>the unsupported term banned"]
+    RA --> G2{"the same gate again"}
     G2 -->|grounded| B
     G2 -->|still ungrounded| D["dropped for good: one warning,<br/>rejected text in the report"]
-    B --> P["_BULLET_PASSES, in order:<br/>verb dedupe / verbatim merge + trim /<br/>underfull fill / style gate / AI-writing sweep"]
+    P["_BULLET_PASSES:<br/>verb dedupe / verbatim merge + trim /<br/>underfull fill / style gate / AI-writing sweep"]
+    B --> P
     P -->|"each pass: snapshot, run,<br/>re-trim if asked, re-verify"| K{"every token still<br/>traces to an atom?"}
     K -->|yes| N["next pass"]
     K -->|no| RV["revert that bullet<br/>to the snapshot"] --> N
@@ -667,6 +768,21 @@ folding it in would have introduced a token no atom supports. Putting a cosmetic
 self-healed finding on the degraded channel would make "finished with warnings" mean
 nothing.
 
+A third section, **jev (N)** (cycle 19, `RunLog.jev`), closes the report: one line per Jev step
+the run took, from `jev_assist.usage_line`, such as `jev shortlist: 1 request, 812 tokens
+(estimated), $0.000034`, with `; <note>` after it when the step fell back or had nothing to
+ask. The steps are `skills`, `shortlist`, `lead`, `verb`, `sweep gate`, `faithfulness`, `best of
+three`, `letter check` and `ats meaning`. A run with Jev off for the tailor records no step,
+and the report leaves the section out. The tokens are estimated
+(`jev.request_size`) and counted per thread, since the dashboard tailors several jobs at once
+and the live client counts real tokens only for the whole process.
+
+A Claude model swap lands in the report too (`_report_model_swaps`): when the installed CLI
+is too old for `claude-opus-5-5` (`MIN_CLI_VERSION` 2.1.280 in `pipeline/claude_cli.py`), the
+transport retries once on `claude-opus-5` (`MODEL_FALLBACKS`) and remembers the swap for the
+process. The first run that sees it warns, and later runs carry it as a note, so one old CLI
+does not mark every job in the process degraded.
+
 ### One model, or one per stage
 `model_for(tier)` maps flash-lite / flash / pro onto three env vars, and `claude_model_for`
 does the same for the Claude CLI provider. That split is a cost-tuning knob (flash-lite for
@@ -721,13 +837,20 @@ Tests: `tests/test_atom_audit.py` (census + gate) and `tests/test_atom_slop.py` 
 whose pins are mostly negative: the technical words that must stay quiet).
 
 ## Settings & customization (`local/settings.py` + dashboard Settings tab)
-`settings.py` is one schema (`SETTINGS_SCHEMA`) of 72 `Field` rows describing every
+`settings.py` is one schema (`SETTINGS_SCHEMA`) of 87 `Field` rows describing every
 user-editable option (key, type, default, validation, backing file). The dashboard's
 **Settings** tab auto-renders it grouped by collapsible section, inside a scrollable canvas.
-`SECTION_ORDER` is Credentials / Connection & paths / Engine / Dashboard / Scraper / Scoring /
-Resume / Auto-apply / Settings history / VM (cloud scraper), two of which `SECTION_DISPLAY`
-retitles for the UI as *Job discovery* and *VM (cloud job discovery)*. `load`/`save` read and atomically write
-(with a `.bak`) **four** backing files (`TARGET_FILES`): the git-ignored `.env` and
+`SECTION_ORDER` (`local/qt/settings_tab.py`) is Jev / Credentials / Connection & paths / Engine /
+Dashboard / Scraper / Scoring / Resume / Auto-apply / Settings history / VM (cloud scraper), three
+of which `SECTION_DISPLAY` retitles for the UI as *Résumé tailor*, *Job discovery* and *VM (cloud
+job discovery)*. Cycle 19 put the Jev section first (`jev_enabled`, `TYPESAFE_API_KEY` moved
+there from Auto-apply, and the advanced area switches `jev_scoring`, `jev_tailor`,
+`jev_difficulty`) and made each provider selector its section's first row: `tailor_provider`
+leads Engine and the scoring `provider` leads Scoring, with help that names each as the writer
+or fallback beside Jev. Auto-apply gained `auto_apply_pause_minutes` and moved
+`auto_apply_jev_mode` under advanced; Resume gained the three Jev tailor options (TL-7 to TL-9).
+`load`/`save` read and atomically write (with a `.bak`) **four** backing files (`TARGET_FILES`): the
+git-ignored `.env` and
 `local/config.json`, plus the root-level `search_config.json` (read by `scraper.py`) and
 `scoring_config.json` (read by `score_jobs.py`). The VM-standalone scraper/scorer never
 import `local/`; they read their own JSON with **env-override > file > built-in-default**
@@ -744,7 +867,7 @@ is the guard). The fourth is the exception that proves the rule.
 | Attribute | Contract |
 | --- | --- |
 | `show_if=(gate_key, allowed_values)` | Rendering. A **configuration gate**: the field does nothing for the way this user has things set up, so it is off screen. Resolved **transitively** by `settings.is_visible` / `visible_keys`: a field is visible only if its own predicate holds *and* its gate field is itself visible. A typo'd gate key raises; it never degrades to "hidden". |
-| `advanced` (26 fields) | Rendering. A **view fold**: the setting applies, the user has said "not now". Composes with `show_if` (both must pass); `settings_tab._field_visible` is the single place both are decided. Search deliberately ignores it, so a folded row stays findable. |
+| `advanced` (30 fields) | Rendering. A **view fold**: the setting applies, the user has said "not now". Composes with `show_if` (both must pass); `settings_tab._field_visible` is the single place both are decided. Search deliberately ignores it, so a folded row stays findable. |
 | `restart` (21 fields) | Rendering. The dashboard reads this key once, at launch, so a save writes the file but the running process keeps the old value. It is nearly every `.env` field: `local/app.py` calls `load_dotenv()` at startup and `python-dotenv` defaults to `override=False`, so neither a live `os.environ` read nor a subprocess that inherits the environment can see the new value. The six VM keys are exempt, because `vm_sync.VMTarget.from_env` reads the file via `settings.load`. |
 | `pattern` / `pattern_help` | **Not** rendering: `validate()` enforces it with `re.fullmatch`, which is what stops the tab writing free text the consumer would silently discard. **A pattern must reject only what the consumer would DISCARD**, never a value it honours: `validate()` runs over every collected field, so an over-strict rule blocks every future Save of every *other* setting. Write the differential test against the real consumer. |
 
@@ -830,4 +953,14 @@ flowchart LR
   `tests/test_apply_inbox.py`: headless Chromium over the HTML fixtures under
   `tests/fixtures/forms/` (`tests/conftest_browser.py` serves them and skips the module with a
   reason when Chromium is missing; the Linux CI job installs it).
+- `tests/test_jev_switch.py`, `tests/test_jev_score.py`, `tests/test_jev_score_calibrate.py`:
+  the per-area Jev switch, the scorer's Jev composition and its calibration script.
+- `tests/test_jev_assist.py`, `tests/test_tailor_jev.py`, `tests/test_tailor_faithfulness.py`,
+  `tests/test_sweep_gate.py`, `tests/test_tailor_jev_options.py`: the tailor's TL-1 to TL-9,
+  with `tests/fixtures/tailor_jev_off_prompts.json` pinning the Jev-off prompts.
+- `tests/test_apply_pause.py` (over `tests/fixtures/forms/pause_*.html`),
+  `tests/test_apply_assess.py`, `tests/test_profile_lock.py`, `tests/test_apply_sheet.py`: park
+  and resume, the difficulty check, the profile lock and the `apply.md` parser.
+- `tests/test_jev_prune.py`, `tests/test_claude_cli_fallback.py`: the replay-cache prune and its
+  refusals, and the Opus 5.5 fallback on an old CLI.
 - `tests/smoke_qt.py`: Qt dashboard smoke (run directly with `QT_QPA_PLATFORM=offscreen`, not under pytest).

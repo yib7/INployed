@@ -1079,9 +1079,10 @@ against the job's own time limit. One job can pause at most five times.
 - **Park it:** the same.
 - You close the browser window or the job's tab while it waits: the job parks as **needs
   human** with its usual reason.
-- The page moved on while it waited (you went on to another step yourself): the job
-  parks whatever you answered, since the run cannot tell what you clicked. A page you may
-  have sent parks as possibly sent: check that job.
+- The page moved on while it waited. From a page with no send button (you clicked
+  **Next** yourself), the run reads the new page and goes on. From a page that could send
+  the application, a change (a new address, the send button or the form gone, a "thank
+  you" message) parks the job as possibly sent, and it is never re-queued: check that job.
 
 A run with the window hidden pauses too, unless every question needs the browser; then it
 parks, and you answer it on a run with the window shown.

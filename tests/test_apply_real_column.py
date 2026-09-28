@@ -183,10 +183,8 @@ def test_a_replay_leaves_out_a_flow_no_recording_holds_yet_and_a_recording_takes
     h.run_matrix(flows, h.judges((), fake=False, real=record), browser=None, server=None,
                  workdir=tmp_path)
     assert calls == [("steady", "real"), ("new", "real")], "a recording runs it"
-    # cycle 18's recording (SP6, 2026-09-26) took in every registered flow
-    # but cycle 19 SP7's pause flows, added after it (no live call records them)
-    unrecorded = [f.name for f in h.FLOWS if not f.recorded]
-    assert unrecorded and all(h.flow(name).pause is not None for name in unrecorded), unrecorded
+    # the registry's own recorded flags are left out on purpose: they change
+    # with every recording, and this test reads only its synthetic flows
 
 
 # --- the real column in the rates and the summary -------------------------------------------

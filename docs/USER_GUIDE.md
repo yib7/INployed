@@ -46,7 +46,7 @@ sentence and paragraph lengths, and any sentence that reads like a bullet with a
 bolted on retold as a story. Two structural checks always run, whatever the **"Strip AI
 writing patterns"** toggle says: a seven-word run copied straight from a résumé bullet
 ("bullet echo"), and sentences or paragraphs that all sit within a narrow band of the
-average length ("uniform rhythm"). Settings → Résumé's **"Strip AI writing patterns from
+average length ("uniform rhythm"). Settings → Resume's **"Strip AI writing patterns from
 the cover letter"** toggle now defaults **on**; see [what it
 catches](#what-strip-ai-writing-patterns-from-the-cover-letter-catches) below.
 
@@ -178,7 +178,8 @@ and always shows on High Score whatever your score filters say. Its **Score** ce
 
 If the URL is one you added before, the dashboard says so ("Already added on <date> as
 <title> at <company>.") and offers **Tailor again** or **Cancel**. **Tailor again** runs the
-tailor on the saved job with the description you just pasted. If tailoring fails, the job
+tailor on the saved job with its saved description, or with the one you just pasted when
+the saved one is blank. If tailoring fails, the job
 stays saved and the status bar says so; run **Tailor résumé** on the job to try again. If you
 run job discovery on a VM, a hand-added job is sent to the VM's job list the way the
 dashboard's other new jobs are.
@@ -263,7 +264,7 @@ The sections, in the order the tab shows them:
   bills: your Vertex project, one API key, or **pool**, the scorer's free keys with Vertex
   as the spillover (see *Tailoring on the scorer's free keys* below). See the Claude backend
   note below.
-- **Dashboard / Job discovery / Scoring / Résumé:** scores, follow-up days, search
+- **Dashboard / Job discovery / Scoring / Resume:** scores, follow-up days, search
   keywords, remote types, spend caps, artifact toggles, and more. **Drop Easy Apply jobs
   before scoring** (off by default) discards LinkedIn Easy-Apply postings before they cost
   a scoring call, for anyone who only wants postings with a real application form.
@@ -273,11 +274,6 @@ The sections, in the order the tab shows them:
   a repost does not spend a fresh Gemini call every time it resurfaces. The first row of
   Scoring is the **Scoring provider**, which scores jobs while Jev is off and takes over
   when Jev is down.
-- **Models:** the scorer's two stages **and** the résumé tailor's are **editable
-  dropdowns**: the recent Gemini 3.x ids by default, plus the Claude tier ids used when a
-  provider is set to `claude`. Pick one or type a custom id. The tailor asks one question
-  before the rest, **simple or per stage**, described under *One model for every step*
-  below.
 - **Auto-apply / Settings history:** the batch-apply queue cap, which webmail inbox the
   run opens for verification emails, and how long a run waits for your answer (see
   *Auto-apply* below); plus a snapshot of your
@@ -289,6 +285,12 @@ The sections, in the order the tab shows them:
   plus the non-secret connection details for your GCP job-discovery VM (instance, zone,
   project, Linux user). Off hides the whole VM area and silences VM prompts; turn
   it on to reveal the controls (see *Manage the VM* below).
+
+The model rows are **editable dropdowns**: the scorer's two stages sit in Scoring and the
+résumé tailor's in Résumé tailor. Each offers the recent Gemini 3.x ids by default, plus the
+Claude tier ids used when a provider is set to `claude`. Pick one or type a custom id. The
+tailor asks one question before the rest, **simple or per stage**, described under *One
+model for every step* below.
 
 Guard rails keep it hard to break: fixed-choice fields are **dropdowns** (no
 typos), bounded numbers are **sliders** or **spin boxes**, multi-select fields are
@@ -378,7 +380,7 @@ next one in the list is tried; a key that has spent its allowance on one model k
 it still has on the others.
 
 #### What "Strip AI writing patterns from the cover letter" catches
-Settings → Résumé, on by default. It adds a second, stricter style pass to the **cover
+Settings → Resume, on by default. It adds a second, stricter style pass to the **cover
 letter only** (the bullets have their own pass, below), applying a letter-relevant subset of
 Conor Bronsdon's MIT-licensed `avoid-ai-writing` skill (credited in `docs/CREDITS.md`):
 
@@ -396,7 +398,7 @@ paragraphs all run the same length. The grounding gate still runs last either wa
 restyled sentence that introduces an unsupported fact is still rejected.
 
 #### What "Strip AI writing patterns from the résumé bullets" catches
-Settings → Résumé. This is the sweep, the last of the bullet passes: **on by default**, and it
+Settings → Resume. This is the sweep, the last of the bullet passes: **on by default**, and it
 **costs one model call per résumé entry on every tailor run** (a second call for an entry
 whose rewrite came back too long). Turn it off to stop paying for it; the free per-bullet
 style gate keeps running either way.
@@ -430,18 +432,19 @@ banned, then gates the answer again: the re-ask. It has no Settings row;
 off, and `tailor_report.txt` names each bullet it recovered.
 
 ### Jev
-Jev is TypeSafe's "System One" model. It never writes text. It answers short, typed
-questions (yes or no, which of these, how sure) with a probability, fast and for very
-little money: $0.042 per million input tokens, with nothing charged for its answers. The
-app uses it for the decisions and leaves the writing to Gemini or Claude: Jev decides, the
-writing model writes, and plain code puts the two together.
+Jev is TypeSafe's "System One" model. It writes no text. It answers typed questions (yes
+or no, which of these, how sure) with a probability, fast and for very little money: $0.042
+per million input tokens, with nothing charged for its answers. The app asks Jev for the
+decisions, and Gemini or Claude writes the text.
 
 Jev works in four places:
 
-- **Scoring.** Jev reads each collected job against your résumé in both scoring stages
-  and the app turns its answers into the usual 1-10 score and recommendation.
-- **The résumé tailor.** Jev picks and checks; your **Résumé tailor provider** still
-  writes every bullet and the cover letter (see *What Jev does in the tailor* below).
+- **Scoring.** Jev reads each collected job against your résumé in both scoring stages.
+  From its answers the app composes the stage 1 score (1-5), then the stage 2 deep score
+  (1-10) and recommendation.
+- **The résumé tailor.** Jev picks skills and experience items and checks each bullet,
+  and your **Resume tailor provider** writes every bullet and the cover letter (see *What
+  Jev does in the tailor* below).
 - **The difficulty check** on the Auto-apply tab (see *How hard is each application?*
   below).
 - **Auto-apply**, which reads every form page through Jev.
@@ -453,7 +456,7 @@ settings* the same section has one switch per area: **Jev for scoring**, **Jev f
 résumé tailor** and **Jev difficulty check**, all on. A change takes effect on the next run.
 
 **When Jev is off or down, nothing stops.** Scoring falls back to your **Scoring
-provider** and the tailor to your **Résumé tailor provider**, the same Gemini or Claude
+provider** and the tailor to your **Resume tailor provider**, the same Gemini or Claude
 setup the app used before Jev. That happens by itself when the switch is off, when there
 is no key, when the package is missing, and when Jev stops answering in the middle of a
 run: it retries briefly, then the rest of that run carries on without it. The one
@@ -465,8 +468,10 @@ After a scoring run, the summary line says how many jobs Jev scored in each stag
 it cost, and how many fell back to the scoring provider.
 
 #### What Jev does in the tailor
-Six steps run whenever Jev is on for the tailor. Each one keeps the tailor's own way of
-doing that step as its fallback:
+Six steps use Jev while it is on for the tailor. Four run on every tailor; the verb step
+runs only when two bullets open with the same verb, and the sweep gate only while **Strip
+AI writing patterns from the résumé bullets** is on. Each one keeps the tailor's own way
+of doing that step as its fallback:
 
 - **Skills:** Jev picks which of your skills lead each skills line for this job.
 - **Shortlist:** Jev rates how well each item in your experience file fits the job, and
@@ -482,17 +487,18 @@ doing that step as its fallback:
   above), so the sweep calls the writing model only for an entry that has one or that
   the sweep's own checks flag, and tells the model which tells it found.
 
-Three more are switches in Settings → Résumé, off by default, shown while **Jev for the
+Three more are switches in Settings → Resume, off by default, shown while **Jev for the
 résumé tailor** is on:
 
 - **Best of 3 bullet drafts (Jev picks):** the rewrite asks for three drafts of each
-  bullet and Jev keeps the one that shows the most of what the job asks for. That call
-  costs about three times as much.
+  bullet and Jev keeps the one that shows the most of what the job asks for. That call's
+  model output costs about three times as much.
 - **Jev checks the cover letter's claims:** Jev reads each sentence of the cover letter
   against your experience, and a sentence that claims something your experience does not
   say goes back for repair.
 - **ATS report: coverage by meaning (Jev):** `ats_report.txt` gains a line counting the
-  job's keywords your résumé covers in other words, beside the exact-match count.
+  job's keywords your résumé shows in words or by a direct equivalent, beside the
+  exact-match count, and a list of the ones it shows by meaning only.
 
 `tailor_report.txt` ends with a **jev** section: one line per step, with its requests,
 tokens and cost.
@@ -737,7 +743,7 @@ decisions live in `local/apply_judge.py`, with the live answers they were tuned 
 
 1. Create a key at `console.typesafe.ai/keys` and put it in `.env` as
    `TYPESAFE_API_KEY=...`, or paste it into **Settings → Jev → TypeSafe API key (Jev
-   judge)** (it is stored write-only; a rotated key needs a dashboard restart), and leave
+   judge)** (it loads masked; untick *Hide* to see it; a rotated key needs a dashboard restart), and leave
    **Use Jev** on. `pip install
    playwright typesafe-sdk` if **Check setup** says they are missing; the run uses your
    installed Google Chrome, and `python -m playwright install chromium` gives it a fallback
@@ -793,7 +799,8 @@ saying why (the reason starts with the words in brackets):
   its submit step as **Ready to submit** ("auto_apply_submit is off").
 - A required question has no answer in your data ("required field without an answer").
   The run first pauses and asks you (see *When the run needs you* below); it parks the job
-  only when you do not answer in time or choose **Park it**. For a parked job, click
+  when you do not answer in time, when you choose **Park it**, and in the other cases
+  *What ends a pause other than an answer* lists. For a parked job, click
   **Answer now**: it opens **Add answer** on the **Apply Answers** tab with the question
   filled in, and once you save it offers to **Re-queue** the job. A saved yes/no or number
   answer fills a later application only where that job words the question the same way. A

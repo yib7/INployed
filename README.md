@@ -352,7 +352,7 @@ calls: entry briefs, the overview lead, verb swaps. Standard and deep both sit o
 writes the first draft and the cover letter. You raise the deep tier yourself when you
 want stronger writing.
 
-One setting (Settings → Engine, *Tailor models: simple or per stage*) points every
+One setting (Settings → Résumé tailor, *Tailor models: simple or per stage*) points every
 stage at a single model instead. In `pool` mode each tier has its own fallback list,
 so the high-volume fast calls never spend the 20-a-day allowance the deep tier needs.
 The same three tiers map onto Claude models when the tailor provider is set to

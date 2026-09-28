@@ -18422,5 +18422,1412 @@
       "probabilities": {},
       "confidence": null
     }
+  },
+  "2c57ae3539da5140f67e3d43954ec65a36bfb3c72ac103b005ffbea4c7f9881b": {
+    "page_state": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "application_form",
+      "score": null,
+      "probabilities": {
+        "application_form": 1.0,
+        "confirmation": 0.0,
+        "captcha_or_bot_check": 0.0,
+        "login_wall": 0.0,
+        "job_posting": 0.0,
+        "code_gate": 0.0,
+        "review_page": 0.0,
+        "signup_form": 0.0,
+        "other": 0.0,
+        "error_or_dead": 0.0,
+        "payment_request": 0.0
+      },
+      "confidence": 1.0
+    },
+    "page_job_description": {
+      "kind": "noul",
+      "noul": 0.03,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_apply_entry": {
+      "kind": "noul",
+      "noul": 0.07,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_applicant_details": {
+      "kind": "noul",
+      "noul": 0.99,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_sign_in": {
+      "kind": "noul",
+      "noul": 0.01,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_create_account": {
+      "kind": "noul",
+      "noul": 0.03,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_received": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_already_applied": {
+      "kind": "noul",
+      "noul": 0.01,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_closed": {
+      "kind": "noul",
+      "noul": 0.04,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_code": {
+      "kind": "noul",
+      "noul": 0.01,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_payment": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_review": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_error": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "has_captcha": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    }
+  },
+  "d62a9d7c64fc034c6c099ed7435e3716a893dab83ae0612a9fdb7d205ad89615": {
+    "field_0_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "full_name",
+      "score": null,
+      "probabilities": {
+        "how_did_you_hear": 0.0,
+        "race_ethnicity": 0.0,
+        "last_name": 0.0,
+        "email": 0.0,
+        "gender": 0.0,
+        "disability_status": 0.0,
+        "full_name": 1.0,
+        "address_city": 0.0,
+        "current_title": 0.0,
+        "address_street": 0.0,
+        "education_school": 0.0,
+        "willing_to_relocate": 0.0,
+        "remote_only": 0.0,
+        "current_company": 0.0,
+        "education_grad_year": 0.0,
+        "signature_today": 0.0,
+        "github_url": 0.0,
+        "address_country": 0.0,
+        "needs_generation": 0.0,
+        "onsite_ok": 0.0,
+        "education_degree": 0.0,
+        "answer_authorization_statement": 0.0,
+        "first_name": 0.0,
+        "cover_letter_text": 0.0,
+        "education_field": 0.0,
+        "leave_blank": 0.0,
+        "authorized_without_sponsorship": 0.0,
+        "address_state": 0.0,
+        "location": 0.0,
+        "veteran_status": 0.0,
+        "address_zip": 0.0,
+        "linkedin_url": 0.0,
+        "requires_sponsorship": 0.0,
+        "work_authorized": 0.0,
+        "years_experience": 0.0,
+        "phone": 0.0
+      },
+      "confidence": 1.0
+    },
+    "field_1_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "email",
+      "score": null,
+      "probabilities": {
+        "needs_generation": 0.0,
+        "leave_blank": 0.0,
+        "email": 1.0
+      },
+      "confidence": 1.0
+    },
+    "field_2_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "resume_file",
+      "score": null,
+      "probabilities": {
+        "resume_file": 1.0,
+        "needs_generation": 0.0,
+        "leave_blank": 0.0
+      },
+      "confidence": 1.0
+    },
+    "field_3_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "leave_blank",
+      "score": null,
+      "probabilities": {
+        "how_did_you_hear": 0.0,
+        "address_state": 0.0,
+        "last_name": 0.0,
+        "email": 0.0,
+        "gender": 0.0,
+        "disability_status": 0.0,
+        "full_name": 0.0,
+        "address_city": 0.0,
+        "current_title": 0.0,
+        "address_street": 0.0,
+        "address_country": 0.0,
+        "education_grad_year": 0.0,
+        "remote_only": 0.0,
+        "current_company": 0.0,
+        "education_school": 0.0,
+        "signature_today": 0.0,
+        "github_url": 0.01,
+        "willing_to_relocate": 0.0,
+        "needs_generation": 0.16,
+        "onsite_ok": 0.0,
+        "education_degree": 0.0,
+        "answer_authorization_statement": 0.0,
+        "first_name": 0.0,
+        "cover_letter_text": 0.0,
+        "education_field": 0.0,
+        "leave_blank": 0.8200000000000001,
+        "authorized_without_sponsorship": 0.0,
+        "phone": 0.0,
+        "location": 0.0,
+        "veteran_status": 0.0,
+        "address_zip": 0.0,
+        "linkedin_url": 0.0,
+        "years_experience": 0.0,
+        "work_authorized": 0.0,
+        "requires_sponsorship": 0.0,
+        "race_ethnicity": 0.0
+      },
+      "confidence": 0.81
+    },
+    "field_4_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "leave_blank",
+      "score": null,
+      "probabilities": {
+        "how_did_you_hear": 0.0,
+        "education_grad_year": 0.0,
+        "address_zip": 0.0,
+        "education_school": 0.0,
+        "needs_generation": 0.04,
+        "onsite_ok": 0.0,
+        "location": 0.0,
+        "education_degree": 0.0,
+        "work_authorized": 0.0,
+        "requires_sponsorship": 0.0,
+        "gender": 0.0,
+        "answer_authorization_statement": 0.0,
+        "disability_status": 0.0,
+        "years_experience": 0.0,
+        "education_field": 0.0,
+        "address_city": 0.0,
+        "leave_blank": 0.96,
+        "authorized_without_sponsorship": 0.0,
+        "address_state": 0.0,
+        "current_title": 0.0,
+        "veteran_status": 0.0,
+        "address_street": 0.0,
+        "race_ethnicity": 0.0,
+        "address_country": 0.0,
+        "willing_to_relocate": 0.0,
+        "remote_only": 0.0,
+        "current_company": 0.0
+      },
+      "confidence": 0.95
+    },
+    "field_5_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "leave_blank",
+      "score": null,
+      "probabilities": {
+        "address_zip": 0.0,
+        "needs_generation": 0.04,
+        "years_experience": 0.03,
+        "leave_blank": 0.93,
+        "phone": 0.0,
+        "education_grad_year": 0.0
+      },
+      "confidence": 0.91
+    },
+    "button_0_role": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "submit",
+      "score": null,
+      "probabilities": {
+        "back": 0.0,
+        "advance": 0.0,
+        "submit": 1.0,
+        "apply_entry": 0.0,
+        "other": 0.0,
+        "upload": 0.0
+      },
+      "confidence": 1.0
+    },
+    "asks_for_prohibited": {
+      "kind": "noul",
+      "noul": 0.03,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    }
+  },
+  "12bfbe3d6523983cf98cb601ff4e3560535bf01cbc9b92814c0a542fef8ec3b8": {
+    "page_state": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "application_form",
+      "score": null,
+      "probabilities": {
+        "confirmation": 0.0,
+        "login_wall": 0.0,
+        "other": 0.0,
+        "signup_form": 0.0,
+        "error_or_dead": 0.0,
+        "review_page": 0.0,
+        "job_posting": 0.0,
+        "code_gate": 0.0,
+        "application_form": 1.0,
+        "payment_request": 0.0,
+        "captcha_or_bot_check": 0.0
+      },
+      "confidence": 1.0
+    },
+    "page_job_description": {
+      "kind": "noul",
+      "noul": 0.03,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_apply_entry": {
+      "kind": "noul",
+      "noul": 0.08,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_applicant_details": {
+      "kind": "noul",
+      "noul": 0.99,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_sign_in": {
+      "kind": "noul",
+      "noul": 0.01,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_create_account": {
+      "kind": "noul",
+      "noul": 0.03,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_received": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_already_applied": {
+      "kind": "noul",
+      "noul": 0.01,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_closed": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_code": {
+      "kind": "noul",
+      "noul": 0.01,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_payment": {
+      "kind": "noul",
+      "noul": 0.01,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_review": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_error": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "has_captcha": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    }
+  },
+  "b4f674eb9c687dcc978b2196ada6d4cb0d2b2759356e83506e1eaf74a60e9b1d": {
+    "field_0_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "full_name",
+      "score": null,
+      "probabilities": {
+        "address_zip": 0.0,
+        "current_company": 0.0,
+        "current_title": 0.0,
+        "signature_today": 0.0,
+        "requires_sponsorship": 0.0,
+        "veteran_status": 0.0,
+        "education_field": 0.0,
+        "leave_blank": 0.0,
+        "work_authorized": 0.0,
+        "education_school": 0.0,
+        "email": 0.0,
+        "phone": 0.0,
+        "how_did_you_hear": 0.0,
+        "last_name": 0.0,
+        "education_grad_year": 0.0,
+        "education_degree": 0.0,
+        "remote_only": 0.0,
+        "cover_letter_text": 0.0,
+        "full_name": 1.0,
+        "gender": 0.0,
+        "disability_status": 0.0,
+        "race_ethnicity": 0.0,
+        "onsite_ok": 0.0,
+        "answer_authorization_statement": 0.0,
+        "authorized_without_sponsorship": 0.0,
+        "location": 0.0,
+        "address_city": 0.0,
+        "address_country": 0.0,
+        "years_experience": 0.0,
+        "willing_to_relocate": 0.0,
+        "github_url": 0.0,
+        "address_street": 0.0,
+        "address_state": 0.0,
+        "needs_generation": 0.0,
+        "first_name": 0.0,
+        "linkedin_url": 0.0
+      },
+      "confidence": 1.0
+    },
+    "field_1_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "email",
+      "score": null,
+      "probabilities": {
+        "email": 1.0,
+        "leave_blank": 0.0,
+        "needs_generation": 0.0
+      },
+      "confidence": 1.0
+    },
+    "field_2_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "resume_file",
+      "score": null,
+      "probabilities": {
+        "resume_file": 1.0,
+        "leave_blank": 0.0,
+        "needs_generation": 0.0
+      },
+      "confidence": 1.0
+    },
+    "field_3_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "leave_blank",
+      "score": null,
+      "probabilities": {
+        "work_authorized": 0.0,
+        "current_company": 0.0,
+        "address_zip": 0.0,
+        "veteran_status": 0.0,
+        "requires_sponsorship": 0.0,
+        "signature_today": 0.0,
+        "education_field": 0.0,
+        "current_title": 0.0,
+        "leave_blank": 0.89,
+        "education_school": 0.0,
+        "email": 0.0,
+        "how_did_you_hear": 0.0,
+        "phone": 0.0,
+        "last_name": 0.0,
+        "education_grad_year": 0.0,
+        "education_degree": 0.0,
+        "remote_only": 0.0,
+        "cover_letter_text": 0.0,
+        "full_name": 0.0,
+        "gender": 0.0,
+        "disability_status": 0.0,
+        "race_ethnicity": 0.0,
+        "onsite_ok": 0.0,
+        "answer_authorization_statement": 0.0,
+        "authorized_without_sponsorship": 0.0,
+        "location": 0.0,
+        "address_country": 0.0,
+        "address_city": 0.0,
+        "years_experience": 0.0,
+        "willing_to_relocate": 0.0,
+        "github_url": 0.0,
+        "address_street": 0.0,
+        "address_state": 0.0,
+        "needs_generation": 0.11,
+        "first_name": 0.0,
+        "linkedin_url": 0.0
+      },
+      "confidence": 0.88
+    },
+    "field_4_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "leave_blank",
+      "score": null,
+      "probabilities": {
+        "disability_status": 0.0,
+        "current_company": 0.0,
+        "work_authorized": 0.0,
+        "leave_blank": 0.96,
+        "veteran_status": 0.0,
+        "requires_sponsorship": 0.0,
+        "answer_authorization_statement": 0.0,
+        "authorized_without_sponsorship": 0.0,
+        "education_field": 0.0,
+        "current_title": 0.0,
+        "education_school": 0.0,
+        "onsite_ok": 0.0,
+        "location": 0.0,
+        "race_ethnicity": 0.0,
+        "address_country": 0.0,
+        "years_experience": 0.0,
+        "address_city": 0.0,
+        "willing_to_relocate": 0.0,
+        "how_did_you_hear": 0.01,
+        "address_zip": 0.0,
+        "education_grad_year": 0.0,
+        "address_street": 0.0,
+        "education_degree": 0.0,
+        "remote_only": 0.0,
+        "needs_generation": 0.03,
+        "address_state": 0.0,
+        "gender": 0.0
+      },
+      "confidence": 0.94
+    },
+    "field_5_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "leave_blank",
+      "score": null,
+      "probabilities": {
+        "address_zip": 0.0,
+        "phone": 0.0,
+        "leave_blank": 0.91,
+        "needs_generation": 0.04,
+        "education_grad_year": 0.0,
+        "years_experience": 0.05
+      },
+      "confidence": 0.88
+    },
+    "field_6_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "leave_blank",
+      "score": null,
+      "probabilities": {
+        "leave_blank": 0.66,
+        "address_zip": 0.0,
+        "current_title": 0.0,
+        "veteran_status": 0.0,
+        "requires_sponsorship": 0.0,
+        "current_company": 0.0,
+        "education_field": 0.0,
+        "work_authorized": 0.0,
+        "signature_today": 0.29000000000000004,
+        "education_school": 0.0,
+        "email": 0.0,
+        "phone": 0.0,
+        "last_name": 0.0,
+        "how_did_you_hear": 0.0,
+        "education_grad_year": 0.02,
+        "education_degree": 0.0,
+        "full_name": 0.01,
+        "cover_letter_text": 0.0,
+        "remote_only": 0.0,
+        "gender": 0.0,
+        "disability_status": 0.0,
+        "race_ethnicity": 0.0,
+        "onsite_ok": 0.0,
+        "answer_authorization_statement": 0.0,
+        "authorized_without_sponsorship": 0.0,
+        "location": 0.0,
+        "years_experience": 0.0,
+        "address_city": 0.0,
+        "address_country": 0.0,
+        "willing_to_relocate": 0.0,
+        "address_state": 0.0,
+        "address_street": 0.0,
+        "github_url": 0.0,
+        "first_name": 0.0,
+        "needs_generation": 0.01,
+        "linkedin_url": 0.0
+      },
+      "confidence": 0.64
+    },
+    "button_0_role": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "submit",
+      "score": null,
+      "probabilities": {
+        "back": 0.0,
+        "upload": 0.0,
+        "apply_entry": 0.0,
+        "other": 0.0,
+        "submit": 1.0,
+        "advance": 0.0
+      },
+      "confidence": 1.0
+    },
+    "asks_for_prohibited": {
+      "kind": "noul",
+      "noul": 0.98,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    }
+  },
+  "fe15d93836c0cd7b8475468373e8f5e27611af0be9db0c543735d28e2b07c80f": {
+    "page_state": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "application_form",
+      "score": null,
+      "probabilities": {
+        "captcha_or_bot_check": 0.0,
+        "job_posting": 0.0,
+        "application_form": 1.0,
+        "other": 0.0,
+        "error_or_dead": 0.0,
+        "payment_request": 0.0,
+        "confirmation": 0.0,
+        "review_page": 0.0,
+        "login_wall": 0.0,
+        "signup_form": 0.0,
+        "code_gate": 0.0
+      },
+      "confidence": 1.0
+    },
+    "page_job_description": {
+      "kind": "noul",
+      "noul": 0.03,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_apply_entry": {
+      "kind": "noul",
+      "noul": 0.08,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_applicant_details": {
+      "kind": "noul",
+      "noul": 0.99,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_sign_in": {
+      "kind": "noul",
+      "noul": 0.01,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_create_account": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_received": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_already_applied": {
+      "kind": "noul",
+      "noul": 0.01,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_closed": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_code": {
+      "kind": "noul",
+      "noul": 0.01,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_payment": {
+      "kind": "noul",
+      "noul": 0.01,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_review": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_error": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "has_captcha": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    }
+  },
+  "7712c733dd9bb0ed7513b37b8d2a64386849014d76156e26b41551ff617b6751": {
+    "field_0_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "full_name",
+      "score": null,
+      "probabilities": {
+        "leave_blank": 0.0,
+        "full_name": 1.0,
+        "onsite_ok": 0.0,
+        "authorized_without_sponsorship": 0.0,
+        "needs_generation": 0.0,
+        "education_grad_year": 0.0,
+        "address_country": 0.0,
+        "email": 0.0,
+        "location": 0.0,
+        "current_title": 0.0,
+        "requires_sponsorship": 0.0,
+        "race_ethnicity": 0.0,
+        "current_company": 0.0,
+        "years_experience": 0.0,
+        "disability_status": 0.0,
+        "signature_today": 0.0,
+        "address_zip": 0.0,
+        "first_name": 0.0,
+        "education_field": 0.0,
+        "veteran_status": 0.0,
+        "address_state": 0.0,
+        "remote_only": 0.0,
+        "address_street": 0.0,
+        "willing_to_relocate": 0.0,
+        "work_authorized": 0.0,
+        "answer_authorization_statement": 0.0,
+        "linkedin_url": 0.0,
+        "github_url": 0.0,
+        "last_name": 0.0,
+        "address_city": 0.0,
+        "phone": 0.0,
+        "education_school": 0.0,
+        "education_degree": 0.0,
+        "how_did_you_hear": 0.0,
+        "gender": 0.0,
+        "cover_letter_text": 0.0
+      },
+      "confidence": 1.0
+    },
+    "field_1_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "email",
+      "score": null,
+      "probabilities": {
+        "needs_generation": 0.0,
+        "leave_blank": 0.0,
+        "email": 1.0
+      },
+      "confidence": 1.0
+    },
+    "field_2_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "resume_file",
+      "score": null,
+      "probabilities": {
+        "needs_generation": 0.0,
+        "leave_blank": 0.0,
+        "resume_file": 1.0
+      },
+      "confidence": 1.0
+    },
+    "field_3_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "leave_blank",
+      "score": null,
+      "probabilities": {
+        "leave_blank": 0.9,
+        "full_name": 0.0,
+        "onsite_ok": 0.0,
+        "address_country": 0.0,
+        "email": 0.0,
+        "education_grad_year": 0.0,
+        "authorized_without_sponsorship": 0.0,
+        "needs_generation": 0.1,
+        "location": 0.0,
+        "current_title": 0.0,
+        "race_ethnicity": 0.0,
+        "requires_sponsorship": 0.0,
+        "current_company": 0.0,
+        "years_experience": 0.0,
+        "disability_status": 0.0,
+        "signature_today": 0.0,
+        "address_zip": 0.0,
+        "first_name": 0.0,
+        "education_field": 0.0,
+        "veteran_status": 0.0,
+        "address_state": 0.0,
+        "remote_only": 0.0,
+        "work_authorized": 0.0,
+        "willing_to_relocate": 0.0,
+        "address_street": 0.0,
+        "answer_authorization_statement": 0.0,
+        "linkedin_url": 0.0,
+        "github_url": 0.0,
+        "last_name": 0.0,
+        "address_city": 0.0,
+        "phone": 0.0,
+        "education_school": 0.0,
+        "education_degree": 0.0,
+        "how_did_you_hear": 0.0,
+        "gender": 0.0,
+        "cover_letter_text": 0.0
+      },
+      "confidence": 0.88
+    },
+    "field_4_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "leave_blank",
+      "score": null,
+      "probabilities": {
+        "education_field": 0.0,
+        "leave_blank": 0.95,
+        "veteran_status": 0.0,
+        "address_state": 0.0,
+        "onsite_ok": 0.0,
+        "address_country": 0.0,
+        "work_authorized": 0.0,
+        "willing_to_relocate": 0.0,
+        "authorized_without_sponsorship": 0.0,
+        "answer_authorization_statement": 0.0,
+        "education_grad_year": 0.0,
+        "address_street": 0.0,
+        "location": 0.0,
+        "address_city": 0.0,
+        "race_ethnicity": 0.0,
+        "requires_sponsorship": 0.0,
+        "current_company": 0.0,
+        "years_experience": 0.0,
+        "current_title": 0.0,
+        "education_school": 0.0,
+        "needs_generation": 0.05,
+        "address_zip": 0.0,
+        "disability_status": 0.0,
+        "remote_only": 0.0,
+        "education_degree": 0.0,
+        "how_did_you_hear": 0.0,
+        "gender": 0.0
+      },
+      "confidence": 0.93
+    },
+    "field_5_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "leave_blank",
+      "score": null,
+      "probabilities": {
+        "address_zip": 0.0,
+        "needs_generation": 0.05,
+        "leave_blank": 0.91,
+        "phone": 0.0,
+        "years_experience": 0.04,
+        "education_grad_year": 0.0
+      },
+      "confidence": 0.89
+    },
+    "field_6_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "leave_blank",
+      "score": null,
+      "probabilities": {
+        "leave_blank": 0.46,
+        "full_name": 0.0,
+        "onsite_ok": 0.0,
+        "address_country": 0.0,
+        "needs_generation": 0.36,
+        "education_grad_year": 0.0,
+        "authorized_without_sponsorship": 0.0,
+        "email": 0.0,
+        "location": 0.0,
+        "current_title": 0.0,
+        "requires_sponsorship": 0.0,
+        "race_ethnicity": 0.0,
+        "current_company": 0.0,
+        "years_experience": 0.01,
+        "address_zip": 0.0,
+        "signature_today": 0.0,
+        "disability_status": 0.0,
+        "first_name": 0.0,
+        "education_field": 0.0,
+        "veteran_status": 0.0,
+        "address_state": 0.0,
+        "remote_only": 0.0,
+        "answer_authorization_statement": 0.0,
+        "willing_to_relocate": 0.0,
+        "address_street": 0.0,
+        "work_authorized": 0.0,
+        "linkedin_url": 0.0,
+        "github_url": 0.0,
+        "last_name": 0.0,
+        "address_city": 0.0,
+        "phone": 0.0,
+        "education_school": 0.0,
+        "education_degree": 0.0,
+        "how_did_you_hear": 0.0,
+        "gender": 0.0,
+        "cover_letter_text": 0.17
+      },
+      "confidence": 0.43
+    },
+    "button_0_role": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "submit",
+      "score": null,
+      "probabilities": {
+        "other": 0.0,
+        "apply_entry": 0.0,
+        "upload": 0.0,
+        "advance": 0.0,
+        "submit": 1.0,
+        "back": 0.0
+      },
+      "confidence": 1.0
+    },
+    "asks_for_prohibited": {
+      "kind": "noul",
+      "noul": 0.03,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    }
+  },
+  "a2a0a36f7fd5284f1c9b0a32a86ea89df98c1687d1ecb40c758f1b6a262d57e6": {
+    "verify_0": {
+      "kind": "noul",
+      "noul": 0.99,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "placeholder_0": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "verify_1": {
+      "kind": "noul",
+      "noul": 0.99,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "placeholder_1": {
+      "kind": "noul",
+      "noul": 0.07,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    }
+  },
+  "a9b421e72a76a1411856afe3c854024406a0c9a29e6a62a89db81da7aa663f63": {
+    "page_state": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "application_form",
+      "score": null,
+      "probabilities": {
+        "confirmation": 0.0,
+        "login_wall": 0.0,
+        "other": 0.0,
+        "review_page": 0.0,
+        "error_or_dead": 0.0,
+        "job_posting": 0.0,
+        "signup_form": 0.0,
+        "code_gate": 0.0,
+        "application_form": 1.0,
+        "payment_request": 0.0,
+        "captcha_or_bot_check": 0.0
+      },
+      "confidence": 1.0
+    },
+    "page_job_description": {
+      "kind": "noul",
+      "noul": 0.03,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_apply_entry": {
+      "kind": "noul",
+      "noul": 0.09,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_applicant_details": {
+      "kind": "noul",
+      "noul": 0.99,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_sign_in": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_create_account": {
+      "kind": "noul",
+      "noul": 0.03,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_received": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_already_applied": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_closed": {
+      "kind": "noul",
+      "noul": 0.03,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_code": {
+      "kind": "noul",
+      "noul": 0.01,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_payment": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_review": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_error": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "has_captcha": {
+      "kind": "noul",
+      "noul": 0.03,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    }
+  },
+  "1e10ced3e2638075b50e3ee3b41f46cfeca5561163a946ac26de4ab3d3e5538a": {
+    "field_0_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "full_name",
+      "score": null,
+      "probabilities": {
+        "years_experience": 0.0,
+        "race_ethnicity": 0.0,
+        "address_country": 0.0,
+        "work_authorized": 0.0,
+        "address_street": 0.0,
+        "last_name": 0.0,
+        "disability_status": 0.0,
+        "how_did_you_hear": 0.0,
+        "linkedin_url": 0.0,
+        "gender": 0.0,
+        "full_name": 1.0,
+        "answer_authorization_statement": 0.0,
+        "willing_to_relocate": 0.0,
+        "onsite_ok": 0.0,
+        "address_city": 0.0,
+        "github_url": 0.0,
+        "first_name": 0.0,
+        "cover_letter_text": 0.0,
+        "remote_only": 0.0,
+        "veteran_status": 0.0,
+        "needs_generation": 0.0,
+        "signature_today": 0.0,
+        "current_company": 0.0,
+        "location": 0.0,
+        "address_state": 0.0,
+        "education_grad_year": 0.0,
+        "education_school": 0.0,
+        "education_field": 0.0,
+        "phone": 0.0,
+        "current_title": 0.0,
+        "leave_blank": 0.0,
+        "email": 0.0,
+        "education_degree": 0.0,
+        "requires_sponsorship": 0.0,
+        "authorized_without_sponsorship": 0.0,
+        "address_zip": 0.0
+      },
+      "confidence": 1.0
+    },
+    "field_1_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "email",
+      "score": null,
+      "probabilities": {
+        "leave_blank": 0.0,
+        "email": 1.0,
+        "needs_generation": 0.0
+      },
+      "confidence": 1.0
+    },
+    "field_2_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "phone",
+      "score": null,
+      "probabilities": {
+        "leave_blank": 0.0,
+        "needs_generation": 0.0,
+        "phone": 1.0
+      },
+      "confidence": 1.0
+    },
+    "field_3_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "current_company",
+      "score": null,
+      "probabilities": {
+        "years_experience": 0.0,
+        "address_zip": 0.0,
+        "address_country": 0.0,
+        "work_authorized": 0.0,
+        "address_street": 0.0,
+        "last_name": 0.0,
+        "linkedin_url": 0.0,
+        "how_did_you_hear": 0.0,
+        "gender": 0.0,
+        "disability_status": 0.0,
+        "full_name": 0.0,
+        "onsite_ok": 0.0,
+        "willing_to_relocate": 0.0,
+        "answer_authorization_statement": 0.0,
+        "address_city": 0.0,
+        "github_url": 0.0,
+        "first_name": 0.0,
+        "cover_letter_text": 0.0,
+        "remote_only": 0.0,
+        "veteran_status": 0.0,
+        "needs_generation": 0.0,
+        "signature_today": 0.0,
+        "current_company": 0.99,
+        "education_field": 0.0,
+        "address_state": 0.0,
+        "phone": 0.0,
+        "education_school": 0.0,
+        "location": 0.0,
+        "education_grad_year": 0.0,
+        "current_title": 0.0,
+        "leave_blank": 0.01,
+        "education_degree": 0.0,
+        "email": 0.0,
+        "requires_sponsorship": 0.0,
+        "authorized_without_sponsorship": 0.0,
+        "race_ethnicity": 0.0
+      },
+      "confidence": 0.99
+    },
+    "field_4_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "linkedin_url",
+      "score": null,
+      "probabilities": {
+        "leave_blank": 0.0,
+        "github_url": 0.0,
+        "linkedin_url": 1.0,
+        "needs_generation": 0.0
+      },
+      "confidence": 1.0
+    },
+    "field_5_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "resume_file",
+      "score": null,
+      "probabilities": {
+        "leave_blank": 0.0,
+        "needs_generation": 0.0,
+        "resume_file": 1.0
+      },
+      "confidence": 1.0
+    },
+    "field_6_source": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "cover_letter_text",
+      "score": null,
+      "probabilities": {
+        "years_experience": 0.0,
+        "race_ethnicity": 0.0,
+        "address_country": 0.0,
+        "work_authorized": 0.0,
+        "address_street": 0.0,
+        "last_name": 0.0,
+        "disability_status": 0.0,
+        "gender": 0.0,
+        "linkedin_url": 0.0,
+        "how_did_you_hear": 0.0,
+        "full_name": 0.0,
+        "onsite_ok": 0.0,
+        "first_name": 0.0,
+        "answer_authorization_statement": 0.0,
+        "address_city": 0.0,
+        "github_url": 0.0,
+        "willing_to_relocate": 0.0,
+        "cover_letter_text": 0.98,
+        "remote_only": 0.0,
+        "veteran_status": 0.0,
+        "needs_generation": 0.01,
+        "signature_today": 0.0,
+        "current_company": 0.0,
+        "education_field": 0.0,
+        "phone": 0.0,
+        "location": 0.0,
+        "education_school": 0.0,
+        "address_state": 0.0,
+        "education_grad_year": 0.0,
+        "current_title": 0.0,
+        "leave_blank": 0.01,
+        "email": 0.0,
+        "education_degree": 0.0,
+        "address_zip": 0.0,
+        "authorized_without_sponsorship": 0.0,
+        "requires_sponsorship": 0.0
+      },
+      "confidence": 0.97
+    },
+    "button_0_role": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "submit",
+      "score": null,
+      "probabilities": {
+        "upload": 0.0,
+        "submit": 0.8099999999999999,
+        "advance": 0.01,
+        "apply_entry": 0.16,
+        "other": 0.02,
+        "back": 0.0
+      },
+      "confidence": 0.78
+    },
+    "asks_for_prohibited": {
+      "kind": "noul",
+      "noul": 0.03,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    }
   }
 }

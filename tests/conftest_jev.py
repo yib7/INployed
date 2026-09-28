@@ -48,7 +48,6 @@ from __future__ import annotations
 
 import pytest
 
-import jev
 import jev_harness
 
 SESSION_KEY = pytest.StashKey[jev_harness.Session]()
@@ -210,7 +209,7 @@ def pytest_terminal_summary(terminalreporter, config):
     session = _session(config)
     if session is None or not session.soft:
         return
-    usage = jev.usage()
+    usage = session.live_usage()    # the lifetime counter's delta: a reset never hides a request
     replay = session.replay
     hits = replay.hits if replay else 0
     misses = replay.misses if replay else 0

@@ -335,6 +335,10 @@ class Session:
         self.spent_usd = 0.0
         self.requests = 0
         self.stopped: str | None = None
+        # every count here is a delta of the lifetime counter
+        # (`jev.total_usage()`): a runner test that calls `jev.reset_usage()`
+        # never makes the session forget a live request
+        self._usage_start = jev.total_usage()
         self._usage_before: dict | None = None
         self.writer = OutcomesWriter(outcomes_path(self.cache_path)) if self.soft else None
 
@@ -369,12 +373,20 @@ class Session:
         rec = TestRecord(test=nodeid, mode=self.mode)
         self.records[nodeid] = rec
         self.current = rec
-        self._usage_before = jev.usage()
+        self._usage_before = jev.total_usage()
         return rec
+
+    def live_usage(self) -> dict:
+        """{"requests", "input_tokens", "usd"} for the live requests (a dry
+        run's estimated ones) made since the session began."""
+        now = jev.total_usage()
+        tokens = max(0, now["input_tokens"] - self._usage_start["input_tokens"])
+        return {"requests": max(0, now["requests"] - self._usage_start["requests"]),
+                "input_tokens": tokens, "usd": jev.usd_for(tokens)}
 
     def end(self, nodeid: str) -> None:
         if self.current is not None and self.current.test == nodeid:
-            before, after = self._usage_before or jev.usage(), jev.usage()
+            before, after = self._usage_before or jev.total_usage(), jev.total_usage()
             delta = max(0.0, after["usd"] - before["usd"])
             self.spent_usd += delta
             self.requests += max(0, after["requests"] - before["requests"])

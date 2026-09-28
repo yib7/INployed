@@ -6,7 +6,8 @@ shape:
 
 - `TypeSafeJev` wraps `typesafe_sdk.TypeSafeClient` with the model pinned to
   `jev-1.13.0` (thresholds are tuned per version; the docs say pin) and keeps a
-  process-wide usage counter (`usage()`, `reset_usage()`).
+  process-wide usage counter (`usage()`, `reset_usage()`) beside a lifetime
+  one no reset touches (`total_usage()`, what the spend guard reads).
 - `FakeJev` is deterministic and key-free: word overlap between the question
   and the state. It drives the loop in tests and dry runs; its rules are in the
   class docstring so fixtures can be written against them.
@@ -101,31 +102,49 @@ class Jev(Protocol):
 # --- usage counter (process-wide) -----------------------------------------------
 
 _USAGE = {"requests": 0, "input_tokens": 0}
-# The scorer judges from worker threads, so every read and write of the counter
-# holds this lock: no count is lost, and a reader never sees one half counted.
+# The lifetime counter: the same counts, and `reset_usage()` never touches it.
+# A spend guard (`SpendCap`) and a recording's summary measure from it, so a
+# reset anywhere in the process (a test, a per-run report) can never make
+# them forget a live request that was already made.
+_TOTAL = {"requests": 0, "input_tokens": 0}
+# The scorer judges from worker threads, so every read and write of either
+# counter holds this lock: no count is lost, and a reader never sees one half
+# counted.
 _USAGE_LOCK = threading.Lock()
 
 
 def usage() -> dict:
     """{"requests", "input_tokens", "usd"} for every live request this process
-    made. The fake and a replay hit never count."""
+    made since the last `reset_usage()`. The fake and a replay hit never count."""
     with _USAGE_LOCK:
         requests, tokens = _USAGE["requests"], _USAGE["input_tokens"]
     return {"requests": requests, "input_tokens": tokens, "usd": usd_for(tokens)}
 
 
+def total_usage() -> dict:
+    """{"requests", "input_tokens", "usd"} for every live request this process
+    ever made: `usage()` without its resets, so it only grows. A guard reads a
+    delta of it."""
+    with _USAGE_LOCK:
+        requests, tokens = _TOTAL["requests"], _TOTAL["input_tokens"]
+    return {"requests": requests, "input_tokens": tokens, "usd": usd_for(tokens)}
+
+
 def reset_usage() -> None:
+    """Zero `usage()`; `total_usage()` keeps its counts."""
     with _USAGE_LOCK:
         _USAGE["requests"] = 0
         _USAGE["input_tokens"] = 0
 
 
 def count_usage(tokens: int) -> None:
-    """Add one live request of `tokens` input tokens to the process counter."""
+    """Add one live request of `tokens` input tokens to both process counters."""
     tokens = max(0, int(tokens))
     with _USAGE_LOCK:
         _USAGE["requests"] += 1
         _USAGE["input_tokens"] += tokens
+        _TOTAL["requests"] += 1
+        _TOTAL["input_tokens"] += tokens
 
 
 def usd_for(tokens: int | float) -> float:
@@ -1119,7 +1138,8 @@ def record_cap(env: Mapping[str, str] | None = None, *, live: bool = True) -> fl
 class SpendCap:
     """The live judge a recording asks through (`ReplayJev(SpendCap(live,
     cap), cache)`). It counts the live spend since it was made
-    (`usage()`), and a request whose estimated cost (`request_size`, the
+    (`total_usage()`, so a `reset_usage()` anywhere in the process never
+    lowers it), and a request whose estimated cost (`request_size`, the
     whole request, at `PRICE_USD_PER_MTOK`) would take that spend past
     `cap_usd` raises `SpendCapReached` before it leaves; so does every
     request after. A request that raised before the counter saw it (a
@@ -1132,7 +1152,7 @@ class SpendCap:
     def __init__(self, inner: Jev, cap_usd: float):
         self.inner = inner
         self.cap_usd = checked_cap(cap_usd, source="cap_usd")
-        self._start = usage()
+        self._start = total_usage()
         self.reached = False
         self.refused = 0
         self.reason = ""
@@ -1141,11 +1161,11 @@ class SpendCap:
 
     @property
     def spent_usd(self) -> float:
-        return max(0.0, usage()["usd"] - self._start["usd"]) + self.unbilled_usd
+        return max(0.0, total_usage()["usd"] - self._start["usd"]) + self.unbilled_usd
 
     @property
     def requests(self) -> int:
-        return max(0, usage()["requests"] - self._start["requests"]) + self.failed
+        return max(0, total_usage()["requests"] - self._start["requests"]) + self.failed
 
     def judge(self, state: Any, questions: dict[str, dict]) -> dict[str, Answer]:
         spent = self.spent_usd
@@ -1158,13 +1178,13 @@ class SpendCap:
             if not self.reached:
                 self.reached, self.reason = True, reason
             raise SpendCapReached(reason)
-        before = usage()["requests"]
+        before = total_usage()["requests"]
         try:
             return self.inner.judge(state, questions)
         except SpendCapReached:
             raise
         except BaseException:
-            if usage()["requests"] == before:
+            if total_usage()["requests"] == before:
                 # the request may have been billed before it failed
                 self.failed += 1
                 self.unbilled_usd += next_usd

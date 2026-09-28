@@ -693,15 +693,20 @@ class _Billed(jev.FakeJev):
         return super().judge(state, questions)
 
 
-def test_the_jobs_jev_cost_is_stored_and_the_total_printed(context, tmp_path, capsys):
+def test_the_jobs_jev_cost_is_stored_and_the_total_printed(context, tmp_path, capsys,
+                                                           monkeypatch):
     import apply_queue
     _queue_lever(context, tmp_path)
-    jev.reset_usage()
-    try:
-        assert aa.run(["42"], judge=_Billed(), settings={}, context=context) == 0
-        spent = jev.usage()
-    finally:
-        jev.reset_usage()
+    # This file runs inside a recording (jev_harness.RUNNER_TESTS), whose
+    # spend cap and summary read the lifetime counter. `_Billed`'s requests
+    # are not the recording's, so they land on a copy of it, and the cost is
+    # a delta of usage(), never a reset.
+    monkeypatch.setattr(jev, "_TOTAL", dict(jev._TOTAL))
+    before = jev.usage()
+    assert aa.run(["42"], judge=_Billed(), settings={}, context=context) == 0
+    after = jev.usage()
+    spent = {"requests": after["requests"] - before["requests"],
+             "usd": after["usd"] - before["usd"]}
     got = apply_queue.load()["jobs"][0]["difficulty"]
     assert spent["requests"] >= 1
     assert got["jev_usd"] == pytest.approx(spent["usd"])

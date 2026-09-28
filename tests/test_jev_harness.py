@@ -39,8 +39,9 @@ QUESTIONS = {
 
 
 class _Bumping:
-    """A stand-in for the live judge: answers like the fake and adds
-    `tokens` input tokens to the process usage counter per call."""
+    """A stand-in for the live judge: answers like the fake and counts one
+    live request of `tokens` input tokens per call (`jev.count_usage`, so
+    both the resettable counter and the lifetime one see it)."""
 
     def __init__(self, tokens=1_000_000):
         self.tokens = tokens
@@ -48,8 +49,7 @@ class _Bumping:
 
     def judge(self, state, questions):
         self.calls += 1
-        jev._USAGE["requests"] += 1
-        jev._USAGE["input_tokens"] += self.tokens
+        jev.count_usage(self.tokens)
         return jev.FakeJev().judge(state, questions)
 
 
@@ -217,7 +217,7 @@ def test_cap_guard_counts_only_the_spend_inside_tests(tmp_path, monkeypatch):
     monkeypatch.setattr(jev_harness, "live_judge", lambda: live)
     s = jev_harness.Session("record", tmp_path / "cache.json", cap_usd=1.0,
                             env={jev.KEY_ENV: "k-test"})
-    jev._USAGE["input_tokens"] += 50_000_000     # spent by something else first
+    jev.count_usage(50_000_000)                  # spent by something else first
     s.begin("t::a")
     s.end("t::a")
     assert s.spent_usd == 0.0 and s.skip_reason() is None
@@ -265,6 +265,99 @@ def test_spend_cap_counts_only_the_spend_since_it_was_made():
     cap = jev.SpendCap(live, cap_usd=_one_request_usd() * 1.5)
     cap.judge(STATE, QUESTIONS)
     assert live.calls == 1 and cap.spent_usd == pytest.approx(_one_request_usd())
+
+
+def test_spend_cap_keeps_the_spend_made_before_a_reset_of_the_usage_counter():
+    # a runner test calls jev.reset_usage() inside a recording: the spend
+    # before it still counts, so the reset never raises the cap
+    one = _one_request_usd()
+    live = _Sized()
+    cap = jev.SpendCap(live, cap_usd=one * 1.5)
+    cap.judge(STATE, QUESTIONS)
+    spent = cap.spent_usd
+    jev.reset_usage()
+    assert jev.usage()["requests"] == 0
+    assert cap.spent_usd == pytest.approx(spent) == pytest.approx(one)
+    with pytest.raises(jev.SpendCapReached):
+        cap.judge(STATE, QUESTIONS)     # the spend before the reset plus this one's estimate
+    assert live.calls == 1, "the request the cap refuses never leaves"
+
+
+def test_spend_cap_requests_are_unchanged_by_a_reset():
+    one = _one_request_usd()
+    cap = jev.SpendCap(_Sized(), cap_usd=one * 10)
+    cap.judge(STATE, QUESTIONS)
+    cap.judge(STATE, QUESTIONS)
+    jev.reset_usage()
+    assert cap.requests == 2
+    cap.judge(STATE, QUESTIONS)
+    assert cap.requests == 3 and cap.spent_usd == pytest.approx(3 * one)
+
+
+def test_spend_cap_counts_a_failed_request_when_a_reset_ran_inside_it():
+    # the inner judge resets the counter and raises before counting: the
+    # request may still have been billed, so it counts at its estimate
+    class _CountedResetFailed:
+        def judge(self, state, questions):
+            jev.count_usage(1)
+            jev.reset_usage()
+            raise TimeoutError("the service timed out after the request left")
+
+    class _ResetFailed:
+        def judge(self, state, questions):
+            jev.reset_usage()
+            raise TimeoutError("the service timed out after the request left")
+
+    jev.count_usage(5)                  # the resettable counter is above 0 at the start
+    counted = jev.SpendCap(_CountedResetFailed(), cap_usd=1.0)
+    with pytest.raises(TimeoutError):
+        counted.judge(STATE, QUESTIONS)
+    assert counted.failed == 0 and counted.requests == 1, "the counter saw it: no second count"
+    jev.count_usage(5)
+    uncounted = jev.SpendCap(_ResetFailed(), cap_usd=1.0)
+    with pytest.raises(TimeoutError):
+        uncounted.judge(STATE, QUESTIONS)
+    assert uncounted.failed == 1 and uncounted.requests == 1
+    assert uncounted.spent_usd == pytest.approx(_one_request_usd())
+
+
+def test_the_session_accounting_survives_a_reset_mid_session(tmp_path, monkeypatch):
+    # a recording made 9 live requests and reported 2: a runner test reset
+    # the counter between them
+    live = _Bumping(tokens=15_000_000)      # 0.63 USD per call
+    monkeypatch.setattr(jev_harness, "live_judge", lambda: live)
+    s = jev_harness.Session("record", tmp_path / "cache.json", cap_usd=1.0,
+                            env={jev.KEY_ENV: "k-test"})
+    s.begin("t::a")
+    s.judge().judge(STATE, QUESTIONS)
+    s.end("t::a")
+    s.begin("t::b")
+    jev.reset_usage()                       # a test that resets the counter
+    s.end("t::b")
+    rec = s.begin("t::c")
+    s.judge().judge({"other": 1}, QUESTIONS)
+    jev.reset_usage()                       # a reset inside the test that spent
+    s.end("t::c")
+    assert live.calls == 2
+    assert s.requests == 2 and s.spent_usd == pytest.approx(1.26)
+    assert rec.usd == pytest.approx(0.63) and s.records["t::b"].usd == 0.0
+    assert s.cap.requests == 2 and s.cap.spent_usd == pytest.approx(1.26)
+    assert s.live_usage() == {"requests": 2, "input_tokens": 30_000_000,
+                              "usd": pytest.approx(1.26)}
+    reason = s.skip_reason()
+    assert reason and jev_harness.CAP_ENV in reason and "1.26" in reason
+
+
+def test_the_session_live_usage_counts_only_since_the_session_began(tmp_path):
+    jev.count_usage(50_000_000)             # spent before the session
+    s = jev_harness.Session("record", tmp_path / "cache.json", cap_usd=1.0, env={}, dry=True)
+    assert s.live_usage() == {"requests": 0, "input_tokens": 0, "usd": 0.0}
+    s.begin("t::a")
+    s.judge().judge(STATE, QUESTIONS)
+    jev.reset_usage()
+    s.end("t::a")
+    size = jev.request_size(STATE, QUESTIONS)[1]
+    assert s.live_usage() == {"requests": 1, "input_tokens": size, "usd": jev.usd_for(size)}
 
 
 def test_spend_cap_is_a_replay_miss_for_the_harness_and_a_judge_unavailable_for_the_run():
@@ -803,6 +896,45 @@ def test_fixture_in_a_dry_record_estimates_the_requests_a_recording_makes(
     # the three tests ask one request between them: the first asks, the rest replay
     assert "estimated live requests 1" in out and "jev record (dry run)" in out
     assert not (tmp_path / "cache.json").exists()
+
+
+_INNER_RESET = '''
+import jev
+pytest_plugins = ["conftest_jev"]
+
+STATE = {STATE!r}
+QUESTIONS = {QUESTIONS!r}
+
+def test_one(jev_judge):
+    jev_judge().judge(STATE, QUESTIONS)
+    jev.reset_usage()
+
+def test_two(jev_judge):
+    jev_judge().judge({{"other": 1}}, QUESTIONS)
+
+def test_three(jev_judge):
+    jev.reset_usage()
+'''
+
+
+def test_the_record_summary_counts_every_live_request_across_a_reset(
+        pytester, monkeypatch, tmp_path):
+    # the summary read the resettable counter: a recording made 2 requests
+    # and reported 0 after a runner test reset it
+    monkeypatch.setenv(jev_harness.MODE_ENV, "record")
+    monkeypatch.setenv(jev_harness.DRY_ENV, "1")
+    monkeypatch.delenv(jev.KEY_ENV, raising=False)
+    monkeypatch.setenv(jev_harness.CAP_ENV, "1.00")
+    monkeypatch.setenv(jev.CACHE_ENV, str(tmp_path / "cache.json"))
+    pytester.syspathinsert(TESTS)
+    pytester.syspathinsert(REPO / "local")
+    pytester.makepyfile(test_inner=_INNER_RESET.format(STATE=STATE, QUESTIONS=QUESTIONS))
+    result = pytester.runpytest_inprocess("-q", "-rs", "-p", "no:cacheprovider")
+    result.assert_outcomes(passed=3)
+    tokens = (jev.request_size(STATE, QUESTIONS)[1]
+              + jev.request_size({"other": 1}, QUESTIONS)[1])
+    out = result.stdout.str()
+    assert f"estimated live requests 2, {tokens} input tokens" in out, out
 
 
 # --- the thresholds helper ------------------------------------------------------------------

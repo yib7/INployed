@@ -552,6 +552,50 @@ def test_a_reset_never_lands_inside_a_count(monkeypatch):
     assert u["input_tokens"] == tokens * u["requests"]
 
 
+def test_the_lifetime_counter_keeps_every_count_across_threads_and_resets(monkeypatch):
+    """total_usage() counts every live request the process made: counts from
+    worker threads are never lost, never read half counted, and a reset of
+    usage() running alongside them never touches it."""
+    monkeypatch.setattr(jev, "_USAGE", _SlowReads(requests=0, input_tokens=0))
+    monkeypatch.setattr(jev, "_TOTAL", _SlowReads(requests=0, input_tokens=0))
+    counters, per_thread, tokens = 3, 25, 10
+    torn = []
+
+    def count():
+        for _ in range(per_thread):
+            jev.count_usage(tokens)
+
+    def read():
+        for _ in range(per_thread):
+            t = jev.total_usage()
+            if t["input_tokens"] != tokens * t["requests"]:
+                torn.append(t)
+
+    def reset():
+        for _ in range(20):
+            jev.reset_usage()
+            time.sleep(0.001)
+
+    _run_threads(*[count] * counters, read, reset)
+    assert torn == []
+    t = jev.total_usage()
+    assert t == {"requests": counters * per_thread,
+                 "input_tokens": counters * per_thread * tokens,
+                 "usd": jev.usd_for(counters * per_thread * tokens)}
+
+
+def test_reset_usage_leaves_the_lifetime_counter_alone():
+    before = jev.total_usage()
+    jev.count_usage(1_000_000)
+    jev.count_usage(500_000)
+    jev.reset_usage()
+    assert jev.usage() == {"requests": 0, "input_tokens": 0, "usd": 0.0}
+    after = jev.total_usage()
+    assert after["requests"] - before["requests"] == 2
+    assert after["input_tokens"] - before["input_tokens"] == 1_500_000
+    assert after["usd"] - before["usd"] == pytest.approx(jev.usd_for(1_500_000))
+
+
 def test_typesafe_reads_the_key_from_the_environment(monkeypatch):
     record = []
     _fake_sdk(monkeypatch, _sdk_response(), record)

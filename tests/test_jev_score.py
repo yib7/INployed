@@ -394,6 +394,34 @@ def test_a_code_cap_never_raises_the_score():
     assert reason == "No match: a field outside data, analytics and software."
 
 
+def test_a_clearance_cap_never_raises_the_score():
+    """Same as the years cap above, for the clearance cap: a `fit` low enough
+    to give 1 on its own stays 1, and the reason never names the clearance."""
+    facts = dict(NO_FACTS, clearance=True)
+    got, reason = jev_score.compose_stage1(facts, _reads(fit=0.0, main_factor="different_field"))
+    assert got == 1
+    assert reason == "No match: a field outside data, analytics and software."
+
+
+def test_an_advanced_degree_cap_never_raises_the_score():
+    """Same as the years cap above, for the advanced-degree cap."""
+    facts = dict(NO_FACTS, advanced_degree=True)
+    got, reason = jev_score.compose_stage1(facts, _reads(fit=0.0, main_factor="different_field"))
+    assert got == 1
+    assert reason == "No match: a field outside data, analytics and software."
+
+
+def test_stage1_min_years_zero_applies_no_cap():
+    """min_years=0 means the posting states no experience bar; unlike an
+    unstated years fact (None), it is still a real value, but `_years_cap`
+    finds no floor at or below 0 (the lowest is 1), so it caps nothing."""
+    facts = dict(NO_FACTS, min_years=0)
+    got, reason = jev_score.compose_stage1(facts, _reads(fit=1.0, main_factor="skills_fit"))
+    assert got == 5
+    assert "year" not in reason
+    assert reason == "Strong match: no experience bar, and the skills, tools and field line up."
+
+
 def test_stage1_uses_the_lowest_cap_when_several_apply():
     facts = dict(NO_FACTS, min_years=3, clearance=True, advanced_degree=True)
     got, reason = jev_score.compose_stage1(facts, _reads(fit=1.0))
@@ -764,8 +792,8 @@ def _reqs(*musts):
     return [Req(f"Requirement {i}", m) for i, m in enumerate(musts)]
 
 
-def _reads2(met, must=None, deep_fit=1.0, recommendation="apply"):
-    reads = {"deep_fit": deep_fit, "recommendation": recommendation}
+def _reads2(met, must=None, deep_fit=1.0):
+    reads = {"deep_fit": deep_fit}
     for i, p in enumerate(met):
         reads[f"req_{i}_met"] = p
         reads[f"req_{i}_must"] = 0.9 if must is None else must[i]
@@ -819,25 +847,34 @@ def test_stage2_lines_are_trimmed_and_keep_the_separator_free():
 
 
 @pytest.mark.parametrize("frac,deep", [
-    (0.0, 1), (0.05, 1),                # value 0: the low end
-    (0.5, 6),                           # a middle value, and the half-up boundary (5.5 -> 6)
-    (0.95, 10), (1.0, 10),              # value 4: the high end
+    (0.0, 7),                           # value 0: the low end
+    (2 / 7 - 1e-9, 7),                  # just below the 7/8 boundary
+    (2 / 7, 8),                         # value 8/7 (~1.142857): exactly the boundary
+    (0.5, 8),                           # value 2: a middle value
+    (1.0, 10),                          # value 4: the high end
 ])
 def test_stage2_deep_score_maps_deep_fit_to_one_to_ten(frac, deep):
-    """`floor(DEEP_BASE + DEEP_SPAN * value / 4 + 0.5)`, DEEP_BASE 1.0, DEEP_SPAN
-    9.0; `deep_fit` already arrives scaled to 0-1 (value / 4)."""
+    """`floor(DEEP_BASE + DEEP_SPAN * value / 4 + 0.5)`, DEEP_BASE 6.5, DEEP_SPAN
+    3.5; `deep_fit` already arrives scaled to 0-1 (value / 4)."""
     reqs = _reqs(True)
     got = jev_score.compose_stage2(reqs, _reads2([1.0], deep_fit=frac))
     assert got["deep_score"] == deep
 
 
-@pytest.mark.parametrize("rec", ["apply", "consider", "skip"])
-def test_stage2_recommendation_is_a_passthrough_of_jevs_choice(rec):
-    """No code derivation: `recommendation` is whatever Jev picked, independent
-    of the per-line met reads (all unmet here)."""
+@pytest.mark.parametrize("deep,rec", [
+    (5, "skip"), (6, "consider"), (7, "consider"), (8, "apply"), (10, "apply"),
+])
+def test_recommend_reads_the_band_off_the_deep_score(deep, rec):
+    assert jev_score.recommend(deep) == rec
+
+
+def test_stage2_recommendation_is_read_off_the_composed_deep_score():
+    """No Choice from Jev: `recommendation` is `recommend(deep_score)`, so a
+    high `deep_fit` gives "apply" independent of the per-line met reads (all
+    unmet here)."""
     reqs = _reqs(True)
-    got = jev_score.compose_stage2(reqs, _reads2([0.1], recommendation=rec))
-    assert got["recommendation"] == rec
+    got = jev_score.compose_stage2(reqs, _reads2([0.1], deep_fit=1.0))
+    assert got["recommendation"] == "apply" == jev_score.recommend(got["deep_score"])
 
 
 def test_stage2_findings_carry_full_line_texts_musts_first():
@@ -859,7 +896,7 @@ def test_stage2_findings_keep_the_full_text_the_trimmed_strengths_string_cuts():
 
 
 def test_stage2_with_zero_requirement_lines_has_empty_strengths_gaps_and_findings():
-    got = jev_score.compose_stage2([], {"deep_fit": 1.0, "recommendation": "apply"})
+    got = jev_score.compose_stage2([], {"deep_fit": 1.0})
     assert got["deep_score"] == 10 and got["recommendation"] == "apply"
     assert got["strengths"] == "" and got["gaps"] == ""
     assert got["findings"] == {"met": [], "unmet_must": [], "unmet_nice": []}
@@ -868,13 +905,10 @@ def test_stage2_with_zero_requirement_lines_has_empty_strengths_gaps_and_finding
 def test_stage2_asks_the_must_read_only_for_a_line_the_code_gives_no_cue():
     reqs = [Req("Python and SQL", True), Req("Tableau", None), Req("Spark is a plus", False)]
     qs = jev_score.stage2_questions(reqs)
-    assert set(qs) == {"req_0_met", "req_1_met", "req_1_must", "req_2_met",
-                       "deep_fit", "recommendation"}
+    assert set(qs) == {"req_0_met", "req_1_met", "req_1_must", "req_2_met", "deep_fit"}
     assert all(qs[k]["type"] == "noul" for k in ("req_0_met", "req_1_met", "req_1_must",
                                                   "req_2_met"))
     assert qs["deep_fit"]["type"] == "score" and len(qs["deep_fit"]["criteria"]) == 5
-    assert qs["recommendation"]["type"] == "choice"
-    assert list(qs["recommendation"]["criteria"]) == ["apply", "consider", "skip"]
     assert "Python and SQL" in qs["req_0_met"]["instructions"]
     assert "`resume`" in qs["req_0_met"]["instructions"]
     assert "Tableau" in qs["req_1_must"]["instructions"]
@@ -882,8 +916,8 @@ def test_stage2_asks_the_must_read_only_for_a_line_the_code_gives_no_cue():
     assert "`candidate`" in qs["deep_fit"]["instructions"]["question"]
 
 
-def test_stage2_questions_with_zero_lines_asks_only_deep_fit_and_recommendation():
-    assert set(jev_score.stage2_questions([])) == {"deep_fit", "recommendation"}
+def test_stage2_questions_with_zero_lines_asks_only_deep_fit():
+    assert set(jev_score.stage2_questions([])) == {"deep_fit"}
 
 
 def test_stage2_reads_and_composes_without_must_answers_for_cued_lines():
@@ -893,8 +927,7 @@ def test_stage2_reads_and_composes_without_must_answers_for_cued_lines():
                              "req_2_met": 0.2}).judge({}, qs)
     reads = jev_score.stage2_reads(answers, qs, len(reqs))
     assert reads is not None
-    assert set(reads) == {"req_0_met", "req_1_met", "req_1_must", "req_2_met",
-                          "deep_fit", "recommendation"}
+    assert set(reads) == {"req_0_met", "req_1_met", "req_1_must", "req_2_met", "deep_fit"}
     assert jev_score.compose_stage2(reqs, reads)["gaps"] == "Python and SQL"
 
 
@@ -914,24 +947,23 @@ JOB2_MD = ("## Responsibilities\n- Build dashboards\n\n"
 
 def test_stage2_sends_one_request_and_composes_the_columns():
     judge = ScriptedJudge({"req_0_met": 0.9, "req_1_met": 0.8, "req_2_met": 0.2,
-                           "req_3_met": 0.1, "deep_fit": 3, "recommendation": "consider"})
+                           "req_3_met": 0.1, "deep_fit": 3})
     got = jev_score.stage2(judge, {"md": JOB2_MD, "facts": NO_FACTS}, RESUME)
     assert len(judge.calls) == 1
     state, questions = judge.calls[0]
     assert set(state) == {"candidate", "resume", "job"}
-    assert len(questions) == 4 + 2        # every line has a heading cue: no must question
+    assert len(questions) == 4 + 1        # every line has a heading cue: no must question
     assert set(got) == {"deep_score", "strengths", "gaps", "recommendation", "findings"}
     assert got["strengths"] == "Python and SQL | Tableau or Power BI"
     assert got["gaps"] == "Statistics coursework"       # Spark: the heading says preferred
-    assert got["recommendation"] == "consider"
-    assert 1 <= got["deep_score"] <= 10
+    assert got["deep_score"] == 9                       # frac 3/4: floor(6.5 + 3.5*0.75 + 0.5)
+    assert got["recommendation"] == "apply"
 
 
 def test_stage2_runs_with_fewer_than_three_requirement_lines():
-    """The old few-lines LLM handoff is gone: `deep_fit` and `recommendation`
-    need no requirement lines at all."""
-    judge = ScriptedJudge({"req_0_met": 0.9, "req_1_met": 0.9, "deep_fit": 4,
-                           "recommendation": "apply"})
+    """The old few-lines LLM handoff is gone: `deep_fit` needs no requirement
+    lines at all."""
+    judge = ScriptedJudge({"req_0_met": 0.9, "req_1_met": 0.9, "deep_fit": 4})
     md = "## Requirements\n- Python\n- SQL\n\nA paragraph about the team."
     got = jev_score.stage2(judge, md, RESUME)
     assert got is not None and got["recommendation"] == "apply"
@@ -939,20 +971,19 @@ def test_stage2_runs_with_fewer_than_three_requirement_lines():
 
 
 def test_stage2_runs_with_zero_requirement_lines():
-    judge = ScriptedJudge({"deep_fit": 2, "recommendation": "skip"})
+    judge = ScriptedJudge({"deep_fit": 2})
     md = "A paragraph about the team with no bulleted list or heading at all."
     got = jev_score.stage2(judge, md, RESUME)
     assert got is not None
     assert got["strengths"] == "" and got["gaps"] == ""
     assert got["findings"] == {"met": [], "unmet_must": [], "unmet_nice": []}
     _state, questions = judge.calls[0]
-    assert set(questions) == {"deep_fit", "recommendation"}
+    assert set(questions) == {"deep_fit"}
 
 
 @pytest.mark.parametrize("table", [
     {"req_1_met": 1.5},
     {"deep_fit": 7},
-    {"recommendation": "astrology"},
 ])
 def test_stage2_returns_none_on_a_read_it_cannot_use(table):
     assert jev_score.stage2(ScriptedJudge(table), JOB2_MD, RESUME) is None

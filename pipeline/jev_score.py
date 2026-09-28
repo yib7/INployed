@@ -9,8 +9,10 @@ for that job.
 
 Cycle 20 rebuilt stage 1 and stage 2 to ask Jev the same rubric the LLM stage
 prompts use, on Jev's own answer types (a Score for the 1-5 and the deep
-score, a Choice for the main factor and the recommendation). Cycle 19's
-narrow reads and fitted weights are gone. See
+score, a Choice for the main factor). Cycle 19's narrow reads and fitted
+weights are gone. SP3 tuned the deep score's map against Gemini's own deep
+score and moved the recommendation to a code read of the composed deep
+score (`recommend`): Jev no longer picks it as a Choice. See
 `docs/superpowers/specs/2026-09-28-jev-scorer-mirror-design.md` for the
 rubric text this module copies verbatim.
 
@@ -51,13 +53,22 @@ ADVANCED_DEGREE_CAP = 2         # a hard master's/PhD requirement the candidate 
 SCORE_LABELS: dict[int, str] = {1: "No match", 2: "Weak match", 3: "Borderline",
                                 4: "Good match", 5: "Strong match"}
 
-# Stage 2 asks Jev the stage 2 rubric directly (`deep_fit`, a five-level Score, and
-# `recommendation`, a Choice Jev picks outright: no code-derived recommendation).
-# `deep_fit`'s value maps to 1-10 by `floor(DEEP_BASE + DEEP_SPAN * value / 4 +
-# 0.5)`. DEEP_BASE and DEEP_SPAN are placeholders until SP3's live check against
-# Gemini's stage 2 scores; SP3 may retune them from the cached answers.
-DEEP_BASE = 1.0
-DEEP_SPAN = 9.0
+# Stage 2 asks Jev the stage 2 rubric directly (`deep_fit`, a five-level Score);
+# the recommendation is no longer a Choice Jev picks, it is read off the
+# composed deep score (see RECOMMEND_APPLY, RECOMMEND_CONSIDER and `recommend`
+# below). `deep_fit`'s value maps to 1-10 by `floor(DEEP_BASE + DEEP_SPAN *
+# value / 4 + 0.5)`. Tuned 2026-09-28 against Gemini's deep score on 321
+# stage 2 jobs (two samples), mean gap 0.52 / 0.53; Jev's `deep_fit` reads a
+# mixed fit where Gemini gives about 8 of 10, so the map starts high. With
+# these values a stage 2 deep score lands on 7 to 10.
+DEEP_BASE = 6.5
+DEEP_SPAN = 3.5
+# The recommendation is read off the composed deep score: apply at
+# RECOMMEND_APPLY or more, consider at RECOMMEND_CONSIDER or more, skip
+# below; 85.1% / 81.9% agreement with Gemini, where Jev's own apply /
+# consider / skip Choice agreed on 29.2% / 30.6%.
+RECOMMEND_APPLY = 8
+RECOMMEND_CONSIDER = 6
 MIN_PREFERRED_LINES = 3         # requirement_lines(): below this many heading bullets,
                                  # other sections' bullets fill in too (unrelated to any
                                  # stage 2 minimum: stage 2 now runs on 0 to 30 lines)
@@ -688,21 +699,13 @@ DEEP_FIT_INSTRUCTIONS: dict[str, str] = {
     "ignore": "Company descriptions, benefits and application instructions.",
 }
 
-RECOMMENDATION_INSTRUCTIONS = ("Should the candidate in `candidate` and `resume` apply to "
-                               "the job in `job`?")
-
-RECOMMENDATION_OPTIONS: dict[str, str] = {
-    "apply": "A clear fit: the candidate should prioritize applying.",
-    "consider": "A mixed fit: worth applying depending on the candidate's other options.",
-    "skip": "The gaps are too large, even though the job looked like a fit at first.",
-}
-
 
 def stage2_questions(reqs: Sequence[Req]) -> dict[str, dict]:
     """A met noul per requirement line, a must noul for each line the code gives
-    no cue, `deep_fit` (a Score on DEEP_FIT_LEVELS) and `recommendation` (a
-    Choice among RECOMMENDATION_OPTIONS), asked in one request. `reqs` may be
-    empty: `deep_fit` and `recommendation` need no requirement lines."""
+    no cue, and `deep_fit` (a Score on DEEP_FIT_LEVELS), asked in one request.
+    `reqs` may be empty: `deep_fit` needs no requirement lines. The
+    recommendation is no longer asked of Jev as a Choice; `compose_stage2`
+    reads it off the composed deep score (`recommend`)."""
     qs: dict[str, dict] = {}
     for i, req in enumerate(reqs):
         text = _cut(req.text, REQ_TEXT_CHARS)
@@ -724,18 +727,15 @@ def stage2_questions(reqs: Sequence[Req]) -> dict[str, dict]:
         "instructions": dict(DEEP_FIT_INSTRUCTIONS),
         "criteria": list(DEEP_FIT_LEVELS),
     }
-    qs["recommendation"] = {
-        "type": "choice",
-        "instructions": RECOMMENDATION_INSTRUCTIONS,
-        "criteria": dict(RECOMMENDATION_OPTIONS),
-    }
     return qs
 
 
 def stage2_reads(answers: Mapping[str, Any], questions: Mapping[str, dict],
                  lines: int) -> dict | None:
     """The reads `compose_stage2` takes, or None when any answer is unusable.
-    A line's must read is taken only when `questions` asked it."""
+    A line's must read is taken only when `questions` asked it. No
+    `recommendation` read: `compose_stage2` derives it from the composed
+    deep score."""
     reads: dict[str, Any] = {}
     for i in range(lines):
         for part in ("met", "must"):
@@ -743,8 +743,6 @@ def stage2_reads(answers: Mapping[str, Any], questions: Mapping[str, dict],
             if part == "met" or qid in questions:
                 reads[qid] = _noul_read(answers.get(qid))
     reads["deep_fit"] = _score_read(answers.get("deep_fit"), len(questions["deep_fit"]["criteria"]))
-    reads["recommendation"] = _choice_read(answers.get("recommendation"),
-                                           questions["recommendation"]["criteria"])
     return None if any(v is None for v in reads.values()) else reads
 
 
@@ -753,16 +751,28 @@ def _joined(lines: list[str]) -> str:
     return " | ".join(_cut(t.replace("|", "/"), LINE_CHARS) for t in lines[:LIST_MAX])
 
 
+def recommend(deep: int) -> str:
+    """The recommendation read off a composed deep score: apply at
+    RECOMMEND_APPLY or more, consider at RECOMMEND_CONSIDER or more, skip
+    below. Pure: the constants at the top of the module."""
+    if deep >= RECOMMEND_APPLY:
+        return "apply"
+    if deep >= RECOMMEND_CONSIDER:
+        return "consider"
+    return "skip"
+
+
 def compose_stage2(reqs: Sequence[Req], reads: Mapping[str, Any]) -> dict:
     """{"deep_score", "strengths", "gaps", "recommendation", "findings"} from the
-    requirement lines and Jev's reads (`req_{i}_met`, `req_{i}_must` 0-1,
-    `deep_fit` 0-1 and `recommendation`, a passthrough of Jev's own choice). A
-    line's code cue decides whether it is a must-have and beats any
-    `req_{i}_must` read; a line with no cue and no read counts as one.
-    `deep_score` maps `deep_fit`'s value (0-4) to 1-10 by
+    requirement lines and Jev's reads (`req_{i}_met`, `req_{i}_must` 0-1 and
+    `deep_fit` 0-1). A line's code cue decides whether it is a must-have and
+    beats any `req_{i}_must` read; a line with no cue and no read counts as
+    one. `deep_score` maps `deep_fit`'s value (0-4) to 1-10 by
     `floor(DEEP_BASE + DEEP_SPAN * value / 4 + 0.5)`; since `deep_fit` already
     arrives scaled to 0-1 (value / 4), that is `floor(DEEP_BASE + DEEP_SPAN *
-    deep_fit + 0.5)`. `findings` carries the full, unjoined line texts (met =
+    deep_fit + 0.5)`. `recommendation` is `recommend(deep_score)`: apply,
+    consider or skip by where the composed deep score falls, no longer a
+    Choice Jev picks. `findings` carries the full, unjoined line texts (met =
     must-haves first, as `strengths` orders them) for the writer (SP2). Pure:
     the rules and constants at the top of the module."""
     lines = []
@@ -782,7 +792,7 @@ def compose_stage2(reqs: Sequence[Req], reads: Mapping[str, Any]) -> dict:
     findings = {"met": list(strengths), "unmet_must": list(gaps_must),
                "unmet_nice": list(gaps_nice)}
     return {"deep_score": deep, "strengths": _joined(strengths), "gaps": _joined(gaps_must),
-            "recommendation": str(reads["recommendation"]), "findings": findings}
+            "recommendation": recommend(deep), "findings": findings}
 
 
 def stage2(judge: Any, job: Any, resume: str) -> dict | None:
@@ -791,8 +801,8 @@ def stage2(judge: Any, job: Any, resume: str) -> dict | None:
     path: no judge, a request that failed or did not fit, an answer that could
     not be read. `requirement_lines()` may find zero lines (0 to
     MAX_REQUIREMENT_LINES); zero lines means no per-line questions and empty
-    strengths and gaps, but `deep_fit` and `recommendation` still run. `job` is
-    as for `stage1`."""
+    strengths and gaps, but `deep_fit` still runs, and `recommendation` is
+    read off its composed deep score. `job` is as for `stage1`."""
     if judge is None:
         return None
     md, _facts = _job_parts(job)

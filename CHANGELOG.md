@@ -24,7 +24,7 @@ and the old Claude-in-Chrome auto-apply is gone.
 - **Jev scoring** (`pipeline/jev_score.py`). Each job's stage 1 and stage 2 go to Jev first,
   and code composes the same score columns the LLM writes; the LLM stage runs only for the
   jobs Jev could not score. The scorer decides for itself: `SCORE_USE_JEV`, else
-  `local/config.json` beside the repo, else off, so the VM stays on Gemini. `run_stats.csv`
+  the repo's own `local/config.json`, else off, so the VM stays on Gemini. `run_stats.csv`
   gains six `jev_*` columns and the run prints how many jobs Jev scored per stage, the cost,
   and the fallbacks. `scripts/jev_score_calibrate.py --live` compares Jev's scores with the
   Gemini scores in a master under a spend cap.
@@ -70,7 +70,7 @@ and the old Claude-in-Chrome auto-apply is gone.
 ### Changed
 
 - **Settings order**: Jev comes first, each provider selector is the first row of its
-  section (**Résumé tailor provider** leads the section now titled *Résumé tailor*, **Scoring
+  section (**Resume tailor provider** leads the section now titled *Résumé tailor*, **Scoring
   provider** leads Scoring), and the Auto-apply judge row moved under *Show advanced
   settings*.
 - **Add job by hand** has one **Add and tailor** button: the job is saved and tailored at
@@ -106,8 +106,8 @@ and the old Claude-in-Chrome auto-apply is gone.
   opener gets its own faithfulness check; best of three keeps the single rephrase call once
   the breaker is open; every repaired cover letter goes back through the style gate; the ATS
   meaning line counts every literal match. The faithfulness check flags only a sure
-  unsupported or contradicted pick or an inflation, and the verb pick asks one choice over
-  at most 60 verbs.
+  unsupported or contradicted pick or an inflation, and the verb pick asks for the category first,
+  then one verb among its unused ones, halving that list only when the request would not fit.
 - **Scoring with the Claude provider falling back to Gemini** now sends the Gemini stage
   models.
 - **Jev refuses a choice past 255 options** before sending it.

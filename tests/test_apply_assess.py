@@ -728,7 +728,6 @@ def test_an_unknown_job_id_is_named(context, tmp_path, capsys):
     assert "job 7 is not in the queue" in capsys.readouterr().out
 
 
-@pytest.mark.jev_unrecorded
 def test_the_real_judge_reads_a_lever_form(context, tmp_path, jev_judge):
     _serve(context, {"/fabrikam/1/apply": _form("lever_single.html")},
            host="https://jobs.lever.co")

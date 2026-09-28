@@ -162,12 +162,12 @@ def _no_sleep(seconds):
     pytest timeout when the live judge reads a fixture differently."""
 
 
-def _runner(context, tmp_path, **settings):
+def _runner(context, tmp_path, *, judge=None, **settings):
     base = {"auto_apply_submit": True, "auto_apply_headless": True,
             "auto_apply_jev_mode": "fake", "auto_apply_batch_cap": 10,
             "auto_apply_generate": True}
     base.update(settings)
-    return apply_run.Runner(jev=jev_harness.judge(), profile_dir=tmp_path / "profile",
+    return apply_run.Runner(jev=judge or jev_harness.judge(), profile_dir=tmp_path / "profile",
                             settings=base, context=context, run_context=_RUN_CONTEXT,
                             sleep=_no_sleep)
 
@@ -3542,14 +3542,58 @@ def test_one_gives_the_job_back_when_a_check_takes_the_profile_after_the_read(
 
 
 # --- cycle 19 SP7: park and resume ---------------------------------------------------------------
-# pause_form.html asks two required questions no saved answer holds (Preferred
-# team, Number of conference talks given); the suite never waits
-# (`apply_pause.NEVER_WAIT`), and each test here turns the pause on with its
-# folder in tmp_path. `h.PauseResponder` answers as the dashboard's card does.
+# pause_form.html asks three required questions no saved answer holds (What is
+# your favourite query language?, Preferred team, Number of conference talks
+# given); the suite never waits (`apply_pause.NEVER_WAIT`), and each test here
+# turns the pause on with its folder in tmp_path. `h.PauseResponder` answers as
+# the dashboard's card does.
 
 import apply_pause  # noqa: E402
 
+_QL = "What is your favourite query language?"
 _TEAM, _TALKS = "Preferred team", "Number of conference talks given"
+_QL_ANSWER = "Datalog 2.0 (user)"
+# the card's answer to each of the three
+_ANSWERS = (("query language", _QL_ANSWER), ("preferred team", "Platform"),
+            ("conference talks", "37"))
+# the real judge's read of the query-language box (the recording of fc9d995)
+_QL_REAL_READ = jev.Answer(kind="choice", choice="leave_blank", confidence=0.81,
+                           probabilities={"leave_blank": 0.82, "needs_generation": 0.16,
+                                          "github_url": 0.01})
+
+
+class _QueryLanguageReadAsRecorded:
+    """The fake with the real judge's read of pause_form.html's query-language
+    box. The fake's word match reads that box as `full_name` (the field's
+    state carries the key `id_or_name`, whose word "name" scores for it)
+    and fills the candidate's name into it, so the pause never asks
+    it; the real judge reads it `leave_blank` (`_QL_REAL_READ`), the plan
+    skips it and the pause asks it with the other two. Every other answer is
+    the fake's."""
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    def judge(self, state, questions):
+        out = dict(self.inner.judge(state, questions))
+        for qid, q in questions.items():
+            if not (qid.startswith("field_") and qid.endswith("_source")):
+                continue
+            _, slices = jev._fake_parts(state, q.get("instructions", ""))
+            if any(isinstance(s, dict) and s.get("label") == _QL for s in slices):
+                out[qid] = _QL_REAL_READ
+        return out
+
+    def __getattr__(self, name):
+        return getattr(self.inner, name)
+
+
+def _pause_judge():
+    """The judge of a pause_form.html run: in fake mode the fake with the
+    real judge's read of the query-language box, else the harness's judge
+    (the recording itself in replay)."""
+    judge = jev_harness.judge()
+    return _QueryLanguageReadAsRecorded(judge) if isinstance(judge, jev.FakeJev) else judge
 
 
 def _pauses_on(monkeypatch, tmp_path, minute_s=None):
@@ -3578,26 +3622,44 @@ def _pause_run(context, fixture_url, job_folder, tmp_path, spec, page="pause_for
                **settings):
     settings.setdefault("auto_apply_submit", False)     # the page stays open at the gate
     _enqueue(job_folder, fixture_url(page))
-    runner = _runner(context, tmp_path, auto_apply_pause_minutes=10, **settings)
+    runner = _runner(context, tmp_path, judge=_pause_judge(), auto_apply_pause_minutes=10,
+                     **settings)
     with h.PauseResponder(spec, poll_s=0.02) as responder:
         out = runner.drain(cap=1)[0]
     return out, responder
 
 
-@pytest.mark.jev_unrecorded
-def test_a_required_question_with_no_answer_pauses_and_the_cards_answer_goes_in(
+def test_a_question_the_judge_leaves_blank_is_asked_and_a_skipped_answer_parks_on_it(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    # the real judge's read (`_QL_REAL_READ`): no source fits the query-language
+    # box, so the one pause asks it with team and talks; a card that leaves it
+    # blank fills the other two and the job parks on the question left unanswered
     _pauses_on(monkeypatch, tmp_path)
     spec = h.PauseSpec("fill", (("preferred team", "Platform"), ("conference talks", "37")))
     out, responder = _pause_run(context, fixture_url, job_folder, tmp_path, spec)
+    assert (out.status, out.reason) == ("needs_human", f"required field without an answer: {_QL}")
+    (req,) = responder.requests
+    assert {q["label"].rstrip(" *") for q in req["questions"]} == {_QL, _TEAM, _TALKS}
+    resumed = next(d for d in _run_decisions(job_folder) if d["what"] == "pause_resume")
+    assert resumed["answered"] == [_TALKS, _TEAM], resumed
+    assert apply_pause.pending_requests() == []
+
+
+def test_a_required_question_with_no_answer_pauses_and_the_cards_answer_goes_in(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    _pauses_on(monkeypatch, tmp_path)
+    spec = h.PauseSpec("fill", _ANSWERS)
+    out, responder = _pause_run(context, fixture_url, job_folder, tmp_path, spec)
     assert out.status == "ready_to_submit", out
     page = _live_page(context)
+    assert page.locator("input[name=favourite_query_language]").input_value() == _QL_ANSWER
     assert page.locator("select[name=preferred_team]").input_value() == "Platform"
     assert page.locator("input[name=conference_talks]").input_value() == "37"
-    # one pause asked both questions, with the live options of the list
+    # one pause asked the three questions, with the live options of the list
     (req,) = responder.requests
     asked = {q["label"].rstrip(" *"): q for q in req["questions"]}
-    assert set(asked) == {_TEAM, _TALKS}, asked
+    assert set(asked) == {_QL, _TEAM, _TALKS}, asked
+    assert asked[_QL]["widget"] == apply_pause.W_TEXT
     assert asked[_TEAM]["widget"] == apply_pause.W_CHOICE
     assert asked[_TEAM]["options"] == ["Data", "Platform"]
     assert asked[_TALKS]["help"] == "Count public conference talks only."
@@ -3609,7 +3671,6 @@ def test_a_required_question_with_no_answer_pauses_and_the_cards_answer_goes_in(
     assert not apply_pause.answer_path("42").exists()
 
 
-@pytest.mark.jev_unrecorded
 @pytest.mark.parametrize("mode", ["timeout", "park"])
 def test_a_timeout_or_park_it_parks_with_the_reason_it_had_before(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch, mode):
@@ -3630,7 +3691,6 @@ def test_a_timeout_or_park_it_parks_with_the_reason_it_had_before(
     assert apply_pause.pending_requests() == []
 
 
-@pytest.mark.jev_unrecorded
 def test_a_window_closed_during_the_pause_parks_as_a_closed_window(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
     _pauses_on(monkeypatch, tmp_path)
@@ -3665,21 +3725,19 @@ def test_the_wait_stays_off_the_job_clock(
     monkeypatch.setattr(apply_pause, "wait_for_answer", _slow)
     import time as _time
     monkeypatch.setattr(apply_run.time, "monotonic", lambda: _time.perf_counter() + ticks["t"])
-    spec = h.PauseSpec("fill", (("preferred team", "Platform"), ("conference talks", "37")))
+    spec = h.PauseSpec("fill", _ANSWERS)
     _enqueue(job_folder, fixture_url("pause_form.html"))
-    runner = _runner(context, tmp_path, auto_apply_pause_minutes=10)
+    runner = _runner(context, tmp_path, judge=_pause_judge(), auto_apply_pause_minutes=10)
     runner.clock = lambda: _time.perf_counter() + ticks["t"]
     with h.PauseResponder(spec, poll_s=0.02):
         out = runner.drain(cap=1)[0]
     assert out.status == "submitted", out
 
 
-@pytest.mark.jev_unrecorded
 def test_a_sensitive_field_is_never_typed_and_the_persons_browser_value_stays(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
     _pauses_on(monkeypatch, tmp_path)
-    spec = h.PauseSpec("fill", (("preferred team", "Platform"), ("conference talks", "37"),
-                                ("date of birth", "11/11/1911")))
+    spec = h.PauseSpec("fill", _ANSWERS + (("date of birth", "11/11/1911"),))
     out, responder = _pause_run(context, fixture_url, job_folder, tmp_path, spec,
                                 page="pause_form.html?dob=1")
     assert out.status == "ready_to_submit", out
@@ -3691,22 +3749,21 @@ def test_a_sensitive_field_is_never_typed_and_the_persons_browser_value_stays(
     assert dob["sensitive"] is True and dob["widget"] == apply_pause.W_BROWSER
 
 
-@pytest.mark.jev_unrecorded
 def test_a_page_that_changed_during_the_wait_is_planned_again_before_any_fill(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
     _pauses_on(monkeypatch, tmp_path)
-    spec = h.PauseSpec("fill", (("preferred team", "Platform"), ("conference talks", "37")))
+    spec = h.PauseSpec("fill", _ANSWERS)
     out, _ = _pause_run(context, fixture_url, job_folder, tmp_path, spec,
                         page="pause_form.html?grow=1")
     assert out.status == "ready_to_submit", out
     page = _live_page(context)
+    assert page.locator("input[name=favourite_query_language]").input_value() == _QL_ANSWER
     assert page.locator("select[name=preferred_team]").input_value() == "Platform"
     assert page.locator("input[name=conference_talks]").input_value() == "37"
     decided = [d["what"] for d in _run_decisions(job_folder)]
     assert "pause_page_changed" in decided and "pause_answer" in decided, decided
 
 
-@pytest.mark.jev_unrecorded
 def test_filled_in_the_browser_keeps_the_persons_values(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
     _pauses_on(monkeypatch, tmp_path)
@@ -3714,6 +3771,7 @@ def test_filled_in_the_browser_keeps_the_persons_values(
                         page="pause_form.html?browser=1")
     assert out.status == "ready_to_submit", out
     page = _live_page(context)
+    assert page.locator("input[name=favourite_query_language]").input_value() == "Datalog"
     assert page.locator("select[name=preferred_team]").input_value() == "Platform"
     assert page.locator("input[name=conference_talks]").input_value() == "4"
 
@@ -3722,8 +3780,7 @@ def test_filled_in_the_browser_keeps_the_persons_values(
 def test_a_value_flagged_save_is_kept_for_future_runs_and_the_run_reads_it(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
     _pauses_on(monkeypatch, tmp_path)
-    spec = h.PauseSpec("fill", (("preferred team", "Platform"), ("conference talks", "37")),
-                       save=("preferred team",))
+    spec = h.PauseSpec("fill", _ANSWERS, save=("preferred team",))
     out, _ = _pause_run(context, fixture_url, job_folder, tmp_path, spec)
     assert out.status == "ready_to_submit", out
     saved = [a for a in apply_answers.load_store()["answers"] if a.get("answer") == "Platform"]
@@ -3735,7 +3792,6 @@ def test_a_value_flagged_save_is_kept_for_future_runs_and_the_run_reads_it(
     assert "pause_saved" in decided, decided
 
 
-@pytest.mark.jev_unrecorded
 def test_a_missing_answer_carries_the_fields_help_options_and_type(
         context, fixture_url, job_folder, catalog_builder, tmp_path):
     # no pause (the suite never waits): the park's missing answers keep what

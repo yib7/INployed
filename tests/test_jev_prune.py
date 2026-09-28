@@ -160,6 +160,37 @@ def test_prune_if_asked_refuses_on_a_narrowed_reason_before_touching_the_cache(t
     assert set(json.loads(cache.read_text(encoding="utf-8"))) == {"used", "stale"}
 
 
+def test_prune_if_asked_refuses_on_a_skip_reason_before_touching_the_cache(tmp_path):
+    # SP8 fix round 2: a jev_judge test that skipped for its own reason (not
+    # the spend cap, not an unrecorded miss) never asked for its keys, so
+    # skip_reason refuses the same way narrowed_reason does, before
+    # jev.prune_cache is ever reached
+    cache = tmp_path / "cache.json"
+    _seed(cache, {"used": {}, "stale": {}})
+    s = jev_harness.Session("replay", cache, prune=True)
+    s.replay = jev.ReplayJev(None, cache)
+    s.replay.used_keys = {"used"}
+    line = jev_harness.prune_if_asked(
+        s, 0, skip_reason="1 jev_judge test(s) skipped for a reason other than a spend-cap "
+                          "stop or an unrecorded flow, so its keys were never asked for: "
+                          "test_inner.py::test_skipped")
+    assert line.startswith("jev prune refused:") and "test_inner.py::test_skipped" in line
+    assert set(json.loads(cache.read_text(encoding="utf-8"))) == {"used", "stale"}
+
+
+# --- jev_skip_reason: a jev_judge test's own skip, apart from the cap or an unrecorded miss -----
+
+def test_jev_skip_reason_is_empty_with_nothing_skipped():
+    assert jev_harness.jev_skip_reason([]) == ""
+
+
+def test_jev_skip_reason_names_every_skipped_test():
+    reason = jev_harness.jev_skip_reason([("test_inner.py::test_a", "Skipped: nope"),
+                                          ("test_inner.py::test_b", "Skipped: also nope")])
+    assert "2" in reason
+    assert "test_inner.py::test_a" in reason and "test_inner.py::test_b" in reason
+
+
 # --- runner_narrowed_reason: the whole RUNNER_TESTS set, no -k/-m/deselect/node id ------------
 
 def test_runner_narrowed_reason_is_empty_for_a_clean_full_run(monkeypatch):
@@ -406,4 +437,88 @@ def test_an_unrecorded_skip_blocks_the_prune(pytester, monkeypatch, tmp_path):
                                           "-W", "error::pytest.PytestUnknownMarkWarning")
     result.assert_outcomes(skipped=1)
     result.stdout.fnmatch_lines(["*jev prune refused:*miss*"])
-    assert not cache.exists()
+
+
+# --- SP8 fix round 2: a jev_judge test's own skip, apart from a spend-cap stop or an ------------
+# --- unrecorded miss, must also block the prune (it never got to ask for its keys) --------------
+
+_INNER_EXTERNAL_SKIP = '''
+import pytest
+pytest_plugins = ["conftest_jev"]
+
+STATE = {STATE!r}
+QUESTIONS = {QUESTIONS!r}
+
+def test_kept(jev_judge):
+    answers = jev_judge().judge(STATE, QUESTIONS)
+    assert answers["page_state"].choice == "application_form"
+
+def test_skipped_for_its_own_reason(jev_judge):
+    pytest.skip("unrelated to jev: a fixture this run does not have")
+'''
+
+
+def test_a_jev_judge_tests_own_skip_blocks_the_prune(pytester, monkeypatch, tmp_path):
+    # a real-world unsafe prune (SP8 fix round 2): a test that requests
+    # jev_judge but skips for a reason of its own -- a platform skipif, an
+    # importorskip, a pytest.skip() in the body, as here -- never calls the
+    # judge, so it leaves no replay miss for jev.prune_cache's own gate to
+    # catch. conftest_jev must tally the skip itself and refuse on it.
+    cache = tmp_path / "cache.json"
+    used_key = jev.ReplayJev.key_for(STATE, QUESTIONS)
+    _seed(cache, {used_key: {"page_state": {"kind": "choice", "choice": "application_form",
+                                            "probabilities": {}, "confidence": 1.0}},
+                 "stale-key": {"page_state": {"kind": "choice", "choice": "other",
+                                              "probabilities": {}, "confidence": 1.0}}})
+    monkeypatch.setenv(jev_harness.MODE_ENV, "replay")
+    monkeypatch.setenv(jev.CACHE_ENV, str(cache))
+    monkeypatch.setenv(jev_harness.PRUNE_ENV, "1")
+    monkeypatch.setattr(jev_harness, "RUNNER_TESTS", "test_inner.py")
+    pytester.syspathinsert(TESTS)
+    pytester.syspathinsert(REPO / "local")
+    pytester.makepyfile(test_inner=_INNER_EXTERNAL_SKIP.format(STATE=STATE, QUESTIONS=QUESTIONS))
+    result = pytester.runpytest_inprocess("-q", "-rs", "-p", "no:cacheprovider")
+    result.assert_outcomes(passed=1, skipped=1)
+    result.stdout.fnmatch_lines(["*jev prune refused:*test_skipped_for_its_own_reason*"])
+    assert set(json.loads(cache.read_text(encoding="utf-8"))) == {used_key, "stale-key"}
+
+
+_INNER_UNRELATED_SKIP = '''
+import pytest
+pytest_plugins = ["conftest_jev"]
+
+STATE = {STATE!r}
+QUESTIONS = {QUESTIONS!r}
+
+def test_kept(jev_judge):
+    answers = jev_judge().judge(STATE, QUESTIONS)
+    assert answers["page_state"].choice == "application_form"
+
+@pytest.mark.skip(reason="a permanent, unrelated skip: this test never touches jev_judge")
+def test_unrelated_skip():
+    assert False
+'''
+
+
+def test_an_unrelated_tests_skip_never_blocks_the_prune(pytester, monkeypatch, tmp_path):
+    # a test that never requests jev_judge was never going to touch the
+    # cache either way (the SP8 fix round 2 runner-replay finding: a
+    # POSIX-only test skipped on Windows, with no jev_judge fixture, does
+    # not block a clean prune)
+    cache = tmp_path / "cache.json"
+    used_key = jev.ReplayJev.key_for(STATE, QUESTIONS)
+    _seed(cache, {used_key: {"page_state": {"kind": "choice", "choice": "application_form",
+                                            "probabilities": {}, "confidence": 1.0}},
+                 "stale-key": {"page_state": {"kind": "choice", "choice": "other",
+                                              "probabilities": {}, "confidence": 1.0}}})
+    monkeypatch.setenv(jev_harness.MODE_ENV, "replay")
+    monkeypatch.setenv(jev.CACHE_ENV, str(cache))
+    monkeypatch.setenv(jev_harness.PRUNE_ENV, "1")
+    monkeypatch.setattr(jev_harness, "RUNNER_TESTS", "test_inner.py")
+    pytester.syspathinsert(TESTS)
+    pytester.syspathinsert(REPO / "local")
+    pytester.makepyfile(test_inner=_INNER_UNRELATED_SKIP.format(STATE=STATE, QUESTIONS=QUESTIONS))
+    result = pytester.runpytest_inprocess("-q", "-rs", "-p", "no:cacheprovider")
+    result.assert_outcomes(passed=1, skipped=1)
+    result.stdout.fnmatch_lines(["*jev prune: kept 1 of 2 key(s)*"])
+    assert set(json.loads(cache.read_text(encoding="utf-8"))) == {used_key}

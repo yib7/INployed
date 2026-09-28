@@ -316,6 +316,34 @@ def _flows_narrowed(flows, all_flows) -> bool:
     return {f.name for f in flows} != {f.name for f in all_flows}
 
 
+def _apart_flows(flows) -> list[str]:
+    """Flows `run_matrix` leaves out of the real judge's replay column
+    because they are not replayable at all (`replayable=False`, e.g. a page
+    whose text changes with the clock): `run_matrix`'s skip condition
+    (`not (f.replayable and f.recorded)`) means such a flow is never asked
+    anything in a replay, on any run, so no key of its could ever land in
+    `used_keys`. A `--real-prune` run may drop a stale key left over for one
+    of these safely, no matter what the cache still holds for that flow
+    name, because a future replay could never claim it either (SP8 fix
+    round 2)."""
+    return [f.name for f in flows if not f.replayable]
+
+
+def _unrecorded_flows(flows) -> list[str]:
+    """Flows `run_matrix` leaves out of the real judge's replay column
+    because the registry still marks them `recorded=False`
+    (`apply_harness.Flow`): unlike a `replayable=False` flow, this is only a
+    bookkeeping flag, not a structural fact. A prior recording can genuinely
+    cache fresh, current keys for one of these and leave the flag unflipped
+    (the SP8 fix round 2 incident: a74890d recorded 11 pause flows, but
+    their `recorded=False` flags never flipped, so a `--real-prune` run
+    right after kept only the keys the replay had touched and deleted the
+    fresh recordings). `main` refuses `--real-prune` outright when this list
+    is non-empty, since the very next flag flip would immediately need
+    exactly the keys such a run could have dropped."""
+    return [f.name for f in flows if f.replayable and not f.recorded]
+
+
 def _recorded_now(h, results) -> list[str]:
     """The flows a recording ran to its end (`results`) that the registry
     still marks `recorded=False`: the flags to flip, or the replay keeps
@@ -440,6 +468,15 @@ def main(argv: list[str] | None = None) -> int:
                   f"still need. Rerun the whole matrix (drop --flows) before pruning.",
                   file=sys.stderr)
             return 2
+        unrecorded = _unrecorded_flows(flows)
+        if args.real_prune and unrecorded:
+            print(f"apply_matrix: --real-prune refuses: {len(unrecorded)} flow(s) the replay "
+                  f"leaves out only because tests/apply_harness.py still marks them "
+                  f"recorded=False: {', '.join(unrecorded)}. A prior recording may have "
+                  f"already cached fresh keys for these; pruning now could delete them before "
+                  f"the flag is ever flipped. Flip each Flow's recorded=True once its "
+                  f"recording is confirmed, then rerun before pruning.", file=sys.stderr)
+            return 2
         real_cache = Path(args.real_cache) if args.real_cache else h.REAL_CACHE
         if args.real in ("record", "dry"):
             return _record_real(h, flows, args.real, real_cache, tmp_path,
@@ -485,8 +522,9 @@ def main(argv: list[str] | None = None) -> int:
         if real is not None:
             rows = [r for r in results if r.judge == h.REAL]
             missed = [r.flow for r in rows if r.replay_misses]
-            apart = [f.name for f in flows if not f.replayable]
-            unrecorded = [f.name for f in flows if f.replayable and not f.recorded]
+            apart = _apart_flows(flows)
+            # `unrecorded` was already computed above, before the run, for the
+            # --real-prune early refusal; reused here for the same list.
             print(f"real judge: replay of {real_cache}: {sum(r.replay_misses for r in rows)} "
                   f"miss(es) over {len(rows)} flow(s)"
                   + (f"; flows with a miss: {', '.join(missed)}" if missed else "")

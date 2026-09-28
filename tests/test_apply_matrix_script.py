@@ -330,6 +330,69 @@ def test_real_prune_refuses_a_flows_narrowed_run_and_leaves_the_cache_as_it_was(
     assert set(json.loads(cache.read_text(encoding="utf-8"))) == {"used-key", "stale-key"}
 
 
+def test_apart_and_unrecorded_flows_are_computed_from_the_registry_alone():
+    fresh = dataclasses.replace(h.flow("post_form"), name="__unrecorded__", recorded=False)
+    apart = dataclasses.replace(h.flow("lever_single_park"), name="__apart__",
+                                replayable=False)
+    kept = h.flow("ashby_wizard_park")
+    flows = (kept, fresh, apart)
+    assert apply_matrix._unrecorded_flows(flows) == ["__unrecorded__"]
+    assert apply_matrix._apart_flows(flows) == ["__apart__"]
+
+
+def test_real_prune_refuses_when_a_recorded_false_flow_was_left_out(tmp_path, monkeypatch,
+                                                                     capsys):
+    # a real-world unsafe prune (SP8 fix round 2): a74890d recorded 11 pause
+    # flows, but their recorded=False flags never flipped, and a
+    # --real-prune run right after kept only the keys the replay had
+    # touched, deleting the fresh recordings. --real-prune must refuse
+    # outright whenever the registry still leaves a flow out this way,
+    # before it runs anything.
+    cache = tmp_path / "matrix_cache.json"
+    cache.write_text(json.dumps({"used-key": {}, "stale-key": {}}), encoding="utf-8")
+    fresh = dataclasses.replace(h.flow("post_form"), name="__unrecorded__", recorded=False)
+
+    def fake_run_parallel(*a, real_used=None, **k):
+        if real_used is not None:
+            real_used.add("used-key")
+        return [_row("fake", True), _row("real", True)]
+    monkeypatch.setattr(apply_matrix, "_run_parallel", fake_run_parallel)
+    monkeypatch.setattr(apply_matrix, "_isolate", lambda *a, **k: None)
+    import unittest.mock
+    with unittest.mock.patch.object(h, "FLOWS", (h.flow("post_form"), fresh)):
+        code = apply_matrix.main(["--seeds", "0", "--jobs", "2", "--real", "replay",
+                                  "--real-cache", str(cache), "--real-prune"])
+    out, err = capsys.readouterr()
+    assert code == 2, err
+    assert "--real-prune refuses" in err and "__unrecorded__" in err
+    assert "apply_matrix: pruned" not in out
+    assert set(json.loads(cache.read_text(encoding="utf-8"))) == {"used-key", "stale-key"}
+
+
+def test_real_prune_does_not_refuse_for_a_replayable_false_flow(tmp_path, monkeypatch, capsys):
+    # unlike a recorded=False flow, a replayable=False flow (ticker_page-
+    # style) can never have its keys asked for by any future replay
+    # (run_matrix's own skip condition), so it must not block --real-prune
+    cache = tmp_path / "matrix_cache.json"
+    cache.write_text(json.dumps({"used-key": {}, "stale-key": {}}), encoding="utf-8")
+    apart = dataclasses.replace(h.flow("post_form"), name="__apart__", replayable=False)
+
+    def fake_run_parallel(*a, real_used=None, **k):
+        if real_used is not None:
+            real_used.add("used-key")
+        return [_row("fake", True), _row("real", True)]
+    monkeypatch.setattr(apply_matrix, "_run_parallel", fake_run_parallel)
+    monkeypatch.setattr(apply_matrix, "_isolate", lambda *a, **k: None)
+    import unittest.mock
+    with unittest.mock.patch.object(h, "FLOWS", (h.flow("post_form"), apart)):
+        code = apply_matrix.main(["--seeds", "0", "--jobs", "2", "--real", "replay",
+                                  "--real-cache", str(cache), "--real-prune"])
+    out, err = capsys.readouterr()
+    assert code == 0, err
+    assert "apply_matrix: pruned" in out and "kept 1 of 2 key(s)" in out
+    assert set(json.loads(cache.read_text(encoding="utf-8"))) == {"used-key"}
+
+
 def test_real_prune_prunes_a_full_flow_clean_run(tmp_path, monkeypatch, capsys):
     cache = tmp_path / "matrix_cache.json"
     cache.write_text(json.dumps({"used-key": {"a": {"kind": "noul", "noul": 0.9}},

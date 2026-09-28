@@ -210,7 +210,34 @@ def runner_narrowed_reason(*, collected_files: set[str], keyword: str, markexpr:
     return ""
 
 
-def prune_if_asked(session: Session, testsfailed: int, *, narrowed_reason: str = "") -> str:
+def jev_skip_reason(skipped: Sequence[tuple[str, str]]) -> str:
+    """Why a `jev_judge` test's own skip should refuse pruning, or "" when
+    `skipped` is empty (SP8 fix round 2: a `--real-prune` run over the flow
+    matrix was fooled the same way by flows its own registry left out; this
+    is the runner-side analog).
+
+    `skipped` is every `(nodeid, reason)` pair `conftest_jev` tallied for a
+    test that requests the `jev_judge` fixture and finished any phase
+    (setup, call or teardown) skipped, in `replay` mode, apart from the two
+    skips this harness already recognizes as accounted for: a spend-cap
+    stop (`record` mode only, so never seen here) and a `jev_unrecorded`-
+    marked replay miss (an expected, named exclusion, not a hole). A skip
+    for any other reason -- a platform `skipif`, an `importorskip`, a
+    `pytest.skip()` in the test body -- means that test's body never asked
+    its questions, so its keys never entered `used_keys` even though a
+    clean, unfiltered run might still need them; pruning here could drop
+    one. A test that never requests `jev_judge` and is skipped for an
+    unrelated reason (a POSIX-only test on Windows, for instance) never
+    reaches `skipped` in the first place and so never blocks a prune."""
+    if not skipped:
+        return ""
+    names = ", ".join(nodeid for nodeid, _ in skipped)
+    return (f"{len(skipped)} {FIXTURE} test(s) skipped for a reason other than a spend-cap "
+            f"stop or an unrecorded flow, so its keys were never asked for: {names}")
+
+
+def prune_if_asked(session: Session, testsfailed: int, *, narrowed_reason: str = "",
+                   skip_reason: str = "") -> str:
     """When `session.prune`, prune `session.cache_path` down to the keys this
     session's replay used (`jev.prune_cache`, gated on the replay's own miss
     count and `testsfailed`, the run's pytest failure count). `narrowed_reason`,
@@ -218,12 +245,17 @@ def prune_if_asked(session: Session, testsfailed: int, *, narrowed_reason: str =
     and config, which this module knows nothing about), refuses immediately
     with it, before touching the cache: a run that was not the whole
     `RUNNER_TESTS` set may not have reached every key a clean pass would.
-    Returns the refusal's reason, or a line naming what was kept; "" when
-    pruning was not asked for."""
+    `skip_reason` (`jev_skip_reason`, fed from `conftest_jev`'s own
+    bookkeeping) refuses the same way when some `jev_judge` test skipped for
+    a reason this harness does not already account for. Returns the
+    refusal's reason, or a line naming what was kept; "" when pruning was
+    not asked for."""
     if not session.prune:
         return ""
     if narrowed_reason:
         return f"jev prune refused: {narrowed_reason}"
+    if skip_reason:
+        return f"jev prune refused: {skip_reason}"
     replay = session.replay
     used = set(replay.used_keys) if replay is not None else set()
     misses = replay.misses if replay is not None else 0

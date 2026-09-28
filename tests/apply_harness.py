@@ -1479,24 +1479,24 @@ FLOWS: tuple[Flow, ...] = (
     # cycle 19 SP7 (park and resume): two required questions no saved answer
     # holds pause the run; the person's answers go in and the run goes on
     Flow("pause_fill", "pause_form.html", True, "submitted", _SUBMITTED,
-         confirm="#thanks:visible", recorded=False,
+         confirm="#thanks:visible",
          pause=PauseSpec("fill", (("query language", "Datalog 2.0 (user)"),
                                   ("preferred team", "Platform"),
                                   ("conference talks", "37"))),
          covers="a pause answered in the card: each value in its own field, then the submit"),
     Flow("pause_browser", "pause_form.html?browser=1", True, "submitted", _SUBMITTED,
-         confirm="#thanks:visible", recorded=False, pause=PauseSpec("browser"),
+         confirm="#thanks:visible", pause=PauseSpec("browser"),
          covers="a pause the person finishes in the browser: the page read again, their "
                 "values kept, then the submit"),
     Flow("pause_changed_page", "pause_form.html?grow=1", True, "submitted", _SUBMITTED,
-         confirm="#thanks:visible", recorded=False,
+         confirm="#thanks:visible",
          pause=PauseSpec("fill", (("query language", "Datalog 2.0 (user)"),
                                   ("preferred team", "Platform"),
                                   ("conference talks", "37"))),
          covers="a page that changed during the pause: read and planned again before any "
                 "fill, the answers put in on the new plan"),
     Flow("pause_sensitive", "pause_form.html?dob=1", True, "submitted", _SUBMITTED,
-         confirm="#thanks:visible", recorded=False,
+         confirm="#thanks:visible",
          pause=PauseSpec("fill", (("query language", "Datalog 2.0 (user)"),
                                   ("preferred team", "Platform"),
                                   ("conference talks", "37"),
@@ -1504,14 +1504,14 @@ FLOWS: tuple[Flow, ...] = (
          covers="a required date of birth the person types in the browser: code never "
                 "types it, the value an answer gives for it is ignored"),
     Flow("pause_timeout", "pause_form.html", True, "needs_human",
-         r"^required field without an answer: ", recorded=False, pause=PauseSpec("timeout"),
+         r"^required field without an answer: ", pause=PauseSpec("timeout"),
          covers="no answer in time: the job parks as it did before SP7"),
     Flow("pause_park", "pause_form.html", True, "needs_human",
-         r"^required field without an answer: ", recorded=False, pause=PauseSpec("park"),
+         r"^required field without an answer: ", pause=PauseSpec("park"),
          covers="Park it: the job parks as it did before SP7"),
     # SP7 fix round 1
     Flow("pause_dup_labels", "pause_form.html?dup=1&grow=1", True, "submitted", _SUBMITTED,
-         confirm="#thanks:visible", recorded=False, wrap=PauseLeftBlank,
+         confirm="#thanks:visible", wrap=PauseLeftBlank,
          pause=PauseSpec("fill", (("query language", "Datalog 2.0 (user)"),
                                   ("preferred team", "Platform"),
                                   ("conference talks", "37")),
@@ -1522,14 +1522,14 @@ FLOWS: tuple[Flow, ...] = (
                 "(review I2)"),
     Flow("pause_submit_in_browser", "pause_disabled.html?click=1", True, "needs_human",
          "^" + re.escape(apply_run.CHECK_SENT_REASON) + r": the page moved on during the pause",
-         recorded=False, wrap=PauseLeftBlank, pause=PauseSpec("browser"),
+         wrap=PauseLeftBlank, pause=PauseSpec("browser"),
          covers="a Submit disabled after the fill; the person fixes the page and clicks Submit "
                 "in the browser during the pause: the run parks with the check-whether note, "
                 "never fills the page after it, and the job is never re-queued (review I1)"),
     Flow("pause_fix_kept", "pause_disabled.html?reformat=1", False, "ready_to_submit",
          _PARKED, confirm="#thanks:visible",
          gate="body:not([data-phone-retyped]) #btn-submit:not([disabled])",
-         recorded=False, wrap=PauseLeftBlank, pause=PauseSpec("browser"),
+         wrap=PauseLeftBlank, pause=PauseSpec("browser"),
          covers="a Submit disabled after the fill; the person rewrites the phone the run typed "
                 "and fills the referral in the browser: the replan keeps both (review I3)"),
     # SP7 fix round 2
@@ -1537,13 +1537,13 @@ FLOWS: tuple[Flow, ...] = (
          "needs_human",
          "^" + re.escape(apply_run.CHECK_SENT_REASON) + r": the page moved on during the pause "
          r"\(its 'Submit application' button is gone\)",
-         recorded=False, wrap=PauseLeftBlank, pause=PauseSpec("browser"),
+         wrap=PauseLeftBlank, pause=PauseSpec("browser"),
          covers="the person clicks the enabled Submit during the pause and the site shows an "
                 "account form that shares the Email label, with no received words: the "
                 "paused page's send button is gone, so the job may have been sent and parks "
                 "with the check-whether note (review N2)"),
     Flow("pause_wizard_next", "pause_disabled.html?click=1&wizard=1", True, "submitted",
-         _SUBMITTED, confirm="#thanks:visible", recorded=False, wrap=PauseLeftBlank,
+         _SUBMITTED, confirm="#thanks:visible", wrap=PauseLeftBlank,
          pause=PauseSpec("browser"),
          covers="a Next disabled after the fill; the person fixes the page and clicks Next "
                 "during the pause, and the address moves on to a review step: a page with no "

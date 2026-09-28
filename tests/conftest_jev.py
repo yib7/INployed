@@ -33,10 +33,16 @@ Hooks, active in `record` and `replay` mode only:
   (`jev_harness.prune_if_asked`, `jev.prune_cache`) -- including a refusal
   when this run was not the whole `RUNNER_TESTS` set (`_narrowed_reason`,
   below: a `-k`/`-m` filter, a deselected test, a missing file or a node id
-  narrower than a file).
+  narrower than a file), or when some `jev_judge` test skipped for a reason
+  this harness does not already account for (`_jev_skip_reason`, below, SP8
+  fix round 2: a platform `skipif`, an `importorskip`, a `pytest.skip()` in
+  the test body -- its keys were never asked for either).
 - deselected: `pytest_deselected` counts every item a `-k`, `-m` or
   `--deselect` filter drops, on the config's own stash -- the count
   `_narrowed_reason` reads at session finish.
+- makereport (any phase): a `jev_judge` test that finishes a phase skipped in
+  `replay` mode, apart from a `jev_unrecorded`-marked replay miss, is tallied
+  on the config's own stash for `_jev_skip_reason` to read at session finish.
 """
 from __future__ import annotations
 
@@ -47,6 +53,7 @@ import jev_harness
 
 SESSION_KEY = pytest.StashKey[jev_harness.Session]()
 DESELECTED_KEY = pytest.StashKey[int]()
+JEV_SKIPPED_KEY = pytest.StashKey[list]()
 
 
 def _xdist_active(config) -> bool:
@@ -163,6 +170,15 @@ def pytest_runtest_makereport(item, call):
     outcome = yield
     rep = outcome.get_result()
     session = _session(item.config)
+    if (session is not None and session.mode == "replay" and rep.skipped
+            and jev_harness.FIXTURE in getattr(item, "fixturenames", ())):
+        # a `jev_judge` test skipped for its own reason, before this
+        # function's own capped/unrecorded overrides below ever run (those
+        # start from a "failed" report, not a "skipped" one): tallied for
+        # `_jev_skip_reason` at session finish (SP8 fix round 2)
+        skipped = item.config.stash.get(JEV_SKIPPED_KEY, [])
+        skipped.append((item.nodeid, str(rep.longrepr)))
+        item.config.stash[JEV_SKIPPED_KEY] = skipped
     if session is None or not session.soft or rep.when != "call":
         return
     record = session.records.get(item.nodeid)
@@ -236,6 +252,15 @@ def _narrowed_reason(session) -> str:
         deselected=config.stash.get(DESELECTED_KEY, 0), args=config.args)
 
 
+def _jev_skip_reason(config) -> str:
+    """`jev_harness.jev_skip_reason` fed from the `(nodeid, reason)` pairs
+    `pytest_runtest_makereport` tallied on the config's own stash for every
+    `jev_judge` test that finished a phase skipped in `replay` mode, apart
+    from the two skips the harness already treats as accounted for. "" when
+    none did."""
+    return jev_harness.jev_skip_reason(config.stash.get(JEV_SKIPPED_KEY, []))
+
+
 def pytest_sessionfinish(session, exitstatus):
     """SP8: in `replay` mode with `AUTO_APPLY_JEV_PRUNE` set, write the shared
     replay's used keys beside `outcomes.jsonl` (`jev_harness.write_used_keys`),
@@ -252,7 +277,8 @@ def pytest_sessionfinish(session, exitstatus):
         return
     jev_harness.write_used_keys(jsession)
     line = jev_harness.prune_if_asked(jsession, session.testsfailed,
-                                      narrowed_reason=_narrowed_reason(session))
+                                      narrowed_reason=_narrowed_reason(session),
+                                      skip_reason=_jev_skip_reason(session.config))
     if not line:
         return
     reporter = session.config.pluginmanager.get_plugin("terminalreporter")

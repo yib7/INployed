@@ -84,9 +84,31 @@ rewrite refuse, naming the reason, and leave the cache exactly as it was:
   file left out, a `-k` or `-m` filter, a deselected test, or a node id
   narrower than a file (`conftest_jev.pytest_sessionfinish`,
   `jev_harness.runner_narrowed_reason`)
+- for the runner target: a `jev_judge` test finished any phase skipped for a
+  reason this harness does not already account for -- a platform `skipif`,
+  an `importorskip`, a `pytest.skip()` in the test body
+  (`conftest_jev.pytest_runtest_makereport` tallies it, `jev_harness.
+  jev_skip_reason` refuses on it) -- that test's body never asked its
+  questions, so a clean run could still need a key it never touched. A
+  spend-cap stop and a `jev_unrecorded`-marked miss do not count here: both
+  are already an accounted-for, expected exclusion. A test that never
+  requests `jev_judge` and skips for an unrelated, permanent reason (a
+  POSIX-only test on Windows, for instance) never blocks the prune either,
+  since it was never going to touch the cache
 - for the matrix target: `--flows` named fewer than the whole registry
   (`apply_matrix._flows_narrowed`) -- the flows left out never got a chance
   to use their keys, so a key one of them still needs would look unused
+- for the matrix target: any flow the replay leaves out because
+  `tests/apply_harness.py` still marks it `recorded=False`
+  (`apply_matrix._unrecorded_flows`) -- unlike a `replayable=False` flow, this
+  is only a bookkeeping flag, not a structural fact, so a prior recording can
+  have already cached fresh keys for it under a flag that never flipped (the
+  SP8 fix round 2 incident: a74890d recorded 11 pause flows, but their
+  `recorded=False` flags stayed put, and a `--real-prune` run right after
+  kept only the keys the replay had touched and deleted the fresh
+  recordings); a `replayable=False` flow (`ticker_page`) does not block the
+  prune, since `run_matrix`'s skip condition means no future replay could
+  ever claim a key for it either, so dropping a stale one is always safe
 
 For the runner target, the shared replay lives for the whole pytest process
 (one process covers every file in `RUNNER_TESTS`), so its `used_keys` already

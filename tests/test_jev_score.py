@@ -308,104 +308,142 @@ JOB_MD = ("## About the role\nYou will query data and build dashboards.\n\n"
           "- Statistics coursework\n")
 
 
-def _reads(skills=0.86, domain="data_analytics_bi", label="entry_level", analytical=0.9):
-    return {"skills_fit": skills, "domain": domain, "experience_label": label,
-            "analytical_work": analytical}
+def _reads(fit=1.0, main_factor="skills_fit"):
+    """`fit` is the 0-1 fraction `stage1_reads` would have scaled a raw 0-4
+    level to (as `_score_read` does)."""
+    return {"fit": fit, "main_factor": main_factor}
+
+
+def _all_strings(value):
+    """Every string nested inside `value` (dicts, lists, tuples), for the
+    prompt hygiene census: a question's `instructions` may itself be a dict."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        out = []
+        for v in value.values():
+            out.extend(_all_strings(v))
+        return out
+    if isinstance(value, (list, tuple)):
+        out = []
+        for v in value:
+            out.extend(_all_strings(v))
+        return out
+    return []
 
 
 # --- SC-2: stage 1 composition ------------------------------------------------------------
 
-def test_the_spec_example_reason_is_composed_word_for_word():
-    score, reason = jev_score.compose_stage1(NO_FACTS, _reads())
-    assert score == 5
-    assert reason == ("Skills fit strong (0.86); domain data analytics; "
-                      "entry level (no years stated); no degree bar")
-
-
-@pytest.mark.parametrize("facts,reads,score,fragment", [
-    # in domain, no experience bar: skills_fit alone maps to 3-5
-    (NO_FACTS, _reads(skills=1.0), 5, "Skills fit strong (1.00)"),
-    (NO_FACTS, _reads(skills=0.75), 5, "Skills fit strong (0.75)"),
-    (NO_FACTS, _reads(skills=0.74), 4, "Skills fit good (0.74)"),
-    (NO_FACTS, _reads(skills=0.45), 4, "good"),
-    (NO_FACTS, _reads(skills=0.44), 3, "Skills fit partial (0.44)"),
-    (NO_FACTS, _reads(skills=0.10), 3, "Skills fit weak (0.10)"),
-    (NO_FACTS, _reads(domain="data_science_ml"), 5, "domain data science or ML"),
-    (NO_FACTS, _reads(domain="software_engineering"), 5, "domain software engineering"),
-    (NO_FACTS, _reads(label="none_stated"), 5, "no experience level stated"),
-    # code years win over the label, cap at 3 and lower with the requirement
-    (dict(NO_FACTS, min_years=0), _reads(label="three_plus_years"), 5, "0-year floor"),
-    (dict(NO_FACTS, min_years=1), _reads(skills=1.0), 3, "1+ years required"),
-    (dict(NO_FACTS, min_years=2), _reads(), 3, "2+ years required"),
-    (dict(NO_FACTS, min_years=3), _reads(), 2, "3+ years required"),
-    (dict(NO_FACTS, min_years=4), _reads(), 2, "4+ years required"),
-    (dict(NO_FACTS, min_years=5), _reads(), 1, "5+ years required"),
-    (dict(NO_FACTS, min_years=2), _reads(skills=0.1), 3, "2+ years required"),
-    # the label counts only when code found no years
-    (NO_FACTS, _reads(label="one_to_two_years"), 3, "a floor of 1 to 2 years"),
-    (NO_FACTS, _reads(label="three_plus_years"), 2, "3 or more years"),
-    (NO_FACTS, _reads(label="senior_title"), 2, "senior title"),
-    # off domain gives 1-2, whatever the analytical read says for hardware
-    (NO_FACTS, _reads(domain="hardware_embedded", analytical=0.9, skills=0.9), 2,
-     "domain hardware or embedded"),
-    (NO_FACTS, _reads(domain="hardware_embedded", skills=0.3), 1, "domain hardware or embedded"),
-    (NO_FACTS, _reads(domain="non_technical", analytical=0.1, skills=0.9), 2, "domain non-technical"),
-    (NO_FACTS, _reads(domain="non_technical", analytical=0.1, skills=0.2), 1, "domain non-technical"),
-    # analytical duties keep a business-flavoured role in domain (the rubric's analyst rule)
-    (NO_FACTS, _reads(domain="non_technical", analytical=0.9), 5,
-     "domain non-technical with data or engineering duties"),
-    # other technical work is a partial domain match unless the duties are data or engineering
-    (NO_FACTS, _reads(domain="other_technical", analytical=0.1, skills=0.95), 3,
-     "domain other technical"),
-    (NO_FACTS, _reads(domain="other_technical", analytical=0.9, skills=0.95), 5,
-     "domain other technical with data or engineering duties"),
-    # a hard advanced degree gives 1-2; a clearance requirement gives 1
-    (dict(NO_FACTS, advanced_degree=True), _reads(skills=0.9), 2, "advanced degree required"),
-    (dict(NO_FACTS, advanced_degree=True), _reads(skills=0.3), 1, "advanced degree required"),
-    (dict(NO_FACTS, clearance=True), _reads(skills=1.0), 1, "clearance required"),
-    # the lowest cap wins
-    (dict(NO_FACTS, min_years=2), _reads(domain="hardware_embedded", skills=0.9), 2, "2+ years"),
-    (dict(NO_FACTS, min_years=5), _reads(domain="other_technical", analytical=0.1), 1, "5+ years"),
+@pytest.mark.parametrize("main_factor,text", [
+    ("skills_fit", "no experience bar, and the skills, tools and field line up"),
+    ("partial_skills", "in field; several main tools or skills are missing from the résumé"),
+    ("years_1_2", "asks for 1 to 2 years of experience"),
+    ("years_3_plus", "asks for 3 or more years of experience"),
+    ("senior", "a senior, lead or manager role"),
+    ("different_field", "a field outside data, analytics and software"),
+    ("degree", "requires a master's degree or PhD"),
+    ("clearance", "requires an active security clearance"),
 ])
-def test_stage1_composition_table(facts, reads, score, fragment):
-    got, reason = jev_score.compose_stage1(facts, reads)
-    assert got == score, reason
-    assert fragment in reason
-    assert not reason.startswith("ERROR")
+def test_stage1_reason_names_each_main_factor_word_for_word(main_factor, text):
+    score, reason = jev_score.compose_stage1(NO_FACTS, _reads(fit=1.0, main_factor=main_factor))
+    assert score == 5
+    assert reason == f"Strong match: {text}."
 
 
-def test_stage1_reason_names_the_degree_bar_only_when_there_is_one():
-    _s, reason = jev_score.compose_stage1(NO_FACTS, _reads())
-    assert reason.endswith("no degree bar") and "clearance" not in reason
-    _s, reason = jev_score.compose_stage1(dict(NO_FACTS, advanced_degree=True, clearance=True),
-                                          _reads())
-    assert "advanced degree required" in reason and "clearance required" in reason
+@pytest.mark.parametrize("frac,score,label", [
+    (0.0, 1, "No match"), (0.05, 1, "No match"), (0.124, 1, "No match"),
+    (0.125, 2, "Weak match"), (0.2, 2, "Weak match"), (0.374, 2, "Weak match"),
+    (0.375, 3, "Borderline"), (0.5, 3, "Borderline"), (0.624, 3, "Borderline"),
+    (0.625, 4, "Good match"), (0.75, 4, "Good match"), (0.874, 4, "Good match"),
+    (0.875, 5, "Strong match"), (1.0, 5, "Strong match"),
+])
+def test_stage1_rounds_fit_half_up_to_a_1_to_5_score(frac, score, label):
+    """`floor(value + 0.5) + 1`, `value = fit * 4`: the boundaries (0.125, 0.375,
+    0.625, 0.875) are the half-up rounding points, where `value` itself lands on
+    a half (0.5, 1.5, 2.5, 3.5)."""
+    got, reason = jev_score.compose_stage1(NO_FACTS, _reads(fit=frac))
+    assert got == score
+    assert reason.startswith(f"{label}: ")
 
 
-def test_stage1_asks_the_four_questions_the_spec_names():
+@pytest.mark.parametrize("facts,score,text", [
+    (dict(NO_FACTS, min_years=5), 1, "the posting asks for 5+ years of experience"),
+    (dict(NO_FACTS, min_years=7), 1, "the posting asks for 7+ years of experience"),
+    (dict(NO_FACTS, min_years=3), 2, "the posting asks for 3+ years of experience"),
+    (dict(NO_FACTS, min_years=4), 2, "the posting asks for 4+ years of experience"),
+    (dict(NO_FACTS, min_years=1), 3, "the posting asks for 1+ years of experience"),
+    (dict(NO_FACTS, min_years=2), 3, "the posting asks for 2+ years of experience"),
+    (dict(NO_FACTS, clearance=True), 1, "the posting requires a security clearance"),
+    (dict(NO_FACTS, advanced_degree=True), 2, "the posting requires a master's degree or PhD"),
+])
+def test_stage1_a_code_cap_that_lowers_the_score_names_the_fact(facts, score, text):
+    """`fit=1.0` alone would give a 5; each cap here is lower, so it wins and
+    the reason names the code fact."""
+    got, reason = jev_score.compose_stage1(facts, _reads(fit=1.0, main_factor="skills_fit"))
+    assert got == score
+    assert reason == f"{jev_score.SCORE_LABELS[score]}: {text}."
+
+
+def test_a_code_cap_never_raises_the_score():
+    """A cap only lowers the score `fit` gave; min_years=1 caps at 3, but a
+    `fit` low enough to give 1 on its own stays 1."""
+    facts = dict(NO_FACTS, min_years=1)
+    got, reason = jev_score.compose_stage1(facts, _reads(fit=0.0, main_factor="different_field"))
+    assert got == 1
+    assert "year" not in reason
+    assert reason == "No match: a field outside data, analytics and software."
+
+
+def test_stage1_uses_the_lowest_cap_when_several_apply():
+    facts = dict(NO_FACTS, min_years=3, clearance=True, advanced_degree=True)
+    got, reason = jev_score.compose_stage1(facts, _reads(fit=1.0))
+    assert got == 1
+    assert reason == "No match: the posting requires a security clearance."
+
+
+def test_stage1_breaks_a_cap_tie_by_years_then_clearance_then_degree():
+    """min_years=4 and an advanced degree both cap at 2: years is checked first."""
+    facts = dict(NO_FACTS, min_years=4, advanced_degree=True)
+    got, reason = jev_score.compose_stage1(facts, _reads(fit=1.0))
+    assert got == 2
+    assert reason == "Weak match: the posting asks for 4+ years of experience."
+
+
+def test_stage1_asks_the_fit_score_and_main_factor_choice():
     qs = jev_score.stage1_questions()
-    assert {qid: q["type"] for qid, q in qs.items()} == {
-        "skills_fit": "score", "domain": "choice", "experience_label": "choice",
-        "analytical_work": "noul"}
-    levels = qs["skills_fit"]["criteria"]
+    assert set(qs) == {"fit", "main_factor"}
+    assert qs["fit"]["type"] == "score" and qs["main_factor"]["type"] == "choice"
+    levels = qs["fit"]["criteria"]
     assert len(levels) == 5
-    assert "almost none of the tools and skills the job lists" in levels[0]
-    assert "nearly all of the core tools and skills" in levels[-1]
-    assert list(qs["domain"]["criteria"]) == [
-        "data_science_ml", "data_analytics_bi", "software_engineering", "other_technical",
-        "hardware_embedded", "non_technical"]
-    assert list(qs["experience_label"]["criteria"]) == [
-        "none_stated", "entry_level", "one_to_two_years", "three_plus_years", "senior_title"]
-    for q in qs.values():
-        assert "`job`" in json.dumps(q["instructions"])
+    assert levels[0].startswith("No match")
+    assert levels[-1].startswith("Strong match")
+    assert list(qs["main_factor"]["criteria"]) == [
+        "skills_fit", "partial_skills", "years_1_2", "years_3_plus", "senior",
+        "different_field", "degree", "clearance"]
+    assert qs["fit"]["instructions"]["question"] == (
+        "How well does the job in `job` fit the candidate described in `candidate` "
+        "and `resume`?")
+    assert "`job`" in qs["main_factor"]["instructions"]
+
+
+def test_stage1_reads_returns_none_for_an_unreadable_or_missing_answer():
+    qs = jev_score.stage1_questions()
+    good = {"fit": jev.Answer(kind="score", score=2.0),
+           "main_factor": jev.Answer(kind="choice", choice="skills_fit")}
+    assert jev_score.stage1_reads(good, qs) == {"fit": 0.5, "main_factor": "skills_fit"}
+    bad_choice = dict(good, main_factor=jev.Answer(kind="choice", choice="astrology"))
+    assert jev_score.stage1_reads(bad_choice, qs) is None
+    bad_score = dict(good, fit=jev.Answer(kind="score", score=float("nan")))
+    assert jev_score.stage1_reads(bad_score, qs) is None
+    missing = {"fit": good["fit"]}
+    assert jev_score.stage1_reads(missing, qs) is None
 
 
 def test_stage1_sends_one_request_with_the_candidate_resume_and_job():
-    judge = ScriptedJudge({"skills_fit": 3.44, "domain": "data_analytics_bi",
-                           "experience_label": "entry_level"})
+    judge = ScriptedJudge({"fit": 4, "main_factor": "skills_fit"})
     got = jev_score.stage1(judge, {"md": JOB_MD, "facts": NO_FACTS}, RESUME)
-    assert got == {"score": 5, "reason": "Skills fit strong (0.86); domain data analytics; "
-                                         "entry level (no years stated); no degree bar"}
+    assert got == {"score": 5, "reason": "Strong match: no experience bar, and the skills, "
+                                         "tools and field line up."}
     assert len(judge.calls) == 1
     state, questions = judge.calls[0]
     assert set(state) == {"candidate", "resume", "job"}
@@ -417,14 +455,13 @@ def test_stage1_sends_one_request_with_the_candidate_resume_and_job():
 
 
 def test_stage1_takes_a_plain_job_text_as_having_no_code_facts():
-    got = jev_score.stage1(ScriptedJudge({"skills_fit": 3.44}), JOB_MD, RESUME)
+    got = jev_score.stage1(ScriptedJudge({"fit": 4, "main_factor": "skills_fit"}), JOB_MD, RESUME)
     assert got["score"] == 5
 
 
 @pytest.mark.parametrize("table", [
-    {"domain": "astrology"},                       # an option the question never offered
-    {"skills_fit": float("nan")},
-    {"analytical_work": 1.7},
+    {"main_factor": "astrology"},                  # an option the question never offered
+    {"fit": float("nan")},
 ])
 def test_stage1_returns_none_on_a_read_it_cannot_use(table):
     assert jev_score.stage1(ScriptedJudge(table), JOB_MD, RESUME) is None
@@ -434,7 +471,7 @@ def test_stage1_returns_none_on_a_missing_answer():
     class Partial(ScriptedJudge):
         def judge(self, state, questions):
             out = super().judge(state, questions)
-            out.pop("domain")
+            out.pop("main_factor")
             return out
     assert jev_score.stage1(Partial(), JOB_MD, RESUME) is None
 
@@ -469,20 +506,7 @@ def test_stage1_returns_none_for_an_empty_resume():
 
 def test_stage_questions_pass_the_prompt_hygiene_census():
     import test_prompt_hygiene as hygiene
-    texts = []
-
-    def walk(value):
-        if isinstance(value, str):
-            texts.append(value)
-        elif isinstance(value, dict):
-            for v in value.values():
-                walk(v)
-        elif isinstance(value, (list, tuple)):
-            for v in value:
-                walk(v)
-
-    walk(jev_score.CANDIDATE)
-    walk(jev_score.stage1_questions())
+    texts = _all_strings(jev_score.CANDIDATE) + _all_strings(jev_score.stage1_questions())
     assert texts
     for text in texts:
         for label, pattern in hygiene.BANNED:
@@ -740,26 +764,24 @@ def _reqs(*musts):
     return [Req(f"Requirement {i}", m) for i, m in enumerate(musts)]
 
 
-def _reads2(met, must=None, resp=1.0, seniority=1.0, domain=1.0):
-    reads = {"responsibilities_fit": resp, "seniority_fit": seniority, "domain_fit": domain}
+def _reads2(met, must=None, deep_fit=1.0, recommendation="apply"):
+    reads = {"deep_fit": deep_fit, "recommendation": recommendation}
     for i, p in enumerate(met):
         reads[f"req_{i}_met"] = p
         reads[f"req_{i}_must"] = 0.9 if must is None else must[i]
     return reads
 
 
-def test_stage2_everything_met_is_a_ten_to_apply():
+def test_stage2_strengths_are_every_met_line_musts_first():
     reqs = _reqs(True, True, True, False)
     got = jev_score.compose_stage2(reqs, _reads2([0.9, 0.9, 0.9, 0.9]))
-    assert got["deep_score"] == 10 and got["recommendation"] == "apply"
     assert got["strengths"] == "Requirement 0 | Requirement 1 | Requirement 2 | Requirement 3"
     assert got["gaps"] == ""
 
 
-def test_stage2_nothing_met_is_a_skip_with_the_must_haves_as_gaps():
+def test_stage2_gaps_are_the_unmet_must_have_lines():
     reqs = _reqs(True, True, False, True)
-    got = jev_score.compose_stage2(reqs, _reads2([0.1] * 4, resp=0.0, seniority=0.0, domain=0.0))
-    assert got["deep_score"] == 3 and got["recommendation"] == "skip"
+    got = jev_score.compose_stage2(reqs, _reads2([0.1] * 4))
     assert got["strengths"] == ""
     assert got["gaps"] == "Requirement 0 | Requirement 1 | Requirement 3"
 
@@ -796,50 +818,72 @@ def test_stage2_lines_are_trimmed_and_keep_the_separator_free():
     assert second == "SQL / Excel"
 
 
-@pytest.mark.parametrize("fit,deep,rec", [
-    (1.0, 10, "apply"),
-    (0.85, 10, "apply"),
-    (0.70, 9, "apply"),
-    (0.45, 7, "apply"),
-    (0.40, 6, "consider"),
-    (0.25, 5, "consider"),
-    (0.20, 5, "consider"),
-    (0.15, 4, "skip"),
-    (0.0, 3, "skip"),
+@pytest.mark.parametrize("frac,deep", [
+    (0.0, 1), (0.05, 1),                # value 0: the low end
+    (0.5, 6),                           # a middle value, and the half-up boundary (5.5 -> 6)
+    (0.95, 10), (1.0, 10),              # value 4: the high end
 ])
-def test_stage2_deep_score_maps_the_mix_to_one_to_ten(fit, deep, rec):
-    reqs = _reqs(True, True, False)
-    got = jev_score.compose_stage2(reqs, _reads2([fit] * 3, resp=fit, seniority=fit, domain=fit))
-    assert (got["deep_score"], got["recommendation"]) == (deep, rec)
+def test_stage2_deep_score_maps_deep_fit_to_one_to_ten(frac, deep):
+    """`floor(DEEP_BASE + DEEP_SPAN * value / 4 + 0.5)`, DEEP_BASE 1.0, DEEP_SPAN
+    9.0; `deep_fit` already arrives scaled to 0-1 (value / 4)."""
+    reqs = _reqs(True)
+    got = jev_score.compose_stage2(reqs, _reads2([1.0], deep_fit=frac))
+    assert got["deep_score"] == deep
 
 
-def test_stage2_weights_must_haves_most():
-    reqs = _reqs(True, True, False, False)
-    musts_met = jev_score.compose_stage2(reqs, _reads2([0.9, 0.9, 0.1, 0.1]))
-    nice_met = jev_score.compose_stage2(reqs, _reads2([0.1, 0.1, 0.9, 0.9]))
-    assert musts_met["deep_score"] > nice_met["deep_score"]
+@pytest.mark.parametrize("rec", ["apply", "consider", "skip"])
+def test_stage2_recommendation_is_a_passthrough_of_jevs_choice(rec):
+    """No code derivation: `recommendation` is whatever Jev picked, independent
+    of the per-line met reads (all unmet here)."""
+    reqs = _reqs(True)
+    got = jev_score.compose_stage2(reqs, _reads2([0.1], recommendation=rec))
+    assert got["recommendation"] == rec
 
 
-def test_stage2_without_nice_to_haves_reweights_the_rest():
-    reqs = _reqs(True, True, True)
-    got = jev_score.compose_stage2(reqs, _reads2([1.0, 1.0, 1.0]))
-    assert got["deep_score"] == 10
+def test_stage2_findings_carry_full_line_texts_musts_first():
+    reqs = _reqs(True, False, True, False)
+    got = jev_score.compose_stage2(reqs, _reads2([0.9, 0.9, 0.1, 0.1]))
+    assert got["findings"] == {
+        "met": ["Requirement 0", "Requirement 1"],
+        "unmet_must": ["Requirement 2"],
+        "unmet_nice": ["Requirement 3"],
+    }
+
+
+def test_stage2_findings_keep_the_full_text_the_trimmed_strengths_string_cuts():
+    long_text = "Experience with " + " ".join(f"tool{i}" for i in range(40))
+    reqs = [Req(long_text, True)]
+    got = jev_score.compose_stage2(reqs, _reads2([0.9]))
+    assert got["findings"]["met"] == [long_text]
+    assert got["strengths"] != long_text and got["strengths"].endswith("...")
+
+
+def test_stage2_with_zero_requirement_lines_has_empty_strengths_gaps_and_findings():
+    got = jev_score.compose_stage2([], {"deep_fit": 1.0, "recommendation": "apply"})
+    assert got["deep_score"] == 10 and got["recommendation"] == "apply"
+    assert got["strengths"] == "" and got["gaps"] == ""
+    assert got["findings"] == {"met": [], "unmet_must": [], "unmet_nice": []}
 
 
 def test_stage2_asks_the_must_read_only_for_a_line_the_code_gives_no_cue():
     reqs = [Req("Python and SQL", True), Req("Tableau", None), Req("Spark is a plus", False)]
     qs = jev_score.stage2_questions(reqs)
     assert set(qs) == {"req_0_met", "req_1_met", "req_1_must", "req_2_met",
-                       "responsibilities_fit", "seniority_fit", "domain_fit"}
+                       "deep_fit", "recommendation"}
     assert all(qs[k]["type"] == "noul" for k in ("req_0_met", "req_1_met", "req_1_must",
                                                   "req_2_met"))
-    assert all(qs[k]["type"] == "score" for k in ("responsibilities_fit", "seniority_fit",
-                                                   "domain_fit"))
+    assert qs["deep_fit"]["type"] == "score" and len(qs["deep_fit"]["criteria"]) == 5
+    assert qs["recommendation"]["type"] == "choice"
+    assert list(qs["recommendation"]["criteria"]) == ["apply", "consider", "skip"]
     assert "Python and SQL" in qs["req_0_met"]["instructions"]
     assert "`resume`" in qs["req_0_met"]["instructions"]
     assert "Tableau" in qs["req_1_must"]["instructions"]
     assert "`job`" in qs["req_1_must"]["instructions"]
-    assert "`candidate`" in qs["seniority_fit"]["instructions"]
+    assert "`candidate`" in qs["deep_fit"]["instructions"]["question"]
+
+
+def test_stage2_questions_with_zero_lines_asks_only_deep_fit_and_recommendation():
+    assert set(jev_score.stage2_questions([])) == {"deep_fit", "recommendation"}
 
 
 def test_stage2_reads_and_composes_without_must_answers_for_cued_lines():
@@ -849,18 +893,15 @@ def test_stage2_reads_and_composes_without_must_answers_for_cued_lines():
                              "req_2_met": 0.2}).judge({}, qs)
     reads = jev_score.stage2_reads(answers, qs, len(reqs))
     assert reads is not None
-    assert set(reads) == set(qs)
+    assert set(reads) == {"req_0_met", "req_1_met", "req_1_must", "req_2_met",
+                          "deep_fit", "recommendation"}
     assert jev_score.compose_stage2(reqs, reads)["gaps"] == "Python and SQL"
 
 
 def test_stage2_questions_pass_the_prompt_hygiene_census():
     import test_prompt_hygiene as hygiene
-    qs = jev_score.stage2_questions([Req("Python and SQL", True)])
-    texts = []
-    for q in qs.values():
-        texts.append(q["instructions"])
-        crit = q["criteria"]
-        texts.extend(crit.values() if isinstance(crit, dict) else crit)
+    texts = _all_strings(jev_score.stage2_questions([Req("Python and SQL", True)]))
+    assert texts
     for text in texts:
         for label, pattern in hygiene.BANNED:
             assert not pattern.search(text), (label, text)
@@ -873,31 +914,45 @@ JOB2_MD = ("## Responsibilities\n- Build dashboards\n\n"
 
 def test_stage2_sends_one_request_and_composes_the_columns():
     judge = ScriptedJudge({"req_0_met": 0.9, "req_1_met": 0.8, "req_2_met": 0.2,
-                           "req_3_met": 0.1, "req_3_must": 0.9,
-                           "responsibilities_fit": 3, "seniority_fit": 3, "domain_fit": 3})
+                           "req_3_met": 0.1, "deep_fit": 3, "recommendation": "consider"})
     got = jev_score.stage2(judge, {"md": JOB2_MD, "facts": NO_FACTS}, RESUME)
     assert len(judge.calls) == 1
     state, questions = judge.calls[0]
     assert set(state) == {"candidate", "resume", "job"}
-    assert len(questions) == 4 + 3        # every line has a heading cue: no must question
-    assert set(got) == {"deep_score", "strengths", "gaps", "recommendation"}
+    assert len(questions) == 4 + 2        # every line has a heading cue: no must question
+    assert set(got) == {"deep_score", "strengths", "gaps", "recommendation", "findings"}
     assert got["strengths"] == "Python and SQL | Tableau or Power BI"
     assert got["gaps"] == "Statistics coursework"       # Spark: the heading says preferred
+    assert got["recommendation"] == "consider"
     assert 1 <= got["deep_score"] <= 10
-    assert got["recommendation"] in ("apply", "consider", "skip")
 
 
-def test_stage2_with_fewer_than_three_lines_takes_the_llm_path():
-    judge = ScriptedJudge()
+def test_stage2_runs_with_fewer_than_three_requirement_lines():
+    """The old few-lines LLM handoff is gone: `deep_fit` and `recommendation`
+    need no requirement lines at all."""
+    judge = ScriptedJudge({"req_0_met": 0.9, "req_1_met": 0.9, "deep_fit": 4,
+                           "recommendation": "apply"})
     md = "## Requirements\n- Python\n- SQL\n\nA paragraph about the team."
-    assert jev_score.stage2(judge, md, RESUME) is None
-    assert judge.calls == []
+    got = jev_score.stage2(judge, md, RESUME)
+    assert got is not None and got["recommendation"] == "apply"
+    assert len(judge.calls) == 1
+
+
+def test_stage2_runs_with_zero_requirement_lines():
+    judge = ScriptedJudge({"deep_fit": 2, "recommendation": "skip"})
+    md = "A paragraph about the team with no bulleted list or heading at all."
+    got = jev_score.stage2(judge, md, RESUME)
+    assert got is not None
+    assert got["strengths"] == "" and got["gaps"] == ""
+    assert got["findings"] == {"met": [], "unmet_must": [], "unmet_nice": []}
+    _state, questions = judge.calls[0]
+    assert set(questions) == {"deep_fit", "recommendation"}
 
 
 @pytest.mark.parametrize("table", [
     {"req_1_met": 1.5},
-    {"seniority_fit": 7},
-    {"domain_fit": float("inf")},
+    {"deep_fit": 7},
+    {"recommendation": "astrology"},
 ])
 def test_stage2_returns_none_on_a_read_it_cannot_use(table):
     assert jev_score.stage2(ScriptedJudge(table), JOB2_MD, RESUME) is None
@@ -955,6 +1010,21 @@ def _jobs_df(*tags, md=JOB2_MD):
     })
 
 
+class RefusesStage2For(ScriptedJudge):
+    """Answers stage 1 requests (no `deep_fit`) for every job; raises for a
+    stage 2 request (`deep_fit` among the questions asked) on a job whose text
+    holds one of `tags`, so that job's stage 1 still comes from Jev."""
+
+    def __init__(self, *tags):
+        super().__init__()
+        self.tags = set(tags)
+
+    def judge(self, state, questions):
+        if "deep_fit" in questions and any(tag in state["job"] for tag in self.tags):
+            raise RuntimeError("no stage 2 answer for this one")
+        return super().judge(state, questions)
+
+
 def test_run_scoring_scores_both_stages_with_jev_and_never_calls_the_llm():
     sj = _sj()
     pool = RecordingPool()
@@ -962,11 +1032,12 @@ def test_run_scoring_scores_both_stages_with_jev_and_never_calls_the_llm():
     merged = asyncio.run(sj.run_scoring(pool, RESUME, _jobs_df("JOB-A", "JOB-B"), jev_run=run))
     assert pool.calls == []
     assert list(merged["score"]) == [5, 5]
-    assert set(merged["reason"]) == {"Skills fit strong (1.00); domain data science or ML; "
-                                     "no experience level stated; no degree bar"}
+    assert set(merged["reason"]) == {
+        "Strong match: no experience bar, and the skills, tools and field line up."}
     assert list(merged["deep_score"]) == [10, 10]
     assert set(merged["recommendation"]) == {"apply"}
     assert merged["strengths"].iloc[0].startswith("Python and SQL | ")
+    assert "findings" not in merged.columns          # score_jobs pops it before the row is built
     assert (run.scored, run.fallback) == ({1: 2, 2: 2}, {1: 0, 2: 0})
 
 
@@ -989,11 +1060,10 @@ def test_run_scoring_sends_the_code_facts_with_stage_one(monkeypatch):
 def test_a_job_jev_cannot_score_takes_the_llm_path():
     sj = _sj()
     pool = RecordingPool()
-    run = sj.JevRun(ScriptedJudge())
-    df = pd.concat([_jobs_df("JOB-A"), _jobs_df("JOB-B", md="A short posting with no list.")],
-                   ignore_index=True)
+    run = sj.JevRun(RefusesStage2For("JOB-B"))
+    df = _jobs_df("JOB-A", "JOB-B")
     merged = asyncio.run(sj.run_scoring(pool, RESUME, df, jev_run=run)).set_index("job_posting_id")
-    # JOB-B has too few requirement lines for Jev's stage 2: the LLM writes it
+    # JOB-B's stage 1 comes from Jev; its stage 2 request fails, so the LLM writes it
     assert pool.jobs(1) == [] and pool.jobs(2) == ["JOB-B"]
     assert merged.loc["job-b", "recommendation"] == "consider"
     assert merged.loc["job-a", "recommendation"] == "apply"
@@ -1027,7 +1097,7 @@ def test_an_outage_mid_run_moves_the_rest_of_the_run_to_the_llm(monkeypatch, cap
     assert len(inner.calls) == 2                  # one answer, one failure, then no more requests
     assert pool.jobs(1) == ["JOB-B", "JOB-C", "JOB-D"]
     assert pool.jobs(2) == ["JOB-A", "JOB-B", "JOB-C", "JOB-D"]
-    assert merged.loc["job-a", "reason"].startswith("Skills fit")
+    assert merged.loc["job-a", "reason"].startswith("Strong match")
     assert merged.loc["job-b", "reason"] == "llm reason"
     assert not merged["reason"].astype(str).str.startswith("ERROR").any()
     assert (run.scored, run.fallback) == ({1: 1, 2: 0}, {1: 3, 2: 4})
@@ -1108,7 +1178,7 @@ def test_main_lets_the_jev_worker_threads_go_once_the_run_is_done(monkeypatch):
     assert closed == [seen["rescore_jev"]]
 
 
-def test_jev_on_without_an_llm_provider_keeps_error_rows_and_scores_only(monkeypatch):
+def test_jev_on_without_an_llm_provider_keeps_error_rows_and_scores_the_rest(monkeypatch):
     sj = _sj()
     monkeypatch.setattr(jev_score, "_WARNED", set())
 
@@ -1119,16 +1189,30 @@ def test_jev_on_without_an_llm_provider_keeps_error_rows_and_scores_only(monkeyp
             return super().judge(state, questions)
 
     run = sj.JevRun(RefusesB())
-    df = pd.concat([_jobs_df("JOB-A", md="A short posting with no list."), _jobs_df("JOB-B")],
-                   ignore_index=True)
+    df = _jobs_df("JOB-A", "JOB-B")
     merged = asyncio.run(sj.run_scoring(None, RESUME, df, jev_run=run)).set_index("job_posting_id")
     assert merged.loc["job-a", "score"] == 5
-    assert pd.isna(merged.loc["job-a", "deep_score"])          # scores only
+    assert merged.loc["job-a", "deep_score"] == 10              # Jev scores both stages now
     assert pd.isna(merged.loc["job-b", "score"])
     assert merged.loc["job-b", "reason"] == sj.NO_LLM_REASON
     assert sj.NO_LLM_REASON.startswith("ERROR:")                # the rescore pass retries it
     assert list(sj.rows_needing_rescore(merged.reset_index())["job_posting_id"]) == ["job-b"]
-    assert (run.no_llm_errors, run.scores_only) == (1, 1)
+    assert (run.no_llm_errors, run.scores_only) == (1, 0)
+
+
+def test_jev_on_without_an_llm_provider_leaves_a_stage2_only_failure_unscored(monkeypatch):
+    """The old few-lines gate used to make this job's stage 2 a quiet no-op;
+    now a real Jev failure with no LLM to catch it does the same job."""
+    sj = _sj()
+    monkeypatch.setattr(jev_score, "_WARNED", set())
+    run = sj.JevRun(RefusesStage2For("JOB-B"))
+    df = _jobs_df("JOB-A", "JOB-B")
+    merged = asyncio.run(sj.run_scoring(None, RESUME, df, jev_run=run)).set_index("job_posting_id")
+    assert merged.loc["job-b", "score"] == 5                    # stage 1 still scored
+    assert pd.isna(merged.loc["job-b", "deep_score"])           # stage 2 skipped: no Jev, no LLM
+    assert merged.loc["job-b", "reason"] == (
+        "Strong match: no experience bar, and the skills, tools and field line up.")
+    assert (run.no_llm_errors, run.scores_only) == (0, 1)
 
 
 class Refuses(ScriptedJudge):
@@ -1200,9 +1284,8 @@ def test_with_jev_off_run_scoring_is_the_llm_path_as_before():
 
 def test_the_run_summary_counts_jev_requests_spend_and_fallbacks_by_stage():
     sj = _sj()
-    run = sj.JevRun(jev.Guarded(jev.DryRun(ScriptedJudge())))
-    df = pd.concat([_jobs_df("JOB-A"), _jobs_df("JOB-B", md="A short posting with no list.")],
-                   ignore_index=True)
+    run = sj.JevRun(jev.Guarded(jev.DryRun(RefusesStage2For("JOB-B"))))
+    df = _jobs_df("JOB-A", "JOB-B")
     asyncio.run(sj.run_scoring(RecordingPool(), RESUME, df, jev_run=run))
     stats = run.stats()
     assert (stats["jev_stage1_scored"], stats["jev_stage2_scored"], stats["jev_requests"],

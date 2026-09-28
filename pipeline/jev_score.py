@@ -1,4 +1,4 @@
-"""Jev scoring for score_jobs.py (cycle 19: SC-1 to SC-3, JS-4).
+"""Jev scoring for score_jobs.py (cycle 20: the scorer mirrors the LLM prompts).
 
 Jev (TypeSafe System One) answers typed questions about a state and cannot
 write text, so the split is: Jev decides, code composes. `score_jobs.py` calls
@@ -6,6 +6,13 @@ write text, so the split is: Jev decides, code composes. `score_jobs.py` calls
 one request about the state `{candidate, resume, job}` and composes the
 columns the LLM path writes today. `None` from either means "use the LLM path"
 for that job.
+
+Cycle 20 rebuilt stage 1 and stage 2 to ask Jev the same rubric the LLM stage
+prompts use, on Jev's own answer types (a Score for the 1-5 and the deep
+score, a Choice for the main factor and the recommendation). Cycle 19's
+narrow reads and fitted weights are gone. See
+`docs/superpowers/specs/2026-09-28-jev-scorer-mirror-design.md` for the
+rubric text this module copies verbatim.
 
 The scorer runs as its own process and on the VM, so it decides Jev use by
 itself (JS-4): `SCORE_USE_JEV` in the environment, else the dashboard's
@@ -29,47 +36,34 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-# --- composition constants (SC-2, SC-3; stage 1 tuned in SP8) -----------------------
+# --- composition constants (cycle 20: the scorer mirrors the LLM prompts) -----------
 #
-# Stage 1 follows the rubric of the stage 1 prompt (score_jobs.STAGE1_TEMPLATE_RESUME):
-# in domain with no experience bar, skills decide 3 to 5; one year or more caps the
-# score at 3 and lowers it as the requirement rises; off domain or a hard advanced
-# degree gives 1 or 2. `skills_fit` arrives scaled to 0-1 (Jev's level over the top
-# level), so 0.75 is the "most of the core tools" level. VL-2 (400 jobs against
-# Gemini's stage 1): 0.75 / 0.45 raised exact agreement from 37% to 42% and agreement
-# at the stage 2 threshold from 70% to 73%, with the two kinds of miss even (51 / 56).
-SKILLS_FOR_5 = 0.75             # in domain with no bar: a 5 at or above this
-SKILLS_FOR_4 = 0.45             # a 4 at or above this, else a 3
-LOW_BAND_SKILLS_FOR_2 = 0.55    # off domain or a hard advanced degree: a 2 at or above this, else a 1
-# Minimum years code found -> the highest score allowed; the first row reached wins.
-YEARS_CAPS: tuple[tuple[int, int], ...] = ((5, 1), (3, 2), (1, 3))
-# experience_label -> the highest score allowed (read only when code found no years).
-EXPERIENCE_LABEL_CAPS: dict[str, int] = {"one_to_two_years": 3, "three_plus_years": 2,
-                                         "senior_title": 2}
-PARTIAL_DOMAIN_CAP = 3          # other technical work without data or engineering duties
+# Stage 1 asks Jev the stage 1 rubric directly (`fit`, a five-level Score) plus a
+# `main_factor` Choice for the reason. `fit`'s value (Jev's probability-weighted
+# level, 0-4) maps to the 1-5 score by `floor(value + 0.5) + 1`; code caps then
+# apply the hard rules the rubric states (years, an advanced degree, a security
+# clearance), as cycle 19 did. The cycle 19 calibration history that used to sit
+# here (skills-fit thresholds, domain weighting) no longer applies: this module
+# no longer builds the score from those narrow reads.
+YEARS_CAPS: tuple[tuple[int, int], ...] = ((5, 1), (3, 2), (1, 3))  # min_years -> score cap
 CLEARANCE_CAP = 1               # a new graduate cannot hold an active clearance
-ANALYTICAL_YES = 0.5            # analytical_work at or above this reads as yes
-SKILLS_WORDS: tuple[tuple[float, str], ...] = (
-    (SKILLS_FOR_5, "strong"), (SKILLS_FOR_4, "good"), (0.30, "partial"), (0.0, "weak"))
+ADVANCED_DEGREE_CAP = 2         # a hard master's/PhD requirement the candidate lacks
+SCORE_LABELS: dict[int, str] = {1: "No match", 2: "Weak match", 3: "Borderline",
+                                4: "Good match", 5: "Strong match"}
 
-# Stage 2 follows the stage 2 prompt: the deep score is a mix of must-have coverage
-# (the mean met probability over the must-have lines), nice-to-have coverage and
-# the three fits, each 0-1; a part with no lines drops out and the rest are
-# reweighted. deep = DEEP_BASE + DEEP_SPAN * mix, rounded half up and kept to 1-10.
-# Jev's met reads run conservative: with 1 + 9 * mix its deep scores sat 1.7 below
-# Gemini's (VL-2, 151 jobs), and the recommendation agreed on 55%. 3 + 8 * mix puts
-# the two scales within 0.8 of each other on average and agrees on 82%, so a mixed
-# table of Jev and Gemini rows sorts on one scale and the bands keep their meaning.
-DEEP_BASE = 3.0
-DEEP_SPAN = 8.0
-MIN_REQUIREMENT_LINES = 3       # fewer: that job's stage 2 takes the LLM path
+# Stage 2 asks Jev the stage 2 rubric directly (`deep_fit`, a five-level Score, and
+# `recommendation`, a Choice Jev picks outright: no code-derived recommendation).
+# `deep_fit`'s value maps to 1-10 by `floor(DEEP_BASE + DEEP_SPAN * value / 4 +
+# 0.5)`. DEEP_BASE and DEEP_SPAN are placeholders until SP3's live check against
+# Gemini's stage 2 scores; SP3 may retune them from the cached answers.
+DEEP_BASE = 1.0
+DEEP_SPAN = 9.0
+MIN_PREFERRED_LINES = 3         # requirement_lines(): below this many heading bullets,
+                                 # other sections' bullets fill in too (unrelated to any
+                                 # stage 2 minimum: stage 2 now runs on 0 to 30 lines)
 MAX_REQUIREMENT_LINES = 30
 MET_YES = 0.5                   # req_{i}_met at or above this counts the line as met
 MUST_YES = 0.5                  # req_{i}_must at or above this makes the line a must-have
-DEEP_WEIGHTS: dict[str, float] = {"must": 0.45, "nice": 0.10, "responsibilities": 0.20,
-                                  "seniority": 0.15, "domain": 0.10}
-RECOMMEND_APPLY = 7             # a deep score at or above this: apply
-RECOMMEND_CONSIDER = 5          # at or above this: consider; below it: skip
 LIST_MAX = 5                    # strengths and gaps keep at most this many lines each
 LINE_CHARS = 90                 # a strength or gap is cut to this length
 REQ_TEXT_CHARS = 300            # a requirement line is cut to this length in its question
@@ -314,97 +308,83 @@ def _score_read(answer: Any, levels: int) -> float | None:
     return min(1.0, max(0.0, raw / top))
 
 
-# --- SC-2: stage 1 (score 1-5 and reason) -----------------------------------------------
+# --- stage 1 (score 1-5 and reason) ------------------------------------------------------
 
-SKILLS_FIT_LEVELS = (
-    "The résumé shows almost none of the tools and skills the job lists.",
-    "The résumé shows a few of the tools and skills the job lists; most of the core ones "
-    "are missing.",
-    "The résumé shows about half of the core tools and skills the job lists.",
-    "The résumé shows most of the core tools and skills the job lists; one or two are missing.",
-    "The résumé shows nearly all of the core tools and skills the job lists.",
+# Levels index 0 (no match) to 4 (strong match), the stage 1 prompt's own wording.
+FIT_LEVELS = (
+    "No match: the job is in another field (sales, recruiting, hardware, electrical, embedded "
+    "or firmware work, or other work with no data, analysis or software in it), or it has a "
+    "hard requirement the candidate cannot meet, such as a required master's degree or PhD or "
+    "an active security clearance.",
+    "Weak match: the job needs 3 or more years of experience or is a senior, staff, principal, "
+    "lead or manager role, or the candidate's skills and tools mostly do not carry over to it.",
+    "Borderline: the job asks for 1 or more years of experience, or only part of the "
+    "candidate's skills, tools and field line up with it.",
+    "Good match: the job has no experience bar, and the candidate's skills, tools and field "
+    "line up with most of what it asks.",
+    "Strong match: the job has no experience bar, and the candidate's skills, tools and field "
+    "line up with nearly everything it asks.",
 )
 
-# option id -> (what Jev reads, what the reason says). data_analytics_bi is in
-# domain per the rubric's analyst rule, business-flavoured titles included.
-DOMAINS: dict[str, tuple[str, str]] = {
-    "data_science_ml": (
-        "Data science, machine learning or AI: building models, running experiments, "
-        "statistical analysis.", "data science or ML"),
-    "data_analytics_bi": (
-        "Data analytics or business intelligence: querying and analysing data, reports and "
-        "dashboards. Business, product, operations, marketing, research and reporting analyst "
-        "roles belong here.", "data analytics"),
-    "software_engineering": (
-        "Software engineering: writing code for applications, services, data pipelines or "
-        "developer tools.", "software engineering"),
-    "other_technical": (
-        "Other technical work: IT support, networking, systems administration, test "
-        "engineering, technical support or another technical field.", "other technical"),
-    "hardware_embedded": (
-        "Hardware or embedded work: firmware, device drivers, low-level C or C++ on devices, "
-        "electrical or chip design.", "hardware or embedded"),
-    "non_technical": (
-        "Non-technical work: sales, recruiting, customer service, administration, writing, "
-        "marketing or operations roles.", "non-technical"),
+FIT_INSTRUCTIONS: dict[str, str] = {
+    "question": ("How well does the job in `job` fit the candidate described in `candidate` "
+                "and `resume`?"),
+    "experience_bar": ("Use the lower bound of any experience range. A range starting at 0, "
+                       "an entry-level, junior, new-grad, associate or level I label, or no "
+                       "stated requirement all count as no experience bar."),
+    "analyst_roles": ("Data, business, BI, reporting, analytics, product, operations, "
+                      "marketing and research analyst roles are in the candidate's field: "
+                      "judge them on whether the candidate can do the listed analytical work, "
+                      "whatever the title or degree field."),
+    "ignore": ("Location, on-site, hybrid or remote terms, relocation, time zone, visa "
+              "sponsorship and work authorization never count for or against a job."),
 }
-IN_DOMAIN = frozenset({"data_science_ml", "data_analytics_bi", "software_engineering"})
-# Fields that count as in domain when the listed duties are data or engineering
-# work (analytical_work): without such duties other technical work is a partial
-# match and non-technical work is off domain. Hardware stays off domain either way,
-# since engineering duties are its norm.
-DUTY_RESCUED = frozenset({"other_technical", "non_technical"})
-PARTIAL_DOMAIN = frozenset({"other_technical"})
-RESCUED_SUFFIX = " with data or engineering duties"
 
-EXPERIENCE_LABELS: dict[str, tuple[str, str]] = {
-    "none_stated": (
-        "The job states no experience level and no years of experience.",
-        "no experience level stated"),
-    "entry_level": (
-        "The job is labeled entry level, new grad, junior, associate or level I, or welcomes "
-        "candidates with no experience.", "entry level (no years stated)"),
-    "one_to_two_years": (
-        "The job asks for at least one or two years of experience.", "a floor of 1 to 2 years"),
-    "three_plus_years": (
-        "The job asks for three or more years of experience.", "3 or more years"),
-    "senior_title": (
-        "The job is a senior, staff, principal, lead, manager or director role.", "senior title"),
+MAIN_FACTOR_INSTRUCTIONS = ("What most decides how well the job in `job` fits the candidate "
+                            "in `candidate` and `resume`?")
+
+# option id -> what Jev reads.
+MAIN_FACTOR_OPTIONS: dict[str, str] = {
+    "skills_fit": ("The job has no experience bar, and the candidate's skills, tools and field "
+                  "line up with it."),
+    "partial_skills": ("The job is in the candidate's field, and several of the main tools or "
+                       "skills it asks for are missing from the résumé."),
+    "years_1_2": "The job asks for one or two years of experience.",
+    "years_3_plus": "The job asks for three or more years of experience.",
+    "senior": "The job is a senior, staff, principal, lead, manager or director role.",
+    "different_field": ("The job is in a field the candidate did not train or work in: sales, "
+                        "recruiting, hardware, embedded work, or work with no data, analysis "
+                        "or software in it."),
+    "degree": "The job requires a master's degree or PhD.",
+    "clearance": "The job requires an active security clearance.",
+}
+
+# option id -> what the reason says.
+FACTOR_TEXT: dict[str, str] = {
+    "skills_fit": "no experience bar, and the skills, tools and field line up",
+    "partial_skills": "in field; several main tools or skills are missing from the résumé",
+    "years_1_2": "asks for 1 to 2 years of experience",
+    "years_3_plus": "asks for 3 or more years of experience",
+    "senior": "a senior, lead or manager role",
+    "different_field": "a field outside data, analytics and software",
+    "degree": "requires a master's degree or PhD",
+    "clearance": "requires an active security clearance",
 }
 
 
 def stage1_questions() -> dict[str, dict]:
-    """The four stage 1 questions, asked in one request (SC-2)."""
+    """The two stage 1 questions, asked in one request: `fit` (a Score on
+    FIT_LEVELS) and `main_factor` (a Choice among MAIN_FACTOR_OPTIONS)."""
     return {
-        "skills_fit": {
+        "fit": {
             "type": "score",
-            "instructions": ("How well do the tools and skills shown in `resume` cover the "
-                             "tools and skills that `job` asks for? Coursework, projects and "
-                             "the internship count as showing a skill."),
-            "criteria": list(SKILLS_FIT_LEVELS),
+            "instructions": dict(FIT_INSTRUCTIONS),
+            "criteria": list(FIT_LEVELS),
         },
-        "domain": {
+        "main_factor": {
             "type": "choice",
-            "instructions": ("Which field is the work that `job` describes in? Judge by the "
-                             "listed duties and the title."),
-            "criteria": {k: v[0] for k, v in DOMAINS.items()},
-        },
-        "experience_label": {
-            "type": "choice",
-            "instructions": "What experience level does `job` ask for?",
-            "criteria": {k: v[0] for k, v in EXPERIENCE_LABELS.items()},
-        },
-        "analytical_work": {
-            "type": "noul",
-            "instructions": ("Are the responsibilities listed in `job` querying or analysing "
-                             "data, building reports or dashboards, or engineering work?"),
-            "criteria": {
-                "true": ("Most listed duties are data analysis, reporting, dashboards, "
-                         "modeling or building software or systems."),
-                "false": ("Most listed duties are selling, recruiting, support, "
-                          "administration, writing or other work with no data or "
-                          "engineering in it."),
-            },
+            "instructions": MAIN_FACTOR_INSTRUCTIONS,
+            "criteria": dict(MAIN_FACTOR_OPTIONS),
         },
     }
 
@@ -412,12 +392,9 @@ def stage1_questions() -> dict[str, dict]:
 def stage1_reads(answers: Mapping[str, Any], questions: Mapping[str, dict]) -> dict | None:
     """The reads `compose_stage1` takes, or None when any answer is unusable."""
     reads = {
-        "skills_fit": _score_read(answers.get("skills_fit"),
-                                  len(questions["skills_fit"]["criteria"])),
-        "domain": _choice_read(answers.get("domain"), questions["domain"]["criteria"]),
-        "experience_label": _choice_read(answers.get("experience_label"),
-                                         questions["experience_label"]["criteria"]),
-        "analytical_work": _noul_read(answers.get("analytical_work")),
+        "fit": _score_read(answers.get("fit"), len(questions["fit"]["criteria"])),
+        "main_factor": _choice_read(answers.get("main_factor"),
+                                    questions["main_factor"]["criteria"]),
     }
     return None if any(v is None for v in reads.values()) else reads
 
@@ -427,53 +404,42 @@ def _years_cap(years: int) -> int | None:
 
 
 def compose_stage1(facts: Mapping[str, Any], reads: Mapping[str, Any]) -> tuple[int, str]:
-    """(score 1-5, reason) from the code facts (`min_years`, `advanced_degree`,
-    `clearance`) and Jev's reads (`skills_fit` 0-1, `domain`, `experience_label`,
-    `analytical_work` 0-1). Pure: the rules and constants at the top of the module."""
-    skills = min(1.0, max(0.0, float(reads["skills_fit"])))
-    domain = str(reads["domain"])
-    label = str(reads["experience_label"])
-    duties = float(reads["analytical_work"]) >= ANALYTICAL_YES
+    """(score 1-5, reason) from Jev's `fit` level and `main_factor` choice, and
+    the code facts (`min_years`, `advanced_degree`, `clearance`). `fit` is
+    scaled 0-1 (the level over the top level); its raw level (0-4) maps to the
+    score by `floor(value + 0.5) + 1`. When a code fact caps the score below
+    what `fit` gave, the reason names that fact in place of `main_factor` (the
+    lowest cap's fact when several caps apply). Pure: the rules and constants
+    at the top of the module."""
+    frac = min(1.0, max(0.0, float(reads["fit"])))
+    value = frac * (len(FIT_LEVELS) - 1)
+    score = max(1, min(5, math.floor(value + 0.5) + 1))
+    main_factor = str(reads["main_factor"])
+
     years = facts.get("min_years")
     degree = bool(facts.get("advanced_degree"))
     clearance = bool(facts.get("clearance"))
 
-    rescued = domain in DUTY_RESCUED and duties
-    if domain in IN_DOMAIN or rescued:
-        fit = "in"
-    elif domain in PARTIAL_DOMAIN:
-        fit = "partial"
-    else:
-        fit = "off"
-
-    if fit == "off" or degree:
-        score = 2 if skills >= LOW_BAND_SKILLS_FOR_2 else 1
-    elif skills >= SKILLS_FOR_5:
-        score = 5
-    elif skills >= SKILLS_FOR_4:
-        score = 4
-    else:
-        score = 3
-    caps = [PARTIAL_DOMAIN_CAP if fit == "partial" else None,
-            CLEARANCE_CAP if clearance else None]
+    cap_facts: list[tuple[int, str]] = []
     if years is not None:
         years = int(years)
-        caps.append(_years_cap(years))
-        experience = "0-year floor" if years <= 0 else f"{years}+ years required"
-    else:
-        caps.append(EXPERIENCE_LABEL_CAPS.get(label))
-        experience = EXPERIENCE_LABELS.get(label, ("", label.replace("_", " ")))[1]
-    score = min([score] + [c for c in caps if c is not None])
-
-    word = next(w for floor, w in SKILLS_WORDS if skills >= floor)
-    field = DOMAINS.get(domain, ("", domain.replace("_", " ")))[1]
-    parts = [f"Skills fit {word} ({skills:.2f})",
-             f"domain {field}{RESCUED_SUFFIX if rescued else ''}",
-             experience,
-             "advanced degree required" if degree else "no degree bar"]
+        cap = _years_cap(years)
+        if cap is not None:
+            cap_facts.append((cap, f"the posting asks for {years}+ years of experience"))
     if clearance:
-        parts.append("clearance required")
-    return max(1, min(5, score)), "; ".join(parts)
+        cap_facts.append((CLEARANCE_CAP, "the posting requires a security clearance"))
+    if degree:
+        cap_facts.append((ADVANCED_DEGREE_CAP, "the posting requires a master's degree or PhD"))
+
+    final, cap_text = score, None
+    if cap_facts:
+        lowest_cap, lowest_text = min(cap_facts, key=lambda ct: ct[0])
+        if lowest_cap < score:
+            final, cap_text = lowest_cap, lowest_text
+
+    label = SCORE_LABELS[final]
+    text = cap_text if cap_text is not None else FACTOR_TEXT.get(main_factor, main_factor)
+    return final, f"{label}: {text}."
 
 
 def stage1(judge: Any, job: Any, resume: str) -> dict | None:
@@ -652,7 +618,7 @@ def requirement_lines(desc: Any, limit: int = MAX_REQUIREMENT_LINES) -> list[Req
 
     Bullet and numbered lines under requirement or qualification headings come
     first (a heading with no bullets lends its short plain lines); when those
-    are fewer than MIN_REQUIREMENT_LINES, bullets from the other sections follow
+    are fewer than MIN_PREFERRED_LINES, bullets from the other sections follow
     in document order. Benefit, company and similar sections never count, and
     lines about where or when the work happens (location, on-site, hybrid or
     remote work, relocation, time zone, travel, shifts) or about eligibility
@@ -682,11 +648,11 @@ def requirement_lines(desc: Any, limit: int = MAX_REQUIREMENT_LINES) -> list[Req
             seen.add(key)
             cue = False if _NICE_LINE_RE.search(text) else must
             (preferred if kind == "req" else others).append(Req(_cut(text, REQ_TEXT_CHARS), cue))
-    picked = preferred if len(preferred) >= MIN_REQUIREMENT_LINES else preferred + others
+    picked = preferred if len(preferred) >= MIN_PREFERRED_LINES else preferred + others
     return picked[:max(0, int(limit))]
 
 
-# --- SC-3: stage 2 (deep score 1-10, strengths, gaps, recommendation) -----------------------
+# --- stage 2 (deep score 1-10, strengths, gaps, recommendation) ---------------------------
 
 MET_CRITERIA = {
     "true": ("The résumé or the candidate context shows it: the skill, tool, degree or "
@@ -697,35 +663,46 @@ MUST_CRITERIA = {
     "true": "The job lists it as required: a must-have, minimum or basic qualification.",
     "false": "The job lists it as preferred, a plus, a bonus or nice to have.",
 }
-RESPONSIBILITIES_LEVELS = (
-    "The candidate has done none of the kinds of work the responsibilities describe.",
-    "The candidate has done a few of the kinds of work the responsibilities describe.",
-    "The candidate has done about half of the kinds of work the responsibilities describe.",
-    "The candidate has done most of the kinds of work the responsibilities describe.",
-    "The candidate has done nearly all of the kinds of work the responsibilities describe.",
+
+# Levels index 0 (poor fit) to 4 (excellent fit), the stage 2 prompt's own wording.
+DEEP_FIT_LEVELS = (
+    "Poor fit: the candidate lacks most of the job's must-have requirements, or the "
+    "day-to-day work is a kind they have not done.",
+    "Weak fit: the candidate meets some must-have requirements; key tools, skills or "
+    "experience the job needs are missing.",
+    "Mixed fit: the candidate meets several core requirements and misses others; they could "
+    "do the job after some ramp-up.",
+    "Good fit: the candidate meets the core requirements; what is missing is nice-to-have or "
+    "a tool they could pick up quickly.",
+    "Excellent fit: the candidate meets nearly every requirement, has done this kind of work "
+    "in the internship or projects, and the role is aimed at new graduates.",
 )
-SENIORITY_LEVELS = (
-    "The job is for experienced or senior staff and would pass over a new graduate.",
-    "The job asks for more experience than a new graduate has; a strong junior could still "
-    "be considered.",
-    "The job suits early-career candidates with a year or two of experience; a new graduate "
-    "could compete.",
-    "The job is entry level or open to new graduates.",
-)
-DOMAIN_FIT_LEVELS = (
-    "The job's field has nothing to do with data, analytics or software.",
-    "The job is in a neighbouring technical field; a few skills carry over.",
-    "The job is in a related field; most skills carry over.",
-    "The job is in the candidate's own field: data science, machine learning, analytics or "
-    "software engineering.",
-)
-_FIT_KEYS = {"responsibilities": "responsibilities_fit", "seniority": "seniority_fit",
-             "domain": "domain_fit"}
+
+DEEP_FIT_INSTRUCTIONS: dict[str, str] = {
+    "question": ("How well does the candidate in `candidate` and `resume` fit the job in "
+                "`job`, judged on its stated requirements and day-to-day work?"),
+    "not_gaps": ("Location, on-site, hybrid or remote terms, relocation, time zone, visa "
+                "sponsorship, work authorization and graduation timing are never gaps. For "
+                "analytical roles, career path, business background, degree field and "
+                "job-title history are never gaps."),
+    "ignore": "Company descriptions, benefits and application instructions.",
+}
+
+RECOMMENDATION_INSTRUCTIONS = ("Should the candidate in `candidate` and `resume` apply to "
+                               "the job in `job`?")
+
+RECOMMENDATION_OPTIONS: dict[str, str] = {
+    "apply": "A clear fit: the candidate should prioritize applying.",
+    "consider": "A mixed fit: worth applying depending on the candidate's other options.",
+    "skip": "The gaps are too large, even though the job looked like a fit at first.",
+}
 
 
 def stage2_questions(reqs: Sequence[Req]) -> dict[str, dict]:
     """A met noul per requirement line, a must noul for each line the code gives
-    no cue, and the three fits, asked in one request (SC-3)."""
+    no cue, `deep_fit` (a Score on DEEP_FIT_LEVELS) and `recommendation` (a
+    Choice among RECOMMENDATION_OPTIONS), asked in one request. `reqs` may be
+    empty: `deep_fit` and `recommendation` need no requirement lines."""
     qs: dict[str, dict] = {}
     for i, req in enumerate(reqs):
         text = _cut(req.text, REQ_TEXT_CHARS)
@@ -742,22 +719,15 @@ def stage2_questions(reqs: Sequence[Req]) -> dict[str, dict]:
                                  f"Requirement: {text}"),
                 "criteria": dict(MUST_CRITERIA),
             }
-    qs["responsibilities_fit"] = {
+    qs["deep_fit"] = {
         "type": "score",
-        "instructions": ("How much of the day-to-day work that `job` describes has the "
-                         "candidate in `resume` done, in the internship, projects or coursework?"),
-        "criteria": list(RESPONSIBILITIES_LEVELS),
+        "instructions": dict(DEEP_FIT_INSTRUCTIONS),
+        "criteria": list(DEEP_FIT_LEVELS),
     }
-    qs["seniority_fit"] = {
-        "type": "score",
-        "instructions": "How well does the seniority that `job` asks for suit `candidate`?",
-        "criteria": list(SENIORITY_LEVELS),
-    }
-    qs["domain_fit"] = {
-        "type": "score",
-        "instructions": ("How close is the field of `job` to the field the candidate trained "
-                         "and worked in, as `resume` shows?"),
-        "criteria": list(DOMAIN_FIT_LEVELS),
+    qs["recommendation"] = {
+        "type": "choice",
+        "instructions": RECOMMENDATION_INSTRUCTIONS,
+        "criteria": dict(RECOMMENDATION_OPTIONS),
     }
     return qs
 
@@ -766,19 +736,16 @@ def stage2_reads(answers: Mapping[str, Any], questions: Mapping[str, dict],
                  lines: int) -> dict | None:
     """The reads `compose_stage2` takes, or None when any answer is unusable.
     A line's must read is taken only when `questions` asked it."""
-    reads: dict[str, float | None] = {}
+    reads: dict[str, Any] = {}
     for i in range(lines):
         for part in ("met", "must"):
             qid = f"req_{i}_{part}"
             if part == "met" or qid in questions:
                 reads[qid] = _noul_read(answers.get(qid))
-    for qid in _FIT_KEYS.values():
-        reads[qid] = _score_read(answers.get(qid), len(questions[qid]["criteria"]))
+    reads["deep_fit"] = _score_read(answers.get("deep_fit"), len(questions["deep_fit"]["criteria"]))
+    reads["recommendation"] = _choice_read(answers.get("recommendation"),
+                                           questions["recommendation"]["criteria"])
     return None if any(v is None for v in reads.values()) else reads
-
-
-def _mean(values: list[float]) -> float | None:
-    return sum(values) / len(values) if values else None
 
 
 def _joined(lines: list[str]) -> str:
@@ -786,53 +753,52 @@ def _joined(lines: list[str]) -> str:
     return " | ".join(_cut(t.replace("|", "/"), LINE_CHARS) for t in lines[:LIST_MAX])
 
 
-def recommendation_for(deep: int) -> str:
-    if deep >= RECOMMEND_APPLY:
-        return "apply"
-    return "consider" if deep >= RECOMMEND_CONSIDER else "skip"
-
-
 def compose_stage2(reqs: Sequence[Req], reads: Mapping[str, Any]) -> dict:
-    """{"deep_score", "strengths", "gaps", "recommendation"} from the requirement
-    lines and Jev's reads (`req_{i}_met`, `req_{i}_must` 0-1 and the three fits
-    scaled 0-1). A line's code cue decides whether it is a must-have and beats
-    any `req_{i}_must` read; a line with no cue and no read counts as one.
-    Pure: the rules and constants at the top of the module."""
+    """{"deep_score", "strengths", "gaps", "recommendation", "findings"} from the
+    requirement lines and Jev's reads (`req_{i}_met`, `req_{i}_must` 0-1,
+    `deep_fit` 0-1 and `recommendation`, a passthrough of Jev's own choice). A
+    line's code cue decides whether it is a must-have and beats any
+    `req_{i}_must` read; a line with no cue and no read counts as one.
+    `deep_score` maps `deep_fit`'s value (0-4) to 1-10 by
+    `floor(DEEP_BASE + DEEP_SPAN * value / 4 + 0.5)`; since `deep_fit` already
+    arrives scaled to 0-1 (value / 4), that is `floor(DEEP_BASE + DEEP_SPAN *
+    deep_fit + 0.5)`. `findings` carries the full, unjoined line texts (met =
+    must-haves first, as `strengths` orders them) for the writer (SP2). Pure:
+    the rules and constants at the top of the module."""
     lines = []
     for i, req in enumerate(reqs):
         met = min(1.0, max(0.0, float(reads[f"req_{i}_met"])))
         must = req.must if req.must is not None else (
             float(reads.get(f"req_{i}_must", 1.0)) >= MUST_YES)
         lines.append((req.text, met, must))
-    parts = {"must": _mean([met for _t, met, must in lines if must]),
-             "nice": _mean([met for _t, met, must in lines if not must])}
-    for part, qid in _FIT_KEYS.items():
-        value = reads.get(qid)
-        parts[part] = None if value is None else min(1.0, max(0.0, float(value)))
-    present = {k: v for k, v in parts.items() if v is not None}
-    total = sum(DEEP_WEIGHTS[k] for k in present)
-    mix = sum(DEEP_WEIGHTS[k] * v for k, v in present.items()) / total if total else 0.0
-    deep = max(1, min(10, math.floor(DEEP_BASE + DEEP_SPAN * mix + 0.5)))
-    strengths = ([t for t, met, must in lines if must and met >= MET_YES]
-                 + [t for t, met, must in lines if not must and met >= MET_YES])
-    gaps = [t for t, met, must in lines if must and met < MET_YES]
-    return {"deep_score": deep, "strengths": _joined(strengths), "gaps": _joined(gaps),
-            "recommendation": recommendation_for(deep)}
+    met_must = [t for t, met, must in lines if must and met >= MET_YES]
+    met_nice = [t for t, met, must in lines if not must and met >= MET_YES]
+    gaps_must = [t for t, met, must in lines if must and met < MET_YES]
+    gaps_nice = [t for t, met, must in lines if not must and met < MET_YES]
+    strengths = met_must + met_nice
+
+    fit = min(1.0, max(0.0, float(reads["deep_fit"])))
+    deep = max(1, min(10, math.floor(DEEP_BASE + DEEP_SPAN * fit + 0.5)))
+    findings = {"met": list(strengths), "unmet_must": list(gaps_must),
+               "unmet_nice": list(gaps_nice)}
+    return {"deep_score": deep, "strengths": _joined(strengths), "gaps": _joined(gaps_must),
+            "recommendation": str(reads["recommendation"]), "findings": findings}
 
 
 def stage2(judge: Any, job: Any, resume: str) -> dict | None:
-    """{"deep_score", "strengths", "gaps", "recommendation"} for one job from one
-    Jev request, or None to run that job's stage 2 on the LLM path: no judge,
-    fewer than MIN_REQUIREMENT_LINES requirement lines, a request that failed or
-    did not fit, an answer that could not be read. `job` is as for `stage1`."""
+    """{"deep_score", "strengths", "gaps", "recommendation", "findings"} for one
+    job from one Jev request, or None to run that job's stage 2 on the LLM
+    path: no judge, a request that failed or did not fit, an answer that could
+    not be read. `requirement_lines()` may find zero lines (0 to
+    MAX_REQUIREMENT_LINES); zero lines means no per-line questions and empty
+    strengths and gaps, but `deep_fit` and `recommendation` still run. `job` is
+    as for `stage1`."""
     if judge is None:
         return None
     md, _facts = _job_parts(job)
     if not md.strip() or not str(resume or "").strip():
         return None
     reqs = requirement_lines(md)
-    if len(reqs) < MIN_REQUIREMENT_LINES:
-        return None
     questions = stage2_questions(reqs)
     state = fitted_state(md, resume, questions)
     if state is None:

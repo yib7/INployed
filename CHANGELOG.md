@@ -93,14 +93,22 @@ and the old Claude-in-Chrome auto-apply is gone.
   `jev.total_usage()`, that no reset touches, and so does the recording summary.
 - **An unsafe partial-run prune.** A prune now refuses a run narrower than the whole set
   (a `-k` or `-m` filter, a deselected test, a node id narrower than a file, a narrowed
-  `--flows`), a `jev_judge` test skipped for an unaccounted reason, and a matrix flow still
-  flagged `recorded=False`, any of which could drop a key a full run still needs.
+  `--flows`), a `jev_judge` test skipped for an unaccounted reason, a test that diverged
+  from the fake, a real-judge matrix row that stopped short of its expected end, and a
+  matrix flow still flagged `recorded=False`, any of which could drop a key a full run
+  still needs.
 - **Pause fixes.** A submit made during a pause, or a send page whose address changed or
   whose send button or form went away, parks as possibly sent and is never re-queued; a Next
   the person clicks from a page with no send button is planned again. Same-labelled fields
   take their own answers, a value the person fixed in the browser is kept, and a stale
   request ages by epoch seconds. A judge outage after the person moved on parks with the
-  check-whether note, and the drain stops before the next job.
+  check-whether note, and the drain stops before the next job. A window or tab closed during
+  a pause on a page with a send button, or after the person moved on, parks as possibly
+  sent. A card answer goes only into its field on the page the run paused on. **Save for
+  future runs** keeps a version 1 store's migration review list.
+- **Tailor résumé on a hand-added job** (and queueing one for auto-apply) reads the job's
+  full description from the master on the worker thread; the dashboard row carries only
+  its first 1,000 characters.
 - **Tailor fixes.** A regrounded bullet keeps its role in its block and may not outgrow its
   pre-sweep lines; a faithfulness revert at the verb dedupe gets a fresh opener, and that
   opener gets its own faithfulness check; best of three keeps the single rephrase call once

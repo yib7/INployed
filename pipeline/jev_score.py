@@ -58,14 +58,14 @@ SCORE_LABELS: dict[int, str] = {1: "No match", 2: "Weak match", 3: "Borderline",
 # composed deep score (see RECOMMEND_APPLY, RECOMMEND_CONSIDER and `recommend`
 # below). `deep_fit`'s value maps to 1-10 by `floor(DEEP_BASE + DEEP_SPAN *
 # value / 4 + 0.5)`. Tuned 2026-09-28 against Gemini's deep score on 321
-# stage 2 jobs (two samples), mean gap 0.52 / 0.53; Jev's `deep_fit` reads a
+# stage 2 jobs (two samples), mean gap 0.53 / 0.54; Jev's `deep_fit` reads a
 # mixed fit where Gemini gives about 8 of 10, so the map starts high. With
 # these values a stage 2 deep score lands on 7 to 10.
 DEEP_BASE = 6.5
 DEEP_SPAN = 3.5
 # The recommendation is read off the composed deep score: apply at
 # RECOMMEND_APPLY or more, consider at RECOMMEND_CONSIDER or more, skip
-# below; 85.1% / 81.9% agreement with Gemini, where Jev's own apply /
+# below; 83.2% / 81.9% agreement with Gemini, where Jev's own apply /
 # consider / skip Choice agreed on 29.2% / 30.6%.
 RECOMMEND_APPLY = 8
 RECOMMEND_CONSIDER = 6

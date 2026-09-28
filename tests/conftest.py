@@ -109,6 +109,7 @@ for _leaked in (
     "SCORE_STAGE1_CONCURRENCY", "SCORE_STAGE2_CONCURRENCY",
     "SCORE_STAGE2_THRESHOLD", "SCORE_MAX_PER_RUN", "SCORE_RESCORE_CAP",
     "SCORE_MIN_FILTER_YEARS", "SCORE_DROP_EASY_APPLY", "SCORE_HTTP_TIMEOUT_S",
+    "SCORE_JEV_WRITER", "SCORE_REPOST_REUSE_DAYS",
     # The multi-model pool's names, read live by keypool.limits_from_disk,
     # score_jobs.load_scoring_config and config.gemini_fallback_models. Proved
     # to leak before this line existed: exporting SCORE_MODEL_LIMITS and
@@ -437,7 +438,8 @@ def _hermetic_repo_data(tmp_path_factory):
                             ("RESCORE_CAP", "rescore_cap"),
                             ("MIN_FILTER_YEARS", "min_filter_years"),
                             ("DROP_EASY_APPLY", "drop_easy_apply"),
-                            ("REPOST_REUSE_DAYS", "repost_reuse_days")):
+                            ("REPOST_REUSE_DAYS", "repost_reuse_days"),
+                            ("JEV_WRITER", "jev_writer")):
             mp.setattr(score_jobs, _attr, _scoring[_key])
         yield
 

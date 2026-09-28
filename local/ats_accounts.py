@@ -6,13 +6,19 @@ keeps ONE master password in the Windows Credential Manager (service
 the ledger records email + method + timestamps and NEVER a password (enforced
 in code: a password-shaped field name is rejected on write).
 
-The password's ONLY exit from the keyring is the clipboard
-(`copy_password_to_clipboard`), so an agent can tell a human (or a signup
-form) to paste it without the secret ever appearing in chat logs, stdout, or
-a file. `clear_clipboard_if_password` wipes it afterwards, and only when the
-clipboard still holds the password, so unrelated user clipboard content is
-never clobbered. No function in this module returns or prints the password;
-the getter is module-private.
+The password leaves the keyring two ways, and neither puts it in a log,
+stdout or a file:
+- `fill_password` types it into one password box on the page the auto-apply
+  run has open. The caller (`apply_run._JobRun._fill_passwords`, and the
+  account step in `apply_run`) decides the box is a real password input on
+  the application's own site before it calls.
+- the clipboard (`copy_password_to_clipboard`), for the Auto-apply tab's copy
+  button, so the person can paste it into a sign-up form.
+  `clear_clipboard_if_password` wipes it afterwards, and only when the
+  clipboard still holds the password, so unrelated user clipboard content is
+  never clobbered.
+No function in this module returns or prints the password; the getter is
+module-private.
 
 keyring is imported lazily so this module (and the dashboard importing it)
 still loads where keyring isn't installed; password_exists() just reports

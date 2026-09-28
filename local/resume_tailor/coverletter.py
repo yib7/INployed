@@ -232,8 +232,8 @@ LETTER_CLAIMS_NOTE = (
     "not state; rewrite each one to say only what those sources state, or cut it):")
 
 _SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
-# A piece ending in one of these is an abbreviation, not a sentence: a single letter
-# ("B.S.", "e.g.", "J. Smith") or a title before a name.
+# A piece ending in one of these closes an abbreviation, so the next piece joins it: a
+# single letter ("B.S.", "e.g.", "J. Smith") or a title before a name.
 _ABBREVIATION_END_RE = re.compile(r"(?:\b[A-Za-z]|\b(?:Dr|Mr|Mrs|Ms|Jr|Sr|St|vs))\.$")
 
 

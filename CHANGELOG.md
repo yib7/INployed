@@ -4,6 +4,126 @@ All notable changes to INployed are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims for
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.0] - 2026-09-28
+
+Jev now works in every part of the app. It makes the yes-or-no calls when jobs are scored,
+picks and checks résumé bullets while your Gemini or Claude provider still writes them,
+rates how hard each queued application is, and reads every auto-apply form. One Settings
+switch turns it off, and scoring and tailoring then run on Gemini or Claude alone, as they
+did before. An auto-apply run that meets a question it needs you for now pauses and asks,
+and the old Claude-in-Chrome auto-apply is gone.
+
+### Added
+
+- **A Jev section leads Settings**: the **Use Jev** master switch, the **TypeSafe API key**
+  (moved from Auto-apply), and three advanced area switches, **Jev for scoring**, **Jev for
+  the résumé tailor** and **Jev difficulty check**, all on by default
+  (`local/jev_switch.py`). With a switch off, no key or no `typesafe-sdk`, scoring and the
+  tailor fall back to their LLM path, and a Jev outage mid-run does the same after a brief
+  retry. Auto-apply has no fallback: Start stays off with the fix beside it.
+- **Jev scoring** (`pipeline/jev_score.py`). Each job's stage 1 and stage 2 go to Jev first,
+  and code composes the same score columns the LLM writes; the LLM stage runs only for the
+  jobs Jev could not score. The scorer decides for itself: `SCORE_USE_JEV`, else
+  `local/config.json` beside the repo, else off, so the VM stays on Gemini. `run_stats.csv`
+  gains six `jev_*` columns and the run prints how many jobs Jev scored per stage, the cost,
+  and the fallbacks. `scripts/jev_score_calibrate.py --live` compares Jev's scores with the
+  Gemini scores in a master under a spend cap.
+- **The tailor's Jev assists** (`local/resume_tailor/jev_assist.py`). On whenever Jev runs
+  for the tailor: skills pick, the atom shortlist, each project's lead bullet, a faithfulness
+  check on every rewritten bullet (one reground, then revert or drop), a fresh opening verb
+  for a repeat (category first, then the verb), and a gate that sends only the entries with
+  a tell to the AI-writing sweep. Three Settings options, off by default: **Best of 3 bullet
+  drafts (Jev picks)**, **Jev checks the cover letter's claims** and **ATS report: coverage
+  by meaning (Jev)**. `tailor_report.txt` ends with a `jev` section, one line per step with
+  its requests, tokens and cost.
+- **The difficulty check** (`local/apply_assess.py`): **Check difficulty** on the Auto-apply
+  tab opens each queued posting, follows its Apply button and reads the first application
+  page without typing anything, then scores it 1 to 10 in code: a base by application
+  system plus steps for unanswerable required questions, essays, sensitive fields, a
+  CAPTCHA, an account wall and your past runs on that system. Easy Apply, a closed posting,
+  a dead end and a payment page score 10. The new **Difficulty** column shows the score
+  with its band (1-3 "Queue it", 4-6 "May need an answer or two", 7-10 "Do it yourself"),
+  reasons and questions in its tooltip. **Check again with my answers** rescores from the
+  saved page with no browser, and **Pre-answer** opens Add answer on one of the questions.
+- **Park and resume** (`local/apply_pause.py`, `local/qt/apply_pause_card.py`). A required
+  field with no answer, an option tie, a required sensitive field or a way on that stays
+  disabled now pauses the job: the console beeps, the tab comes to the front with the fields
+  outlined, the taskbar flashes, and a **Waiting for you** card on the Auto-apply tab asks
+  each question in its own control. **Fill and continue**, **I filled it in the browser,
+  continue** or **Park it**; **Save for future runs** (off by default) keeps an answer as a
+  confirmed custom answer. **Wait for your answer (minutes)** (Settings > Auto-apply,
+  default 10, 0 to 60) sets the wait, which stays off the job clock; at most five pauses per
+  job. A timeout or Park it parks as before.
+- **One browser at a time on the auto-apply profile** (`local/profile_lock.py`): a run, the
+  sign-in and the difficulty check refuse to open while another holds it, and Start and
+  Check difficulty stay off meanwhile.
+- **Answer now** on a parked job opens Add answer prefilled with the question, then offers
+  Re-queue.
+- **Opus 5.5** (`claude-opus-5-5`) is in the Claude model lists and is the tailor's Claude
+  deep-tier default. It needs Claude CLI 2.1.280 or newer; on an older CLI the run falls back
+  to `claude-opus-5` once per process, the tailor report says so, and Check setup names the
+  version gap.
+- **Replay-cache prune** (`scripts/jev_record.ps1 -Mode replay -Prune`, runner or matrix):
+  rewrites a Jev replay cache to the keys a clean full replay used, and refuses on any miss,
+  failure or narrowed run.
+
+### Changed
+
+- **Settings order**: Jev comes first, each provider selector is the first row of its
+  section (**Résumé tailor provider** leads the section now titled *Résumé tailor*, **Scoring
+  provider** leads Scoring), and the Auto-apply judge row moved under *Show advanced
+  settings*.
+- **Add job by hand** has one **Add and tailor** button: the job is saved and tailored at
+  once and never scored. Every field (URL, title, company, description) is required. A URL
+  added before offers **Tailor again** or Cancel. High Score always shows hand-added jobs,
+  and their Score cell reads "hand-added". A failed tailor keeps the saved job.
+- **The scorer and the retention prune leave hand-added jobs alone**: the rescore pass skips
+  them and `prune_master.py` keeps their description. Copy both scripts to the VM (see
+  `docs/ARCHITECTURE.md`, *Operator note: VM redeploy*).
+- **Jev's stage 2 deep score** is 3 + 8 x mix, and stage 1 gives a 5 from skills fit 0.75
+  and a 4 from 0.45, from the calibration against Gemini.
+- **Auto-apply refuses to start while Jev cannot run**, in the panel, the drain, `one`,
+  Check setup and the doctor, and names an unknown or test-only judge mode.
+
+### Fixed
+
+- **The spend cap undercounted after a reset.** `jev.SpendCap` measured its spend as a delta
+  of the per-run counter, so a `reset_usage()` inside a live recording clamped the spend to
+  0 and raised the cap by everything spent before it. It now reads a lifetime counter,
+  `jev.total_usage()`, that no reset touches, and so does the recording summary.
+- **An unsafe partial-run prune.** A prune now refuses a run narrower than the whole set
+  (a `-k` or `-m` filter, a deselected test, a node id narrower than a file, a narrowed
+  `--flows`), a `jev_judge` test skipped for an unaccounted reason, and a matrix flow still
+  flagged `recorded=False`, any of which could drop a key a full run still needs.
+- **Pause fixes.** A submit made during a pause, or a send page whose address changed or
+  whose send button or form went away, parks as possibly sent and is never re-queued; a Next
+  the person clicks from a page with no send button is planned again. Same-labelled fields
+  take their own answers, a value the person fixed in the browser is kept, and a stale
+  request ages by epoch seconds. A judge outage after the person moved on parks with the
+  check-whether note, and the drain stops before the next job.
+- **Tailor fixes.** A regrounded bullet keeps its role in its block and may not outgrow its
+  pre-sweep lines; a faithfulness revert at the verb dedupe gets a fresh opener, and that
+  opener gets its own faithfulness check; best of three keeps the single rephrase call once
+  the breaker is open; every repaired cover letter goes back through the style gate; the ATS
+  meaning line counts every literal match. The faithfulness check flags only a sure
+  unsupported or contradicted pick or an inflation, and the verb pick asks one choice over
+  at most 60 verbs.
+- **Scoring with the Claude provider falling back to Gemini** now sends the Gemini stage
+  models.
+- **Jev refuses a choice past 255 options** before sending it.
+- **Settings**: a stored choice in another case reads as its match, an unknown one stays on
+  screen and Revert drops it, a blank choice opens on its default, and a blank Google Cloud
+  location opens and saves as a blank.
+
+### Removed
+
+- **The Claude-in-Chrome auto-apply.** `local/apply_driver.py`, `local/apply_playwright.py`
+  and `tests/test_apply_driver.py` are gone; the `apply.md` parser moved to
+  `local/apply_sheet.py`. `ats_accounts.py` dropped its `clip-password` and `clip-clear`
+  verbs, and `apply_queue.py` its skill-only `claim`, `update`, `add-missing`, `finish` and
+  `context` verbs. The local `auto-apply` skill and `job-applier` agent were archived. The
+  Apply panel's by-hand Claude-in-Chrome prompt over `apply.md` stays.
+
 ## [1.14.0] - 2026-09-22
 
 The batch auto-apply drain is now the project's own code. `local/apply_run.py` drives a
@@ -1847,6 +1967,7 @@ First public release: an end-to-end job-discovery and résumé-tailoring pipelin
 - Cross-platform dashboard + engine (Windows / macOS / Linux); the setup scripts and VM
   automation are Windows-first.
 
+[1.15.0]: https://github.com/yib7/INployed/compare/v1.14.0...v1.15.0
 [1.14.0]: https://github.com/yib7/INployed/compare/v1.13.0...v1.14.0
 [1.13.0]: https://github.com/yib7/INployed/compare/v1.12.1...v1.13.0
 [1.12.1]: https://github.com/yib7/INployed/compare/v1.12.0...v1.12.1

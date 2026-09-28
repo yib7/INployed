@@ -419,7 +419,8 @@ requirements.txt        pinned desktop/dev dependencies (the set CI tests)
 .github/                SECURITY.md + the CI workflow (Windows + Linux matrix)
 pipeline/               headless pipeline scripts, flat so the VM can run them standalone:
   scraper.py            job discovery (fetches + normalizes postings)
-  score_jobs.py         two-stage Gemini relevance scorer
+  score_jobs.py         two-stage Gemini relevance scorer (Jev first when it is on)
+  jev_score.py          Jev's stage 1 and stage 2 scoring, composed in code (optional on the VM)
   run_labels.py         shared run-label buckets (morning/afternoon/evening/night)
   keypool.py            Gemini key/credential pool + rotation for the scorer
   claude_cli.py         optional Claude Code CLI backend (tailor + local scorer)
@@ -437,16 +438,21 @@ local/app.py            PySide6/Qt dashboard entry point (triage / tracker / sta
 local/open_dashboard.pyw  the launcher's target: resolves the synced master, then opens app.py, no console
 local/qt/               Qt UI package (main_window, jobs_model/tab, settings_tab, vm_panel, resume_data_tab, answers_tab, ...)
 local/jobsdata.py       toolkit-agnostic data + config logic (load/filter/sort/columns/blocklist)
-local/settings.py       the one schema behind the Settings tab: 79 fields, where each is stored
+local/settings.py       the one schema behind the Settings tab: 87 fields, where each is stored
 local/setup_check.py    what's missing or misconfigured, in plain sentences (the Check setup button)
 local/errmsg.py         the single renderer for user-facing exception text (no home paths, no secrets)
 local/chrome_launch.py  open job/resume links in the configured Chrome profile
 local/vm_schedule.py    pure crontab / pause / run-label generators
 local/vm_sync.py        gcloud ssh/scp argv builders (pause/resume, crontab, config + outbox pushes)
 local/watcher.py        scheduled watcher: reconciles seen-state, pops the dashboard on new high scores
-local/apply_queue.py    the batch auto-apply queue: atomic JSON store + its CLI (claim / finish / add_missing)
+local/apply_queue.py    the batch auto-apply queue: atomic JSON store + its CLI (list / stats / requeue / ...)
 local/apply_run.py      the Jev-judged auto-apply drain (drain / one / login / doctor), state machine + submit gate
 local/jev.py            the TypeSafe Jev judge client, the deterministic fake, and the replay cache
+local/jev_switch.py     whether Jev runs for scoring, the tailor, the difficulty check and auto-apply
+local/apply_assess.py   the difficulty check: a 1-10 score per queued job, typing nothing
+local/apply_pause.py    park and resume: a run waits for your answer to a question it needs you for
+local/profile_lock.py   one browser at a time on the auto-apply profile
+local/apply_sheet.py    the apply.md parser the fact catalog reads
 local/apply_judge.py    every Jev question and threshold behind the drain (untuned until the live pass)
 local/apply_form.py     page digest: visible fields, buttons and text per frame, for the judge
 local/apply_facts.py    the fact catalog (apply.md + answer bank) the judge maps fields onto

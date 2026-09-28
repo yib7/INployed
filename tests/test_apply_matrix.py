@@ -723,6 +723,11 @@ def test_enter_and_escape_that_send_nothing_break_nothing():
     ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the page moved on during the pause (it "
                     "shows 'thank you for applying'); the run had reached: the Submit "
                     "application button stays disabled after the fill", True),
+    # SP7 review N2: the paused page's send button gone, or its address changed
+    ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the page moved on during the pause (its "
+                    "'Submit application' button is gone); the run had reached: x", True),
+    ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the page moved on during the pause (its "
+                    "address changed); the run had reached: x", True),
     ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the run stopped after the pause (the "
                     "browser window was closed); the run had reached: x", True),
     ("needs_human", f"no submit button (the page says '{apply_run.CHECK_SENT_REASON}: the page "

@@ -142,7 +142,8 @@ def write_request(job: Mapping[str, Any], page_url: str, reason: str,
         "reason": str(reason or ""),
         "headless": bool(headless),
         "pause_id": str(pause_id or ""),
-        "asked_at": datetime.now().isoformat(timespec="seconds"),
+        "asked_at": datetime.now().isoformat(timespec="seconds"),     # for display
+        "asked_epoch": time.time(),     # the age `_stale` reads (review N3)
         "pid": os.getpid(),
         "minutes": minutes,
         "questions": [dict(q) for q in questions],
@@ -197,16 +198,19 @@ def pid_alive(pid: Any) -> bool:
 
 def _stale(data: Mapping[str, Any]) -> bool:
     """A request whose run is gone: its process no longer runs, or it is
-    older than the minutes it waits plus `STALE_MARGIN_S`."""
+    older than the minutes it waits plus `STALE_MARGIN_S`. The age is
+    counted in epoch seconds (`asked_epoch`), so a DST change never moves
+    it; the local `asked_at` is for display only (review N3). A request
+    with no epoch is aged by its process alone."""
     pid = data.get("pid")
     if pid not in (None, "") and not pid_alive(pid):
         return True
     try:
-        asked = datetime.fromisoformat(str(data.get("asked_at") or ""))
+        asked = float(data["asked_epoch"])
         minutes = float(data.get("minutes") or MINUTES_MAX)
-    except (TypeError, ValueError):
+    except (KeyError, TypeError, ValueError):
         return False
-    return (datetime.now() - asked).total_seconds() > minutes * 60 + STALE_MARGIN_S
+    return time.time() - asked > minutes * 60 + STALE_MARGIN_S
 
 
 def pending_requests() -> list[dict]:
@@ -227,7 +231,16 @@ def pending_requests() -> list[dict]:
             clear(data.get("job", ""))
             continue
         out.append(data)
-    return sorted(out, key=lambda d: str(d.get("asked_at") or ""))
+    return sorted(out, key=_asked_order)
+
+
+def _asked_order(data: Mapping[str, Any]) -> tuple[float, str]:
+    """Oldest first by epoch seconds (review N3), then by the local time."""
+    try:
+        epoch = float(data.get("asked_epoch") or 0.0)
+    except (TypeError, ValueError):
+        epoch = 0.0
+    return epoch, str(data.get("asked_at") or "")
 
 
 def write_answer(job_id: Any, mode: str, values: Mapping[str, Any] | None = None,
@@ -622,11 +635,17 @@ class Pauser:
     def _print(self) -> tuple | None:
         """The page as the pause saw it: its URL and its fields' labels and
         types; None when it cannot be read."""
+        return self._read()[0]
+
+    def _read(self) -> tuple[tuple | None, tuple]:
+        """The page's print (`_print`) and its visible buttons as (text,
+        locator) pairs, from one read; (None, ()) when it cannot be read."""
         try:
             digest = self.jr._extract()
         except Exception:       # noqa: BLE001  (a page mid-navigation)
-            return None
-        return (self._url(), tuple((_norm(f.label), f.type) for f in digest.fields))
+            return None, ()
+        return ((self._url(), tuple((_norm(f.label), f.type) for f in digest.fields)),
+                tuple((b.text, tuple(b.locator)) for b in digest.buttons))
 
     # -- the hooks
 
@@ -766,10 +785,10 @@ class Pauser:
         "Park it". A window closed during the wait parks with `reason`.
 
         A headless run whose questions only the browser takes parks at once
-        (review M4). After the wait the run reads the page against its print
-        and text from before (`_pause_moved`): a page that moved on (the
-        person may have sent it) raises the run's park, whatever the answer
-        (review I1). Each value is checked against its question
+        (review M4). After the wait the run reads the page against its print,
+        buttons and text from before (`_pause_moved`): a page that moved on
+        (the person may have sent it) raises the run's park, whatever the
+        answer (reviews I1, N2). Each value is checked against its question
         (`valid_value`) before anything is saved or filled (review M5), and
         every resume reads the answer store again (review M2)."""
         jr = self.jr
@@ -782,7 +801,7 @@ class Pauser:
             return None, None
         self.count += 1
         pid = uuid.uuid4().hex[:12]
-        before = self._print()
+        before, buttons = self._read()
         text = self._text()
         write_request(jr.entry, self._url(), reason, questions, headless=self._headless(),
                       pause_id=pid, minutes=minutes)
@@ -813,7 +832,7 @@ class Pauser:
         if not _page_closed(jr.page):
             outline(jr.page, asked, False)
             moved = getattr(jr, "_pause_moved", None)
-            park = moved(before, text, reason) if callable(moved) else None
+            park = moved(before, text, reason, buttons=buttons) if callable(moved) else None
             if park is not None:
                 raise park
         if answer is None:

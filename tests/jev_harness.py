@@ -1,9 +1,10 @@
 """The judge selector for the runner tests (SP8: record and replay).
 
 `AUTO_APPLY_TEST_JEV` picks the judge every `Runner(...)` in
-`tests/test_apply_run.py` and `tests/test_apply_run_boundaries.py` gets,
-and the one the screening set's real-judge test in `tests/test_screening.py`
-runs every screening question with (the runner tests, `RUNNER_TESTS`):
+`tests/test_apply_run.py`, `tests/test_apply_run_boundaries.py` and the
+difficulty check's `tests/test_apply_assess.py` gets, and the one the
+screening set's real-judge test in `tests/test_screening.py` runs every
+screening question with (the runner tests, `RUNNER_TESTS`):
 
 - unset or `fake`: `FakeJev()`, today's behaviour, nothing written anywhere.
 - `record`: `ReplayJev(SpendCap(TypeSafeJev(), cap), cache)`; every request
@@ -60,7 +61,7 @@ DRY_CAP_USD = jev.DRY_RECORD_CAP_USD
 MODES = ("fake", "record", "replay")
 FIXTURE = "jev_judge"
 RUNNER_TESTS = ("tests/test_apply_run.py tests/test_apply_run_boundaries.py "
-                "tests/test_screening.py")
+                "tests/test_screening.py tests/test_apply_assess.py")
 # the recording command a miss points at: the script sets the cap, exports
 # the key for one run and runs the runner tests serially
 RECORD_COMMAND = r".\scripts\jev_record.ps1 -Target runner -Cap <USD>"

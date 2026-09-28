@@ -1532,6 +1532,22 @@ FLOWS: tuple[Flow, ...] = (
          recorded=False, wrap=PauseLeftBlank, pause=PauseSpec("browser"),
          covers="a Submit disabled after the fill; the person rewrites the phone the run typed "
                 "and fills the referral in the browser: the replan keeps both (review I3)"),
+    # SP7 fix round 2
+    Flow("pause_submit_to_account", "pause_disabled.html?click=1&account=1", True,
+         "needs_human",
+         "^" + re.escape(apply_run.CHECK_SENT_REASON) + r": the page moved on during the pause "
+         r"\(its 'Submit application' button is gone\)",
+         recorded=False, wrap=PauseLeftBlank, pause=PauseSpec("browser"),
+         covers="the person clicks the enabled Submit during the pause and the site shows an "
+                "account form that shares the Email label, with no received words: the "
+                "paused page's send button is gone, so the job may have been sent and parks "
+                "with the check-whether note (review N2)"),
+    Flow("pause_wizard_next", "pause_disabled.html?click=1&wizard=1", True, "submitted",
+         _SUBMITTED, confirm="#thanks:visible", recorded=False, wrap=PauseLeftBlank,
+         pause=PauseSpec("browser"),
+         covers="a Next disabled after the fill; the person fixes the page and clicks Next "
+                "during the pause, and the address moves on to a review step: a page with no "
+                "send button that moved on is planned again, and the gate sends (review N1)"),
 )
 
 

@@ -7987,24 +7987,54 @@ class _JobRun:
         apply_queue.add_missing(self.job_id, question, context=context, path=self.r.queue_path,
                                 **extra)
 
-    def _pause_moved(self, before: tuple | None, text: str, reason: str) -> _Parked | None:
-        """After a pause's wait (SP7 review I1): did the page move on while
-        the run waited? A received phrase it did not show before
-        (`new_confirmation`), or none of the labelled fields it paused on
-        still there (the form gone). Either way the person may have sent it
-        in the browser: the job may have been sent (`_maybe_sent`), is never
+    def _pause_moved(self, before: tuple | None, text: str, reason: str,
+                     buttons: tuple = ()) -> _Parked | None:
+        """After a pause's wait (SP7 reviews I1, N2): did the page move on
+        while the run waited? `before` is the pause's print of the page
+        (URL, fields), `buttons` its visible (text, locator) pairs.
+
+        - A received phrase it did not show before (`new_confirmation`)
+          reads as sent on any page.
+        - A page with a send-worded button (`_send_worded`) reads as sent
+          when its address changed, when no button with that text is on the
+          page now, when none of its labelled fields is left, or when it can
+          no longer be read: the two signals the gate's own wait uses
+          (`_moved_during_wait`), and the form gone.
+        - A page with no send-worded button (a wizard's Next, review N1)
+          that moved on is read and planned again: the person went on to
+          the next step, and nothing on the page they left could send.
+
+        Read as sent, the job may have been sent (`_maybe_sent`), is never
         handed back to the queue, and parks with the "check whether" note.
-        None when the page is the form it paused on."""
+        None when the page is the form it paused on, or a step it moved on
+        to from a page that could not send."""
         word = new_confirmation(text, self._page_text())
-        gone = False
+        what = f"it shows {word!r}" if word else ""
         if not word and before is not None:
+            after, now = self.pause._read()
             was = {row for row in before[1] if row[0]}
-            after = self.pause._print()
-            gone = bool(was) and after is not None and not was & set(after[1])
-        if not word and not gone:
+            url_moved = after is not None and str(after[0]) != str(before[0])
+            form_gone = bool(was) and after is not None and not was & set(after[1])
+            sends = [t for t, _loc in buttons if _send_worded(t)]
+            if sends:
+                there = {" ".join(str(t).split()).lower() for t, _loc in now}
+                gone = [t for t in sends if " ".join(str(t).split()).lower() not in there]
+                if after is None:
+                    what = "it could not be read"
+                elif url_moved:
+                    what = "its address changed"
+                elif len(gone) == len(sends):
+                    what = f"its {_cap(' '.join(str(gone[0]).split()), 60)!r} button is gone"
+                elif form_gone:
+                    what = "the form it paused on is gone"
+            elif url_moved or form_gone:
+                self._decide("pause_moved_on", "the page moved on to another step while the "
+                                               "run waited for you, from a page with no send "
+                                               "button: it is read and planned again")
+                return None
+        if not what:
             return None
         self._pause_sent = True
-        what = f"it shows {word!r}" if word else "the form it paused on is gone"
         self._decide("pause_moved", f"the page moved on while the run waited for you ({what}): "
                                     "the application may have been sent in the browser")
         return _Parked("needs_human", f"{CHECK_SENT_REASON}: the page moved on during the pause "

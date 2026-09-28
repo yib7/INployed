@@ -871,3 +871,93 @@ def test_a_value_the_person_fixed_in_the_browser_is_never_typed_over(
     assert len(phone) == 1, [(a.kind, a.url) for a in phone]
     decided = [d for d in _decisions(r) if d["what"] == "pause_kept"]
     assert [d["fields"] for d in decided] == [["Phone"]], decided
+
+
+# === SP7 fix round 2 ======================================================================================
+
+def test_a_submit_that_lands_on_an_account_form_parks_as_possibly_sent(
+        _browser, flow_server, tmp_path):
+    # review N2: after the person's submit the site shows an account form
+    # that shares the "Email" label and no received words; the paused
+    # page's send button is gone, so the job may have been sent
+    r = h.run_flow(h.flow("pause_submit_to_account"), jev.FakeJev(), "fake", browser=_browser,
+                   server=flow_server, workdir=tmp_path)
+    assert not r.breaks, r.breaks
+    assert r.status == "needs_human" and r.policy is True, (r.status, r.reason)
+    assert "(its 'Submit application' button is gone)" in r.reason, r.reason
+    # nothing typed on the account form after the pause
+    assert not [a for a in r.actions if a.name.startswith("account_")], r.actions
+
+
+def test_a_next_the_person_clicks_during_a_pause_is_planned_again(
+        _browser, flow_server, tmp_path):
+    # review N1: a disabled Next (no send button on the page); the person
+    # clicks it and the address moves on: the run plans the review step and
+    # the gate sends
+    r = h.run_flow(h.flow("pause_wizard_next"), jev.FakeJev(), "fake", browser=_browser,
+                   server=flow_server, workdir=tmp_path)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    decided = [d["what"] for d in _decisions(r)]
+    assert "pause_moved_on" in decided and "pause_moved" not in decided, decided
+
+
+class _Moved:
+    """A job run double for `_JobRun._pause_moved`: the page's text now, the
+    pause's read of the page after the wait, and every decision kept."""
+
+    def __init__(self, url: str, rows: tuple, buttons: tuple, text: str = ""):
+        self.text = text
+        self._pause_sent = False
+        self.decided: list[str] = []
+        self.pause = type("P", (), {"_read": lambda _self: ((url, rows), buttons)})()
+
+    def _page_text(self) -> str:
+        return self.text
+
+    def _decide(self, what: str, *a, **kw) -> None:
+        self.decided.append(what)
+
+
+_URL1 = "https://jobs.example/apply/42"
+_ROWS = (("email", "email"), ("phone", "tel"))
+_SUBMIT = (("Submit application", (0, "#go")),)
+_NEXT = (("Next", (0, "#next")),)
+
+
+def _moved(run: _Moved, before_url: str, buttons: tuple):
+    return apply_run._JobRun._pause_moved(run, (before_url, _ROWS), "", "the run's reason",
+                                          buttons=buttons)
+
+
+def test_a_send_page_whose_address_changed_during_the_pause_parks_as_possibly_sent():
+    run = _Moved(_URL1 + "/next", _ROWS, _SUBMIT)
+    park = _moved(run, _URL1, _SUBMIT)
+    assert park is not None and "(its address changed)" in park.reason, park
+    assert run._pause_sent and run.decided == ["pause_moved"]
+
+
+def test_a_send_page_whose_submit_is_gone_parks_even_when_a_label_is_shared():
+    run = _Moved(_URL1, (("email", "email"), ("password", "password")),
+                 (("Create account", (0, "#acct")),))
+    park = _moved(run, _URL1, _SUBMIT)
+    assert park is not None and "button is gone" in park.reason, park
+    assert run._pause_sent
+
+
+def test_a_send_page_still_showing_its_form_and_submit_goes_on():
+    run = _Moved(_URL1, _ROWS, _SUBMIT)
+    assert _moved(run, _URL1, _SUBMIT) is None
+    assert not run._pause_sent and run.decided == []
+
+
+def test_a_page_with_no_send_button_that_moved_on_is_planned_again():
+    run = _Moved(_URL1 + "?step=2", (("cover note", "textarea"),), _SUBMIT)
+    assert _moved(run, _URL1, _NEXT) is None
+    assert not run._pause_sent and run.decided == ["pause_moved_on"]
+
+
+def test_received_words_park_as_possibly_sent_on_any_page():
+    run = _Moved(_URL1 + "?step=2", (), (), text="Thank you for applying")
+    park = _moved(run, _URL1, _NEXT)
+    assert park is not None and "thank you for applying" in park.reason, park
+    assert run._pause_sent

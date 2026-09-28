@@ -7,8 +7,10 @@
 #   .\scripts\jev_record.ps1 -Target matrix -Dry           # the dry run: fake answers, no key
 #
 # Targets:
-#   runner    tests/test_apply_run.py, tests/test_apply_run_boundaries.py and
-#             tests/test_screening.py (the screening set's real judge)
+#   runner    tests/test_apply_run.py, tests/test_apply_run_boundaries.py,
+#             tests/test_screening.py (the screening set's real judge) and
+#             tests/test_apply_assess.py (the difficulty check's real judge);
+#             the same files as RUNNER_TESTS in tests/jev_harness.py
 #             (cache tests/fixtures/jev_cache/cache.json, committed)
 #   matrix    scripts/apply_matrix.py --real, one run per registered flow
 #             (cache tests/fixtures/jev_cache/matrix_cache.json, committed)
@@ -87,7 +89,7 @@ try {
         if ($Dry) { $env:AUTO_APPLY_RECORD_DRY = "1"; $set += "AUTO_APPLY_RECORD_DRY" }
         if ($Cache) { $env:AUTO_APPLY_JEV_CACHE = $Cache; $set += "AUTO_APPLY_JEV_CACHE" }
         Write-Host "jev $Mode over the runner tests (cap $capText USD, dry $Dry)"
-        python -m pytest tests/test_apply_run.py tests/test_apply_run_boundaries.py tests/test_screening.py -q
+        python -m pytest tests/test_apply_run.py tests/test_apply_run_boundaries.py tests/test_screening.py tests/test_apply_assess.py -q
         $code = $LASTEXITCODE
         if (-not $Dry) {
             $thresholdArgs = @()

@@ -22,6 +22,12 @@
   data-person-submitted: the harness counts the run's sends); ?reformat=1
   types the referral code and rewrites the phone the run typed in the
   site's own format (the person's fix, review I3).
+  Fix round 2: with ?click=1, ?account=1 swaps the thank-you page for an
+  account form that shares the "Email" label and shows no received words
+  (review N2: the send button gone reads as possibly sent); ?wizard=1 makes
+  the disabled control a Next, and the person's click moves the address on
+  to a review step with its own Submit (review N1: the run plans the new
+  step, then the gate sends).
 -->
 <form id="application" onsubmit="return false">
   <label>Full name * <input name="name" type="text" required></label>
@@ -31,12 +37,24 @@
   <button type="button" id="btn-submit" disabled>Submit application</button>
 </form>
 <h2 id="thanks">Thank you for applying</h2>
+<section id="account" hidden>
+  <h2>Save your details for next time</h2>
+  <label>Email * <input name="account_email" type="email"></label>
+  <label>Password * <input name="account_password" type="password"></label>
+  <button type="button" id="btn-account">Create account</button>
+</section>
+<section id="review" hidden>
+  <h2>Review your details</h2>
+  <p>Check your answers before you send them.</p>
+  <button type="button" id="btn-final">Submit application</button>
+</section>
 <script>
   const params = new URLSearchParams(location.search);
   const form = document.getElementById('application');
   const button = document.getElementById('btn-submit');
   const referral = document.getElementById('referral');
   const PERSON_PHONE = '+1 (555) 555-0100';
+  if (params.get('wizard')) button.textContent = 'Next';
   const sync = () => { button.disabled = !referral.value; };
   referral.addEventListener('input', sync);
   const set = (el, value) => {
@@ -68,8 +86,22 @@
   }).observe(document.body, {attributes: true, attributeFilter: ['style'], subtree: true});
   button.addEventListener('click', function () {
     if (button.disabled) return;
-    document.body.setAttribute(person ? 'data-person-submitted' : 'data-submitted', '1');
     form.style.display = 'none';
+    if (params.get('wizard')) {
+      history.pushState({}, '', location.pathname + location.search + '&step=2');
+      document.getElementById('review').hidden = false;
+      return;
+    }
+    document.body.setAttribute(person ? 'data-person-submitted' : 'data-submitted', '1');
+    if (params.get('account')) {
+      document.getElementById('account').hidden = false;
+      return;
+    }
+    document.getElementById('thanks').style.display = 'block';
+  });
+  document.getElementById('btn-final').addEventListener('click', function () {
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('review').hidden = true;
     document.getElementById('thanks').style.display = 'block';
   });
 </script>

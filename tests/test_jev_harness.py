@@ -929,3 +929,16 @@ def test_thresholds_helper_reads_todays_question_ids_over_several_caches(tmp_pat
     assert "against the labels: 1 right" in out and "1 wrong" in out
     assert "ashby_wizard real p2: judged review_page 0.60, read confirmation 0.35" in out
     assert "outcomes: 0 test(s) recorded" in out
+
+
+def test_the_record_scripts_runner_target_runs_the_runner_tests():
+    # SP7 fix round 2: the difficulty check's jev_unrecorded tests are
+    # recorded with the SP7 runner tests; the script and RUNNER_TESTS name
+    # the same files, and every one exists
+    files = jev_harness.RUNNER_TESTS.split()
+    assert "tests/test_apply_assess.py" in files
+    assert all((REPO / f).is_file() for f in files), files
+    script = (REPO / "scripts" / "jev_record.ps1").read_text(encoding="ascii")
+    runs = [line.strip() for line in script.splitlines()
+            if line.strip().startswith("python -m pytest tests/test_apply_run.py")]
+    assert runs == [f"python -m pytest {jev_harness.RUNNER_TESTS} -q"], runs

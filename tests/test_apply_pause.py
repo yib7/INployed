@@ -326,6 +326,7 @@ def test_the_builtin_check_is_shared_with_the_answers_tab():
 
 import os  # noqa: E402
 import subprocess  # noqa: E402
+import time  # noqa: E402
 from datetime import datetime, timedelta  # noqa: E402
 from types import SimpleNamespace  # noqa: E402
 
@@ -384,7 +385,7 @@ class _Jr:
     def _maybe_sent(self):
         return False
 
-    def _pause_moved(self, before, text, reason):
+    def _pause_moved(self, before, text, reason, buttons=()):
         self.moved_calls.append((before, text, reason))
         return self.moved
 
@@ -597,11 +598,27 @@ def test_a_request_older_than_its_wait_is_cleaned_up():
     apply_pause.write_request(_JOB, _URL, "r", [], minutes=10)
     path = apply_pause.request_path("42")
     data = json.loads(path.read_text(encoding="utf-8"))
-    age = timedelta(minutes=10, seconds=apply_pause.STALE_MARGIN_S + 5)
-    data["asked_at"] = (datetime.now() - age).isoformat(timespec="seconds")
+    data["asked_epoch"] -= 10 * 60 + apply_pause.STALE_MARGIN_S + 5
     path.write_text(json.dumps(data), encoding="utf-8")
     assert apply_pause.pending_requests() == []
     assert not path.exists()
+
+
+def test_a_request_is_aged_by_epoch_seconds_so_a_clock_change_keeps_it(monkeypatch):
+    # review N3: the local asked_at is for display; a DST change or a clock
+    # jump that makes it read hours old never clears a live request
+    before = time.time()
+    apply_pause.write_request(_JOB, _URL, "r", [], minutes=10)
+    path = apply_pause.request_path("42")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert before <= data["asked_epoch"] <= time.time()
+    data["asked_at"] = (datetime.now() - timedelta(hours=3)).isoformat(timespec="seconds")
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert [r["job"] for r in apply_pause.pending_requests()] == ["42"]
+    # the wait's own minutes, counted in epoch seconds, still age it out
+    monkeypatch.setattr(apply_pause.time, "time",
+                        lambda: data["asked_epoch"] + 10 * 60 + apply_pause.STALE_MARGIN_S + 1)
+    assert apply_pause.pending_requests() == []
 
 
 def test_pid_alive_tells_a_live_process_from_a_finished_one():

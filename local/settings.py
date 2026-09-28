@@ -453,10 +453,11 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Stage-1 score at/above which a job gets deep Stage-2 analysis.", min=1, max=5,
           slider=True),
     Field("jev_writer", "Jev writer for high scores", "bool", True, "Scoring", "scoring",
-          advanced=True, help="When Jev scores a job 4 or higher, the Scoring provider's stage 1 "
-          "model (Claude Haiku or Gemini Flash-Lite) writes that job's reason, strengths and gaps "
-          "from Jev's findings: one short call per such job. Off: those jobs keep Jev's code-written "
-          "notes, and scoring calls the provider only when Jev cannot score a job."),
+          advanced=True, help="When Jev scores a job at/above the stage 2 threshold (4 by "
+          "default), the Scoring provider's stage 1 model (Claude Haiku or Gemini Flash-Lite by "
+          "default) writes its reason, strengths and gaps: 30-100 seconds and, on the Claude "
+          "provider, about $0.04 at Haiku list prices, per job. Off: those jobs keep Jev's "
+          "code-written notes, and the provider runs only when Jev cannot score a job."),
     # NOT advanced, deliberately: this is the only ceiling on an LLM bill, so it
     # stays where a user worried about spend can find it without first learning
     # that a disclosure toggle exists. `rescore_cap` below reads like its twin but

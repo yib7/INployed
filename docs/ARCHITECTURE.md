@@ -93,14 +93,16 @@ the same rubric wording the LLM stage prompts use:
   `requirement_lines()` finds (0 to 30 lines; a job with fewer than 3 requirement lines no
   longer goes to the LLM path for that reason alone). The deep score is
   `floor(DEEP_BASE + DEEP_SPAN * level / 4 + 0.5)`, `DEEP_BASE` 6.5 and `DEEP_SPAN` 3.5, landing
-  on 7 to 10. `recommend()` reads the recommendation off the composed deep score in code (apply
-  at `RECOMMEND_APPLY`, 8, or more; consider at `RECOMMEND_CONSIDER`, 6, or more; skip below):
-  Jev no longer picks the recommendation as a Choice. Strengths are the met lines and gaps the
-  unmet must-have lines, up to 5 each, cut to 90 characters.
+  on 7 to 10, so skip is unreachable at these values. `recommend()` reads the recommendation off
+  the composed deep score in code (apply at `RECOMMEND_APPLY`, 8, or more; consider at
+  `RECOMMEND_CONSIDER`, 6, or more; skip below): Jev no longer picks the recommendation as a
+  Choice. Strengths are the met lines and gaps the unmet must-have lines, up to 5 each, cut to
+  90 characters.
 
 **The writer** (`score_jobs.write_notes`, cycle 20). For a job Jev scored in stage 2 whose
-stage 1 score is 4 or more, one call to the Scoring provider's stage 1 model
-(`claude-haiku-4-5`, or Gemini's flash-lite model) turns Jev's findings, `writer_findings`
+stage 1 score is at or above the stage 2 threshold (4 by default), one call to the Scoring
+provider's stage 1 model (`claude-haiku-4-5` by default, or Gemini's flash-lite model by
+default) turns Jev's findings, `writer_findings`
 (the stage 1 score and label, the deep score, the recommendation, and the met / unmet-must /
 unmet-nice lines), into that job's `reason`, `strengths` and `gaps`. It is given the scores and
 cannot change them. An error, unreadable JSON, a blank reason or no strengths, or a job with no

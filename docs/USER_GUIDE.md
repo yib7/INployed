@@ -446,10 +446,12 @@ Jev works in four places:
   scales, in both stages: the stage 1 score (1-5), then the stage 2 deep score (1-10)
   and recommendation. The stage 1 reason names what decided the score, such as the
   candidate's skills and field, the years the job asks for, or a hard requirement like
-  a clearance or an advanced degree. For a job Jev scores 4 or more, one short call to
-  your **Scoring provider**'s quick model writes that job's reason, strengths and gaps
-  from Jev's findings; turn this off at Settings → Scoring → **Jev writer for high
-  scores**.
+  a clearance or an advanced degree. A job Jev scores in stage 2 gets a deep score from
+  7 to 10, so it always reads apply or consider, never skip. For a job at or above the
+  stage 2 threshold (4 by default), one call to your **Scoring provider**'s quick model
+  writes that job's reason, strengths and gaps from Jev's findings, taking about 30 to
+  100 seconds and, on the Claude provider, about $0.04 at Haiku list prices; turn this
+  off at Settings → Scoring → **Jev writer for high scores**.
 - **The résumé tailor.** Jev picks skills and experience items and checks each bullet,
   and your **Resume tailor provider** writes every bullet and the cover letter (see *What
   Jev does in the tailor* below).

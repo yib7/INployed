@@ -36,11 +36,12 @@ the real model judges the fixtures differently from the fake.
 `ReplayJev` served (`used_keys`) is written to `used_keys.json` beside
 `outcomes.jsonl` (`write_used_keys`), and the cache is rewritten to keep only
 those keys (`prune_if_asked`, `jev.prune_cache`) once the run had 0 replay
-misses, 0 test failures, and was the whole `RUNNER_TESTS` set with no
+misses, 0 test failures, no test that diverged from the fake, and was the
+whole `RUNNER_TESTS` set with no
 `-k`/`-m` filter, no deselected test and no node id narrower than a file
 (`runner_narrowed_reason`, checked in `conftest_jev.pytest_sessionfinish`
 against pytest's own session and config); any of those refuses instead,
-naming the reason, and leaves the cache as it was -- a partial run's
+naming the reason, and leaves the cache as it was: a partial run's
 `used_keys` may not cover every key a clean pass would reach.
 
 `Session` holds the per-run state; `conftest_jev` wires it into pytest as the
@@ -73,7 +74,7 @@ DRY_ENV = "AUTO_APPLY_RECORD_DRY"
 DRY_CAP_USD = jev.DRY_RECORD_CAP_USD
 # SP8: prune the cache to the keys this run served, once it is clean (see
 # `write_used_keys` and `prune_if_asked`). Valid with `replay` only: a
-# `record` run's cache is meant to grow, not shrink to what one session used.
+# `record` run only adds keys to the cache.
 PRUNE_ENV = "AUTO_APPLY_JEV_PRUNE"
 MODES = ("fake", "record", "replay")
 FIXTURE = "jev_judge"
@@ -192,9 +193,9 @@ def runner_narrowed_reason(*, collected_files: set[str], keyword: str, markexpr:
     `config.option.keyword`/`markexpr` (a `-k`/`-m` filter); `deselected` is
     how many items a filter actually dropped (`pytest_deselected`, which also
     fires for `--deselect`); `args` is `config.args`, the file/dir/node-id
-    positional arguments pytest was given -- any entry with `::` in it names
-    a single test or class rather than a whole file, narrower than
-    `RUNNER_TESTS` asks for even when every file is still represented."""
+    positional arguments pytest was given. An entry with `::` in it names
+    a single test or class, narrower than `RUNNER_TESTS` asks for even when
+    every file is still represented."""
     missing = sorted(set(RUNNER_TESTS.split()) - set(collected_files))
     if missing:
         return f"the whole runner set did not run; missing {', '.join(missing)}"
@@ -221,13 +222,13 @@ def jev_skip_reason(skipped: Sequence[tuple[str, str]]) -> str:
     (setup, call or teardown) skipped, in `replay` mode, apart from the two
     skips this harness already recognizes as accounted for: a spend-cap
     stop (`record` mode only, so never seen here) and a `jev_unrecorded`-
-    marked replay miss (an expected, named exclusion, not a hole). A skip
-    for any other reason -- a platform `skipif`, an `importorskip`, a
-    `pytest.skip()` in the test body -- means that test's body never asked
+    marked replay miss (the marker names the test as not recorded yet). A
+    skip for any other reason (a platform `skipif`, an `importorskip`, a
+    `pytest.skip()` in the test body) means that test's body never asked
     its questions, so its keys never entered `used_keys` even though a
-    clean, unfiltered run might still need them; pruning here could drop
-    one. A test that never requests `jev_judge` and is skipped for an
-    unrelated reason (a POSIX-only test on Windows, for instance) never
+    whole-set run with no filter might still need them; pruning here could
+    drop one. A test that never requests `jev_judge` and is skipped for a
+    reason of its own (a POSIX-only test on Windows, for instance) never
     reaches `skipped` in the first place and so never blocks a prune."""
     if not skipped:
         return ""

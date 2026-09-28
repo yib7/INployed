@@ -80,29 +80,36 @@ rewrite refuse, naming the reason, and leave the cache exactly as it was:
 
 - any replay miss, or any test failure, in the run (`jev.prune_cache`'s own
   gate: 0 misses and 0 failures only)
-- for the runner target: the run was not the whole `RUNNER_TESTS` set -- a
+- for the runner target: the run was not the whole `RUNNER_TESTS` set: a
   file left out, a `-k` or `-m` filter, a deselected test, or a node id
   narrower than a file (`conftest_jev.pytest_sessionfinish`,
   `jev_harness.runner_narrowed_reason`)
 - for the runner target: a `jev_judge` test finished any phase skipped for a
-  reason this harness does not already account for -- a platform `skipif`,
-  an `importorskip`, a `pytest.skip()` in the test body
-  (`conftest_jev.pytest_runtest_makereport` tallies it, `jev_harness.
-  jev_skip_reason` refuses on it) -- that test's body never asked its
+  reason this harness does not already account for (a platform `skipif`,
+  an `importorskip`, a `pytest.skip()` in the test body;
+  `conftest_jev.pytest_runtest_makereport` tallies it, `jev_harness.
+  jev_skip_reason` refuses on it). That test's body never asked its
   questions, so a clean run could still need a key it never touched. A
-  spend-cap stop and a `jev_unrecorded`-marked miss do not count here: both
-  are already an accounted-for, expected exclusion. A test that never
-  requests `jev_judge` and skips for an unrelated, permanent reason (a
-  POSIX-only test on Windows, for instance) never blocks the prune either,
-  since it was never going to touch the cache
+  spend-cap stop and a `jev_unrecorded`-marked miss do not count here: the
+  harness already accounts for both. A test that never requests `jev_judge`
+  and skips for a reason of its own (a POSIX-only test on Windows, for
+  instance) never blocks the prune either, since it was never going to touch
+  the cache
+- for the runner target: a test diverged from the fake (replay turns its
+  failed assertion into an xfail, so it never counts as a failure). The
+  requests after the failed assertion were never asked for, so their keys
+  would look unused (`jev_harness.prune_if_asked`)
 - for the matrix target: `--flows` named fewer than the whole registry
-  (`apply_matrix._flows_narrowed`) -- the flows left out never got a chance
+  (`apply_matrix._flows_narrowed`). The flows left out never got a chance
   to use their keys, so a key one of them still needs would look unused
+- for the matrix target: a real-judge row that did not reach its expected
+  end (`apply_matrix._real_short`). The requests after the point where it
+  stopped were never asked for
 - for the matrix target: any flow the replay leaves out because
   `tests/apply_harness.py` still marks it `recorded=False`
-  (`apply_matrix._unrecorded_flows`) -- unlike a `replayable=False` flow, this
-  is only a bookkeeping flag, not a structural fact, so a prior recording can
-  have already cached fresh keys for it under a flag that never flipped (the
+  (`apply_matrix._unrecorded_flows`). A `recorded=False` flag is bookkeeping,
+  so a prior recording can have already cached fresh keys for the flow
+  under a flag that never flipped (the
   SP8 fix round 2 incident: a74890d recorded 11 pause flows, but their
   `recorded=False` flags stayed put, and a `--real-prune` run right after
   kept only the keys the replay had touched and deleted the fresh
@@ -122,9 +129,9 @@ its own `used_keys` back on its "done" message; `scripts/apply_matrix.py`
 folds every worker's keys together before `--real-prune` (which the `.ps1`
 switch passes through) checks the flow selection and rewrites `--real-cache`.
 
-Prune after a live recording, never instead of one: it only ever removes
-keys, so run it once the new flows are recorded and every test that should
-replay does, over the whole set (no `-k`, `-m`, node id or `-Flows`).
+Prune once a live recording is done: it only ever removes keys, so run it
+after the new flows are recorded and every test that should replay does,
+over the whole set (no `-k`, `-m`, node id or `-Flows`).
 
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/jev_record.ps1 -Mode replay -Prune
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/jev_record.ps1 -Target matrix -Mode replay -Prune

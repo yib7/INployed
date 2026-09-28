@@ -41,12 +41,13 @@ make, with no key.
 
 `--real-prune` (SP8, only with `--real replay`) rewrites `--real-cache` to
 keep only the keys this run served (`jev.prune_cache`), once the run had 0
-replay misses in the real column and 0 failures; otherwise it refuses and
+replay misses in the real column, 0 failures and every real row at its
+expected end (`_real_short`); otherwise it refuses and
 names the reason, leaving the cache as it was. The keys a parallel run's
 workers used are folded together in `main` before the prune runs. A `--flows`
 run never prunes (SP8 review): the flows left out never got a chance to use
 their keys, so a stale key one of them still needs would look unused and be
-dropped -- `--real-prune` refuses outright, before anything runs, unless
+dropped. `--real-prune` refuses outright, before anything runs, unless
 `--flows` names the whole registry (`_flows_narrowed`).
 
 Exit 0 when no run broke an invariant and every worker finished, 1 when a
@@ -332,9 +333,8 @@ def _apart_flows(flows) -> list[str]:
 def _unrecorded_flows(flows) -> list[str]:
     """Flows `run_matrix` leaves out of the real judge's replay column
     because the registry still marks them `recorded=False`
-    (`apply_harness.Flow`): unlike a `replayable=False` flow, this is only a
-    bookkeeping flag, not a structural fact. A prior recording can genuinely
-    cache fresh, current keys for one of these and leave the flag unflipped
+    (`apply_harness.Flow`). The flag is bookkeeping, so a prior recording
+    can cache fresh keys for one of these and leave the flag unflipped
     (the SP8 fix round 2 incident: a74890d recorded 11 pause flows, but
     their `recorded=False` flags never flipped, so a `--real-prune` run
     right after kept only the keys the replay had touched and deleted the

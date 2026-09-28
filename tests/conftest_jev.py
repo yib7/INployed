@@ -30,7 +30,7 @@ Hooks, active in `record` and `replay` mode only:
 - session finish: when `AUTO_APPLY_JEV_PRUNE` is set, the shared replay's used
   keys are written to `jev_harness.used_keys_path` (SP8, gitignored), and the
   cache is pruned to them, or refused with a reason
-  (`jev_harness.prune_if_asked`, `jev.prune_cache`) -- including a refusal
+  (`jev_harness.prune_if_asked`, `jev.prune_cache`). It refuses
   when this run was not the whole `RUNNER_TESTS` set (`_narrowed_reason`,
   below: a `-k`/`-m` filter, a deselected test, a missing file or a node id
   narrower than a file), or when some `jev_judge` test skipped for a reason
@@ -40,7 +40,7 @@ Hooks, active in `record` and `replay` mode only:
   diverged from the fake (its failed assertion became an xfail above, and the
   requests after it were never asked for, final review D I1).
 - deselected: `pytest_deselected` counts every item a `-k`, `-m` or
-  `--deselect` filter drops, on the config's own stash -- the count
+  `--deselect` filter drops, on the config's own stash: the count
   `_narrowed_reason` reads at session finish.
 - makereport (any phase): a `jev_judge` test that finishes a phase skipped in
   `replay` mode, apart from a `jev_unrecorded`-marked replay miss, is tallied
@@ -68,7 +68,7 @@ def _xdist_active(config) -> bool:
     on the whole WORKER PROCESS, so a `pytester.runpytest_inprocess(...)` call
     nested inside a real worker (as `test_jev_harness.py`'s fixture/hook tests
     do) inherits it even though that nested, single-process pytest run is
-    never itself distributed -- an env-var check raised a false UsageError
+    never itself distributed; an env-var check raised a false UsageError
     there, caught by running this file under `-n 2` (SP3.5 fix round 1).
     `config.workerinput` is per-`Config`, not per-process, so the inner run's
     own fresh `Config` never carries it."""
@@ -175,7 +175,7 @@ def pytest_runtest_makereport(item, call):
             and jev_harness.FIXTURE in getattr(item, "fixturenames", ())):
         # a `jev_judge` test skipped for its own reason, before this
         # function's own capped/unrecorded overrides below ever run (those
-        # start from a "failed" report, not a "skipped" one): tallied for
+        # start from a "failed" report): tallied for
         # `_jev_skip_reason` at session finish (SP8 fix round 2)
         skipped = item.config.stash.get(JEV_SKIPPED_KEY, [])
         skipped.append((item.nodeid, str(rep.longrepr)))
@@ -271,8 +271,8 @@ def pytest_sessionfinish(session, exitstatus):
     the run's own failure count: a replay miss that is not marked
     `jev_unrecorded` already turned its test's report into a failure above,
     so it counts here too. (`session` here is pytest's own `Session`, the
-    hookspec's name for it -- not `jev_harness.Session`, which
-    `_session(session.config)` returns.)"""
+    hookspec's name for it; `_session(session.config)` returns the
+    `jev_harness.Session`.)"""
     jsession = _session(session.config)
     if jsession is None or not jsession.soft or not jsession.prune:
         return

@@ -10,7 +10,8 @@ import pandas as pd
 import pytest
 
 import score_jobs as sj
-from test_jev_score import RESUME, RefusesStage2For, RecordingPool, ScriptedJudge, _jobs_df
+from test_jev_score import (JOB2_MD, RESUME, RefusesStage2For, RecordingPool, ScriptedJudge,
+                            _jobs_df)
 
 
 def _resp(text):
@@ -250,6 +251,27 @@ def test_a_job_whose_stage_two_falls_back_to_the_llm_gets_no_writer_call():
     asyncio.run(sj.run_scoring(pool, RESUME, _jobs_df("JOB-B"), jev_run=run))
     assert pool.jobs(1) == [] and pool.jobs(2) == ["JOB-B"]   # stage 1 Jev, stage 2 LLM
     assert run.writer == {"written": 0, "kept": 0}
+
+
+def test_a_job_with_no_matching_stage_one_row_gets_no_writer_call():
+    """A code-review guard: `s1_row["score"].iloc[0]` used to have no guard for
+    an empty `s1_row`. A blank job_posting_id reproduces it -- `merge` and
+    `isin` line NaN keys up with each other, but `==` never does, so the
+    writer hook's own `s1_df["job_posting_id"] == job_id` lookup comes back
+    empty even though the job's stage 1 row is right there. The writer is
+    skipped, Jev's own composed reason stays, and it counts as kept code text."""
+    pool = WriterPool()
+    run = sj.JevRun(ScriptedJudge())
+    df = pd.DataFrame({
+        "job_posting_id": [float("nan")],
+        "job_description_md": [f"JOB-A\n{JOB2_MD}"],
+        "filtered_out": [False],
+    })
+    merged = asyncio.run(sj.run_scoring(pool, RESUME, df, jev_run=run))
+    assert pool.calls == []
+    assert merged["reason"].iloc[0] == (
+        "Strong match: no experience bar, and the skills, tools and field line up.")
+    assert run.writer == {"written": 0, "kept": 1}
 
 
 def test_a_job_below_the_stage_two_threshold_gets_no_writer_call():

@@ -1683,16 +1683,22 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame, *,
                     row, findings = _pop_jev_findings(got)
                     if findings is not None and JEV_WRITER and pool is not None:
                         s1_row = s1_df.loc[s1_df["job_posting_id"] == job_id]
-                        score = int(s1_row["score"].iloc[0])
-                        block = writer_findings(score, got)
-                        notes = await write_notes(pool, sem2, resume, job_id, job_md, block)
-                        if notes is not None:
-                            row["strengths"] = notes["strengths"]
-                            row["gaps"] = notes["gaps"]
-                            s1_df.loc[s1_row.index, "reason"] = notes["reason"]
-                            jev_run.note_writer(written=True)
-                        else:
+                        if s1_row.empty:
+                            # No stage 1 row matches this job (a blank
+                            # job_posting_id, say): keep Jev's own composed
+                            # text rather than guess a score.
                             jev_run.note_writer(written=False)
+                        else:
+                            score = int(s1_row["score"].iloc[0])
+                            block = writer_findings(score, got)
+                            notes = await write_notes(pool, sem2, resume, job_id, job_md, block)
+                            if notes is not None:
+                                row["strengths"] = notes["strengths"]
+                                row["gaps"] = notes["gaps"]
+                                s1_df.loc[s1_row.index, "reason"] = notes["reason"]
+                                jev_run.note_writer(written=True)
+                            else:
+                                jev_run.note_writer(written=False)
                     return {"job_posting_id": job_id, **row}
                 if pool is None:
                     jev_run.note_no_llm(2, job_id)

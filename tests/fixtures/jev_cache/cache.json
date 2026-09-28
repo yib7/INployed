@@ -19829,5 +19829,165 @@
       "probabilities": {},
       "confidence": null
     }
+  },
+  "30aabd333eb49df04fb9dd56ce626ec8691c534a85ba97dcf39f107332a9b26d": {
+    "page_state": {
+      "kind": "choice",
+      "noul": null,
+      "choice": "confirmation",
+      "score": null,
+      "probabilities": {
+        "job_posting": 0.0,
+        "application_form": 0.02,
+        "confirmation": 0.95,
+        "signup_form": 0.0,
+        "login_wall": 0.0,
+        "captcha_or_bot_check": 0.0,
+        "error_or_dead": 0.03,
+        "review_page": 0.0,
+        "code_gate": 0.0,
+        "other": 0.0,
+        "payment_request": 0.0
+      },
+      "confidence": 0.94
+    },
+    "page_job_description": {
+      "kind": "noul",
+      "noul": 0.03,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_apply_entry": {
+      "kind": "noul",
+      "noul": 0.03,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_applicant_details": {
+      "kind": "noul",
+      "noul": 0.05,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_sign_in": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_create_account": {
+      "kind": "noul",
+      "noul": 0.03,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_received": {
+      "kind": "noul",
+      "noul": 0.96,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_already_applied": {
+      "kind": "noul",
+      "noul": 0.1,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_closed": {
+      "kind": "noul",
+      "noul": 0.15,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_code": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_payment": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_review": {
+      "kind": "noul",
+      "noul": 0.11,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "page_error": {
+      "kind": "noul",
+      "noul": 0.03,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "has_captcha": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    }
+  },
+  "e44ac8113a74ac22bb653acff8aa0db75e31fae53189e32cc8ab43a52c7116e5": {
+    "verify_0": {
+      "kind": "noul",
+      "noul": 0.99,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "placeholder_0": {
+      "kind": "noul",
+      "noul": 0.02,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "verify_1": {
+      "kind": "noul",
+      "noul": 0.99,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    },
+    "placeholder_1": {
+      "kind": "noul",
+      "noul": 0.13,
+      "choice": null,
+      "score": null,
+      "probabilities": {},
+      "confidence": null
+    }
   }
 }

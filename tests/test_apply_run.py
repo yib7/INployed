@@ -3708,7 +3708,6 @@ def test_a_window_closed_during_the_pause_parks_as_a_closed_window(
     assert apply_pause.pending_requests() == []
 
 
-@pytest.mark.jev_unrecorded
 def test_the_wait_stays_off_the_job_clock(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
     # a pause longer than the whole job budget still leaves the fill its time
@@ -3776,7 +3775,6 @@ def test_filled_in_the_browser_keeps_the_persons_values(
     assert page.locator("input[name=conference_talks]").input_value() == "4"
 
 
-@pytest.mark.jev_unrecorded
 def test_a_value_flagged_save_is_kept_for_future_runs_and_the_run_reads_it(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
     _pauses_on(monkeypatch, tmp_path)

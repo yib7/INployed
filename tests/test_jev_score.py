@@ -1025,8 +1025,12 @@ class RefusesStage2For(ScriptedJudge):
         return super().judge(state, questions)
 
 
-def test_run_scoring_scores_both_stages_with_jev_and_never_calls_the_llm():
+def test_run_scoring_scores_both_stages_with_jev_and_never_calls_the_llm(monkeypatch):
     sj = _sj()
+    # SP2's writer is a deliberate exception to "never calls the LLM": it is
+    # this test's own subject elsewhere (tests/test_score_jobs_writer.py), so
+    # it is switched off here to keep this test about the Jev-vs-LLM path.
+    monkeypatch.setattr(sj, "JEV_WRITER", False)
     pool = RecordingPool()
     run = sj.JevRun(ScriptedJudge())
     merged = asyncio.run(sj.run_scoring(pool, RESUME, _jobs_df("JOB-A", "JOB-B"), jev_run=run))
@@ -1057,8 +1061,13 @@ def test_run_scoring_sends_the_code_facts_with_stage_one(monkeypatch):
     assert seen == [{"min_years": 3, "advanced_degree": True, "clearance": False}]
 
 
-def test_a_job_jev_cannot_score_takes_the_llm_path():
+def test_a_job_jev_cannot_score_takes_the_llm_path(monkeypatch):
     sj = _sj()
+    # JOB-A's stage 2 is fully Jev-scored here, which would otherwise draw a
+    # writer call on this same pool (see tests/test_score_jobs_writer.py);
+    # switched off so pool.jobs() reflects only the LLM-path routing this
+    # test is about.
+    monkeypatch.setattr(sj, "JEV_WRITER", False)
     pool = RecordingPool()
     run = sj.JevRun(RefusesStage2For("JOB-B"))
     df = _jobs_df("JOB-A", "JOB-B")
@@ -1282,8 +1291,11 @@ def test_with_jev_off_run_scoring_is_the_llm_path_as_before():
         assert set(merged["reason"]) == {"llm reason"}
 
 
-def test_the_run_summary_counts_jev_requests_spend_and_fallbacks_by_stage():
+def test_the_run_summary_counts_jev_requests_spend_and_fallbacks_by_stage(monkeypatch):
     sj = _sj()
+    # This test is about the Jev/LLM request and spend counts; the writer's own
+    # counts and summary suffix are tests/test_score_jobs_writer.py's subject.
+    monkeypatch.setattr(sj, "JEV_WRITER", False)
     run = sj.JevRun(jev.Guarded(jev.DryRun(RefusesStage2For("JOB-B"))))
     df = _jobs_df("JOB-A", "JOB-B")
     asyncio.run(sj.run_scoring(RecordingPool(), RESUME, df, jev_run=run))

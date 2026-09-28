@@ -72,6 +72,7 @@ def files(tmp_path, monkeypatch):
              _row(902, 3, score_reused="1.0"), _row(903, 3, reason="ERROR: boom"),
              _row(904, 3, reason="Skills fit strong (0.90); domain data analytics"),
              _row(905, 3, score=""), _row(906, 3, job_description_formatted="", job_summary=""),
+             _row(907, 3, extracted_date="2026-09-28"),  # Jev-scored by date: left out too
              _row(0, 5)]                            # a second row for job 0: the first row wins
     master = _write_master(tmp_path / "master.csv", rows)
     resume = tmp_path / "resume.md"
@@ -222,6 +223,7 @@ def test_the_rows_left_out(files):
     assert len(ids) == len(set(ids)) == 40
     assert not any(i.startswith("manual-") or i.startswith("40000" + "9") for i in ids)
     assert "40000000" in strata[1] and "40000000" not in strata[5]
+    assert "40000907" not in ids                     # extracted_date on JEV_START_DATE: left out
 
 
 def test_load_jobs_reads_the_text_score_jobs_reads(tmp_path):
@@ -251,6 +253,11 @@ def test_load_jobs_reads_the_text_score_jobs_reads(tmp_path):
     ({"score_reused": "True"}, None),
     ({"reason": "Skills fit good (0.60); domain data science or ML"}, None),
     ({"job_description_formatted": "<p>short</p>", "job_summary": "short"}, None),
+    ({"extracted_date": "2026-09-28"}, None),               # on JEV_START_DATE: excluded
+    ({"extracted_date": "2026-09-29"}, None),                # after: excluded
+    ({"extracted_date": "2026-09-27"}, (3, "formatted")),    # before: stays in
+    ({"extracted_date": "not a date"}, (3, "formatted")),     # unparseable: stays in
+    ({"extracted_date": ""}, (3, "formatted")),               # missing: stays in
 ])
 def test_eligible_rows(extra, got):
     assert calib.eligible(_row(1, 3, **extra)) == got

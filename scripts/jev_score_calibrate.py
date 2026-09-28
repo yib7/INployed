@@ -6,9 +6,15 @@
 Samples up to --sample already-scored jobs from the master, stratified by the
 Gemini stage 1 score (an equal share per score, a small score's leftover shared
 out among the rest), and runs `jev_score.stage1` on each, plus `jev_score.stage2`
-where Gemini ran stage 2. The facts and the text are the ones `score_jobs.py`
-gives Jev: `score_jobs.jev_facts` and the markdown of the formatted description
-(the job summary when the retention prune blanked it).
+wherever Gemini ran stage 2 (no requirement-line minimum). The facts and the
+text are the ones `score_jobs.py` gives Jev: `score_jobs.jev_facts` and the
+markdown of the formatted description (the job summary when the retention
+prune blanked it).
+
+A row Jev itself scored is left out of the sample: by its reason's old
+"Skills fit " prefix, and by an `extracted_date` on or after 2026-09-28 (the
+day Jev scoring began) when the column is present and the date parses; a
+missing or unparseable date stays eligible.
 
 Every live request goes through `jev.SpendCap` under --cap-usd, and each answer
 lands in a replay cache under %LOCALAPPDATA%\\INployed\\jev_calibration\\ (keyed
@@ -67,13 +73,16 @@ SCORES = (1, 2, 3, 4, 5)
 RECOMMENDATIONS = ("apply", "consider", "skip")
 # A row whose reason Jev composed (jev_score.compose_stage1): Jev against Jev says nothing.
 JEV_REASON_PREFIX = "Skills fit "
+# The day Jev scoring began; a row scored on or after this date is Jev against Jev too,
+# even once the reason has been through the writer and no longer carries the prefix above.
+JEV_START_DATE = "2026-09-28"
 _TRUE = ("true", "1", "1.0", "yes")
 _TITLE_COLS = ("job_title", "job_posting_title", "title")
 # (column, text source): the formatted description first, as score_jobs reads it
 _TEXT_COLS = (("job_description_formatted", "formatted"), ("job_description", "formatted"),
               ("job_summary", "summary"))
 _COLUMNS = frozenset({"job_posting_id", "score", "deep_score", "recommendation", "reason",
-                      "filtered_out", "score_reused", *_TITLE_COLS,
+                      "filtered_out", "score_reused", "extracted_date", *_TITLE_COLS,
                       *(col for col, _source in _TEXT_COLS)})
 
 
@@ -94,7 +103,7 @@ class Job:
     jev: int | None = None
     jev_deep: int | None = None
     jev_rec: str = ""
-    stage2: str = ""        # "compared", "few_lines" (the LLM path in production), "no_answer"
+    stage2: str = ""        # "compared" or "no_answer"
 
 
 # --- reading the master ----------------------------------------------------------------
@@ -123,16 +132,31 @@ def _row_text(row: dict) -> tuple[str, str]:
     return "", ""
 
 
+def _jev_scored_by_date(row: dict) -> bool:
+    """Whether `row`'s `extracted_date` falls on or after JEV_START_DATE. A
+    missing or unparseable date reads as False (stays eligible)."""
+    raw = row.get("extracted_date", "")
+    if not str(raw or "").strip():
+        return False
+    parsed = pd.to_datetime(raw, format="mixed", errors="coerce")
+    if pd.isna(parsed):
+        return False
+    return parsed >= pd.Timestamp(JEV_START_DATE)
+
+
 def eligible(row: dict) -> tuple[int, str] | None:
     """(the Gemini stage 1 score, the text source) for a scraped job Gemini
     scored that still has job text, else None. Hand-added rows, filtered rows,
-    reused scores and rows whose reason Jev composed are left out."""
+    reused scores and rows Jev itself scored (by the old reason prefix or by
+    an extracted_date on or after JEV_START_DATE) are left out."""
     job_id = str(row.get("job_posting_id", "") or "").strip()
     if not job_id or job_id.startswith(score_jobs.MANUAL_ID_PREFIX):
         return None
     if _flag(row.get("filtered_out", "")) or _flag(row.get("score_reused", "")):
         return None
     if str(row.get("reason", "") or "").startswith(("ERROR:", JEV_REASON_PREFIX)):
+        return None
+    if _jev_scored_by_date(row):
         return None
     score = _whole(row.get("score", ""), 1, 5)
     source, _raw = _row_text(row)
@@ -261,9 +285,6 @@ def run(jobs: list[Job], judge: Any, resume: str, stop) -> tuple[int, str]:
         done += 1
         if job.gemini_deep is None:
             continue
-        if len(jev_score.requirement_lines(job.text)) < jev_score.MIN_REQUIREMENT_LINES:
-            job.stage2 = "few_lines"
-            continue
         deep = jev_score.stage2(judge, {"md": job.text}, resume)
         if deep is None:
             why = stop()
@@ -339,11 +360,9 @@ def report(jobs: list[Job], *, threshold: int, strata: dict[int, list[str]],
 
     ran = [j for j in both if j.gemini_deep is not None]
     deep = [j for j in ran if j.stage2 == "compared"]
-    few = sum(1 for j in ran if j.stage2 == "few_lines")
     lines.append("")
     lines.append(f"Stage 2 where Gemini ran it: {len(ran)} jobs, {len(deep)} compared, "
-                 f"{few} with too few requirement lines (the LLM path in production), "
-                 f"{len(ran) - len(deep) - few} with no answer")
+                 f"{len(ran) - len(deep)} with no answer")
     if deep:
         gap = sum(abs(j.gemini_deep - j.jev_deep) for j in deep) / len(deep)
         rho2 = spearman([j.gemini_deep for j in deep], [j.jev_deep for j in deep])

@@ -1425,6 +1425,16 @@ def _restore_reused_scores(result: pd.DataFrame, reused_snapshot: pd.DataFrame) 
 _S2_COLUMNS = ["job_posting_id", "deep_score", "strengths", "gaps", "recommendation"]
 
 
+def _pop_jev_findings(result: dict) -> tuple[dict, dict | None]:
+    """(Jev's stage 2 result without `findings`, the findings it carried, or
+    None when Jev did not score this job). The row never carries a `findings`
+    column; a later cycle's writer reads the findings side of this split so it
+    never has to build them again."""
+    result = dict(result)
+    findings = result.pop("findings", None)
+    return result, findings
+
+
 async def run_scoring(pool, resume: str, df: pd.DataFrame, *,
                       jev_run: JevRun | None = None) -> pd.DataFrame:
     """Stage 1 + Stage 2 over the unfiltered, unreused rows of df; returns df
@@ -1515,7 +1525,10 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame, *,
             if jev_on:
                 got = await jev_run.ask(jsem, 2, job_id, {"md": job_md}, resume)
                 if got is not None:
-                    return {"job_posting_id": job_id, **got}
+                    # `findings` is for the writer (a later cycle); the row never
+                    # carries it.
+                    row, _findings = _pop_jev_findings(got)
+                    return {"job_posting_id": job_id, **row}
                 if pool is None:
                     jev_run.note_no_llm(2, job_id)
                     return None

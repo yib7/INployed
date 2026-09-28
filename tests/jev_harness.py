@@ -31,12 +31,21 @@ In `record` and `replay` mode every test writes its answers and outcomes to
 fails becomes an xfail carrying the divergence, so one run reports every place
 the real model judges the fixtures differently from the fake.
 
+`replay` mode with `AUTO_APPLY_JEV_PRUNE=1` (SP8, `-Prune` on
+`scripts/jev_record.ps1`): at session finish, every key the run's shared
+`ReplayJev` served (`used_keys`) is written to `used_keys.json` beside
+`outcomes.jsonl` (`write_used_keys`), and, once the run had 0 replay misses
+and 0 test failures, the cache is rewritten to keep only those keys
+(`prune_if_asked`, `jev.prune_cache`); a miss or a failure refuses instead of
+risking a key some other test still needs.
+
 `Session` holds the per-run state; `conftest_jev` wires it into pytest as the
 `jev_judge` fixture. `judge()` is the module-level factory the test helpers
 call in place of `jev.FakeJev()`.
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sys
@@ -58,6 +67,10 @@ MODE_ENV = "AUTO_APPLY_TEST_JEV"
 CAP_ENV = jev.RECORD_CAP_ENV
 DRY_ENV = "AUTO_APPLY_RECORD_DRY"
 DRY_CAP_USD = jev.DRY_RECORD_CAP_USD
+# SP8: prune the cache to the keys this run served, once it is clean (see
+# `write_used_keys` and `prune_if_asked`). Valid with `replay` only: a
+# `record` run's cache is meant to grow, not shrink to what one session used.
+PRUNE_ENV = "AUTO_APPLY_JEV_PRUNE"
 MODES = ("fake", "record", "replay")
 FIXTURE = "jev_judge"
 RUNNER_TESTS = ("tests/test_apply_run.py tests/test_apply_run_boundaries.py "
@@ -125,6 +138,11 @@ def dry_from(env: Mapping[str, str]) -> bool:
     return (env.get(DRY_ENV) or "").strip().lower() in ("1", "true", "yes")
 
 
+def prune_from(env: Mapping[str, str]) -> bool:
+    """`AUTO_APPLY_JEV_PRUNE` set to 1, true or yes."""
+    return (env.get(PRUNE_ENV) or "").strip().lower() in ("1", "true", "yes")
+
+
 def dry_copy(cache_path: Path) -> Path:
     """A temp copy of the cache (an empty one when there is none) for a dry
     run to write its fake answers into."""
@@ -136,6 +154,44 @@ def dry_copy(cache_path: Path) -> Path:
 
 def outcomes_path(cache_path: Path) -> Path:
     return Path(cache_path).parent / "outcomes.jsonl"
+
+
+def used_keys_path(cache_path: Path) -> Path:
+    """Where `write_used_keys` puts the run's used-key set: beside
+    `outcomes.jsonl`, gitignored the same way (`tests/fixtures/jev_cache/.gitignore`)."""
+    return Path(cache_path).parent / "used_keys.json"
+
+
+def write_used_keys(session: Session) -> Path:
+    """Write `session`'s replay's `used_keys` to `used_keys_path`, sorted: the
+    keys this run actually served, for a later `-Prune` to keep. A session
+    whose replay never ran (no test used the fixture) writes an empty list.
+    Returns the path written."""
+    path = used_keys_path(session.cache_path)
+    used = sorted(session.replay.used_keys) if session.replay is not None else []
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"mode": session.mode, "used_keys": used}, indent=2),
+                    encoding="utf-8")
+    return path
+
+
+def prune_if_asked(session: Session, testsfailed: int) -> str:
+    """When `session.prune`, prune `session.cache_path` down to the keys this
+    session's replay used (`jev.prune_cache`, gated on the replay's own miss
+    count and `testsfailed`, the run's pytest failure count). Returns the
+    refusal's reason, or a line naming what was kept; "" when pruning was not
+    asked for."""
+    if not session.prune:
+        return ""
+    replay = session.replay
+    used = set(replay.used_keys) if replay is not None else set()
+    misses = replay.misses if replay is not None else 0
+    try:
+        before, after = jev.prune_cache(session.cache_path, used, misses=misses,
+                                        failures=testsfailed)
+    except jev.PruneRefused as e:
+        return f"jev prune refused: {e}"
+    return f"jev prune: kept {after} of {before} key(s) in {session.cache_path}"
 
 
 def live_judge() -> jev.Jev:
@@ -178,14 +234,19 @@ class Observed:
 
 class Session:
     """One pytest run's harness state: the mode, the shared replay cache, the
-    per-test records, the live spend and the cap."""
+    per-test records, the live spend and the cap, and (`replay` mode) whether
+    the run prunes the cache to what it used when it finishes clean."""
 
     def __init__(self, mode: str, cache_path: Path, cap_usd: float | None = None,
-                 env: Mapping[str, str] | None = None, *, dry: bool = False):
+                 env: Mapping[str, str] | None = None, *, dry: bool = False,
+                 prune: bool = False):
         if mode not in MODES:
             raise ValueError(f"unknown harness mode {mode!r}")
+        if prune and mode != "replay":
+            raise ValueError(f"{PRUNE_ENV} is only valid with {MODE_ENV}=replay")
         self.mode = mode
         self.dry = bool(dry) and mode == "record"
+        self.prune = bool(prune)
         self.env = os.environ if env is None else env
         # checked before the dry copy is made: a live recording without a cap
         # is refused (ValueError) before anything is written
@@ -207,7 +268,8 @@ class Session:
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Session:
         env = os.environ if env is None else env
-        return cls(mode_from(env), cache_path_from(env), None, env=env, dry=dry_from(env))
+        return cls(mode_from(env), cache_path_from(env), None, env=env, dry=dry_from(env),
+                   prune=prune_from(env))
 
     @property
     def live(self) -> bool:

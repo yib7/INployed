@@ -7,6 +7,7 @@ then the success rate per flow and overall.
                                    [--json out.json] [--verbose]
                                    [--jobs N] [--flow-timeout S]
                                    [--real record|replay|dry] [--real-cache PATH]
+                                   [--real-prune]
 
 The flows, the judges and the invariants are `tests/apply_harness.py`'s. The
 run is hermetic: the fixtures are served from `tests/fixtures/` on a local
@@ -37,6 +38,12 @@ stops starting flows at `AUTO_APPLY_RECORD_USD_CAP`. `--real dry` is the
 same run with the fake answering at each request's estimated size into a
 temp copy of the cache: the request count and the spend a recording would
 make, with no key.
+
+`--real-prune` (SP8, only with `--real replay`) rewrites `--real-cache` to
+keep only the keys this run served (`jev.prune_cache`), once the run had 0
+replay misses in the real column and 0 failures; otherwise it refuses and
+names the reason, leaving the cache as it was. The keys a parallel run's
+workers used are folded together in `main` before the prune runs.
 
 Exit 0 when no run broke an invariant and every worker finished, 1 when a
 run broke one or a worker crashed or hung, 2 when the browser could not
@@ -117,17 +124,20 @@ def _run_flow_worker(flow_name: str, seeds: tuple, fast: bool, workdir: str, out
     `run_matrix` -> `run_flow` calls `apply_harness.offline` on every
     context it opens, worker or not). Streams a ("progress", line) message
     per run, in the same text `main`'s own `--verbose` prints, and ends with
-    exactly one ("done", [RunResult, ...]) or ("error", flow_name, cause).
-    With `real_cache`, the real judge's replay over that cache runs last
-    (`apply_harness.real_judge("replay", ...)`: read-only, so workers may
-    share the file)."""
+    exactly one ("done", [RunResult, ...], [used key, ...]) or
+    ("error", flow_name, cause). With `real_cache`, the real judge's replay
+    over that cache runs last (`apply_harness.real_judge("replay", ...)`:
+    read-only, so workers may share the file); the done message's third item
+    is that replay's own `used_keys` (SP8: a worker's own process, so its
+    used keys never reach `main` any other way), sorted, or [] with no real
+    judge."""
     try:
         tmp = Path(workdir)
         _isolate(tmp, appdata=f"appdata-{flow_name}")
         import apply_harness as h
         f = h.flow(flow_name)
-        real = h.real_judge("replay", Path(real_cache)).judge if real_cache else None
-        judge_list = h.judges(seeds, real=real)
+        real_replay = h.real_judge("replay", Path(real_cache)).judge if real_cache else None
+        judge_list = h.judges(seeds, real=real_replay)
         server = h.FlowServer()
         server.start()
         try:
@@ -149,7 +159,8 @@ def _run_flow_worker(flow_name: str, seeds: tuple, fast: bool, workdir: str, out
                     browser.close()
         finally:
             server.stop()
-        out_queue.put(("done", results))
+        used = sorted(real_replay.used_keys) if real_replay is not None else []
+        out_queue.put(("done", results, used))
     except Exception:       # noqa: BLE001  (reported as a failure row, never raised)
         out_queue.put(("error", flow_name, traceback.format_exc()))
 
@@ -220,9 +231,13 @@ def _next_message(out_q, p, deadline: float):
 
 
 def _run_one_flow(name: str, seeds: tuple, fast: bool, workdir: Path, timeout: float,
-                  verbose: bool, ctx, real_cache: str = "") -> list:
+                  verbose: bool, ctx, real_cache: str = "",
+                  real_used: set | None = None) -> list:
     """`name` in its own worker process, bounded by `timeout`: the worker's
-    own results, or a "failed" row per judge naming a crash or a timeout."""
+    own results, or a "failed" row per judge naming a crash or a timeout.
+    With `real_used` given, the worker's real-column `used_keys` (SP8) are
+    added to it on a clean finish; a crash or a timeout adds none, since no
+    replay is known to have run to completion."""
     out_q = ctx.Queue()
     p = ctx.Process(target=_run_flow_worker,
                     args=(name, seeds, fast, str(workdir), out_q, real_cache), daemon=True)
@@ -252,6 +267,8 @@ def _run_one_flow(name: str, seeds: tuple, fast: bool, workdir: Path, timeout: f
             reason = f"apply_matrix: {name} did not finish within {timeout:.0f}s"
         return _crash_results(name, seeds, reason, bool(real_cache))
     if payload[0] == "done":
+        if real_used is not None and len(payload) > 2:
+            real_used.update(payload[2])
         return payload[1]
     cause = payload[2] if len(payload) > 2 else ""
     cause = cause.strip().splitlines()[-1] if cause.strip() else "unknown error"
@@ -260,18 +277,21 @@ def _run_one_flow(name: str, seeds: tuple, fast: bool, workdir: Path, timeout: f
 
 
 def _run_parallel(flows, seeds: tuple, fast: bool, jobs: int, flow_timeout: float,
-                  workdir: Path, *, verbose: bool = False, real_cache: str = "") -> list:
+                  workdir: Path, *, verbose: bool = False, real_cache: str = "",
+                  real_used: set | None = None) -> list:
     """Every flow in `flows`, one worker process per flow, `jobs` running at
     once; the combined rows put back in `flows`' own order (each flow's own
     rows already come back in judge order from `run_matrix`), so the output
-    matches the serial run's regardless of which worker finishes first."""
+    matches the serial run's regardless of which worker finishes first. With
+    `real_used` given, every worker's real-column used keys (SP8) are folded
+    into it as they finish."""
     ctx = mp.get_context("spawn")
     names = [f.name for f in flows]
     per_flow: dict[str, list] = {}
 
     def _task(name: str) -> None:
         per_flow[name] = _run_one_flow(name, seeds, fast, workdir, flow_timeout, verbose, ctx,
-                                       real_cache)
+                                       real_cache, real_used=real_used)
 
     with ThreadPoolExecutor(max_workers=max(1, jobs)) as ex:
         list(ex.map(_task, names))
@@ -382,7 +402,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--real-cache", default="",
                     help="the real judge's cache (default "
                          "tests/fixtures/jev_cache/matrix_cache.json)")
+    ap.add_argument("--real-prune", action="store_true",
+                    help="with --real replay: once the run has 0 replay misses and 0 "
+                         "failures, rewrite --real-cache to keep only the keys this run "
+                         "used (jev.prune_cache); refuses otherwise, naming the reason")
     args = ap.parse_args(argv)
+    if args.real_prune and args.real != "replay":
+        print("apply_matrix: --real-prune only applies with --real replay", file=sys.stderr)
+        return 2
 
     with tempfile.TemporaryDirectory(prefix="apply-matrix-") as tmp:
         tmp_path = Path(tmp)
@@ -424,12 +451,15 @@ def main(argv: list[str] | None = None) -> int:
                     browser.close()
             finally:
                 server.stop()
+            real_used_keys = set(real.used_keys) if real is not None else set()
         else:
             timeout = args.flow_timeout if args.flow_timeout > 0 else \
                 _default_flow_timeout(len(judge_list))
+            real_used_keys = set()
             results = _run_parallel(flows, noisy_seeds, not args.real_timing, jobs, timeout,
                                     tmp_path, verbose=args.verbose,
-                                    real_cache=str(real_cache) if real is not None else "")
+                                    real_cache=str(real_cache) if real is not None else "",
+                                    real_used=real_used_keys if real is not None else None)
         print(h.summary(results))
         if real is not None:
             rows = [r for r in results if r.judge == h.REAL]
@@ -458,6 +488,16 @@ def main(argv: list[str] | None = None) -> int:
             rows = [{k: v for k, v in asdict(r).items() if k != "actions"} for r in results]
             Path(args.json).write_text(json.dumps(rows, indent=2), encoding="utf-8")
         failed = _failures(h, results, whole=not args.flows)
+        if args.real_prune:
+            import jev
+            misses = sum(r.replay_misses for r in results if r.judge == h.REAL)
+            try:
+                before_n, after_n = jev.prune_cache(real_cache, real_used_keys, misses=misses,
+                                                    failures=len(failed))
+            except jev.PruneRefused as e:
+                print(f"apply_matrix: prune refused: {e}", file=sys.stderr)
+            else:
+                print(f"apply_matrix: pruned {real_cache}: kept {after_n} of {before_n} key(s)")
         if failed:
             print(f"apply_matrix: FAILED: {'; '.join(failed)}", file=sys.stderr)
         return 1 if failed else 0

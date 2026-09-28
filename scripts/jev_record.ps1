@@ -5,6 +5,7 @@
 #   .\scripts\jev_record.ps1 -Target matrix -Cap 0.20      # record the flow matrix's real column
 #   .\scripts\jev_record.ps1 -Target captures -Cap 0.05    # record the local captures' page reads
 #   .\scripts\jev_record.ps1 -Target matrix -Dry           # the dry run: fake answers, no key
+#   .\scripts\jev_record.ps1 -Mode replay -Prune           # replay, then drop unused keys
 #
 # Targets:
 #   runner    tests/test_apply_run.py, tests/test_apply_run_boundaries.py,
@@ -30,7 +31,16 @@
 # ends, the variables this script set are removed, so a later plain pytest stays
 # on the fake, and the key is dropped when this script loaded it. A recording or
 # a replay of the runner or matrix target ends with scripts/jev_thresholds.py
-# over its cache. Pure ASCII on purpose (PowerShell 5.1).
+# over its cache.
+#
+# -Prune (SP8, -Mode replay only, -Target runner or matrix) rewrites the
+# target's cache to keep only the keys that replay used, once the replay had
+# 0 misses and 0 failures (jev.prune_cache); otherwise it prints the refusal
+# and leaves the cache as it was. Over time a cache picks up keys no test
+# replays any more (a fixture changed, a test was removed); -Prune drops
+# them. It never runs in -Mode record: a recording's cache is meant to grow.
+#
+# Pure ASCII on purpose (PowerShell 5.1).
 param(
     [ValidateSet("record", "replay")]
     [string]$Mode = "record",
@@ -40,8 +50,22 @@ param(
     [string]$Cache = "",
     [string]$Flows = "",
     [string]$Json = "",
-    [switch]$Dry
+    [switch]$Dry,
+    [switch]$Prune
 )
+
+if ($Prune -and $Mode -ne "replay") {
+    Write-Host "-Prune is only valid with -Mode replay."
+    exit 2
+}
+if ($Prune -and $Target -eq "captures") {
+    Write-Host "-Prune supports -Target runner or -Target matrix, not captures."
+    exit 2
+}
+if ($Prune -and $Dry) {
+    Write-Host "-Prune is not valid with -Dry: a dry run estimates a recording, it replays nothing."
+    exit 2
+}
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -88,6 +112,7 @@ try {
         $set += "AUTO_APPLY_TEST_JEV"
         if ($Dry) { $env:AUTO_APPLY_RECORD_DRY = "1"; $set += "AUTO_APPLY_RECORD_DRY" }
         if ($Cache) { $env:AUTO_APPLY_JEV_CACHE = $Cache; $set += "AUTO_APPLY_JEV_CACHE" }
+        if ($Prune) { $env:AUTO_APPLY_JEV_PRUNE = "1"; $set += "AUTO_APPLY_JEV_PRUNE" }
         Write-Host "jev $Mode over the runner tests (cap $capText USD, dry $Dry)"
         python -m pytest tests/test_apply_run.py tests/test_apply_run_boundaries.py tests/test_screening.py tests/test_apply_assess.py -q
         $code = $LASTEXITCODE
@@ -105,6 +130,7 @@ try {
         if ($Cache) { $matrixArgs += @("--real-cache", $Cache) }
         if ($Flows) { $matrixArgs += @("--flows", $Flows) }
         if ($Json) { $matrixArgs += @("--json", $Json) }
+        if ($Prune) { $matrixArgs += @("--real-prune") }
         Write-Host "jev $real over the flow matrix (cap $capText USD)"
         python @matrixArgs
         $code = $LASTEXITCODE

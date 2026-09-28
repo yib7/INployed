@@ -27,6 +27,10 @@ Hooks, active in `record` and `replay` mode only:
   divergence; either way the test's record goes to `outcomes.jsonl`.
 - terminal summary: replay hits and misses, live requests and spend, the
   outcomes path, and the cap stop if it happened.
+- session finish: the shared replay's used keys are written to
+  `jev_harness.used_keys_path` (SP8, gitignored); in `replay` mode, when
+  `AUTO_APPLY_JEV_PRUNE` is set, the cache is then pruned to those keys, or
+  refused with a reason (`jev_harness.prune_if_asked`, `jev.prune_cache`).
 """
 from __future__ import annotations
 
@@ -197,3 +201,26 @@ def pytest_terminal_summary(terminalreporter, config):
     terminalreporter.write_line(f"outcomes: {session.writer.path}")
     if session.stopped:
         terminalreporter.write_line(session.stopped)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """SP8: write the shared replay's used keys beside `outcomes.jsonl`
+    (`jev_harness.write_used_keys`), then, in `replay` mode with
+    `AUTO_APPLY_JEV_PRUNE` set, prune the cache to them or print the refusal
+    (`jev_harness.prune_if_asked`). `session.testsfailed` is the run's own
+    failure count: a replay miss that is not marked `jev_unrecorded` already
+    turned its test's report into a failure above, so it counts here too.
+    (`session` here is pytest's own `Session`, the hookspec's name for it --
+    not `jev_harness.Session`, which `_session(session.config)` returns.)"""
+    jsession = _session(session.config)
+    if jsession is None or not jsession.soft:
+        return
+    jev_harness.write_used_keys(jsession)
+    line = jev_harness.prune_if_asked(jsession, session.testsfailed)
+    if not line:
+        return
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    if reporter is not None:
+        reporter.write_line(line)
+    else:
+        print(line)      # no terminal reporter: some other plugin took over reporting

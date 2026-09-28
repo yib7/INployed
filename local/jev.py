@@ -994,6 +994,12 @@ class ReplayJev:
     (sorted keys, no whitespace), so key order in the state does not matter and
     any change to a question does. The cache is one JSON object
     `{key: {question_id: answer}}` written atomically after every miss.
+
+    `used_keys` (SP8) is every key this instance served: a hit's key, and a
+    miss's key once it is recorded. It is the run's own record of what it
+    needed, so a cache carrying a stale key no test asks for any more can be
+    told apart from one every key of which still earns its place
+    (`prune_cache`).
     """
 
     def __init__(self, inner: Jev | None, cache_path: Path):
@@ -1001,6 +1007,7 @@ class ReplayJev:
         self.cache_path = Path(cache_path)
         self.hits = 0
         self.misses = 0
+        self.used_keys: set[str] = set()
         self._cache: dict[str, dict] | None = None
 
     @staticmethod
@@ -1020,6 +1027,7 @@ class ReplayJev:
         hit = cache.get(key)
         if isinstance(hit, dict) and set(hit) == set(questions):
             self.hits += 1
+            self.used_keys.add(key)
             return {qid: Answer.from_dict(raw) for qid, raw in hit.items()}
         self.misses += 1
         if self.inner is None:
@@ -1028,7 +1036,39 @@ class ReplayJev:
         cache[key] = {qid: a.to_dict() for qid, a in answers.items()}
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_json(self.cache_path, cache)
+        self.used_keys.add(key)
         return answers
+
+
+class PruneRefused(RuntimeError):
+    """`prune_cache` refused to rewrite the cache: a miss or a failed test in
+    the run means its `used_keys` may not cover every key a clean pass would
+    reach, and pruning on it could drop one a passing test still needs."""
+
+
+def prune_cache(cache_path: Path, used_keys: set[str], *, misses: int = 0,
+                failures: int = 0) -> tuple[int, int]:
+    """Rewrite the cache at `cache_path` to keep only `used_keys`, atomically
+    (`atomic_write_json`, the same tmp-file-then-replace every other cache
+    write here uses). Raises `PruneRefused`, naming the reason, when `misses`
+    or `failures` is not zero (a miss or a failed test means this run may not
+    have reached every key a clean pass would) or when `used_keys` is empty (a
+    run that served nothing is never a reason to empty the cache). Returns
+    (the key count before, the key count after)."""
+    if misses:
+        raise PruneRefused(f"{misses} replay miss(es) in the run: a miss means the run did not "
+                           f"see every key a clean pass would, so pruning on it could drop one "
+                           f"a passing test still needs")
+    if failures:
+        raise PruneRefused(f"{failures} test failure(s) in the run: a failure may have kept a "
+                           f"test from reaching every key it would reach on a clean pass")
+    if not used_keys:
+        raise PruneRefused("no keys were used in this run; refusing to prune to an empty cache")
+    cache = read_json_dict(cache_path)
+    before = len(cache)
+    kept = {k: v for k, v in cache.items() if k in used_keys}
+    atomic_write_json(cache_path, kept)
+    return before, len(kept)
 
 
 # --- a recording's spend cap (SP8b) ------------------------------------------------------

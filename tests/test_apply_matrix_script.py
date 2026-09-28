@@ -290,6 +290,58 @@ def test_a_replay_miss_in_the_real_column_fails_the_script(monkeypatch, capsys):
                               "--real", "replay"]) == 0
 
 
+# --- --real-prune (SP8): pruning the matrix cache to what a replay used ------------------------
+
+def test_real_prune_only_applies_with_real_replay(capsys):
+    assert apply_matrix.main(["--real-prune"]) == 2
+    assert "--real-prune only applies with --real replay" in capsys.readouterr().err
+    assert apply_matrix.main(["--real-prune", "--real", "dry"]) == 2
+
+
+def test_real_prune_keeps_only_the_keys_a_clean_run_used(tmp_path, monkeypatch, capsys):
+    # the workers report their real judge's used keys back on the "done"
+    # message (`_run_flow_worker`); `_run_parallel`'s `real_used` kwarg folds
+    # them together, so a fake standing in for it must do the same to prove
+    # `main` wires the two together correctly
+    cache = tmp_path / "matrix_cache.json"
+    cache.write_text(json.dumps({"used-key": {"a": {"kind": "noul", "noul": 0.9}},
+                                 "stale-key": {"a": {"kind": "noul", "noul": 0.1}}}),
+                     encoding="utf-8")
+
+    def fake_run_parallel(*a, real_used=None, **k):
+        if real_used is not None:
+            real_used.add("used-key")
+        return [_row("fake", True), _row("real", True)]
+    monkeypatch.setattr(apply_matrix, "_run_parallel", fake_run_parallel)
+    monkeypatch.setattr(apply_matrix, "_isolate", lambda *a, **k: None)
+    code = apply_matrix.main(["--flows", "post_form", "--seeds", "0", "--jobs", "2",
+                              "--real", "replay", "--real-cache", str(cache), "--real-prune"])
+    out, err = capsys.readouterr()
+    assert code == 0, err
+    assert "apply_matrix: pruned" in out and "kept 1 of 2 key(s)" in out
+    assert set(json.loads(cache.read_text(encoding="utf-8"))) == {"used-key"}
+
+
+def test_real_prune_refuses_after_a_replay_miss_and_leaves_the_cache_as_it_was(
+        tmp_path, monkeypatch, capsys):
+    cache = tmp_path / "matrix_cache.json"
+    cache.write_text(json.dumps({"used-key": {}, "stale-key": {}}), encoding="utf-8")
+    real_miss = dataclasses.replace(_row("real", True), replay_misses=1)
+
+    def fake_run_parallel(*a, real_used=None, **k):
+        if real_used is not None:
+            real_used.add("used-key")
+        return [_row("fake", True), real_miss]
+    monkeypatch.setattr(apply_matrix, "_run_parallel", fake_run_parallel)
+    monkeypatch.setattr(apply_matrix, "_isolate", lambda *a, **k: None)
+    code = apply_matrix.main(["--flows", "post_form", "--seeds", "0", "--jobs", "2",
+                              "--real", "replay", "--real-cache", str(cache), "--real-prune"])
+    out, err = capsys.readouterr()
+    assert code == 1, err
+    assert "apply_matrix: prune refused:" in err and "miss" in err
+    assert set(json.loads(cache.read_text(encoding="utf-8"))) == {"used-key", "stale-key"}
+
+
 def test_a_recording_names_the_flows_it_recorded_that_are_still_flagged_unrecorded():
     # final review C N4: the flags to flip after a recording
     fresh = dataclasses.replace(h.flow("post_form"), name="__fresh__", recorded=False)

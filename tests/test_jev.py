@@ -267,6 +267,99 @@ def test_replay_misses_on_a_changed_state(tmp_path):
     assert inner.calls == 2
 
 
+# --- (b2) ReplayJev.used_keys and jev.prune_cache (SP8) -------------------------
+
+def test_used_keys_starts_empty_and_gains_the_key_on_a_hit(tmp_path):
+    cache = tmp_path / "cache.json"
+    r = jev.ReplayJev(_Counting(), cache)
+    assert r.used_keys == set()
+    key = jev.ReplayJev.key_for(STATE, QUESTIONS)
+    r.judge(STATE, QUESTIONS)               # a miss that records
+    assert r.used_keys == {key}
+    r2 = jev.ReplayJev(None, cache)
+    r2.judge(STATE, QUESTIONS)              # a hit over a fresh instance
+    assert r2.used_keys == {key}
+
+
+def test_used_keys_holds_one_entry_per_distinct_request(tmp_path):
+    r = jev.ReplayJev(_Counting(), tmp_path / "cache.json")
+    r.judge(STATE, QUESTIONS)
+    other = {**STATE, "page": {"title": "Other"}}
+    r.judge(other, QUESTIONS)
+    assert r.used_keys == {jev.ReplayJev.key_for(STATE, QUESTIONS),
+                          jev.ReplayJev.key_for(other, QUESTIONS)}
+
+
+def test_used_keys_never_grows_on_a_miss_with_no_inner(tmp_path):
+    r = jev.ReplayJev(None, tmp_path / "cache.json")
+    with pytest.raises(jev.JevUnavailable):
+        r.judge(STATE, QUESTIONS)
+    assert r.used_keys == set()
+
+
+def _seed_cache(path: Path, keys: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(keys), encoding="utf-8")
+
+
+def test_prune_cache_keeps_only_the_given_keys(tmp_path):
+    cache = tmp_path / "cache.json"
+    _seed_cache(cache, {"used": {"q": {"kind": "noul", "noul": 0.9}},
+                        "stale": {"q": {"kind": "noul", "noul": 0.1}}})
+    before, after = jev.prune_cache(cache, {"used"})
+    assert (before, after) == (2, 1)
+    assert json.loads(cache.read_text(encoding="utf-8")) == {
+        "used": {"q": {"kind": "noul", "noul": 0.9}}}
+
+
+def test_prune_cache_refuses_after_a_miss(tmp_path):
+    cache = tmp_path / "cache.json"
+    _seed_cache(cache, {"used": {}, "stale": {}})
+    with pytest.raises(jev.PruneRefused, match="miss"):
+        jev.prune_cache(cache, {"used"}, misses=1)
+    assert set(json.loads(cache.read_text(encoding="utf-8"))) == {"used", "stale"}
+
+
+def test_prune_cache_refuses_after_a_failure(tmp_path):
+    cache = tmp_path / "cache.json"
+    _seed_cache(cache, {"used": {}, "stale": {}})
+    with pytest.raises(jev.PruneRefused, match="failure"):
+        jev.prune_cache(cache, {"used"}, failures=1)
+    assert set(json.loads(cache.read_text(encoding="utf-8"))) == {"used", "stale"}
+
+
+def test_prune_cache_refuses_an_empty_key_set(tmp_path):
+    cache = tmp_path / "cache.json"
+    _seed_cache(cache, {"used": {}})
+    with pytest.raises(jev.PruneRefused, match="no keys"):
+        jev.prune_cache(cache, set())
+    assert set(json.loads(cache.read_text(encoding="utf-8"))) == {"used"}
+
+
+def test_prune_cache_writes_atomically(tmp_path, monkeypatch):
+    cache = tmp_path / "cache.json"
+    _seed_cache(cache, {"used": {}, "stale": {}})
+    calls = []
+    real_atomic = jev.atomic_write_json
+
+    def _wrapped(path, data):
+        calls.append((Path(path), dict(data)))
+        real_atomic(path, data)
+    monkeypatch.setattr(jev, "atomic_write_json", _wrapped)
+    jev.prune_cache(cache, {"used"})
+    assert calls == [(cache, {"used": {}})]
+    assert not list(tmp_path.glob("*.tmp"))     # no stranded temp file
+
+
+def test_prune_cache_treats_a_missing_cache_as_empty(tmp_path):
+    cache = tmp_path / "missing.json"
+    with pytest.raises(jev.PruneRefused, match="no keys"):
+        jev.prune_cache(cache, set())
+    before, after = jev.prune_cache(cache, {"x"})
+    assert (before, after) == (0, 0)
+    assert json.loads(cache.read_text(encoding="utf-8")) == {}
+
+
 # --- (c) get(): the factory and the missing-key refusal ------------------------
 
 def test_get_typesafe_without_a_key_raises_jev_unavailable_naming_the_console():

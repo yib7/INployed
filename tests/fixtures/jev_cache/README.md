@@ -65,6 +65,38 @@ and prints it as a flag to flip; after the next recording, set each one it
 names to `recorded=True`, so the replay covers it. A replay that misses a
 request exits 1.
 
+## Pruning to the replayed keys (SP8)
+
+Over the cycles a cache picks up keys no test replays any more: a fixture
+changed shape, a test was removed, a flow was renamed. `-Prune` on
+`scripts/jev_record.ps1` (`-Mode replay` only, `-Target runner` or `matrix`)
+rewrites the target's cache to keep only the keys that replay actually served.
+
+It is safe by construction: the replay's shared `ReplayJev` records every key
+it serves (`local/jev.py`, `used_keys`), and the rewrite (`jev.prune_cache`)
+refuses, naming the reason, unless the run had 0 replay misses and 0 test
+failures. A miss or a failure means the run may not have reached every key a
+clean pass would, and pruning on it could drop one a passing test still
+needs -- so nothing is written, and the cache is left exactly as it was.
+
+For the runner target, the shared replay lives for the whole pytest process
+(one process covers every file in `RUNNER_TESTS`), so its `used_keys` already
+covers all four modules; at session finish (`conftest_jev.pytest_sessionfinish`)
+the keys are written to `used_keys.json` beside `outcomes.jsonl` (gitignored),
+and, when `-Prune` set `AUTO_APPLY_JEV_PRUNE`, the cache is pruned there and
+then. For the matrix target, `--jobs` runs one worker process per flow, so
+each worker's real judge (`apply_harness.real_judge("replay", ...)`) reports
+its own `used_keys` back on its "done" message; `scripts/apply_matrix.py`
+folds every worker's keys together before `--real-prune` (which the `.ps1`
+switch passes through) rewrites `--real-cache`.
+
+Prune after a live recording, never instead of one: it only ever removes
+keys, so run it once the new flows are recorded and every test that should
+replay does.
+
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/jev_record.ps1 -Mode replay -Prune
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/jev_record.ps1 -Target matrix -Mode replay -Prune
+
 ## Commands (from the repo root)
 
 Every live recording goes through `scripts/jev_record.ps1`, which loads the
@@ -133,4 +165,5 @@ line: the test id, every answer (with the fake's answer beside it), every
 terminal outcome the runner reached (status, reason), and a failed assertion
 becomes an xfail carrying the divergence text, so one run reports every
 divergence at once. In `fake` mode nothing is written and assertions are hard.
-`outcomes.jsonl` is ignored by git; the two caches are committed.
+`outcomes.jsonl` and `used_keys.json` (SP8, the run's used-key set for
+`-Prune`) are both ignored by git; the two caches are committed.

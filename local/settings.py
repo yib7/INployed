@@ -267,10 +267,10 @@ SETTINGS_SCHEMA: list[Field] = [
     # has no area switch here and only the master turns it off.
     Field("jev_enabled", "Use Jev", "bool", True, "Jev", "config",
           choices=("True", "False"),
-          help="Jev is the TypeSafe judge. On: it makes the yes-or-no calls when jobs "
-               "are scored, picks and checks résumé bullets (your tailor provider "
-               "still writes each one), rates how hard each queued application is, "
-               "and reads every auto-apply form. Off: scoring and tailoring run on "
+          help="Jev is the TypeSafe judge. On: it scores collected jobs on the scorer's "
+               "own 1-5 and 1-10 scales, picks and checks résumé bullets (your tailor "
+               "provider still writes each one), rates how hard each queued application "
+               "is, and reads every auto-apply form. Off: scoring and tailoring run on "
                "Gemini or Claude alone, as they did before Jev, and auto-apply cannot "
                "start. Takes effect on the next run."),
     # The key row sits in the section whose feature spends it, with the same
@@ -288,9 +288,10 @@ SETTINGS_SCHEMA: list[Field] = [
                "million input tokens (output is free)."),
     Field("jev_scoring", "Jev for scoring", "bool", True, "Jev", "config",
           show_if=("jev_enabled", ("True",)), advanced=True,
-          help="Jev reads each collected job against your résumé in both scoring "
-               "stages. Off: the Scoring provider scores every job on its own. Takes "
-               "effect on the next scoring run."),
+          help="Jev scores each collected job against your résumé in both scoring "
+               "stages, on the same scales the Scoring provider uses. Off: the "
+               "Scoring provider scores every job on its own. Takes effect on the "
+               "next scoring run."),
     Field("jev_tailor", "Jev for the résumé tailor", "bool", True, "Jev", "config",
           choices=("True", "False"), show_if=("jev_enabled", ("True",)), advanced=True,
           help="Jev picks your skills lines, shortlists the experience a job asks for, "
@@ -451,6 +452,11 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("stage2_threshold", "Stage-2 threshold", "int", 4, "Scoring", "scoring",
           help="Stage-1 score at/above which a job gets deep Stage-2 analysis.", min=1, max=5,
           slider=True),
+    Field("jev_writer", "Jev writer for high scores", "bool", True, "Scoring", "scoring",
+          advanced=True, help="When Jev scores a job 4 or higher, the Scoring provider's stage 1 "
+          "model (Claude Haiku or Gemini Flash-Lite) writes that job's reason, strengths and gaps "
+          "from Jev's findings: one short call per such job. Off: those jobs keep Jev's code-written "
+          "notes, and scoring calls the provider only when Jev cannot score a job."),
     # NOT advanced, deliberately: this is the only ceiling on an LLM bill, so it
     # stays where a user worried about spend can find it without first learning
     # that a disclosure toggle exists. `rescore_cap` below reads like its twin but

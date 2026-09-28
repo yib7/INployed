@@ -8065,6 +8065,23 @@ class _JobRun:
                                       f"({what}); the run had reached: {_cap(reason, 200)}",
                        CHECK_SENT_NOTE)
 
+    def _pause_closed(self, buttons: tuple = ()) -> None:
+        """The window or the tab closed during a pause's wait (final review
+        A I-2). The person had the browser: on a page with a send-worded
+        button (`buttons`, the pause's read) they may have sent it before the
+        close, and after going on from an earlier step (`_person_moved_on`)
+        they may have sent it on a later one. Either way the job may have
+        been sent (`_pause_sent`): it ends with the check-whether note and is
+        never offered a Re-queue."""
+        sends = [t for t, _loc in buttons if _send_worded(t)]
+        if not sends and not self._person_moved_on:
+            return
+        self._pause_sent = True
+        what = (f"its {_cap(' '.join(str(sends[0]).split()), 60)!r} button was on the page"
+                if sends else "you had gone on to another step")
+        self._decide("pause_closed", f"the browser closed during the pause ({what}): the "
+                                     "application may have been sent in the browser")
+
     def _pause_reload(self) -> None:
         """After every resume from a pause (PR-6, SP7 review M2: an answer the
         person saved or added in the Apply Answers tab meanwhile): the store

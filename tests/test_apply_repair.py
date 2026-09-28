@@ -970,6 +970,30 @@ def test_a_page_with_no_send_button_that_moved_on_is_planned_again():
     assert not run._pause_sent and run.decided == ["pause_moved_on"]
 
 
+# final review A I-2: the window or the tab closed during a pause
+
+def _closed(buttons: tuple, *, moved_on: bool = False) -> _Moved:
+    run = _Moved(_URL1, _ROWS, buttons)
+    run._person_moved_on = moved_on
+    apply_run._JobRun._pause_closed(run, buttons)
+    return run
+
+
+def test_a_close_during_a_pause_on_a_page_with_a_send_button_may_have_been_sent():
+    run = _closed(_SUBMIT)
+    assert run._pause_sent and run.decided == ["pause_closed"]
+
+
+def test_a_close_during_a_pause_after_the_person_moved_on_may_have_been_sent():
+    run = _closed(_NEXT, moved_on=True)
+    assert run._pause_sent and run.decided == ["pause_closed"]
+
+
+def test_a_close_during_a_pause_on_a_page_that_cannot_send_stays_a_closed_window():
+    run = _closed(_NEXT)
+    assert not run._pause_sent and run.decided == []
+
+
 class _Busy529(Exception):
     """An overloaded service the way the SDK raises one: the judge's guard
     retries it, then opens its breaker (the judge down)."""

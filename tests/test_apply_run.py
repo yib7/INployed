@@ -3691,8 +3691,12 @@ def test_a_timeout_or_park_it_parks_with_the_reason_it_had_before(
     assert apply_pause.pending_requests() == []
 
 
-def test_a_window_closed_during_the_pause_parks_as_a_closed_window(
+def test_a_window_closed_during_a_pause_on_a_sendable_page_may_have_been_sent(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    # final review A I-2: pause_form.html shows its Submit application button
+    # during the pause, and the person has the browser: they may have sent it
+    # there before closing the tab. The job ends with the check-whether note
+    # (it was the closed-tab end, whose note offers a Re-queue)
     _pauses_on(monkeypatch, tmp_path)
 
     def _closes(page, job_id, minutes, **kw):
@@ -3702,9 +3706,14 @@ def test_a_window_closed_during_the_pause_parks_as_a_closed_window(
     _enqueue(job_folder, fixture_url("pause_form.html"))
     out = _runner(context, tmp_path, auto_apply_pause_minutes=10).drain(cap=1)[0]
     assert out.status == "needs_human", out
-    assert out.reason.startswith((apply_run.CLOSED_REASON, apply_run.TAB_CLOSED_REASON)), \
+    assert out.reason.startswith(f"{apply_run.CHECK_SENT_REASON}: the run stopped after the "
+                                 "pause ("), out.reason
+    assert apply_run.CLOSED_REASON in out.reason or apply_run.TAB_CLOSED_REASON in out.reason, \
         out.reason
     assert "required field without an answer: " in out.reason, out.reason
+    entry = _entry()
+    assert entry["tab_note"] == apply_run.CHECK_SENT_NOTE, entry
+    assert apply_queue.possibly_sent(entry)
     assert apply_pause.pending_requests() == []
 
 

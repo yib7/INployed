@@ -649,6 +649,24 @@ def test_a_card_answer_is_keyed_by_the_page_the_run_paused_on(pauses_on, boxes):
                                                              ("skip", "")]
 
 
+def test_a_close_during_the_wait_hands_the_run_the_paused_pages_buttons(pauses_on, boxes):
+    # final review A I-2: the run reads the buttons the pause saw
+    # (`_JobRun._pause_closed`) before the park, so a page that could send
+    # ends with the check-whether note
+    f = _field(1, "Please explain", id_or_name="explain")
+    digest = _digest(f)
+    digest.buttons.append(SimpleNamespace(text="Submit application", locator=(0, "#go")))
+    jr = _Jr(_Page(_Clock(), closed_after=1), digest=digest)
+    seen: list = []
+    jr._pause_closed = seen.append
+    p = apply_pause.Pauser(jr, RuntimeError)
+    with pytest.raises(RuntimeError):
+        p.at_plan(digest, FillPlan(fields=[_pf(f)], park_reason="required field without an "
+                                                                "answer: Please explain"))
+    assert seen == [(("Submit application", (0, "#go")),)]
+    assert apply_pause.pending_requests() == []
+
+
 def test_a_save_keeps_the_review_list_of_a_version_1_store(tmp_path):
     # final review A I-3: a store still version 1 on disk migrates in memory
     # with its review list; the pause's save keeps that list

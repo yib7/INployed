@@ -785,7 +785,9 @@ class Pauser:
     def _wait(self, reason: str, asked: list) -> tuple[dict | None, tuple | None]:
         """Write the request, give the notice, wait. Returns (the answer,
         the page's print at the start), the answer None on a timeout or
-        "Park it". A window closed during the wait parks with `reason`.
+        "Park it". A window closed during the wait parks with `reason`,
+        after the run reads the page's buttons from before the wait
+        (`_pause_closed`): a page that could send may have been sent.
 
         A headless run whose questions only the browser takes parks at once
         (review M4). After the wait the run reads the page against its print,
@@ -828,6 +830,11 @@ class Pauser:
                                      clock=jr.r.clock, sleep=jr.r.sleep)
         except PageClosed:
             clear(jr.job_id)
+            # the person had the browser: on a page that could send it they
+            # may have sent it before the close (final review A I-2)
+            closed = getattr(jr, "_pause_closed", None)
+            if callable(closed):
+                closed(buttons)
             raise self.parked("needs_human", reason) from None
         finally:
             jr.deadline += max(0.0, jr.r.clock() - start)

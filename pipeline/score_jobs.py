@@ -1106,6 +1106,11 @@ def writer_findings(score: int, row: dict) -> str:
     )
 
 
+# Twin of local/resume_tailor/compose.py's _strip_em_dashes (pipeline/ ships alone to the VM and cannot import local/).
+def _strip_em_dashes(text: str) -> str:
+    return re.sub(r"\s*—\s*|\s--\s", ", ", text)
+
+
 async def write_notes(pool, sem: asyncio.Semaphore, resume: str, job_id: str, job_md: str,
                       findings_block: str) -> dict | None:
     """For a job Jev scored in stage 2 (SP2): one call to the provider's stage 1
@@ -1144,9 +1149,9 @@ async def write_notes(pool, sem: asyncio.Semaphore, resume: str, job_id: str, jo
             )
             _track_usage(resp)
             data = json.loads(resp.text)
-            reason = str(data["reason"]).strip()
-            strengths = [s.strip() for s in data["strengths"] if str(s).strip()]
-            gaps = [g.strip() for g in data["gaps"] if str(g).strip()]
+            reason = _strip_em_dashes(str(data["reason"]).strip())
+            strengths = [_strip_em_dashes(s.strip()) for s in data["strengths"] if str(s).strip()]
+            gaps = [_strip_em_dashes(g.strip()) for g in data["gaps"] if str(g).strip()]
             if not reason or not strengths:
                 return None
             return {"reason": reason, "strengths": " | ".join(strengths), "gaps": " | ".join(gaps)}
@@ -1604,7 +1609,8 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame, *,
 
     SP2: for a job whose stage 2 Jev scored, when JEV_WRITER is on and `pool`
     is not None, one write_notes() call turns Jev's findings into that job's
-    reason/strengths/gaps; a failure leaves Jev's own composed text in place.
+    reason/strengths/gaps; a failure leaves Jev's own composed text in place,
+    and so does a job with no matching stage 1 row.
     """
     reused_mask = (df["score_reused"].fillna(False).astype(bool)
                   if "score_reused" in df.columns else pd.Series(False, index=df.index))

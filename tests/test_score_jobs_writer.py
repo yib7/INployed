@@ -41,6 +41,13 @@ def test_writer_prompts_are_free_of_em_dashes():
         assert "—" not in text
 
 
+def test_writer_prompt_still_asks_for_no_em_dashes_alongside_the_code_backstop():
+    # The prompt ban and _strip_em_dashes are two layers, same as the tailor's
+    # style gate plus its own mechanical strip; this pins the prompt layer so
+    # a later edit cannot drop it on the assumption the code backstop covers it.
+    assert "no em dashes and no hype" in sj.WRITER_TEMPLATE_RESUME
+
+
 def test_writer_templates_format_with_resume_today_findings_and_job():
     resume_half = sj.WRITER_TEMPLATE_RESUME.format(resume="RESUME-TEXT", today="Sep 28, 2026")
     assert "RESUME-TEXT" in resume_half and "Sep 28, 2026" in resume_half
@@ -120,6 +127,24 @@ def test_write_notes_success_joins_strengths_and_gaps_with_pipe_and_strips_items
     out = asyncio.run(sj.write_notes(pool, asyncio.Semaphore(1), RESUME, "J1", "job md", "block"))
     assert out == {"reason": "Good skills match.", "strengths": "Python | SQL",
                   "gaps": "Kubernetes | AWS"}
+
+
+def test_write_notes_strips_an_em_dash_with_spaces_from_the_reason():
+    pool = FakeWriterPool(_ok_json(reason="Good fit — strong skills match."))
+    out = asyncio.run(sj.write_notes(pool, asyncio.Semaphore(1), RESUME, "J1", "job md", "block"))
+    assert out["reason"] == "Good fit, strong skills match."
+
+
+def test_write_notes_strips_a_bare_em_dash_from_a_strength():
+    pool = FakeWriterPool(_ok_json(strengths=["Python—SQL"]))
+    out = asyncio.run(sj.write_notes(pool, asyncio.Semaphore(1), RESUME, "J1", "job md", "block"))
+    assert out["strengths"] == "Python, SQL"
+
+
+def test_write_notes_strips_a_bare_em_dash_from_a_gap():
+    pool = FakeWriterPool(_ok_json(gaps=["Kubernetes—Docker"]))
+    out = asyncio.run(sj.write_notes(pool, asyncio.Semaphore(1), RESUME, "J1", "job md", "block"))
+    assert out["gaps"] == "Kubernetes, Docker"
 
 
 def test_write_notes_uses_stage1_models_temperature_and_schema():

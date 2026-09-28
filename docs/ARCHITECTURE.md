@@ -75,21 +75,40 @@ Locally the scorer can also run through the Claude Code CLI (Settings → Scorin
 always scores with Gemini. A `claude` provider that falls back to Gemini now also switches the
 stage model chains to the Gemini models (SC-6), so the fallback never sends a Claude id to Gemini.
 
-**Jev scoring** (`pipeline/jev_score.py`, cycle 19). When Jev is on, `score_jobs.py` asks Jev
+**Jev scoring** (`pipeline/jev_score.py`, cycle 20). When Jev is on, `score_jobs.py` asks Jev
 first for each job's stage, and the LLM stage runs only for the jobs Jev returned `None` on.
 Jev answers typed questions and writes no text, so `jev_score.stage1` and `stage2` each send one
-request about `{candidate, resume, job}` and compose the same columns the LLM path writes:
+request about `{candidate, resume, job}` and compose the same columns the LLM path writes, on
+the same rubric wording the LLM stage prompts use:
 
-- **Stage 1** reads domain, experience and skills fit, then applies the stage 1 prompt's
-  rubric in code: `SKILLS_FOR_5` (0.75) and `SKILLS_FOR_4` (0.45) set the in-domain score,
-  `YEARS_CAPS` / `EXPERIENCE_LABEL_CAPS` cap it by the years code found, and the off-domain
-  band gives 1 or 2.
-- **Stage 2** splits the description into requirement lines (a job with fewer than
-  `MIN_REQUIREMENT_LINES` goes to the LLM) and asks per line whether the résumé meets it and
-  whether it is a must-have. Code drops work-arrangement, travel and immigration lines before
-  asking. The deep score is `DEEP_BASE + DEEP_SPAN * mix` (3 + 8 x mix), where the mix weighs
-  must-have and nice-to-have coverage and three fits by `DEEP_WEIGHTS`. `RECOMMEND_APPLY` (7)
-  and `RECOMMEND_CONSIDER` (5) turn it into the recommendation.
+- **Stage 1** asks one `fit` Score on `FIT_LEVELS` (five levels, "No match" to "Strong match",
+  the stage 1 prompt's own wording) and one `main_factor` Choice among eight deciding factors.
+  `compose_stage1` maps `fit`'s level to the score (`floor(value + 0.5) + 1`, 1-5); a code cap
+  from `jev_facts` can then lower it: `YEARS_CAPS` caps at 1 / 2 / 3 for 5+ / 3+ / 1+ years, a
+  required clearance caps at 1, a required master's or PhD caps at 2. The reason is
+  `"{label}: {text}."`; a cap that lowered the score names the posting's requirement in place
+  of `main_factor`.
+- **Stage 2** asks `deep_fit` (a Score on `DEEP_FIT_LEVELS`, "Poor fit" to "Excellent fit") plus
+  a met noul, and a must noul where the code gives no must/nice-to-have cue, for each line
+  `requirement_lines()` finds (0 to 30 lines; a job with fewer than 3 requirement lines no
+  longer goes to the LLM path for that reason alone). The deep score is
+  `floor(DEEP_BASE + DEEP_SPAN * level / 4 + 0.5)`, `DEEP_BASE` 6.5 and `DEEP_SPAN` 3.5, landing
+  on 7 to 10. `recommend()` reads the recommendation off the composed deep score in code (apply
+  at `RECOMMEND_APPLY`, 8, or more; consider at `RECOMMEND_CONSIDER`, 6, or more; skip below):
+  Jev no longer picks the recommendation as a Choice. Strengths are the met lines and gaps the
+  unmet must-have lines, up to 5 each, cut to 90 characters.
+
+**The writer** (`score_jobs.write_notes`, cycle 20). For a job Jev scored in stage 2 whose
+stage 1 score is 4 or more, one call to the Scoring provider's stage 1 model
+(`claude-haiku-4-5`, or Gemini's flash-lite model) turns Jev's findings, `writer_findings`
+(the stage 1 score and label, the deep score, the recommendation, and the met / unmet-must /
+unmet-nice lines), into that job's `reason`, `strengths` and `gaps`. It is given the scores and
+cannot change them. An error, unreadable JSON, a blank reason or no strengths, or a job with no
+matching stage 1 row, keeps Jev's own composed text; that row is never an ERROR row. Em dashes
+in the writer's output are replaced mechanically (`_strip_em_dashes`). The switch is
+`jev_writer` in `scoring_config.json` (`SCORE_JEV_WRITER`, default on) with a Settings →
+Scoring row, **Jev writer for high scores**, under advanced. Jobs the LLM path scored in stage
+2 never get a writer call.
 
 The scorer is its own process and runs on the VM, so it decides Jev use itself (JS-4):
 `SCORE_USE_JEV` in the environment, else `jev_enabled` and `jev_scoring` from the repo's own
@@ -103,8 +122,9 @@ per-process usage counter is lock-guarded.
 
 `run_stats.csv` gains `jev_stage1_scored`, `jev_stage2_scored`, `jev_requests`, `jev_usd`,
 `jev_stage1_fallback` and `jev_stage2_fallback` (a job both the fresh and the rescore pass see
-counts once per stage), and the run prints `Jev scored stage 1: N, stage 2: M (R requests, $X);
-LLM fallback stage 1: K, stage 2: L`.
+counts once per stage; the writer adds no run-stats column of its own). The run prints `Jev
+scored stage 1: N, stage 2: M (R requests, $X); LLM fallback stage 1: K, stage 2: L`, and, once
+the writer has made an attempt, `; Jev writer: N written, M kept code text`.
 
 Hand-added jobs (`manual-*` ids, MA-3) are never scored: `rows_needing_rescore` skips them, and
 `prune_master.py` keeps their description past the retention window.
@@ -122,14 +142,28 @@ scoring off (jev_score.py is not beside score_jobs.py)." without it, and the VM 
 **Operator note: Stage 2 calibration.** `scripts/jev_score_calibrate.py --live [--cap-usd 1.00]
 [--sample 400] [--seed 19] [--master PATH] [--resume PATH]` compares Jev's scores against the
 Gemini scores already in a master. It spends money (it refuses without `--live`), caches answers
-under `%LOCALAPPDATA%\INployed\jev_calibration\` and prints aggregates only. The Drive master
-cannot calibrate stage 2: the 3-day retention prune leaves only `job_summary` on older rows,
-and in the VL-2 run 397 of 400 sampled rows had no full description. Calibrate stage 2 on the
-local master (`--master`) or on rows younger than 3 days. The VL-2 holdout (151 local jobs)
-moved the deep score to 3 + 8 x mix, which raised recommendation agreement with Gemini from 55%
-to 82%. The tunables are `DEEP_BASE`, `DEEP_SPAN`, `DEEP_WEIGHTS`, `MET_YES` / `MUST_YES` and
-`RECOMMEND_APPLY` / `RECOMMEND_CONSIDER` in `pipeline/jev_score.py`; stage 1's are
-`SKILLS_FOR_5` / `SKILLS_FOR_4`.
+under `%LOCALAPPDATA%\INployed\jev_calibration\` and prints aggregates only. Cycle 20 dropped
+the stage 2 requirement-line minimum, so the script now runs stage 2 wherever Gemini ran it, and
+it leaves out rows Jev already scored: by the old "Skills fit " reason prefix and by an
+`extracted_date` on or after 2026-09-28.
+
+Stage 1 against Gemini on 400 jobs (Drive master, seed 19): exact match 46.5%, within one
+93.2%, Spearman 0.82, agreement at the 4+ cut 84.8% (cycle 19: 42.2% / 82.5% / 0.62 / 73.2%).
+On the local-master holdout (seed 20): exact match 44.5%, within one 94.0%, Spearman 0.84, cut
+agreement 85.0% (cycle 19: 38.0% / 81.0% / no figure / 73.2%). Stage 2, Drive and local: mean
+gap to Gemini's deep score 0.53 / 0.54, recommendation agreement 83.2% / 81.9%, Spearman 0.66 /
+0.64 (cycle 19's holdout: 0.84 / 82.1% / 0.57). Jev's own apply / consider / skip Choice agreed
+with Gemini on only 29.2% / 30.6% of jobs; that low agreement is why `recommend()` reads the
+recommendation off the composed deep score in code. Jev leans low at the 4+ cut: on the two
+samples, Gemini alone scored 52-57 jobs at 4 or more that Jev did not, and Jev alone scored
+3-9 that Gemini did not.
+
+A live writer check (Claude provider, 8 high-scoring jobs) wrote all 8, with every gap traced
+to an unmet requirement line and no banned-topic gap; cost runs about $0.04 per call at Haiku
+list prices, 30 to 100 seconds per call.
+
+The tunables are `DEEP_BASE`, `DEEP_SPAN`, `RECOMMEND_APPLY`, `RECOMMEND_CONSIDER`, `MET_YES`,
+`MUST_YES`, `YEARS_CAPS`, `CLEARANCE_CAP` and `ADVANCED_DEGREE_CAP` in `pipeline/jev_score.py`.
 
 **Repost score reuse** (`reuse_repost_scores`, gated by `SCORE_REPOST_REUSE_DAYS` / Settings
 → Scoring → "Repost score reuse window (days)", default 30) runs before either LLM stage.
@@ -837,7 +871,7 @@ Tests: `tests/test_atom_audit.py` (census + gate) and `tests/test_atom_slop.py` 
 whose pins are mostly negative: the technical words that must stay quiet).
 
 ## Settings & customization (`local/settings.py` + dashboard Settings tab)
-`settings.py` is one schema (`SETTINGS_SCHEMA`) of 87 `Field` rows describing every
+`settings.py` is one schema (`SETTINGS_SCHEMA`) of 88 `Field` rows describing every
 user-editable option (key, type, default, validation, backing file). The dashboard's
 **Settings** tab auto-renders it grouped by collapsible section, inside a scrollable canvas.
 `SECTION_ORDER` (`local/qt/settings_tab.py`) is Jev / Credentials / Connection & paths / Engine /
@@ -849,6 +883,8 @@ there from Auto-apply, and the advanced area switches `jev_scoring`, `jev_tailor
 leads Engine and the scoring `provider` leads Scoring, with help that names each as the writer
 or fallback beside Jev. Auto-apply gained `auto_apply_pause_minutes` and moved
 `auto_apply_jev_mode` under advanced; Resume gained the three Jev tailor options (TL-7 to TL-9).
+Cycle 20 added `jev_writer` under advanced in Scoring, the switch for the writer that turns a
+Jev-scored job's findings into prose (SP2).
 `load`/`save` read and atomically write (with a `.bak`) **four** backing files (`TARGET_FILES`): the
 git-ignored `.env` and
 `local/config.json`, plus the root-level `search_config.json` (read by `scraper.py`) and
@@ -867,7 +903,7 @@ is the guard). The fourth is the exception that proves the rule.
 | Attribute | Contract |
 | --- | --- |
 | `show_if=(gate_key, allowed_values)` | Rendering. A **configuration gate**: the field does nothing for the way this user has things set up, so it is off screen. Resolved **transitively** by `settings.is_visible` / `visible_keys`: a field is visible only if its own predicate holds *and* its gate field is itself visible. A typo'd gate key raises; it never degrades to "hidden". |
-| `advanced` (30 fields) | Rendering. A **view fold**: the setting applies, the user has said "not now". Composes with `show_if` (both must pass); `settings_tab._field_visible` is the single place both are decided. Search deliberately ignores it, so a folded row stays findable. |
+| `advanced` (31 fields) | Rendering. A **view fold**: the setting applies, the user has said "not now". Composes with `show_if` (both must pass); `settings_tab._field_visible` is the single place both are decided. Search deliberately ignores it, so a folded row stays findable. |
 | `restart` (21 fields) | Rendering. The dashboard reads this key once, at launch, so a save writes the file but the running process keeps the old value. It is nearly every `.env` field: `local/app.py` calls `load_dotenv()` at startup and `python-dotenv` defaults to `override=False`, so neither a live `os.environ` read nor a subprocess that inherits the environment can see the new value. The six VM keys are exempt, because `vm_sync.VMTarget.from_env` reads the file via `settings.load`. |
 | `pattern` / `pattern_help` | **Not** rendering: `validate()` enforces it with `re.fullmatch`, which is what stops the tab writing free text the consumer would silently discard. **A pattern must reject only what the consumer would DISCARD**, never a value it honours: `validate()` runs over every collected field, so an over-strict rule blocks every future Save of every *other* setting. Write the differential test against the real consumer. |
 

@@ -4,6 +4,32 @@ All notable changes to INployed are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims for
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.0] - 2026-09-28
+
+Jev's job scorer now mirrors the LLM scorer: the same two stages, the same rubric, on Jev's
+own 1-5 and 1-10 scales. Jobs it scores 4 or more now get a short written explanation instead
+of a fragment reason.
+
+### Changed
+
+- **Jev scoring mirrors the LLM scorer.** Stage 1 asks Jev for a fit score (1-5, the LLM
+  prompt's own five labels, "No match" to "Strong match") and what decided it; the same code
+  rules as before still cap the score for years of experience, a required clearance or a
+  required advanced degree. Stage 2 asks Jev for a deep score (1-10) plus which lines the
+  résumé meets; the recommendation (apply, consider, skip) now comes from that deep score in
+  code, since Jev's own pick agreed with Gemini only 3 times in 10. Against Gemini on 400
+  jobs, Jev's stage 1 score now matches exactly 46.5% of the time (was 42.2%) and agrees at
+  the "worth a look" cut 84.8% of the time (was 73.2%); stage 2's recommendation agrees with
+  Gemini 83.2% of the time on the Drive master and 81.9% on the local master.
+
+### Added
+
+- **A writer for Jev's high-scoring jobs.** For a job Jev scores 4 or more, one short call to
+  the Scoring provider turns Jev's findings into that job's reason, strengths and gaps; a
+  failed call keeps Jev's own text and never shows as an error. Turn it off at Settings →
+  Scoring → **Jev writer for high scores** (on by default). On the Claude provider this call
+  runs on Haiku and costs about $0.04 each.
+
 ## [1.15.0] - 2026-09-28
 
 Jev now works in every part of the app. It makes the yes-or-no calls when jobs are scored,

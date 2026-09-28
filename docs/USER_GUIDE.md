@@ -271,7 +271,10 @@ The sections, in the order the tab shows them:
   **Repost score reuse window (days)** (Scoring, under *Show advanced settings*; default
   30, 0 turns it off) copies a still-fresh master row's score onto a new posting that
   matches on title, company, location and the first 400 characters of the description, so
-  a repost does not spend a fresh Gemini call every time it resurfaces. The first row of
+  a repost does not spend a fresh Gemini call every time it resurfaces. **Jev writer for
+  high scores** (Scoring, under *Show advanced settings*; on by default) is the switch for
+  the quick rewrite described under *Jev* below; turn it off to keep Jev's own
+  code-written reason, strengths and gaps. The first row of
   Scoring is the **Scoring provider**, which scores jobs while Jev is off and takes over
   when Jev is down.
 - **Auto-apply / Settings history:** the batch-apply queue cap, which webmail inbox the
@@ -439,9 +442,14 @@ decisions, and Gemini or Claude writes the text.
 
 Jev works in four places:
 
-- **Scoring.** Jev reads each collected job against your résumé in both scoring stages.
-  From its answers the app composes the stage 1 score (1-5), then the stage 2 deep score
-  (1-10) and recommendation.
+- **Scoring.** Jev scores each collected job against your résumé on the scorer's own
+  scales, in both stages: the stage 1 score (1-5), then the stage 2 deep score (1-10)
+  and recommendation. The stage 1 reason names what decided the score, such as the
+  candidate's skills and field, the years the job asks for, or a hard requirement like
+  a clearance or an advanced degree. For a job Jev scores 4 or more, one short call to
+  your **Scoring provider**'s quick model writes that job's reason, strengths and gaps
+  from Jev's findings; turn this off at Settings → Scoring → **Jev writer for high
+  scores**.
 - **The résumé tailor.** Jev picks skills and experience items and checks each bullet,
   and your **Resume tailor provider** writes every bullet and the cover letter (see *What
   Jev does in the tailor* below).
@@ -465,7 +473,8 @@ run** stays greyed out with the fix beside it, such as "Auto-apply runs on Jev. 
 on in Settings > Jev." The cloud VM always scores with Gemini.
 
 After a scoring run, the summary line says how many jobs Jev scored in each stage, what
-it cost, and how many fell back to the scoring provider.
+it cost, how many fell back to the scoring provider, and how many the writer rewrote
+versus left as Jev's own text.
 
 #### What Jev does in the tailor
 Six steps use Jev while it is on for the tailor. Four run on every tailor; the verb step

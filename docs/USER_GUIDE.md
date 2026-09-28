@@ -152,8 +152,8 @@ nothing from the copy.
 Right-click any job to work with it: **Set status →** marks it applied / interviewing /
 rejected / offer from any tab, and the menu also offers **Delete job** (any row) and
 **Edit job…** (for jobs you added by hand). An **Add job by hand** button (High Score /
-All Jobs toolbar) takes a pasted posting URL or job description and runs it through the same
-scoring + tailoring pipeline as a scraped job. A **Find new jobs** button (bottom action bar)
+All Jobs toolbar) saves a posting you found yourself and tailors your résumé for it at once
+(see *Add a job by hand* below). A **Find new jobs** button (bottom action bar)
 kicks off a fresh discovery + score on demand; it asks first (a *small test run* or a
 *full run*) because finding jobs costs real money / API credits.
 
@@ -164,6 +164,24 @@ more recent status wins; nothing is deleted). The **Stats** tab shows a **freshn
 badge** (mirrored in the window's header strip): green when the latest pipeline run is recent, amber *"the cloud job search may
 have failed"* once it's older than the **Flag data as stale after (hours)** setting
 (default 36), so a broken cron run doesn't go unnoticed.
+
+### Add a job by hand
+For a posting the automatic search missed, click **Add job by hand** on the High Score or
+All Jobs toolbar. Fill in all four boxes: the posting's URL, the job title, the company and
+the full job description pasted from the posting. Then click **Add and tailor**. The job is
+saved and the résumé tailor starts on it right away; it asks first whether you also want a
+cover letter, as any tailor run does.
+
+A job you add by hand is never scored. You picked it, so it skips the scorer (and its cost)
+and always shows on High Score whatever your score filters say. Its **Score** cell reads
+"hand-added".
+
+If the URL is one you added before, the dashboard says so ("Already added on <date> as
+<title> at <company>.") and offers **Tailor again** or **Cancel**. **Tailor again** runs the
+tailor on the saved job with the description you just pasted. If tailoring fails, the job
+stays saved and the status bar says so; run **Tailor résumé** on the job to try again. If you
+run job discovery on a VM, a hand-added job is sent to the VM's job list the way the
+dashboard's other new jobs are.
 
 ### Get fresh jobs
 - **From the dashboard:** click **Find new jobs** and choose a *small test run* or a
@@ -193,7 +211,7 @@ so a non-technical user can set things up without touching a file. Each section 
 not editing (the tagline still tells you what each collapsed section is for) and tackle
 one group at a time.
 
-**Finding one setting among seventy-odd.** Three things at the top of the tab, in this order:
+**Finding one setting among about ninety.** Three things at the top of the tab, in this order:
 
 - **The search box:** type a word and the tab filters to the rows that mention it. It
   matches the setting's name, its explanation, its config key **and the chips on the
@@ -205,9 +223,10 @@ one group at a time.
   never saved. If a match exists but your configuration makes it inert, a muted line under
   the results says so and names the switch: *"3 more settings apply when Scoring provider
   is 'claude'"*.
-- **Show advanced settings:** off by default, folding 16 power-user rows away on a fresh
-  install (the per-stage model pickers and fallback lists, scorer concurrency and retry caps)
-  and 19 once VM features are on, which adds the VM plumbing. The label counts what it is
+- **Show advanced settings:** off by default, folding 21 power-user rows away on a fresh
+  install (the per-stage model pickers and fallback lists, scorer concurrency and retry caps,
+  Jev's three area switches and the Auto-apply judge) and 24 once VM features are on, which
+  adds the VM plumbing. The label counts what it is
   currently withholding *for your configuration*, so ticking it really does reveal that many
   rows. Search ignores the fold: an advanced row still turns up in
   results, tagged `(advanced)`.
@@ -225,8 +244,12 @@ there. A row tagged **`restart`** is one the dashboard reads only at startup, so
 writes the file immediately but the running app keeps using the old value; Save says so
 again and names them.
 
-The sections:
+The sections, in the order the tab shows them:
 
+- **Jev:** the **Use Jev** switch and the **TypeSafe API key (Jev judge)** box, first
+  because they decide how scoring, tailoring and auto-apply run (see *Jev* below). Under
+  *Show advanced settings* sit three more switches, one per area: **Jev for scoring**, **Jev
+  for the résumé tailor** and **Jev difficulty check**.
 - **Credentials:** the job-data (Bright Data) API token, the Gemini API-key pool,
   and the résumé-tailor API key. Each box holds the saved value (read straight from
   your local `.env`), masked by default. Untick *Hide* to reveal one, edit it to
@@ -235,8 +258,9 @@ The sections:
   location, your name (for résumé filenames), the résumé output folder and
   `pdflatex` path (with **Browse…** buttons), and which Chrome profile to open
   links in.
-- **Engine:** the tailor's **provider** (Gemini or Claude) and, on Gemini, which backend
-  it bills: your Vertex project, one API key, or **pool**, the scorer's free keys with Vertex
+- **Résumé tailor:** its first row is the tailor's **provider** (Gemini or Claude), the
+  model that writes every bullet and the cover letter. Then, on Gemini, which backend it
+  bills: your Vertex project, one API key, or **pool**, the scorer's free keys with Vertex
   as the spillover (see *Tailoring on the scorer's free keys* below). See the Claude backend
   note below.
 - **Dashboard / Job discovery / Scoring / Résumé:** scores, follow-up days, search
@@ -246,14 +270,17 @@ The sections:
   **Repost score reuse window (days)** (Scoring, under *Show advanced settings*; default
   30, 0 turns it off) copies a still-fresh master row's score onto a new posting that
   matches on title, company, location and the first 400 characters of the description, so
-  a repost does not spend a fresh Gemini call every time it resurfaces.
+  a repost does not spend a fresh Gemini call every time it resurfaces. The first row of
+  Scoring is the **Scoring provider**, which scores jobs while Jev is off and takes over
+  when Jev is down.
 - **Models:** the scorer's two stages **and** the résumé tailor's are **editable
   dropdowns**: the recent Gemini 3.x ids by default, plus the Claude tier ids used when a
   provider is set to `claude`. Pick one or type a custom id. The tailor asks one question
   before the rest, **simple or per stage**, described under *One model for every step*
   below.
-- **Auto-apply / Settings history:** the batch-apply queue cap and which webmail
-  inbox the apply agent opens for verification emails; plus a snapshot of your
+- **Auto-apply / Settings history:** the batch-apply queue cap, which webmail inbox the
+  run opens for verification emails, and how long a run waits for your answer (see
+  *Auto-apply* below); plus a snapshot of your
   settings on every Save, restorable from **Restore from archive…**. **Settings
   snapshots** is one dropdown: *Off*, *Keep everything* (the default; nothing is ever
   deleted), *Keep newest 20*, or *Keep newest 100*. Each snapshot holds a copy of your
@@ -290,11 +317,17 @@ the VM keeps running unchanged.
 > **Scoring provider** to `claude` (both default to `gemini`). The Claude path drives the
 > headless CLI with your subscription auth (no API key) and prompt caching; left on `tiers`
 > (the default), the tailor stages map fast → `claude-haiku-4-5`, standard →
-> `claude-sonnet-5`, deep → `claude-opus-5`. The cloud VM always scores with Gemini,
-> regardless of this setting.
+> `claude-sonnet-5`, deep → `claude-opus-5-5` (Opus 5.5). The cloud VM always scores with
+> Gemini, regardless of this setting.
+>
+> Opus 5.5 needs Claude CLI version 2.1.280 or newer. On an older CLI the tailor switches
+> to `claude-opus-5` by itself and goes on. The first run that hits it carries a warning in
+> its `tailor_report.txt` (the dashboard's batch summary shows it), and later runs carry a
+> note. Run `claude update`, then close and reopen
+> the dashboard, to get Opus 5.5 back. **Check setup** names the version gap too.
 
 #### One model for every step, or one per stage
-Settings → Engine, **Tailor models: simple or per stage** (and, on the Claude provider,
+Settings → Résumé tailor, **Tailor models: simple or per stage** (and, on the Claude provider,
 **Claude models: simple or per stage**). Tailoring runs in stages, and by default each one
 gets its own model: a cheap one for the small calls (entry briefs, the overview lead, verb
 swaps), a standard one that selects your atoms and runs every bullet cleanup pass, and a deep
@@ -321,7 +354,7 @@ reopen the dashboard** before the change affects a tailoring run. Save names the
 need it.
 
 #### Tailoring on the scorer's free keys (`pool`)
-Settings → Engine, **Resume tailor engine**. `vertex` (the default) bills every tailor call to
+Settings → Résumé tailor, **Resume tailor engine**. `vertex` (the default) bills every tailor call to
 your Google Cloud project and `api_key` uses the single **Gemini API key (resume tailor)**.
 `pool` uses the same **Gemini API keys** the job scorer rotates through, every one of them,
 held to Google's free-tier limits, and bills the project only when no key can take the call:
@@ -396,6 +429,74 @@ banned, then gates the answer again: the re-ask. It has no Settings row;
 `RESUME_TAILOR_REGROUND=0` in `.env` or `"reground": false` in `local/config.json` turns it
 off, and `tailor_report.txt` names each bullet it recovered.
 
+### Jev
+Jev is TypeSafe's "System One" model. It never writes text. It answers short, typed
+questions (yes or no, which of these, how sure) with a probability, fast and for very
+little money: $0.042 per million input tokens, with nothing charged for its answers. The
+app uses it for the decisions and leaves the writing to Gemini or Claude: Jev decides, the
+writing model writes, and plain code puts the two together.
+
+Jev works in four places:
+
+- **Scoring.** Jev reads each collected job against your résumé in both scoring stages
+  and the app turns its answers into the usual 1-10 score and recommendation.
+- **The résumé tailor.** Jev picks and checks; your **Résumé tailor provider** still
+  writes every bullet and the cover letter (see *What Jev does in the tailor* below).
+- **The difficulty check** on the Auto-apply tab (see *How hard is each application?*
+  below).
+- **Auto-apply**, which reads every form page through Jev.
+
+**Turning it on or off.** Settings → Jev → **Use Jev** is on by default. Jev also needs a
+key in **TypeSafe API key (Jev judge)** (create one at `console.typesafe.ai/keys`) and the
+`typesafe-sdk` package (**Check setup** says when it is missing). Under *Show advanced
+settings* the same section has one switch per area: **Jev for scoring**, **Jev for the
+résumé tailor** and **Jev difficulty check**, all on. A change takes effect on the next run.
+
+**When Jev is off or down, nothing stops.** Scoring falls back to your **Scoring
+provider** and the tailor to your **Résumé tailor provider**, the same Gemini or Claude
+setup the app used before Jev. That happens by itself when the switch is off, when there
+is no key, when the package is missing, and when Jev stops answering in the middle of a
+run: it retries briefly, then the rest of that run carries on without it. The one
+exception is auto-apply, which has no fallback: while Jev cannot run, **Start auto-apply
+run** stays greyed out with the fix beside it, such as "Auto-apply runs on Jev. Turn Jev
+on in Settings > Jev." The cloud VM always scores with Gemini.
+
+After a scoring run, the summary line says how many jobs Jev scored in each stage, what
+it cost, and how many fell back to the scoring provider.
+
+#### What Jev does in the tailor
+Six steps run whenever Jev is on for the tailor. Each one keeps the tailor's own way of
+doing that step as its fallback:
+
+- **Skills:** Jev picks which of your skills lead each skills line for this job.
+- **Shortlist:** Jev rates how well each item in your experience file fits the job, and
+  the tailor chooses from the best-fitting ones.
+- **Lead:** for each project, Jev picks which bullet opens it.
+- **Faithfulness:** Jev checks every rewritten bullet against the items it came from. A
+  bullet that claims more than you wrote, or something you never wrote, gets one retry
+  from the same items; if the retry still fails, the tailor goes back to the earlier
+  wording or drops the bullet.
+- **Verb:** when two bullets open with the same verb, Jev picks a fresh one from the
+  verb list.
+- **Sweep gate:** Jev reads each entry for the AI-writing tells before the sweep (see
+  above), so the sweep calls the writing model only for an entry that has one or that
+  the sweep's own checks flag, and tells the model which tells it found.
+
+Three more are switches in Settings → Résumé, off by default, shown while **Jev for the
+résumé tailor** is on:
+
+- **Best of 3 bullet drafts (Jev picks):** the rewrite asks for three drafts of each
+  bullet and Jev keeps the one that shows the most of what the job asks for. That call
+  costs about three times as much.
+- **Jev checks the cover letter's claims:** Jev reads each sentence of the cover letter
+  against your experience, and a sentence that claims something your experience does not
+  say goes back for repair.
+- **ATS report: coverage by meaning (Jev):** `ats_report.txt` gains a line counting the
+  job's keywords your résumé covers in other words, beside the exact-match count.
+
+`tailor_report.txt` ends with a **jev** section: one line per step, with its requests,
+tokens and cost.
+
 ### What leaves your machine
 There is no analytics, no crash reporting, and no phone-home. The only outbound
 traffic is the work you asked for, and each destination gets only what it needs:
@@ -405,9 +506,8 @@ traffic is the work you asked for, and each destination gets only what it needs:
 | Bright Data | you run job discovery | your search keywords and the dataset ID |
 | Google Gemini (Vertex or API key) | scoring and résumé tailoring | the job description, your `resume.md` / `master_experience.yaml` content |
 | Anthropic (`claude` CLI) | only if you set a provider to `claude` | the same prompts, through your own CLI login |
-| the job posting's own site | only when you paste a URL into *Add job by hand* | a plain GET for the page text |
-| the employer's application site | only when you run auto-apply on a queued job | the answers from your apply sheet and answer bank, typed into the form by the auto-apply browser profile; it submits only when the gate in *Auto-apply (batch, Jev-judged)* passes |
-| TypeSafe (the Jev judge) | only during an auto-apply run, in `typesafe` mode | each form page's field labels, options and visible text, the names of your facts for the field mapping; the values stay on your machine until the verification and grounding checks, which receive the values it typed and an excerpt of your apply sheet |
+| the employer's application site | only when you run auto-apply or the difficulty check on a queued job | auto-apply: the answers from your apply sheet and answer bank, typed into the form by the auto-apply browser profile; it submits only when the gate in *Auto-apply (batch, Jev-judged)* passes. The difficulty check opens the posting and its Apply page and types nothing |
+| TypeSafe (the Jev judge) | only while **Use Jev** is on and a key is set | scoring: the job's text and your `resume.md`; the tailor: the job's text and the parts of your experience file, skills and drafted bullets it judges (and, with the Settings options on, the cover letter's sentences and the ATS keywords); the difficulty check and auto-apply: each form page's field labels, options and visible text, the names of your facts for the field mapping. In auto-apply the values stay on your machine until the verification and grounding checks, which receive the values it typed and an excerpt of your apply sheet |
 | your own GCP VM (`gcloud compute ssh/scp`) | only when you click a VM control in *Settings* | your search and scoring config, the ids already collected, and rows to merge; plus, only when you click **Set on VM**, the one API key you typed into that box. It runs under your own `gcloud` login |
 | healthchecks.io | **opt-in, VM cron only** | a start ping and the run's exit code; no job data, no identifiers |
 
@@ -614,6 +714,10 @@ through the queue in a new terminal window, one job at a time, in a browser prof
 its own. This is the power-user path; for one job at a time, the **Apply** flow above is
 the recommended way in.
 
+The older auto-apply that ran through Claude-in-Chrome (the `auto-apply` skill and its
+helper scripts) has been removed; auto-apply now runs on Jev alone. The **Apply** panel's
+by-hand flow with Claude-in-Chrome, above, is unchanged.
+
 **What Jev is and what it decides.** The run is ordinary code driving a Google
 Chrome window (Playwright; the bundled Chromium stands in when Chrome is not installed). Every judgment call inside it goes to Jev, TypeSafe's
 "System One" model, which answers structured questions with a probability: what kind
@@ -632,8 +736,9 @@ decisions live in `local/apply_judge.py`, with the live answers they were tuned 
 **Setup, once.**
 
 1. Create a key at `console.typesafe.ai/keys` and put it in `.env` as
-   `TYPESAFE_API_KEY=...`, or paste it into **Settings → Auto-apply → TypeSafe API
-   key** (it is stored write-only; a rotated key needs a dashboard restart). `pip install
+   `TYPESAFE_API_KEY=...`, or paste it into **Settings → Jev → TypeSafe API key (Jev
+   judge)** (it is stored write-only; a rotated key needs a dashboard restart), and leave
+   **Use Jev** on. `pip install
    playwright typesafe-sdk` if **Check setup** says they are missing; the run uses your
    installed Google Chrome, and `python -m playwright install chromium` gives it a fallback
    browser when Chrome is absent; `python local/apply_run.py doctor` prints the same
@@ -687,11 +792,13 @@ saying why (the reason starts with the words in brackets):
 - Submitting is off (**Submit when verified** off, or `--no-submit`): every job stops at
   its submit step as **Ready to submit** ("auto_apply_submit is off").
 - A required question has no answer in your data ("required field without an answer").
-  Click **Answer now** to open the **Apply Answers** tab (the panel itself carries no answer
-  box), save the answer there, then **Re-queue**; a saved yes/no or number answer fills a
-  later application only where that job words the question the same way. A way on that stays
-  disabled until a field the run left blank is answered stops the same way. An optional
-  question with no answer is left blank.
+  The run first pauses and asks you (see *When the run needs you* below); it parks the job
+  only when you do not answer in time or choose **Park it**. For a parked job, click
+  **Answer now**: it opens **Add answer** on the **Apply Answers** tab with the question
+  filled in, and once you save it offers to **Re-queue** the job. A saved yes/no or number
+  answer fills a later application only where that job words the question the same way. A
+  way on that stays disabled until a field the run left blank is answered stops the same
+  way. An optional question with no answer is left blank.
 - A question the run never answers: an SSN, a birthdate, bank or card details, an ID
   number ("asks for ..., which auto-apply never fills"). You finish that application by
   hand.
@@ -768,8 +875,8 @@ application's sites; if the page tries to post it anywhere else, the run blocks 
 and the job stops with nothing sent.
 Controls inside another site's frame (a CAPTCHA widget, a chat or cookie widget) are
 never clicked or filled, and the run goes on without them. You finish a stopped job by
-hand and **Mark applied** or **Re-queue** it. The four settings under **Settings →
-Auto-apply**:
+hand and **Mark applied** or **Re-queue** it. The settings under **Settings →
+Auto-apply** that shape a run:
 
 - **Submit when verified** (`auto_apply_submit`, on): off parks every job at its review
   page instead. `--no-submit` on the command line does the same for one run.
@@ -782,7 +889,11 @@ Auto-apply**:
   job. Off leaves every such field for you.
 - **Hide the browser window** (`auto_apply_headless`, off): on runs Chrome with no
   window. Leave it off to watch the run and step in when it parks.
-- **Auto-apply judge** (`auto_apply_jev_mode`, `typesafe`): `fake` is a test-only judge
+- **Wait for your answer (minutes)** (`auto_apply_pause_minutes`, 10, from 0 to 60): how
+  long a run waits for you when it pauses on a question (see *When the run needs you*
+  below). 0 parks the job at once, as runs did before the pause existed.
+- **Auto-apply judge** (`auto_apply_jev_mode`, `typesafe`, under *Show advanced
+  settings*): `fake` is a test-only judge
   that answers from word overlap; the drain refuses it (so does `replay`, the test
   harness's cached judge). A dry run is `drain --no-submit` with the real judge: it
   fills every queued job and parks it at its review page.
@@ -918,3 +1029,104 @@ drain report; none of them sends an application twice:
   status list under a "Work authorization" heading, stops the run: none of it is covered by a
   built-in answer. Add a custom answer with the question exactly as the form words it; it fills
   only that exact wording elsewhere.
+
+#### When the run needs you: pause and resume
+Some stops are questions only you can answer. For those, the run pauses and asks you,
+then carries on with your answer. It pauses for:
+
+- a required field your saved answers cannot fill;
+- two options that both match your answer equally well;
+- a required field only you should type (an SSN, a birthdate, bank or card details, an ID
+  number);
+- a way on that stays disabled after the fill.
+
+Every other stop in the park policy above still parks the job at once, and so does any
+question after something may already have been sent.
+
+**How you hear about it.** The run's console window prints a line and beeps: "job
+<id>: waiting for you: <reason>. Answer in the dashboard's Auto-apply tab or fill it in
+the browser (up to 10 min)." The job's browser tab comes to the front with the fields it
+asks about outlined, and the dashboard's taskbar button flashes.
+
+**The Waiting-for-you card.** At the top of the **Auto-apply** tab a **Waiting for you**
+card shows the job and each question it asks, in a control that fits it: a short list of
+options as buttons, a longer one as a dropdown, Yes or No for a tick box, a number box or a
+text box. A field only you should type shows "Type this one in the browser" in place of a
+box; code never types those. Then pick one of three buttons:
+
+- **Fill and continue:** the run puts each of your answers in its own field and goes on.
+- **I filled it in the browser, continue:** you typed the answers into the form yourself;
+  the run reads the page again and goes on. This button is hidden when the browser window
+  is hidden.
+- **Park it:** the job stops as it did before the pause existed, with its usual reason.
+
+**Save for future runs.** Beside each question sits a **Save for future runs** box, off by
+default. Tick it before **Fill and continue** and the answer is also saved on the **Apply
+Answers** tab as a confirmed
+custom answer, with the note "Saved from <company> on <date>", so later runs fill that
+question by themselves. The box is not offered for a field only you should type, and it is
+greyed out with the reason when **Add answer** would refuse the question: a built-in answer
+already covers it, or you already saved an answer for it. The run reads your answers again
+after each pause, so a saved answer counts for the rest of the run.
+
+**Time limits.** A run waits **Wait for your answer (minutes)** for you, 10 minutes by
+default (Settings → Auto-apply, 0 to 60; 0 turns the pause off). The wait does not count
+against the job's own time limit. One job can pause at most five times.
+
+**What ends a pause other than an answer:**
+
+- No answer in time: the job parks with its usual reason.
+- **Park it:** the same.
+- You close the browser window or the job's tab while it waits: the job parks as **needs
+  human** with its usual reason.
+- The page moved on while it waited (you went on to another step yourself): the job
+  parks whatever you answered, since the run cannot tell what you clicked. A page you may
+  have sent parks as possibly sent: check that job.
+
+A run with the window hidden pauses too, unless every question needs the browser; then it
+parks, and you answer it on a run with the window shown.
+
+#### How hard is each application? (the difficulty check)
+Before you queue a batch, the difficulty check tells you which jobs the run is likely to
+finish and which ones you are better off doing yourself. Select a job on the **Auto-apply**
+tab (or none, for every queued job) and click **Check difficulty**. A new terminal window
+opens the posting in the auto-apply browser, follows its Apply button and reads the first
+application page. It types nothing, signs in nowhere and submits nothing; the Apply button
+is the only thing it clicks. It costs about 2 to 4 Jev requests per job.
+
+Each job gets a score from 1 (easy) to 10 (hard), shown in the tab's **Difficulty** column
+as "N/10":
+
+| Score | What it means |
+| --- | --- |
+| 1 to 3 | **Queue it**: the run should finish this one. |
+| 4 to 6 | **May need an answer or two**: expect a pause or a park you can answer. |
+| 7 to 10 | **Do it yourself**: apply by hand. |
+
+The score starts from the application system (Greenhouse, Lever and Ashby are the easiest;
+Workday and iCIMS harder; Taleo, SuccessFactors and Oracle the hardest), then adds for each
+required question your saved answers cannot fill, each required written answer, a field
+only you should type, a CAPTCHA and an account wall. Your own history counts too: a system
+where past runs parked twice or more scores a point higher, and one where they reached the
+end twice or more without a park a point lower. Some pages score 10 at once: an **Easy
+Apply** job always scores 10, **Do it yourself** ("Easy Apply: the run leaves Easy Apply
+jobs to you"), and so do a closed posting, a dead page and a payment page.
+
+Hover over a score to see its reasons and the exact questions your answers cannot fill. A
+result older than 7 days shows its age beside the score.
+
+- **Pre-answer** opens **Add answer** on the **Apply Answers** tab with one of those
+  questions filled in.
+- **Check again with my answers** scores the selected job again from the page it saved,
+  with the answers you have now (after **Pre-answer**, say). It opens no browser and costs a
+  Jev request or two.
+
+**Check difficulty** is hidden while **Jev difficulty check** is off in Settings → Jev, and
+greyed out with the reason while Jev cannot run or another browser holds the auto-apply
+profile. From a terminal: `python local/apply_assess.py` with job ids, or `--all` for every
+queued job (`--recheck` for the no-browser rescore).
+
+**One browser at a time.** A run, **Sign in to sites** and the difficulty check all use the
+same browser profile, so only one of them can have it open. While one does, the others
+refuse to start and say "The auto-apply browser is open: a run, a sign-in or a difficulty
+check holds its profile." Close that window, or wait for it to finish.

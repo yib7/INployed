@@ -1745,10 +1745,13 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame, *,
                             score = int(s1_row["score"].iloc[0])
                             try:
                                 block = writer_findings(score, got)
-                            except Exception:  # noqa: BLE001  (M2: never crash the gather)
-                                notes = None
-                            else:
-                                notes = await write_notes(pool, sem2, resume, job_id, job_md, block)
+                            except Exception as e:  # noqa: BLE001  (M2: never crash the gather)
+                                # A local error that cost no call: keep Jev's
+                                # text, and leave the streak to provider failures.
+                                _warn_writer_once(f"findings error ({type(e).__name__})")
+                                jev_run.note_writer(written=False)
+                                return {"job_posting_id": job_id, **row}
+                            notes = await write_notes(pool, sem2, resume, job_id, job_md, block)
                             if notes is not None:
                                 row["strengths"] = notes["strengths"]
                                 row["gaps"] = notes["gaps"]

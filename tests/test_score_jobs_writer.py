@@ -485,3 +485,66 @@ def test_run_scoring_writer_gives_each_job_its_own_notes_and_keeps_a_failed_jobs
         "Strong match: no experience bar, and the skills, tools and field line up.")
     assert merged.loc["job-b", "strengths"].startswith("Python and SQL")
     assert run.writer == {"written": 1, "kept": 1}
+
+
+# --- the latch's edges: a local findings error, two passes, overlapping calls --
+
+def test_a_findings_block_error_keeps_code_text_without_feeding_the_streak(monkeypatch, capsys):
+    monkeypatch.setattr(sj, "JEV_CONCURRENCY", 1)
+    monkeypatch.setattr(sj, "_WRITER_WARNED", set())
+
+    def broken(score, row):
+        raise ValueError("bad findings")
+
+    monkeypatch.setattr(sj, "writer_findings", broken)
+    tags = [f"JOB-{c}" for c in "ABCD"]
+    pool = WriterPool()
+    run = sj.JevRun(ScriptedJudge())
+    merged = asyncio.run(sj.run_scoring(pool, RESUME, _jobs_df(*tags), jev_run=run)
+                        ).set_index("job_posting_id")
+    assert pool.calls == []                  # no block, no call
+    assert run.writer == {"written": 0, "kept": len(tags)}
+    assert not run.writer_stopped            # a local error is no provider outage
+    assert merged.loc["job-a", "strengths"].startswith("Python and SQL")
+    out = capsys.readouterr().out
+    assert out.count("Jev writer: findings error (ValueError); keeping Jev's code text.") == 1
+    assert "stopped after" not in out
+
+
+def test_the_writer_latch_holds_across_two_run_scoring_passes_on_one_jev_run(monkeypatch):
+    # The fresh pass and the rescore pass share one JevRun, so a latch tripped
+    # in the first pass keeps the second pass from calling the writer at all.
+    monkeypatch.setattr(sj, "JEV_CONCURRENCY", 1)
+    run = sj.JevRun(ScriptedJudge())
+    failing = WriterPool(exc=RuntimeError("boom"))
+    asyncio.run(sj.run_scoring(failing, RESUME, _jobs_df("JOB-A", "JOB-B", "JOB-C"), jev_run=run))
+    assert run.writer_stopped
+    healthy = WriterPool()
+    asyncio.run(sj.run_scoring(healthy, RESUME, _jobs_df("JOB-D", "JOB-E"), jev_run=run))
+    assert healthy.calls == []
+    assert run.writer == {"written": 0, "kept": 5}
+
+
+class SlowFailingPool:
+    """A writer provider whose calls overlap: each one yields to the event loop
+    before it fails, so several are in flight when the latch trips."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def generate(self, *, model, contents, config):
+        self.calls += 1
+        await asyncio.sleep(0.01)
+        raise RuntimeError("usage limit")
+
+
+def test_overlapping_writer_failures_count_every_job_and_stop_once(capsys):
+    tags = [f"JOB-{c}" for c in "ABCDEFGH"]
+    pool = SlowFailingPool()
+    run = sj.JevRun(ScriptedJudge())
+    asyncio.run(sj.run_scoring(pool, RESUME, _jobs_df(*tags), jev_run=run))
+    assert run.writer == {"written": 0, "kept": len(tags)}
+    assert run.writer_stopped
+    assert sj.WRITER_FAIL_LIMIT <= pool.calls <= len(tags)
+    out = capsys.readouterr().out
+    assert out.count("Jev writer: stopped after 3 failures in a row") == 1

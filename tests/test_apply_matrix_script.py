@@ -393,7 +393,15 @@ def test_real_prune_does_not_refuse_for_a_replayable_false_flow(tmp_path, monkey
     assert set(json.loads(cache.read_text(encoding="utf-8"))) == {"used-key"}
 
 
+def _one_flow_registry(monkeypatch):
+    """The registry as `post_form` alone, every flag set: a whole-registry
+    --real-prune test reads its own rows, never the registry's recorded
+    flags (a flow added after the last recording refuses the prune at once)."""
+    monkeypatch.setattr(h, "FLOWS", (h.flow("post_form"),))
+
+
 def test_real_prune_prunes_a_full_flow_clean_run(tmp_path, monkeypatch, capsys):
+    _one_flow_registry(monkeypatch)
     cache = tmp_path / "matrix_cache.json"
     cache.write_text(json.dumps({"used-key": {"a": {"kind": "noul", "noul": 0.9}},
                                  "stale-key": {"a": {"kind": "noul", "noul": 0.1}}}),
@@ -417,6 +425,7 @@ def test_real_prune_prunes_a_full_flow_clean_run(tmp_path, monkeypatch, capsys):
 
 def test_real_prune_refuses_after_a_replay_miss_and_leaves_the_cache_as_it_was(
         tmp_path, monkeypatch, capsys):
+    _one_flow_registry(monkeypatch)
     cache = tmp_path / "matrix_cache.json"
     cache.write_text(json.dumps({"used-key": {}, "stale-key": {}}), encoding="utf-8")
     real_miss = dataclasses.replace(_row("real", True), replay_misses=1)
@@ -436,6 +445,7 @@ def test_real_prune_refuses_after_a_replay_miss_and_leaves_the_cache_as_it_was(
 
 
 def test_real_prune_refuses_after_a_crashed_worker_row(tmp_path, monkeypatch, capsys):
+    _one_flow_registry(monkeypatch)
     # a crashed or hung worker's rows count as failures (`_failures` ->
     # "run(s) lost to a crashed or hung worker"); --real-prune must refuse on
     # them exactly like any other test failure, leaving the cache untouched
@@ -457,6 +467,35 @@ def test_real_prune_refuses_after_a_crashed_worker_row(tmp_path, monkeypatch, ca
     assert code == 1, err
     assert "apply_matrix: prune refused:" in err and "failure" in err
     assert set(json.loads(cache.read_text(encoding="utf-8"))) == {"used-key", "stale-key"}
+
+
+def test_real_prune_refuses_after_a_real_row_that_missed_its_end(tmp_path, monkeypatch,
+                                                                 capsys):
+    # final review D I1: a real-judge flow that ended early (a timeout under
+    # --jobs, a flaky load) has no miss, break or crash, and it never asked
+    # the requests after where it stopped; the prune refuses and leaves the
+    # cache as it was
+    _one_flow_registry(monkeypatch)
+    cache = tmp_path / "matrix_cache.json"
+    cache.write_text(json.dumps({"used-key": {}, "stale-key": {}}), encoding="utf-8")
+    short = h.RunResult("post_form", h.REAL, "failed", "TimeoutError at fill (page 2)", False,
+                        [], 1, 1, 0.1, policy=None)
+
+    def fake_run_parallel(*a, real_used=None, **k):
+        if real_used is not None:
+            real_used.add("used-key")
+        return [_row("fake", True), short]
+    monkeypatch.setattr(apply_matrix, "_run_parallel", fake_run_parallel)
+    monkeypatch.setattr(apply_matrix, "_isolate", lambda *a, **k: None)
+    code = apply_matrix.main(["--seeds", "0", "--jobs", "2",
+                              "--real", "replay", "--real-cache", str(cache), "--real-prune"])
+    out, err = capsys.readouterr()
+    assert "apply_matrix: prune refused:" in err and "post_form" in err, err
+    assert "did not reach" in err, err
+    assert "apply_matrix: pruned" not in out
+    assert set(json.loads(cache.read_text(encoding="utf-8"))) == {"used-key", "stale-key"}
+    assert code == (1 if apply_matrix._failures(h, [_row("fake", True), short], whole=True)
+                    else 0)
 
 
 def test_a_recording_names_the_flows_it_recorded_that_are_still_flagged_unrecorded():

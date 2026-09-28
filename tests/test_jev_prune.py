@@ -178,6 +178,24 @@ def test_prune_if_asked_refuses_on_a_skip_reason_before_touching_the_cache(tmp_p
     assert set(json.loads(cache.read_text(encoding="utf-8"))) == {"used", "stale"}
 
 
+def test_prune_if_asked_refuses_after_a_divergence(tmp_path):
+    # final review D I1: a replay assertion turned into an xfail counts as no
+    # failure, and the test stopped before its later requests: their keys
+    # were never asked for
+    cache = tmp_path / "cache.json"
+    _seed(cache, {"used": {}, "stale": {}})
+    s = jev_harness.Session("replay", cache, prune=True)
+    s.replay = jev.ReplayJev(None, cache)
+    s.replay.used_keys = {"used"}
+    rec = s.begin("test_inner.py::test_one")
+    s.end("test_inner.py::test_one")
+    rec.divergence = "AssertionError: assert 'other' == 'application_form'"
+    line = jev_harness.prune_if_asked(s, 0)
+    assert line.startswith("jev prune refused:") and "test_inner.py::test_one" in line
+    assert "diverged" in line
+    assert set(json.loads(cache.read_text(encoding="utf-8"))) == {"used", "stale"}
+
+
 # --- jev_skip_reason: a jev_judge test's own skip, apart from the cap or an unrecorded miss -----
 
 def test_jev_skip_reason_is_empty_with_nothing_skipped():
@@ -292,6 +310,47 @@ def test_a_replay_miss_refuses_to_prune(pytester, monkeypatch, tmp_path):
     result.assert_outcomes(failed=1)
     result.stdout.fnmatch_lines(["*jev prune refused:*miss*"])
     assert not cache.exists()
+
+
+_INNER_DIVERGES = '''
+import jev, jev_harness
+pytest_plugins = ["conftest_jev"]
+
+STATE = {STATE!r}
+LATER = {LATER!r}
+QUESTIONS = {QUESTIONS!r}
+
+def test_one(jev_judge):
+    judge = jev_judge()
+    answers = judge.judge(STATE, QUESTIONS)
+    assert answers["page_state"].choice == "application_form"
+    judge.judge(LATER, QUESTIONS)
+'''
+
+
+def test_a_diverged_replay_refuses_to_prune(pytester, monkeypatch, tmp_path):
+    # final review D I1: the test asks k1, its assertion fails (an xfail in
+    # replay mode, no failure), and it never asks k2; the prune would drop k2
+    later = {**STATE, "page": {"title": "Review your application"}}
+    k1, k2 = jev.ReplayJev.key_for(STATE, QUESTIONS), jev.ReplayJev.key_for(later, QUESTIONS)
+    cache = tmp_path / "cache.json"
+    _seed(cache, {k1: {"page_state": {"kind": "choice", "choice": "other",
+                                      "probabilities": {"application_form": 0.1, "other": 0.9},
+                                      "confidence": 0.9}},
+                  k2: {"page_state": {"kind": "choice", "choice": "other",
+                                      "probabilities": {}, "confidence": 1.0}}})
+    monkeypatch.setenv(jev_harness.MODE_ENV, "replay")
+    monkeypatch.setenv(jev.CACHE_ENV, str(cache))
+    monkeypatch.setenv(jev_harness.PRUNE_ENV, "1")
+    monkeypatch.setattr(jev_harness, "RUNNER_TESTS", "test_inner.py")
+    pytester.syspathinsert(TESTS)
+    pytester.syspathinsert(REPO / "local")
+    pytester.makepyfile(test_inner=_INNER_DIVERGES.format(STATE=STATE, LATER=later,
+                                                          QUESTIONS=QUESTIONS))
+    result = pytester.runpytest_inprocess("-q", "-p", "no:cacheprovider")
+    result.assert_outcomes(xfailed=1)
+    result.stdout.fnmatch_lines(["*jev prune refused:*diverged*test_inner.py::test_one*"])
+    assert set(json.loads(cache.read_text(encoding="utf-8"))) == {k1, k2}
 
 
 def test_prune_never_fires_without_the_env_var(pytester, monkeypatch, tmp_path):

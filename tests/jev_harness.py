@@ -247,8 +247,11 @@ def prune_if_asked(session: Session, testsfailed: int, *, narrowed_reason: str =
     `RUNNER_TESTS` set may not have reached every key a clean pass would.
     `skip_reason` (`jev_skip_reason`, fed from `conftest_jev`'s own
     bookkeeping) refuses the same way when some `jev_judge` test skipped for
-    a reason this harness does not already account for. Returns the
-    refusal's reason, or a line naming what was kept; "" when pruning was
+    a reason this harness does not already account for. A test that diverged
+    from the fake (an assertion `conftest_jev` turned into an xfail, which
+    `testsfailed` never counts) refuses too: it stopped at the assertion, so
+    the requests after it were never asked for (final review D I1). Returns
+    the refusal's reason, or a line naming what was kept; "" when pruning was
     not asked for."""
     if not session.prune:
         return ""
@@ -256,6 +259,11 @@ def prune_if_asked(session: Session, testsfailed: int, *, narrowed_reason: str =
         return f"jev prune refused: {narrowed_reason}"
     if skip_reason:
         return f"jev prune refused: {skip_reason}"
+    diverged = sorted(nodeid for nodeid, rec in session.records.items() if rec.divergence)
+    if diverged:
+        return (f"jev prune refused: {len(diverged)} test(s) diverged from the fake, so the "
+                f"requests after each failed assertion were never asked for: "
+                f"{', '.join(diverged)}")
     replay = session.replay
     used = set(replay.used_keys) if replay is not None else set()
     misses = replay.misses if replay is not None else 0

@@ -344,6 +344,15 @@ def _unrecorded_flows(flows) -> list[str]:
     return [f.name for f in flows if f.replayable and not f.recorded]
 
 
+def _real_short(h, results) -> list[str]:
+    """The real-judge flows whose replay row did not reach the flow's
+    expected end (final review D I1): a run that stopped early (a timeout
+    under --jobs, a flaky load) has no miss, break or crash, and it never
+    asked the requests after where it stopped. `main` refuses
+    `--real-prune` when this list is not empty."""
+    return sorted({r.flow for r in results if r.judge == h.REAL and not r.ok})
+
+
 def _recorded_now(h, results) -> list[str]:
     """The flows a recording ran to its end (`results`) that the registry
     still marks `recorded=False`: the flags to flip, or the replay keeps
@@ -551,7 +560,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.real_prune:
             import jev
             misses = sum(r.replay_misses for r in results if r.judge == h.REAL)
+            short = _real_short(h, results)
             try:
+                # a miss or a failure refuses in `prune_cache` with its own words
+                if short and not (misses or failed):
+                    raise jev.PruneRefused(
+                        f"{len(short)} real-judge flow(s) did not reach their expected end, "
+                        f"so the requests after where each stopped were never asked for: "
+                        f"{', '.join(short)}")
                 before_n, after_n = jev.prune_cache(real_cache, real_used_keys, misses=misses,
                                                     failures=len(failed))
             except jev.PruneRefused as e:

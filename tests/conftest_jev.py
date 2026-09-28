@@ -36,7 +36,9 @@ Hooks, active in `record` and `replay` mode only:
   narrower than a file), or when some `jev_judge` test skipped for a reason
   this harness does not already account for (`_jev_skip_reason`, below, SP8
   fix round 2: a platform `skipif`, an `importorskip`, a `pytest.skip()` in
-  the test body -- its keys were never asked for either).
+  the test body; its keys were never asked for either), or when some test
+  diverged from the fake (its failed assertion became an xfail above, and the
+  requests after it were never asked for, final review D I1).
 - deselected: `pytest_deselected` counts every item a `-k`, `-m` or
   `--deselect` filter drops, on the config's own stash -- the count
   `_narrowed_reason` reads at session finish.

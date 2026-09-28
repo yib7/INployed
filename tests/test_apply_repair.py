@@ -970,6 +970,14 @@ def test_a_page_with_no_send_button_that_moved_on_is_planned_again():
     assert not run._pause_sent and run.decided == ["pause_moved_on"]
 
 
+def test_a_same_address_page_with_no_send_button_that_lost_a_field_moved_on():
+    # final fix review Important 1: a single-page app's next step at the same
+    # address; one of the paused step's labelled fields is gone
+    run = _Moved(_URL1, (("phone", "tel"),), _NEXT)
+    assert _moved(run, _URL1, _NEXT) is None
+    assert run._person_moved_on and run.decided == ["pause_moved_on"]
+
+
 # final review A I-2: the window or the tab closed during a pause
 
 def _closed(buttons: tuple, *, moved_on: bool = False) -> _Moved:

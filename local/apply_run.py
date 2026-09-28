@@ -8024,8 +8024,10 @@ class _JobRun:
           no longer be read: the two signals the gate's own wait uses
           (`_moved_during_wait`), and the form gone.
         - A page with no send-worded button (a wizard's Next, review N1)
-          that moved on is read and planned again: the person went on to
-          the next step, and nothing on the page they left could send.
+          that moved on (its address changed, or any of its labelled fields
+          is gone: a same-address single-page app's next step) is read and
+          planned again: the person went on to the next step, and nothing on
+          the page they left could send.
 
         Read as sent, the job may have been sent (`_maybe_sent`), is never
         handed back to the queue, and parks with the "check whether" note.
@@ -8038,6 +8040,9 @@ class _JobRun:
             was = {row for row in before[1] if row[0]}
             url_moved = after is not None and str(after[0]) != str(before[0])
             form_gone = bool(was) and after is not None and not was & set(after[1])
+            # any labelled field gone: a same-address single-page app's next
+            # step (`Pauser._moved_on`, final fix review Important 1)
+            form_changed = after is not None and not was <= set(after[1])
             sends = [t for t, _loc in buttons if _send_worded(t)]
             if sends:
                 there = {" ".join(str(t).split()).lower() for t, _loc in now}
@@ -8050,7 +8055,7 @@ class _JobRun:
                     what = f"its {_cap(' '.join(str(gone[0]).split()), 60)!r} button is gone"
                 elif form_gone:
                     what = "the form it paused on is gone"
-            elif url_moved or form_gone:
+            elif url_moved or form_changed:
                 self._person_moved_on = True
                 self._decide("pause_moved_on", "the page moved on to another step while the "
                                                "run waited for you, from a page with no send "

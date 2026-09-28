@@ -905,14 +905,18 @@ class Pauser:
 
     def _moved_on(self, before: tuple | None) -> bool:
         """Did the page move on from the one the run paused on (`before`,
-        its print)? Its address changed, none of its labelled fields is
-        left, or it cannot be read (then or now): the checks
-        `apply_run._JobRun._pause_moved` makes."""
+        its print)? Its whole address changed (a hash-routed app's
+        `#/step2` too), any of its labelled fields is gone, or it cannot be
+        read (then or now). A single-page app whose address never changes
+        shows its next step as the paused step's fields gone, even when that
+        step repeats the asked field (final fix review Important 1). A field
+        the person's browser edit removed costs one more pause for the same
+        question at most."""
         after = self._print()
         if before is None or after is None:
             return True
         was = {row for row in before[1] if row[0]}
-        return str(after[0]) != str(before[0]) or (bool(was) and not was & set(after[1]))
+        return str(after[0]) != str(before[0]) or not was <= set(after[1])
 
     def _keep_for_replan(self, digest, asked: list, answer: dict, before: tuple | None,
                          typed: Mapping[tuple, str] | None = None) -> None:

@@ -625,6 +625,51 @@ def test_a_card_answer_is_dropped_when_the_page_moved_on_at_a_required_field(pau
     assert [(pf.action, pf.value) for pf in plan.fields] == [("skip", "")]
 
 
+def test_a_card_answer_is_dropped_on_a_same_address_app_whose_next_step_repeats_the_field(
+        pauses_on, boxes):
+    # final fix review Important 1: a single-page app never changes its
+    # address. Step 1 has "Full name" and "Please explain" (id explain); the
+    # person answers in the card and clicks Next; step 2 shows its own
+    # "Please explain" (id explain). Step 1's "Full name" is gone, so the page
+    # moved on and step 2's box never takes step 1's answer
+    name = _field(1, "Full name", id_or_name="name")
+    one = _field(2, "Please explain", required=False, id_or_name="explain")
+    two = _field(5, "Please explain", required=False, id_or_name="explain")
+    step_one, step_two = _digest(name, one), _digest(two)
+    page = _Page(_Clock())
+    jr = _Jr(page, digest=step_one)
+
+    def next_step():
+        jr.digest = step_two            # the address stays _URL
+    page.on_wait = _answers_with("fill", {"2": "step one answer"}, then=next_step)
+    p = apply_pause.Pauser(jr, RuntimeError)
+    with pytest.raises(apply_pause.Replan):
+        p.at_disabled(step_one, FillPlan(fields=[_pf(name, "fill"), _pf(one)]), "disabled")
+    assert jr.page.url == _URL
+    assert p.pending == {}
+    assert "pause_answer_dropped" in jr.decided, jr.decided
+    plan = FillPlan(fields=[_pf(two)])
+    p.apply_pending(step_two, plan)
+    assert [(pf.action, pf.value) for pf in plan.fields] == [("skip", "")]
+    assert "pause_answer" not in jr.decided, jr.decided
+
+
+def test_a_card_answer_stays_when_every_field_of_the_paused_page_is_still_there(pauses_on,
+                                                                               boxes):
+    # the same address and the same fields: the answer goes in its own box
+    name = _field(1, "Full name", id_or_name="name")
+    one = _field(2, "Please explain", required=False, id_or_name="explain")
+    digest = _digest(name, one)
+    jr = _Jr(_Page(_Clock(), on_wait=_answers_with("fill", {"2": "my answer"})), digest=digest)
+    p = apply_pause.Pauser(jr, RuntimeError)
+    with pytest.raises(apply_pause.Replan):
+        p.at_disabled(digest, FillPlan(fields=[_pf(name, "fill"), _pf(one)]), "disabled")
+    plan = FillPlan(fields=[_pf(name, "fill"), _pf(one)])
+    p.apply_pending(digest, plan)
+    assert [(pf.action, pf.value) for pf in plan.fields][1] == ("fill", "my answer")
+    assert "pause_answer_dropped" not in jr.decided, jr.decided
+
+
 def test_a_card_answer_is_keyed_by_the_page_the_run_paused_on(pauses_on, boxes):
     # a page that grew during the wait (a new box, the asked one still there)
     # keeps the answer, keyed by the paused page's own path

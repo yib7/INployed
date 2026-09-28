@@ -700,7 +700,8 @@ def test_the_jobs_jev_cost_is_stored_and_the_total_printed(context, tmp_path, ca
     # This file runs inside a recording (jev_harness.RUNNER_TESTS), whose
     # spend cap and summary read the lifetime counter. `_Billed`'s requests
     # are not the recording's, so they land on a copy of it, and the cost is
-    # a delta of usage(), never a reset.
+    # a delta of usage(), never a reset. The copy hides every count made in
+    # this test, so it must never ask the recording judge (`jev_judge`).
     monkeypatch.setattr(jev, "_TOTAL", dict(jev._TOTAL))
     before = jev.usage()
     assert aa.run(["42"], judge=_Billed(), settings={}, context=context) == 0

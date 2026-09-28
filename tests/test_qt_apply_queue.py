@@ -326,6 +326,40 @@ def test_queue_not_ready_yes_tailors_then_flips_to_queued(qtbot, monkeypatch, tm
     w.registry.record_resume.assert_called_once_with("1", str(folder))
 
 
+def test_queue_tailor_of_a_hand_added_job_reads_the_full_description_in_the_worker(
+        qtbot, monkeypatch, tmp_path):
+    # final review C I-1: a hand-added job's dashboard row holds only the
+    # 1000-character summary; the tailor the queue starts reads the full
+    # description from the master CSV inside the worker, never on the UI thread
+    full = "Requirements: 3+ years of SQL, dbt and Airflow. " * 60
+    df = pd.DataFrame([{"job_posting_id": "manual-abc", "score": "", "recommendation": "",
+                        "job_title": "Data Analyst", "company_name": "Acme",
+                        "url": "https://x/m", "is_easy_apply": "False", "is_seen": "no",
+                        "extracted_date": "2026-09-28", "job_summary": full[:1000]}])
+    w = _win(qtbot, monkeypatch, tmp_path, df=df)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Yes))
+    monkeypatch.setattr(w, "_apply_auth_env", lambda: None)
+    monkeypatch.setattr(w, "reload_data", lambda: None)
+    reads: list[str] = []
+    monkeypatch.setattr(mw.jobsdata, "master_row",
+                        lambda j, **k: reads.append(str(j)) or {
+                            "job_posting_id": j, "job_description_formatted": full})
+    runner = _HeldRunner()
+    monkeypatch.setattr(mw.workers, "run_async", runner)
+
+    w._queue_for_auto_apply(["manual-abc"])
+    assert reads == [] and len(runner.held) == 1      # nothing read on the UI thread
+
+    folder = _ready_folder(tmp_path, monkeypatch, "manual-abc")
+    seen: list[dict] = []
+    monkeypatch.setattr("resume_tailor.tailor",
+                        lambda job, **k: seen.append(dict(job)) or folder, raising=False)
+    runner.complete_next()
+    assert reads == ["manual-abc"]
+    assert seen[0]["job_description_formatted"] == full
+
+
 def test_queue_tailor_failure_marks_entry_failed_with_note(qtbot, monkeypatch, tmp_path):
     w = _win(qtbot, monkeypatch, tmp_path, df=_jobs_df())
     monkeypatch.setattr(QtWidgets.QMessageBox, "question",

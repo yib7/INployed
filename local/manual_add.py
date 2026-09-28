@@ -402,10 +402,10 @@ def retailor_existing(
     handling with `add_manual_job` through `_run_tailor`.
 
     `jd_text` is the description the user just re-pasted into the dialog. The
-    master's retention prune (pipeline/prune_master.py) blanks a row's
-    job_description_formatted once it ages past the retention window, so a
-    duplicate re-added after that point can carry only the 1000-char
-    job_summary even though the user just pasted the full text again. When
+    stored record often comes from the dashboard's row, and a hand-added
+    job's row never carries its description (the gz bridge leaves
+    job_description_formatted out), so the record can carry only the
+    1000-char job_summary even though the user just pasted the full text again. When
     the stored record's job_description_formatted is blank, this fills it
     with `_pasted_description(jd_text)` -- the SAME expression a fresh add
     stores in that field (trimmed only at the ends, embedded newlines intact;

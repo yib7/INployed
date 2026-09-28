@@ -426,6 +426,64 @@ def test_delete_jobs_cancel_is_noop(qtbot, monkeypatch):
     assert called == []
 
 
+# ── Tailor résumé on a hand-added job (final review C I-1) ────────────────────
+
+_FULL_JD = _JD + "Requirements: 3+ years of SQL, dbt and Airflow.\n" * 40
+
+
+def _master_on_threads(monkeypatch):
+    """jobsdata.master_row stubbed with the full description; each call's
+    thread is kept."""
+    import threading
+    threads: list = []
+
+    def master_row(jid, **k):
+        threads.append(threading.current_thread())
+        return {"job_posting_id": jid, "job_description_formatted": _FULL_JD,
+                "job_description": ""}
+    monkeypatch.setattr(mw.jobsdata, "master_row", master_row)
+    return threads
+
+
+def _summary_payload(jid="manual-abc"):
+    """The dashboard row's payload for a hand-added job: its description is
+    left out of the gz bridge, so only the 1000-character summary is there."""
+    return {"job_posting_id": jid, "company_name": "Acme", "job_title": "Data Analyst",
+            "job_description_formatted": "", "job_description": "",
+            "job_summary": _FULL_JD[:1000], "url": "https://x/1"}
+
+
+def test_tailor_on_a_hand_added_job_reads_the_full_description_on_the_worker(
+        qtbot, monkeypatch, tmp_path):
+    import threading
+    w = _win(qtbot)
+    threads = _master_on_threads(monkeypatch)
+    seen: list = []
+
+    def fake_tailor(job, **k):
+        seen.append(dict(job))
+        return tmp_path
+    monkeypatch.setattr("resume_tailor.tailor", fake_tailor, raising=False)
+    w._tailor_work([_summary_payload()], {"cover_letter": False, "ats_report": True,
+                                          "prep_sheet": False, "tone": "professional"})
+    (job,) = seen
+    assert job["job_description_formatted"] == _FULL_JD
+    assert threads and threading.main_thread() not in threads
+
+
+def test_tailor_keeps_a_payload_that_carries_its_description(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    threads = _master_on_threads(monkeypatch)
+    seen: list = []
+    monkeypatch.setattr("resume_tailor.tailor",
+                        lambda job, **k: seen.append(dict(job)) or tmp_path, raising=False)
+    payload = {**_summary_payload(), "job_description_formatted": "Own description " * 10}
+    w._tailor_work([payload], {"cover_letter": False, "ats_report": True,
+                               "prep_sheet": False, "tone": "professional"})
+    assert seen[0]["job_description_formatted"] == "Own description " * 10
+    assert threads == []
+
+
 def test_edit_manual_job_prefills_and_updates_keeping_id(qtbot, monkeypatch):
     w = _win(qtbot)
     monkeypatch.setattr(mw.jobsdata, "master_row",

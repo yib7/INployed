@@ -120,6 +120,27 @@ def _tailor_pool_size(n_jobs: int) -> int:
     return max(1, min(n_jobs, MAX_PARALLEL_TAILORS))
 
 
+_JD_COLUMNS = ("job_description_formatted", "job_description")
+
+
+def _with_master_jd(job: dict) -> dict:
+    """`job` with its full description from the master CSV when the payload
+    carries none (final review C I-1). A hand-added job's dashboard row holds
+    only the 1000-character `job_summary`: the gz bridge leaves its
+    description out, and the master CSV keeps it. Worker threads only:
+    `jobsdata.master_row` reads the file."""
+    if any(str(job.get(col) or "").strip() for col in _JD_COLUMNS):
+        return job
+    jid = str(job.get("job_posting_id") or "").strip()
+    try:
+        row = jobsdata.master_row(jid) if jid else None
+    except Exception:  # noqa: BLE001 - the payload as it is still tailors
+        row = None
+    if not row or not any(str(row.get(col) or "").strip() for col in _JD_COLUMNS):
+        return job
+    return {**job, **{col: str(row.get(col) or "") for col in _JD_COLUMNS}}
+
+
 # How many warning lines one degraded job contributes to the batch dialog before the
 # rest are summarised. A grounding gate having a bad day can produce one per bullet,
 # and a message box that tall is a wall, not a report — the folder's tailor_report.txt
@@ -2026,9 +2047,8 @@ class MainWindow(QtWidgets.QMainWindow):
         """Worker body for MA-2's "Tailor again": re-run tailoring on an already
         saved row, never appending a second copy. `jd_text` is the description
         the user just re-pasted into the dialog; retailor_existing uses it only
-        to patch a blank stored description for this run (the master's
-        retention prune can blank an older row), and never rewrites the row
-        with it."""
+        to patch a blank stored description for this run (a hand-added job's
+        dashboard row carries none), and never rewrites the row with it."""
         import manual_add
         return manual_add.retailor_existing(
             record, jd_text=jd_text, tailor_opts=opts, on_status=self.tailor_progress.emit)
@@ -2394,6 +2414,10 @@ class MainWindow(QtWidgets.QMainWindow):
             # call returns.
             warnings: list[str] = []
             try:
+                # a hand-added job's payload holds only its summary: the full
+                # description comes from the master here, on the worker, for
+                # Tailor resume and the auto-apply queue's tailor alike
+                job = _with_master_jd(job)
                 out = tailor_resume(job, cover_letter=opts["cover_letter"],
                                     ats_report=opts["ats_report"], prep_sheet=opts["prep_sheet"],
                                     tone=opts["tone"], reset_usage=False,

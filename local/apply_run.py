@@ -317,6 +317,9 @@ MAILTO_REASON = "apply by email"
 MAILTO_NOTE = "the posting asks for an email application: send it yourself"
 CLOSED_REASON = "the browser window was closed"
 TAB_CLOSED_REASON = "the job's tab was closed"
+# A pause's wait failed with the window and the tab both still open (a
+# renderer crash, a dropped connection): ended as a close (`_pause_closed`)
+PAUSE_UNANSWERED_REASON = "the job's page stopped answering during the wait"
 # The judge stayed down through the retries (RES-02): the job goes back to
 # `queued` with its attempt not counted and the drain stops; no park.
 JUDGE_DOWN_REASON = "judge unavailable"
@@ -8108,7 +8111,7 @@ class _JobRun:
                                      "application may have been sent in the browser")
         window = self._window_closed()
         why = (CLOSED_REASON if window else TAB_CLOSED_REASON if self._tab_closed()
-               else "the job's page stopped answering during the wait")
+               else PAUSE_UNANSWERED_REASON)
         return _PauseClosed("needs_human", f"{CHECK_SENT_REASON}: the run stopped after the "
                                            f"pause ({why}); {what}; the run had reached: "
                                            f"{_cap(reason, 200)}", CHECK_SENT_NOTE,

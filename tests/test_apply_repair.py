@@ -1016,7 +1016,7 @@ def test_a_close_during_a_pause_on_a_page_that_cannot_send_may_have_been_sent_to
 @pytest.mark.parametrize("window,tab,why", [
     (True, False, apply_run.CLOSED_REASON),
     (False, True, apply_run.TAB_CLOSED_REASON),
-    (False, False, "the job's page stopped answering during the wait")])
+    (False, False, apply_run.PAUSE_UNANSWERED_REASON)])
 def test_a_close_during_a_pause_returns_its_own_check_whether_park(window, tab, why):
     # final fix review Minor 2: the park already carries the check-whether
     # reason and note, whatever the run's handler finds of the window later
@@ -1030,6 +1030,7 @@ def test_a_close_during_a_pause_returns_its_own_check_whether_park(window, tab, 
                                   f"pause ({why}); "), park.reason
     assert park.reason.endswith("the run had reached: the Next button stays disabled")
     assert park.window is window
+    assert h.policy_park(park.status, park.reason) is True, park.reason
     assert apply_queue.possibly_sent({"status": "needs_human", "notes": park.reason,
                                       "tab_note": park.tab_note})
 
@@ -1054,11 +1055,10 @@ def test_a_failed_wait_with_the_tab_still_open_ends_possibly_sent(
     monkeypatch.setattr(apply_pause, "wait_for_answer", _fails)
     r = h.run_flow(h.flow("pause_wizard_next"), jev.FakeJev(), "fake", browser=_browser,
                    server=flow_server, workdir=tmp_path)
-    assert not r.breaks, r.breaks
+    assert not r.breaks and r.policy is True, (r.breaks, r.policy, r.reason)
     assert r.status == "needs_human", (r.status, r.reason)
     assert r.reason.startswith(f"{apply_run.CHECK_SENT_REASON}: the run stopped after the "
-                               "pause (the job's page stopped answering during the wait); "), \
-        r.reason
+                               f"pause ({apply_run.PAUSE_UNANSWERED_REASON}); "), r.reason
     entry = _flow_entry(r)
     assert entry["tab_note"] == apply_run.CHECK_SENT_NOTE, entry
     assert apply_queue.possibly_sent(entry)
@@ -1076,7 +1076,7 @@ def test_a_tab_closed_after_the_waits_last_poll_ends_possibly_sent(
     monkeypatch.setattr(apply_pause, "wait_for_answer", _answers_then_closes)
     r = h.run_flow(h.flow("pause_wizard_next"), jev.FakeJev(), "fake", browser=_browser,
                    server=flow_server, workdir=tmp_path)
-    assert not r.breaks, r.breaks
+    assert not r.breaks and r.policy is True, (r.breaks, r.policy, r.reason)
     assert r.status == "needs_human", (r.status, r.reason)
     assert r.reason.startswith(f"{apply_run.CHECK_SENT_REASON}: the run stopped after the "
                                f"pause ({apply_run.TAB_CLOSED_REASON}); "), r.reason
@@ -1099,7 +1099,7 @@ def test_a_tab_closed_during_a_pause_on_a_next_only_step_is_never_offered_a_requ
     monkeypatch.setattr(apply_pause, "wait_for_answer", _closes)
     r = h.run_flow(h.flow("pause_wizard_next"), jev.FakeJev(), "fake", browser=_browser,
                    server=flow_server, workdir=tmp_path)
-    assert not r.breaks, r.breaks
+    assert not r.breaks and r.policy is True, (r.breaks, r.policy, r.reason)
     assert r.status == "needs_human", (r.status, r.reason)
     assert r.reason.startswith(f"{apply_run.CHECK_SENT_REASON}: the run stopped after the "
                                "pause ("), r.reason

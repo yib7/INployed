@@ -2324,11 +2324,13 @@ _POLICY_PARKS = tuple(re.compile(p) for p in (
     # sent, and the run cannot read on, a dead end the user checks. The
     # window or the tab the user closed there, and the link and the
     # final-worded steps, end the same way (`_stopped_after_send`, final
-    # review A R2-M4)
+    # review A R2-M4); a pause's wait that failed with the page still open
+    # ends as a close too (`_pause_closed`, final fix review round 2)
     "^" + re.escape(apply_run.CHECK_SENT_REASON) + r": the run stopped after the "
     r"(?:submit click|code step|link step|final-worded step|pause) \((?:"
     + re.escape(apply_run.JUDGE_DOWN_REASON) + ": |" + re.escape(apply_run.CLOSED_REASON)
-    + r"\)|" + re.escape(apply_run.TAB_CLOSED_REASON) + r"\))",
+    + r"\)|" + re.escape(apply_run.TAB_CLOSED_REASON) + r"\)|"
+    + re.escape(apply_run.PAUSE_UNANSWERED_REASON) + r"\))",
     # SP7 review I1: the page moved on while the run waited for the person,
     # who may have sent it in the browser; the user checks it
     "^" + re.escape(apply_run.CHECK_SENT_REASON) + r": the page moved on during the pause \(",

@@ -734,6 +734,16 @@ def test_enter_and_escape_that_send_nothing_break_nothing():
                     "another step in the browser during the pause", True),
     ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the run stopped after the pause (the "
                     "browser window was closed); the run had reached: x", True),
+    # final fix review round 2: any close during a pause (`_pause_closed`)
+    ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the run stopped after the pause "
+                    f"({apply_run.TAB_CLOSED_REASON}); you had the browser and may have gone "
+                    "on in it; the run had reached: x", True),
+    ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the run stopped after the pause "
+                    f"({apply_run.PAUSE_UNANSWERED_REASON}); you had the browser and may have "
+                    "gone on in it; the run had reached: x", True),
+    ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the run stopped after the pause "
+                    f"({apply_run.PAUSE_UNANSWERED_REASON} twice); the run had reached: x",
+     False),
     ("needs_human", f"no submit button (the page says '{apply_run.CHECK_SENT_REASON}: the page "
                     "moved on during the pause (')", False),
     # an error of the run's own is no dead end, and the shape quoted is none

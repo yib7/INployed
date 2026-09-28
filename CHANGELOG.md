@@ -103,12 +103,14 @@ and the old Claude-in-Chrome auto-apply is gone.
   take their own answers, a value the person fixed in the browser is kept, and a stale
   request ages by epoch seconds. A judge outage after the person moved on parks with the
   check-whether note, and the drain stops before the next job. A window or tab closed during
-  a pause on a page with a send button, or after the person moved on, parks as possibly
-  sent. A card answer goes only into its field on the page the run paused on. **Save for
-  future runs** keeps a version 1 store's migration review list.
-- **Tailor résumé on a hand-added job** (and queueing one for auto-apply) reads the job's
-  full description from the master on the worker thread; the dashboard row carries only
-  its first 1,000 characters.
+  a pause, on any page, parks as possibly sent with the check-whether note and is never
+  offered a Re-queue: the person may have clicked through and sent it first. A card answer
+  goes only into its field on the page the run paused on; a page whose address changed or
+  that lost any field it had at the pause moved on, so a same-address app's next step
+  never takes it. **Save for future runs** keeps a version 1 store's migration review list.
+- **Tailor résumé on a hand-added job** (and queueing one for auto-apply), and its cover
+  letter, interview prep, Ask AI and Apply, read the job's full description from the local
+  master on the worker thread; the dashboard row carries only its first 1,000 characters.
 - **Tailor fixes.** A regrounded bullet keeps its role in its block and may not outgrow its
   pre-sweep lines; a faithfulness revert at the verb dedupe gets a fresh opener, and that
   opener gets its own faithfulness check; best of three keeps the single rephrase call once

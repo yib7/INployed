@@ -1074,7 +1074,10 @@ custom answer, with the note "Saved from <company> on <date>", so later runs fil
 question by themselves. The box is not offered for a field only you should type, and it is
 greyed out with the reason when **Add answer** would refuse the question: a built-in answer
 already covers it, or you already saved an answer for it. The run reads your answers again
-after each pause, so a saved answer counts for the rest of the run.
+after each pause, so a saved answer counts for the rest of the run. The answer is saved even
+when the run drops your card answer because the page moved on (see below). The saved copy
+then reaches a later field only where that field asks the same question as the one you
+answered.
 
 **Time limits.** A run waits **Wait for your answer (minutes)** for you, 10 minutes by
 default (Settings → Auto-apply, 0 to 60; 0 turns the pause off). The wait does not count
@@ -1084,18 +1087,22 @@ against the job's own time limit. One job can pause at most five times.
 
 - No answer in time: the job parks with its usual reason.
 - **Park it:** the same.
-- You close the browser window or the job's tab while it waits. When the page it paused on
-  had a send button, or you had gone on to another step during an earlier pause, you may
-  have sent the application first: the job parks as possibly sent and is never re-queued, so
-  check that job. Otherwise a closed window parks the job as **needs human** with "the
-  browser window was closed", and a closed tab with "the job's tab was closed" followed by
-  its usual reason in parentheses.
+- You close the browser window or the job's tab while it waits, on any page. You had the
+  browser and may have clicked on and sent the application before the close, so the job
+  parks as possibly sent: "check whether the application went through: the run stopped
+  after the pause (the browser window was closed)", or "(the job's tab was closed)", then
+  what the paused page showed and what the run had reached. It is never re-queued, and
+  **Answer now** offers no **Re-queue**: check that job. A closed window also stops the
+  run; a closed tab ends only that job.
 - The page moved on while it waited. A new "thank you" message parks the job as possibly
   sent on any page. From a page with no send button (you clicked **Next** yourself), the
   run reads the new page and goes on, and the answers you gave in the card for the page it
-  left go into no field. From a page that could send the application, a new address or the
-  send button or the form gone parks the job as possibly sent, and it is never re-queued:
-  check that job.
+  left go into no field. The run counts the page as moved on when its address changed or
+  any field it had when the run paused is gone, even when the next step repeats the field
+  you answered. A new request for a question you just answered means the page moved on
+  during the wait (a link inside the page can change the address too): answer it again.
+  From a page that could send the application, a new address or the send button or the
+  form gone parks the job as possibly sent, and it is never re-queued: check that job.
 
 A run with the window hidden pauses too, unless every question needs the browser; then it
 parks, and you answer it on a run with the window shown.

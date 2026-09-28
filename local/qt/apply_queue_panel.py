@@ -1320,10 +1320,15 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
 
     def _answer_with(self, prefill: Dict[str, Any]) -> None:
+        """The answer saved, a Re-queue is offered only for a job parked or
+        failed with nothing sent (SP7 review I4): never for a submitted job,
+        one waiting for the person's submit, or one that may have been sent."""
         e = self._selected_entry()
         jid = str((e or {}).get("job_posting_id") or "")
         saved = self._on_answer_now(prefill)
-        if saved is True and jid and self._confirm_requeue(e or {}):
+        offer = (str((e or {}).get("status") or "") in ("needs_human", "failed")
+                 and not apply_queue.possibly_sent(e or {}))
+        if saved is True and jid and offer and self._confirm_requeue(e or {}):
             self._requeue_job(jid)
             self._set_note(f"Re-queued {(e or {}).get('company', '')}: the next run uses "
                            f"your answer.")

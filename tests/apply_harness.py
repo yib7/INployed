@@ -690,6 +690,29 @@ class OptionalLeftBlank:
         return out
 
 
+class PauseLeftBlank:
+    """A judge that maps the boxes labelled as in `LABELS` to `leave_blank`
+    at 0.95 (no fact on the sheet answers them), as a real judge reads them
+    (SP7 fix round 1): pause_disabled.html's optional referral code, so its
+    Submit stays disabled after the fill, and pause_form.html's two "Please
+    explain" boxes, so the run asks both. The rest goes to the judge it
+    wraps."""
+    LABELS = ("Referral code", "Please explain")
+
+    def __init__(self, inner: Any):
+        self.inner = inner
+
+    def judge(self, state: Any, questions: dict) -> dict:
+        out = dict(self.inner.judge(state, questions))
+        for row in (state or {}).get("fields") or []:
+            qid = f"field_{row.get('n')}_source"
+            label = str(row.get("label", "")).strip().rstrip(" *")
+            if label in self.LABELS and qid in out:
+                out[qid] = jev.Answer(kind="choice", choice="leave_blank", confidence=0.95,
+                                      probabilities={"leave_blank": 0.95})
+        return out
+
+
 class VerifiedReadAsConfirmation:
     """A judge that reads an email-verified page as a confirmation at 0.90,
     its received Noul yes (the I5 shape: "Your email is verified, thank
@@ -722,16 +745,22 @@ class PauseSpec:
     """How a pause flow's person answers (cycle 19, SP7): `mode` is "fill",
     "browser" or "park", or "timeout" (no answer comes); `values` are
     (words of the question's label, the value) pairs; `save` names the
-    labels whose value is kept for future runs."""
+    labels whose value is kept for future runs; `by_id` are (field id, value)
+    pairs, read first (two fields with the same label, SP7 review I2)."""
     mode: str
     values: tuple[tuple[str, str], ...] = ()
     save: tuple[str, ...] = ()
+    by_id: tuple[tuple[str, str], ...] = ()
 
     def answer(self, request: dict) -> tuple[str, dict[str, str], dict[str, bool]]:
         values: dict[str, str] = {}
         save: dict[str, bool] = {}
+        ids = dict(self.by_id)
         for q in request.get("questions") or []:
             label = str(q.get("label") or "").lower()
+            if str(q.get("field_id") or "") in ids:
+                values[str(q["key"])] = ids[str(q["field_id"])]
+                continue
             for words, value in self.values:
                 if words.lower() in label:
                     values[str(q["key"])] = value
@@ -1480,6 +1509,29 @@ FLOWS: tuple[Flow, ...] = (
     Flow("pause_park", "pause_form.html", True, "needs_human",
          r"^required field without an answer: ", recorded=False, pause=PauseSpec("park"),
          covers="Park it: the job parks as it did before SP7"),
+    # SP7 fix round 1
+    Flow("pause_dup_labels", "pause_form.html?dup=1&grow=1", True, "submitted", _SUBMITTED,
+         confirm="#thanks:visible", recorded=False, wrap=PauseLeftBlank,
+         pause=PauseSpec("fill", (("query language", "Datalog 2.0 (user)"),
+                                  ("preferred team", "Platform"),
+                                  ("conference talks", "37")),
+                         by_id=(("explain_a", "Alpha reason (user)"),
+                                ("explain_b", "Beta reason (user)"))),
+         covers="two required fields with the same label, answered in the card, on a page that "
+                "changed during the pause: each answer goes in its own field on the replan "
+                "(review I2)"),
+    Flow("pause_submit_in_browser", "pause_disabled.html?click=1", True, "needs_human",
+         "^" + re.escape(apply_run.CHECK_SENT_REASON) + r": the page moved on during the pause",
+         recorded=False, wrap=PauseLeftBlank, pause=PauseSpec("browser"),
+         covers="a Submit disabled after the fill; the person fixes the page and clicks Submit "
+                "in the browser during the pause: the run parks with the check-whether note, "
+                "never fills the page after it, and the job is never re-queued (review I1)"),
+    Flow("pause_fix_kept", "pause_disabled.html?reformat=1", False, "ready_to_submit",
+         _PARKED, confirm="#thanks:visible",
+         gate="body:not([data-phone-retyped]) #btn-submit:not([disabled])",
+         recorded=False, wrap=PauseLeftBlank, pause=PauseSpec("browser"),
+         covers="a Submit disabled after the fill; the person rewrites the phone the run typed "
+                "and fills the referral in the browser: the replan keeps both (review I3)"),
 )
 
 
@@ -2250,9 +2302,12 @@ _POLICY_PARKS = tuple(re.compile(p) for p in (
     # final-worded steps, end the same way (`_stopped_after_send`, final
     # review A R2-M4)
     "^" + re.escape(apply_run.CHECK_SENT_REASON) + r": the run stopped after the "
-    r"(?:submit click|code step|link step|final-worded step) \((?:"
+    r"(?:submit click|code step|link step|final-worded step|pause) \((?:"
     + re.escape(apply_run.JUDGE_DOWN_REASON) + ": |" + re.escape(apply_run.CLOSED_REASON)
     + r"\)|" + re.escape(apply_run.TAB_CLOSED_REASON) + r"\))",
+    # SP7 review I1: the page moved on while the run waited for the person,
+    # who may have sent it in the browser; the user checks it
+    "^" + re.escape(apply_run.CHECK_SENT_REASON) + r": the page moved on during the pause \(",
     # SP8a review M1: the judge down under the same job a second time, a
     # failure the job's own request may cause: parked so the queue moves on.
     # Only after the judge answered in the drain (R2-I1): a park while it
@@ -2514,9 +2569,11 @@ def _after_each_read(js: str):
 
 
 def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServer,
-             workdir: Path, fast: bool = True) -> RunResult:
+             workdir: Path, fast: bool = True, pause: PauseSpec | None = None) -> RunResult:
     """`f` once under `judge`: a fresh context, queue, ledger and job folder;
-    the drain of that one job; the invariants."""
+    the drain of that one job; the invariants. `pause`: how the person
+    answers a flow with no `Flow.pause` of its own (SP7 review M8: pauses on
+    and parked at once, every other flow must end as it did)."""
     import apply_queue
 
     rundir = Path(tempfile.mkdtemp(prefix=f"{f.name}-{judge_name}-", dir=str(workdir)))
@@ -2538,7 +2595,7 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
             stack.enter_context(fast_timing(f.settle_s, f.timing))
         if f.on_read:
             stack.enter_context(_after_each_read(f.on_read))
-        pause_minutes = stack.enter_context(pausing(rundir, f.pause, recorder))
+        pause_minutes = stack.enter_context(pausing(rundir, f.pause or pause, recorder))
         url = f.start_url(server.base)
         apply_queue.enqueue(apply_queue.new_entry(JOB_ID, company="Fabrikam",
                                                   title="Analytics Engineer", apply_url=url),
@@ -2605,8 +2662,11 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
 
 def run_matrix(flows: Iterable[Flow], judge_list: list[tuple[str, Any]], *, browser,
                server: FlowServer, workdir: Path, fast: bool = True,
-               progress: Callable[[RunResult], None] | None = None) -> list[RunResult]:
+               progress: Callable[[RunResult], None] | None = None,
+               pause: PauseSpec | None = None) -> list[RunResult]:
+    """Each flow under each judge (`run_flow`); `pause` as `run_flow` takes it."""
     results = []
+    extra = {"pause": pause} if pause is not None else {}
     for f in flows:
         for name, judge in judge_list:
             if name == REAL and not (f.replayable and f.recorded) and replay_only(judge):
@@ -2614,7 +2674,7 @@ def run_matrix(flows: Iterable[Flow], judge_list: list[tuple[str, Any]], *, brow
                 # yet: no replay can hit
                 continue
             r = run_flow(f, judge, name, browser=browser, server=server, workdir=workdir,
-                         fast=fast)
+                         fast=fast, **extra)
             results.append(r)
             if progress is not None:
                 progress(r)

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Analytics Engineer - Fabrikam</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  label { display: block; margin: 10px 0; }
+  input { display: block; margin-top: 2px; }
+  #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Analytics Engineer</h1>
+<p>Fabrikam, Remote</p>
+<!--
+  SP7 fix round 1: a Submit that stays disabled until the optional referral
+  code holds a value, so the run pauses at the disabled way on. The query
+  string adds what the person does in the browser while the run waits:
+  ?click=1 types the referral code, then clicks the Submit it enables (the
+  person sent the application during the pause, review I1, marked
+  data-person-submitted: the harness counts the run's sends); ?reformat=1
+  types the referral code and rewrites the phone the run typed in the
+  site's own format (the person's fix, review I3).
+-->
+<form id="application" onsubmit="return false">
+  <label>Full name * <input name="name" type="text" required></label>
+  <label>Email * <input name="email" type="email" required></label>
+  <label>Phone * <input name="phone" type="tel" required></label>
+  <label>Referral code <input name="referral" id="referral" type="text"></label>
+  <button type="button" id="btn-submit" disabled>Submit application</button>
+</form>
+<h2 id="thanks">Thank you for applying</h2>
+<script>
+  const params = new URLSearchParams(location.search);
+  const form = document.getElementById('application');
+  const button = document.getElementById('btn-submit');
+  const referral = document.getElementById('referral');
+  const PERSON_PHONE = '+1 (555) 555-0100';
+  const sync = () => { button.disabled = !referral.value; };
+  referral.addEventListener('input', sync);
+  const set = (el, value) => {
+    el.value = value;
+    el.dispatchEvent(new Event('input', {bubbles: true}));
+    el.dispatchEvent(new Event('change', {bubbles: true}));
+  };
+  let done = false;
+  let person = false;
+  const outlined = (el) => (el.style.outline || '').indexOf('217, 119, 6') >= 0;
+  new MutationObserver(() => {
+    if (done || !outlined(referral)) return;
+    done = true;
+    if (params.get('click') || params.get('reformat')) set(referral, 'FRIEND-7');
+    if (params.get('reformat')) {
+      const phone = form.elements.phone;
+      set(phone, PERSON_PHONE);
+      // the run typing over the person's fix marks the page
+      phone.addEventListener('input', () => {
+        if (phone.value !== PERSON_PHONE) document.body.setAttribute('data-phone-retyped', '1');
+      });
+    }
+    if (params.get('click')) {
+      // the person's own click: marked apart from a run's send
+      person = true;
+      button.click();
+      person = false;
+    }
+  }).observe(document.body, {attributes: true, attributeFilter: ['style'], subtree: true});
+  button.addEventListener('click', function () {
+    if (button.disabled) return;
+    document.body.setAttribute(person ? 'data-person-submitted' : 'data-submitted', '1');
+    form.style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

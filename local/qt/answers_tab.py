@@ -120,6 +120,9 @@ DISK_POLL_MS = 5000
 
 _DISK_CHANGED = ("The answers file changed on disk (a paused run may have saved an "
                  "answer). Reload to see it; your unsaved edits here are dropped then.")
+_SAVE_CLASH = ("Not saved: the answers file changed on disk in a way that overlaps your "
+               "edits. Reload, then make your edits again.")
+_SAVED_MERGED = "Saved, with the answers a paused run added on disk."
 
 
 def _is_us(answer: str) -> bool:
@@ -409,6 +412,10 @@ class AnswersEditor(QtWidgets.QWidget):
         # SP7: the file as last read, and the rows as they were then
         self._disk_sig: tuple | None = None
         self._clean: list[dict] = []
+        # the stamp and the entries of the read the rows come from; the
+        # banner's `_disk_sig` moves on per change, these only on a read
+        self._rows_sig: tuple | None = None
+        self._read_entries: list[dict] | None = None
 
         self._build_shell()
         self.reload()
@@ -515,11 +522,13 @@ class AnswersEditor(QtWidgets.QWidget):
             self._refresh_counts()
             self._update_review_banner()
             self.refresh_test_answers_state()
+            self._read_entries = None
             self._mark_read()
             return
         entries = store["answers"]
         if self._merge_defaults:
             entries = apply_answers.with_missing_builtins(entries)
+        self._read_entries = [dict(e) for e in entries]
         self.review = store["review"]          # kept for the next save
         country_answer = next(
             (str(e.get("answer", "") or "").strip() for e in entries
@@ -547,8 +556,38 @@ class AnswersEditor(QtWidgets.QWidget):
         """What `check_disk` compares against: the file's stamp and the rows
         as this read left them."""
         self._disk_sig = self._store_sig()
+        self._rows_sig = self._disk_sig
         self._clean = self.collect()
         self.disk_banner.setVisible(False)
+
+    def _merged_with_disk(self, answers: list[dict]) -> list[dict] | None:
+        """SP7 review I5: `answers` (the rows) with the entries added on disk
+        since the rows were read (a paused run's save), or None when the two
+        clash: an entry read then was changed or removed on disk, or an added
+        one has an id or a question the rows hold."""
+        if self._read_entries is None:
+            return None
+        try:
+            store = apply_answers.load_store(self.store_path)
+        except apply_answers.AnswerStoreError:
+            return None
+        disk = store["answers"]
+        if self._merge_defaults:
+            disk = apply_answers.with_missing_builtins(disk)
+        on_disk = {str(e.get("id", "")): e for e in disk}
+        was = {str(e.get("id", "")): e for e in self._read_entries}
+        if any(on_disk.get(eid) != e for eid, e in was.items()):
+            return None
+        out = list(answers)
+        ids = {str(e.get("id", "")) for e in out}
+        for eid, e in on_disk.items():
+            if eid in was:
+                continue
+            if eid in ids or apply_answers.find_collision(str(e.get("question", "")), out):
+                return None
+            out.append(dict(e))
+            ids.add(eid)
+        return out
 
     def has_unsaved_edits(self) -> bool:
         """Whether a row differs from the file as last read (an added or a
@@ -921,6 +960,17 @@ class AnswersEditor(QtWidgets.QWidget):
             QtWidgets.QMessageBox.critical(self, "Apply answers",
                                            "Problems found:\n\n- " + "\n- ".join(errs))
             return False
+        merged = False
+        if self._store_sig() != self._rows_sig:
+            # the file changed since the rows were read (a paused run saved
+            # an answer): its new entries join the rows, or nothing is saved
+            joined = self._merged_with_disk(answers)
+            if joined is None:
+                self.status.setText(_SAVE_CLASH)
+                self.disk_banner.setVisible(True)
+                return False
+            merged = len(joined) > len(answers)
+            answers = joined
         try:
             apply_answers.save(answers, self.store_path, review=self.review)
         except (ValueError, OSError, apply_answers.AnswerStoreError) as exc:
@@ -931,7 +981,7 @@ class AnswersEditor(QtWidgets.QWidget):
         self.reload()
         if warn:
             QtWidgets.QMessageBox.warning(self, "Apply answers", "\n\n".join(warn))
-        self.status.setText("Saved.")
+        self.status.setText(_SAVED_MERGED if merged else "Saved.")
         if self.on_saved:
             self.on_saved()
         return True

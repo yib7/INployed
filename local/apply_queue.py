@@ -577,6 +577,23 @@ def unclaim(job_id: str, *, notes: Optional[str] = None, give_back: bool = True,
         return dict(e)
 
 
+# The run's words for a job that may have been sent (`apply_run.CHECK_SENT_REASON`,
+# which is this string; a test pins the two together)
+CHECK_SENT_WORDS = "check whether the application went through"
+
+
+def possibly_sent(entry: Dict[str, Any]) -> bool:
+    """Was the entry's application sent, or may it have been: a submitted
+    entry, or a park whose reason or tab note carries the run's "check
+    whether" words. Answer now never offers such an entry a Re-queue (SP7
+    review I4); the Re-queue button stays the person's call once they checked,
+    as the note says."""
+    if str(entry.get("status") or "") == "submitted":
+        return True
+    return any(str(entry.get(k) or "").startswith(CHECK_SENT_WORDS)
+               for k in ("notes", "tab_note"))
+
+
 def requeue(job_id: str, *, refresh_answers: bool = False,
             path: Optional[Path] = None) -> Dict[str, Any]:
     """Send an entry (any status) back to "queued": clears missing_answers /

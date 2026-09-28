@@ -20,7 +20,8 @@
   ?browser=1 types each outlined field's data-browser value (the person
   filled it in the browser), ?grow=1 adds an optional field once a field is
   outlined (the page changed during the wait), ?dob=1 adds a required date of
-  birth (a sensitive field, typed by the page's own script when outlined).
+  birth (a sensitive field, typed by the page's own script when outlined),
+  ?dup=1 adds two required fields with the same label (SP7 review I2).
 -->
 <form id="application" onsubmit="return false">
   <label>Full name * <input name="name" type="text" required></label>
@@ -45,6 +46,13 @@
   const params = new URLSearchParams(location.search);
   const form = document.getElementById('application');
   const button = document.getElementById('btn-submit');
+  if (params.get('dup')) {
+    for (const name of ['explain_a', 'explain_b']) {
+      const label = document.createElement('label');
+      label.innerHTML = 'Please explain * <textarea name="' + name + '" required></textarea>';
+      form.insertBefore(label, button);
+    }
+  }
   if (params.get('dob')) {
     const label = document.createElement('label');
     label.innerHTML = 'Date of birth * <input name="date_of_birth" type="text" required ' +

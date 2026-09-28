@@ -320,3 +320,293 @@ def test_the_builtin_check_is_shared_with_the_answers_tab():
     pytest.importorskip("PySide6")
     from qt import answers_tab
     assert answers_tab.builtin_answering is apply_pause.builtin_answering
+
+
+# -- one job's pauses (SP7 fix round 1) ----------------------------------------------------------
+
+import os  # noqa: E402
+import subprocess  # noqa: E402
+from datetime import datetime, timedelta  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+import apply_fill  # noqa: E402
+from apply_form import FormDigest  # noqa: E402
+
+_URL = "https://ats.example/apply/1"
+
+
+class _Log:
+    def warning(self, *a, **k):
+        pass
+
+    info = warning
+
+
+class _Jr:
+    """A job run double for `Pauser`: a page double at `_URL`, the pause's
+    settings, and every decision kept. `moved` is what `_pause_moved`
+    returns (the run's own check that the page moved on during a wait)."""
+
+    def __init__(self, page, *, headless=False, digest=None, moved=None):
+        self.page = page
+        page.url = _URL
+        page.bring_to_front = lambda: None
+        self.entry = dict(_JOB)
+        self.job_id = "42"
+        self.log = _Log()
+        self.r = SimpleNamespace(clock=page.clock, sleep=None, drain_report=False,
+                                 settings={"auto_apply_pause_minutes": 10,
+                                           "auto_apply_headless": headless})
+        self.deadline = 100.0
+        self.decided: list[str] = []
+        self.reloads = 0
+        self.digest = digest
+        self.moved = moved
+        self.moved_calls: list[tuple] = []
+
+    def _decide(self, what, why, **kw):
+        self.decided.append(what)
+
+    def _trace(self, *a, **kw):
+        pass
+
+    def _extract(self):
+        if self.digest is None:
+            raise RuntimeError("no page")
+        return self.digest
+
+    def _page_text(self):
+        return "Apply"
+
+    def _pause_reload(self):
+        self.reloads += 1
+
+    def _maybe_sent(self):
+        return False
+
+    def _pause_moved(self, before, text, reason):
+        self.moved_calls.append((before, text, reason))
+        return self.moved
+
+
+def _answers_with(mode, values=None, save=None, then=None):
+    """A page double's `on_wait` that answers the pause on its first poll
+    (the dashboard's card), after `then()` (what the person did in the
+    browser meanwhile)."""
+    def on_wait(n):
+        if n != 1:
+            return
+        if then is not None:
+            then()
+        req = apply_pause.read_request(apply_pause.request_path("42"))
+        apply_pause.write_answer("42", mode, values or {}, save or {}, pause_id=req["pause_id"])
+    return on_wait
+
+
+@pytest.fixture
+def pauses_on(monkeypatch):
+    monkeypatch.setattr(apply_pause, "NEVER_WAIT", False)
+
+
+@pytest.fixture
+def boxes(monkeypatch):
+    """The page's boxes as `apply_fill.read_back` reads them: locator -> value."""
+    held: dict = {}
+    monkeypatch.setattr(apply_fill, "read_back", lambda page, pf: held.get(pf.locator, ""))
+    return held
+
+
+def _explain_fields():
+    return [_field(1, "Please explain", id_or_name="explain_a"),
+            _field(2, "Please explain", id_or_name="explain_b")]
+
+
+def _digest(*fields):
+    return FormDigest(url_host="ats.example", title="Apply", text="Apply", fields=list(fields))
+
+
+def test_an_answer_to_one_of_two_same_labelled_fields_goes_in_its_own_field(pauses_on, boxes):
+    # review I2: the answer for the second "Please explain" lands in the second
+    a, b = _explain_fields()
+    digest = _digest(a, b)
+    jr = _Jr(_Page(_Clock(), on_wait=_answers_with("fill", {"2": "answer for B"})),
+             digest=digest)
+    p = apply_pause.Pauser(jr, RuntimeError)
+    with pytest.raises(apply_pause.Replan):
+        p.at_disabled(digest, FillPlan(fields=[_pf(a), _pf(b)]), "the Submit button stays "
+                      "disabled after the fill")
+    plan = FillPlan(fields=[_pf(a), _pf(b)])
+    p.apply_pending(digest, plan)
+    got = {pf.n: (pf.action, pf.value) for pf in plan.fields}
+    assert got == {1: ("skip", ""), 2: ("fill", "answer for B")}, got
+
+
+def test_same_labelled_fields_with_no_id_are_told_apart_by_their_place(pauses_on, boxes):
+    a, b = _field(1, "Please explain"), _field(2, "Please explain")
+    digest = _digest(a, b)
+    jr = _Jr(_Page(_Clock(), on_wait=_answers_with("fill", {"1": "A", "2": "B"})),
+             digest=digest)
+    p = apply_pause.Pauser(jr, RuntimeError)
+    with pytest.raises(apply_pause.Replan):
+        p.at_disabled(digest, FillPlan(fields=[_pf(a), _pf(b)]), "disabled")
+    plan = FillPlan(fields=[_pf(a), _pf(b)])
+    p.apply_pending(digest, plan)
+    assert [pf.value for pf in plan.fields] == ["A", "B"]
+
+
+def test_the_answers_kept_for_a_replan_apply_to_the_next_plan_only(pauses_on, boxes):
+    # review M7: a single-page app keeps its path; the fields asked on one
+    # step are never read back as the person's on a later one
+    f = _field(1, "Please explain", id_or_name="explain")
+    digest = _digest(f)
+    jr = _Jr(_Page(_Clock(), on_wait=_answers_with("browser")), digest=digest)
+    p = apply_pause.Pauser(jr, RuntimeError)
+    with pytest.raises(apply_pause.Replan):
+        p.at_disabled(digest, FillPlan(fields=[_pf(f)]), "disabled")
+    p.apply_pending(digest, FillPlan(fields=[_pf(f)]))
+    boxes[f.locator] = "typed by the site"
+    later = FillPlan(fields=[_pf(f)])
+    p.apply_pending(digest, later)
+    assert later.fields[0].action == "skip"
+    assert (p.pending, p.asked, p.typed) == ({}, set(), {})
+
+
+def _typed(f, value):
+    pf = _pf(f, "fill")
+    pf.value = value
+    return pf
+
+
+def test_a_value_the_person_changed_in_the_browser_is_kept_on_the_replan(pauses_on, boxes):
+    # review I3: the run typed the phone, the person rewrote it in the site's
+    # format during the pause; the page read again keeps theirs
+    phone, email, referral = (_field(1, "Phone", "tel", id_or_name="phone"),
+                              _field(2, "Email", "email", id_or_name="email"),
+                              _field(3, "Referral code", required=False, id_or_name="referral"))
+    digest = _digest(phone, email, referral)
+    boxes[phone.locator] = "555-555-0100"
+    boxes[email.locator] = "jane@example.com"
+
+    def person():
+        boxes[phone.locator] = "+1 (555) 555-0100"
+        boxes[referral.locator] = "FRIEND-7"
+    jr = _Jr(_Page(_Clock(), on_wait=_answers_with("browser", then=person)), digest=digest)
+    p = apply_pause.Pauser(jr, RuntimeError)
+    first = FillPlan(fields=[_typed(phone, "555-555-0100"), _typed(email, "jane@example.com"),
+                             _pf(referral)])
+    with pytest.raises(apply_pause.Replan):
+        p.at_disabled(digest, first, "disabled")
+    again = FillPlan(fields=[_typed(phone, "555-555-0100"), _typed(email, "jane@example.com"),
+                             _pf(referral)])
+    p.apply_pending(digest, again)
+    got = {pf.label: pf.action for pf in again.fields}
+    assert got == {"Phone": apply_pause.KEPT, "Email": "fill",
+                   "Referral code": apply_pause.KEPT}, got
+
+
+def test_a_page_that_moved_on_during_the_wait_ends_the_pause_with_the_runs_park(pauses_on,
+                                                                               boxes):
+    # review I1: the run's own check (`_pause_moved`) reads the page after
+    # every wait; a page that moved on raises its park, whatever the answer
+    f = _field(1, "Referral code", required=False, id_or_name="referral")
+    digest = _digest(f)
+    for mode in ("browser", "fill", "park"):
+        moved = RuntimeError("check whether the application went through")
+        jr = _Jr(_Page(_Clock(), on_wait=_answers_with(mode, {"1": "X"})), digest=digest,
+                 moved=moved)
+        p = apply_pause.Pauser(jr, RuntimeError)
+        with pytest.raises(RuntimeError) as got:
+            p.at_disabled(digest, FillPlan(fields=[_pf(f)]), "disabled")
+        assert got.value is moved, mode
+        before, text, reason = jr.moved_calls[0]
+        assert before[0] == _URL and text == "Apply" and reason.startswith("disabled")
+        assert p.pending == {} and p.asked == set()
+
+
+def test_a_headless_pause_with_only_browser_questions_parks_at_once(pauses_on, boxes):
+    # review M4: nobody can type into a headless browser
+    dob = _field(1, "Date of birth")
+    digest = _digest(dob)
+    page = _Page(_Clock())
+    jr = _Jr(page, headless=True, digest=digest)
+    p = apply_pause.Pauser(jr, RuntimeError)
+    reason = apply_pause.apply_judge.sensitive_reason("Date of birth")
+    plan = FillPlan(fields=[_pf(dob)], park_reason=reason)
+    p.at_plan(digest, plan)
+    assert page.waits == 0 and p.count == 0
+    assert not apply_pause.request_path("42").exists()
+    assert "pause_skipped" in jr.decided and "pause" not in jr.decided
+    # a headed browser still pauses for it
+    headed = _Jr(_Page(_Clock(), on_wait=_answers_with("park")), digest=digest)
+    apply_pause.Pauser(headed, RuntimeError).at_plan(digest, FillPlan(fields=[_pf(dob)],
+                                                                      park_reason=reason))
+    assert "pause" in headed.decided
+
+
+def test_a_choice_that_names_no_live_option_is_never_saved(pauses_on, boxes):
+    # review M5: the value is checked against the live options before the save
+    apply_answers.save(apply_answers.seed_defaults())
+    team = _field(1, "Preferred team", "select", options=["Data", "Platform"],
+                  id_or_name="team")
+    talks = _field(2, "Number of conference talks given", "number", id_or_name="talks")
+    digest = _digest(team, talks)
+    jr = _Jr(_Page(_Clock(), on_wait=_answers_with("fill", {"1": "Plattform", "2": "four"},
+                                                   {"1": True, "2": True})), digest=digest)
+    p = apply_pause.Pauser(jr, RuntimeError)
+    plan = FillPlan(fields=[_pf(team), _pf(talks)],
+                    park_reason="required field without an answer: Preferred team")
+    p.at_plan(digest, plan)
+    questions = {e["question"] for e in apply_answers.load()}
+    assert "Preferred team" not in questions
+    assert "Number of conference talks given" not in questions
+    assert jr.decided.count("pause_value_refused") == 2, jr.decided
+    assert [pf.action for pf in plan.fields] == ["skip", "skip"]
+
+
+def test_every_resume_reads_the_answer_store_again(pauses_on, boxes):
+    # review M2: an answer added in the Apply Answers tab during the pause
+    # counts from the next page, a save or none
+    f = _field(1, "Referral code", required=False, id_or_name="referral")
+    digest = _digest(f)
+    jr = _Jr(_Page(_Clock(), on_wait=_answers_with("browser")), digest=digest)
+    p = apply_pause.Pauser(jr, RuntimeError)
+    with pytest.raises(apply_pause.Replan):
+        p.at_disabled(digest, FillPlan(fields=[_pf(f)]), "disabled")
+    assert jr.reloads == 1
+
+
+def test_a_request_names_the_runs_process_and_its_minutes():
+    path = apply_pause.write_request(_JOB, _URL, "r", [], minutes=7)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["pid"] == os.getpid() and data["minutes"] == 7
+
+
+def test_a_request_whose_run_is_gone_is_cleaned_up(monkeypatch):
+    # review M3: a killed drain leaves its request behind
+    apply_pause.write_request(_JOB, _URL, "r", [], minutes=10)
+    apply_pause.write_request({**_JOB, "job_posting_id": "7"}, _URL, "r", [], minutes=10)
+    dead = json.loads(apply_pause.request_path("7").read_text(encoding="utf-8"))
+    dead["pid"] = 999_999_999
+    apply_pause.request_path("7").write_text(json.dumps(dead), encoding="utf-8")
+    monkeypatch.setattr(apply_pause, "pid_alive", lambda pid: pid == os.getpid())
+    assert [r["job"] for r in apply_pause.pending_requests()] == ["42"]
+    assert not apply_pause.request_path("7").exists()
+
+
+def test_a_request_older_than_its_wait_is_cleaned_up():
+    apply_pause.write_request(_JOB, _URL, "r", [], minutes=10)
+    path = apply_pause.request_path("42")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    age = timedelta(minutes=10, seconds=apply_pause.STALE_MARGIN_S + 5)
+    data["asked_at"] = (datetime.now() - age).isoformat(timespec="seconds")
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert apply_pause.pending_requests() == []
+    assert not path.exists()
+
+
+def test_pid_alive_tells_a_live_process_from_a_finished_one():
+    assert apply_pause.pid_alive(os.getpid())
+    done = subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"],
+                          capture_output=True, text=True, encoding="utf-8", check=True)
+    assert not apply_pause.pid_alive(int(done.stdout.strip()))
+    assert not apply_pause.pid_alive(0)

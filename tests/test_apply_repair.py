@@ -816,3 +816,58 @@ def test_a_required_option_tie_pauses_and_the_persons_pick_goes_in_on_the_spot(
     assert "replan" not in decided, decided
     picked = [a for a in r.actions if a.kind == "pick" and a.user == "Yes"]
     assert [a.name for a in picked] == ["work_auth"], [(a.name, a.url) for a in picked]
+
+
+# === SP7 fix round 1 ======================================================================================
+
+def test_a_submit_the_person_clicks_during_a_pause_parks_as_possibly_sent(
+        _browser, flow_server, tmp_path, monkeypatch):
+    # review I1: the person fixes the disabled page and clicks Submit in the
+    # browser, then answers "I filled it in the browser"; the run reads the
+    # thank-you page as a page that moved on, never fills it, and the job
+    # may have been sent (never re-queued, even with the judge down)
+    maybe_sent: list[bool] = []
+    real = apply_run._JobRun._pause_moved
+
+    def _moved(self, *a, **kw):
+        out = real(self, *a, **kw)
+        maybe_sent.append(self._maybe_sent())
+        return out
+    monkeypatch.setattr(apply_run._JobRun, "_pause_moved", _moved)
+    r = h.run_flow(h.flow("pause_submit_in_browser"), jev.FakeJev(), "fake", browser=_browser,
+                   server=flow_server, workdir=tmp_path)
+    assert not r.breaks, r.breaks
+    assert r.status == "needs_human" and r.policy is True, (r.status, r.reason)
+    assert r.reason.startswith(f"{apply_run.CHECK_SENT_REASON}: the page moved on during the "
+                               "pause (it shows 'thank you for applying')"), r.reason
+    assert "stays disabled after the fill" in r.reason, r.reason
+    decided = [d["what"] for d in _decisions(r)]
+    assert "pause_moved" in decided and "replan" not in decided, decided
+    assert maybe_sent == [True], maybe_sent
+    # nothing typed after the pause: the person's referral is theirs
+    assert not [a for a in r.actions if a.kind == "fill" and a.name == "referral"]
+
+
+def test_same_labelled_fields_answered_in_the_card_each_take_their_own_answer(
+        _browser, flow_server, tmp_path):
+    # review I2: two required "Please explain" fields, a page that changed
+    # during the pause; the invariant (USER-ANSWER-ELSEWHERE) holds
+    r = h.run_flow(h.flow("pause_dup_labels"), jev.FakeJev(), "fake", browser=_browser,
+                   server=flow_server, workdir=tmp_path)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    typed = {a.name: a.user for a in r.actions if a.kind == "fill" and a.user}
+    assert typed.get("explain_a") == "Alpha reason (user)", typed
+    assert typed.get("explain_b") == "Beta reason (user)", typed
+
+
+def test_a_value_the_person_fixed_in_the_browser_is_never_typed_over(
+        _browser, flow_server, tmp_path):
+    # review I3: the run typed the phone; the person rewrote it in the site's
+    # format during the disabled pause; the replan keeps it
+    r = h.run_flow(h.flow("pause_fix_kept"), jev.FakeJev(), "fake", browser=_browser,
+                   server=flow_server, workdir=tmp_path)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    phone = [a for a in r.actions if a.kind == "fill" and a.name == "phone"]
+    assert len(phone) == 1, [(a.kind, a.url) for a in phone]
+    decided = [d for d in _decisions(r) if d["what"] == "pause_kept"]
+    assert [d["fields"] for d in decided] == [["Phone"]], decided

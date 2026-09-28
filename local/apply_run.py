@@ -4611,6 +4611,9 @@ class _JobRun:
         # answers went on the site or after the submit click: the link may be
         # the step that sends it (final review A-I2, A R2-M3)
         self._link_may_send = False
+        # the page moved on while the run waited for the person (SP7 review
+        # I1): they may have sent it in the browser (`_pause_moved`)
+        self._pause_sent = False
         # a send that never reached the site and nothing else left (`_Unsent`):
         # what the watch saw is no possible send (final review A-M4)
         self._unsent = False
@@ -5356,6 +5359,8 @@ class _JobRun:
             return "the link step"
         if self._code_may_send:
             return "the code step"
+        if self._pause_sent and not self._final_advance:
+            return "the pause"
         return "the final-worded step"
 
     def _judge_down(self) -> str:
@@ -5373,9 +5378,11 @@ class _JobRun:
         `submit_clicked` after validation errors, final review A-M4):
         something may have been sent, so the job is never handed back to the
         queue. An account's own code before any of the application's answers
-        went on a page sends none of it (SP8a review M9)."""
+        went on a page sends none of it (SP8a review M9). A page that moved
+        on while the run waited for the person (`_pause_sent`, SP7 review
+        I1) may have been sent in the browser."""
         if self.submit_clicked or self._code_may_send or self._link_may_send \
-                or self._final_advance:
+                or self._final_advance or self._pause_sent:
             return True
         watch = self._send_watch
         return bool(watch is not None and not self._unsent and watch.any())
@@ -7980,9 +7987,34 @@ class _JobRun:
         apply_queue.add_missing(self.job_id, question, context=context, path=self.r.queue_path,
                                 **extra)
 
+    def _pause_moved(self, before: tuple | None, text: str, reason: str) -> _Parked | None:
+        """After a pause's wait (SP7 review I1): did the page move on while
+        the run waited? A received phrase it did not show before
+        (`new_confirmation`), or none of the labelled fields it paused on
+        still there (the form gone). Either way the person may have sent it
+        in the browser: the job may have been sent (`_maybe_sent`), is never
+        handed back to the queue, and parks with the "check whether" note.
+        None when the page is the form it paused on."""
+        word = new_confirmation(text, self._page_text())
+        gone = False
+        if not word and before is not None:
+            was = {row for row in before[1] if row[0]}
+            after = self.pause._print()
+            gone = bool(was) and after is not None and not was & set(after[1])
+        if not word and not gone:
+            return None
+        self._pause_sent = True
+        what = f"it shows {word!r}" if word else "the form it paused on is gone"
+        self._decide("pause_moved", f"the page moved on while the run waited for you ({what}): "
+                                    "the application may have been sent in the browser")
+        return _Parked("needs_human", f"{CHECK_SENT_REASON}: the page moved on during the pause "
+                                      f"({what}); the run had reached: {_cap(reason, 200)}",
+                       CHECK_SENT_NOTE)
+
     def _pause_reload(self) -> None:
-        """After a pause saved an answer (PR-6): the store read again and the
-        facts rebuilt from it, the entry's own PDFs kept. A store that no
+        """After every resume from a pause (PR-6, SP7 review M2: an answer the
+        person saved or added in the Apply Answers tab meanwhile): the store
+        read again and the facts rebuilt from it, the entry's own PDFs kept. A store that no
         longer reads keeps the answers the run had."""
         from resume_tailor import apply_answers
         try:

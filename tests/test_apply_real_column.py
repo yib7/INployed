@@ -184,7 +184,9 @@ def test_a_replay_leaves_out_a_flow_no_recording_holds_yet_and_a_recording_takes
                  workdir=tmp_path)
     assert calls == [("steady", "real"), ("new", "real")], "a recording runs it"
     # cycle 18's recording (SP6, 2026-09-26) took in every registered flow
-    assert [f.name for f in h.FLOWS if not f.recorded] == []
+    # but cycle 19 SP7's pause flows, added after it (no live call records them)
+    unrecorded = [f.name for f in h.FLOWS if not f.recorded]
+    assert unrecorded and all(h.flow(name).pause is not None for name in unrecorded), unrecorded
 
 
 # --- the real column in the rates and the summary -------------------------------------------

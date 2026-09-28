@@ -531,6 +531,19 @@ def test_each_flow_holds_every_invariant_under_the_fake_and_the_noisy_seeds(
         assert fake.ok, table
 
 
+@pytest.mark.parametrize("flow_name", [f.name for f in h.FLOWS if f.pause is None])
+def test_each_flow_ends_as_before_with_pauses_on_and_parked_at_once(
+        _browser, flow_server, tmp_path, flow_name):
+    # SP7 review M8: every flow that has no pause of its own, run with pauses
+    # on and a person who answers each one with Park it, ends as it does with
+    # pauses off, and holds every invariant
+    f = h.flow(flow_name)
+    (r,) = h.run_matrix([f], h.judges((), fake=True), browser=_browser, server=flow_server,
+                        workdir=tmp_path, pause=h.PauseSpec("park"))
+    assert not r.breaks, (r.status, r.reason, r.breaks)
+    assert r.ok is not bool(f.known), (f.known, r.status, r.reason)
+
+
 def test_the_success_floors_over_the_whole_registry():
     if set(_RESULTS) != {f.name for f in h.FLOWS}:
         pytest.skip("the per-flow matrix tests did not all run")
@@ -706,6 +719,14 @@ def test_enter_and_escape_that_send_nothing_break_nothing():
     ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the run stopped after the link step "
                     "(the browser window was closed); the run was not watching requests at "
                     "this step", True),
+    # SP7 review I1: the page moved on while the run waited for the person
+    ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the page moved on during the pause (it "
+                    "shows 'thank you for applying'); the run had reached: the Submit "
+                    "application button stays disabled after the fill", True),
+    ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the run stopped after the pause (the "
+                    "browser window was closed); the run had reached: x", True),
+    ("needs_human", f"no submit button (the page says '{apply_run.CHECK_SENT_REASON}: the page "
+                    "moved on during the pause (')", False),
     # an error of the run's own is no dead end, and the shape quoted is none
     ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the run stopped after the final-worded "
                     "step (TimeoutError at verify); the run was not watching requests at this "

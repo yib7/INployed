@@ -1694,6 +1694,71 @@ def test_the_tabs_own_save_reads_as_no_change_on_disk(qtbot, tmp_path, monkeypat
     assert ed.check_disk() == "" and not ed.has_unsaved_edits()
 
 
+def test_a_save_over_an_answer_a_paused_run_saved_keeps_both(qtbot, tmp_path, monkeypatch):
+    # SP7 review I5: the tab's rows predate the run's save; its own save
+    # merges the answer added on disk in, never drops it
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    ed = _editor(qtbot, store)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", lambda *a, **k: None)
+    _row(ed, "work_authorized")["answer_widget"].setCurrentText("No")
+    ed._append_row(_custom("favourite_colour", "Favourite colour", answer="Teal",
+                           confirmed=True))
+    _run_saves(store)                               # before the tab's timer looks
+    assert ed.save()
+    saved = {e["question"]: e["answer"] for e in apply_answers.load(store)}
+    assert saved["Preferred team"] == "Platform"
+    assert saved["Favourite colour"] == "Teal"
+    assert saved[apply_answers.BUILTINS["work_authorized"].question] == "No"
+    assert ed.disk_banner.isHidden()
+
+
+def test_a_save_after_the_banner_still_merges_the_runs_answer(qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    ed = _editor(qtbot, store)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", lambda *a, **k: None)
+    _row(ed, "work_authorized")["answer_widget"].setCurrentText("No")
+    _run_saves(store)
+    assert ed.check_disk() == "banner"
+    assert ed.save()
+    assert "Preferred team" in {e["question"] for e in apply_answers.load(store)}
+
+
+def test_a_save_that_would_clash_with_the_disk_is_refused_with_the_banner(
+        qtbot, tmp_path, monkeypatch):
+    # the run saved a question the tab also added unsaved: no silent pick
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    ed = _editor(qtbot, store)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", lambda *a, **k: None)
+    ed._append_row(_custom("preferred_team", "Preferred team", answer="Data", confirmed=True))
+    _run_saves(store)
+    assert ed.save() is False
+    assert not ed.disk_banner.isHidden()
+    assert ed.status.text().startswith("Not saved: the answers file changed on disk")
+    saved = {e["question"]: e["answer"] for e in apply_answers.load(store)}
+    assert saved["Preferred team"] == "Platform"
+
+
+def test_a_save_over_an_entry_changed_on_disk_is_refused_with_the_banner(
+        qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    ed = _editor(qtbot, store)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", lambda *a, **k: None)
+    _row(ed, "work_authorized")["answer_widget"].setCurrentText("No")
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", note="edited elsewhere",
+                            confirmed=True)])
+    import os
+    st = store.stat()
+    os.utime(store, ns=(st.st_mtime_ns + 1_000_000, st.st_mtime_ns + 1_000_000))
+    assert ed.save() is False
+    assert not ed.disk_banner.isHidden()
+    (entry,) = [e for e in apply_answers.load(store) if e["id"] == "work_authorized"]
+    assert entry["note"] == "edited elsewhere" and entry["answer"] == "Yes"
+
+
 def test_the_disk_check_rides_a_five_second_timer(qtbot, tmp_path):
     ed = _editor(qtbot, tmp_path / "apply_answers.json")
     assert at.DISK_POLL_MS == 5000

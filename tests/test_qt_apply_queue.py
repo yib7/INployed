@@ -1982,6 +1982,48 @@ def test_answer_now_offers_no_requeue_when_the_answer_was_not_saved(qtbot, tmp_p
     assert apply_queue.load(qfile)["jobs"][0]["status"] == "needs_human"
 
 
+_CHECK_SENT = "check whether the application went through"
+
+
+@pytest.mark.parametrize("status, notes, tab_note, offered", [
+    ("needs_human", "required field without an answer: Preferred team", "", True),
+    ("failed", "TimeoutError at fill", "", True),
+    # SP7 review I4: a job that may have been sent, or was, is never re-queued here
+    ("needs_human", f"{_CHECK_SENT}: the page moved on during the pause (it shows 'thank "
+                    "you for applying')", f"{_CHECK_SENT}, then Mark applied or Re-queue", False),
+    ("needs_human", "the submit click found no confirmation",
+     f"{_CHECK_SENT}, then Mark applied or Re-queue", False),
+    ("submitted", "confirmation page", "", False),
+    ("ready_to_submit", "auto_apply_submit is off", "review and submit", False),
+])
+def test_answer_now_offers_requeue_only_for_a_job_nothing_was_sent_for(
+        qtbot, tmp_path, monkeypatch, status, notes, tab_note, offered):
+    qfile = _qfile(tmp_path)
+    apply_queue.enqueue(apply_queue.new_entry("1", company="Acme", title="Analyst",
+                                              apply_url="https://x/1"), path=qfile)
+    apply_queue.add_missing("1", "Preferred team", path=qfile)
+    apply_queue.finish("1", status, notes=notes, tab_note=tab_note, path=qfile)
+    asked = []
+    p = _dpanel(qtbot, qfile, on_answer_now=lambda prefill: True)
+    monkeypatch.setattr(p, "_confirm_requeue", lambda e: asked.append(e["company"]) or True)
+    p.table.selectRow(0)
+    p._answer_with({"question": "Preferred team"})
+    assert asked == (["Acme"] if offered else []), (status, notes)
+    assert apply_queue.load(qfile)["jobs"][0]["status"] == ("queued" if offered else status)
+
+
+def test_possibly_sent_reads_the_runs_check_whether_words():
+    import apply_run
+    assert apply_queue.CHECK_SENT_WORDS == apply_run.CHECK_SENT_REASON
+    assert apply_run.CHECK_SENT_NOTE.startswith(apply_queue.CHECK_SENT_WORDS)
+    assert apply_queue.possibly_sent({"status": "needs_human",
+                                      "notes": f"{_CHECK_SENT}: the run stopped"})
+    assert apply_queue.possibly_sent({"status": "needs_human",
+                                      "tab_note": apply_run.CHECK_SENT_NOTE})
+    assert apply_queue.possibly_sent({"status": "submitted"})
+    assert not apply_queue.possibly_sent({"status": "needs_human", "notes": "no submit button"})
+
+
 def test_answer_now_with_several_questions_offers_each(qtbot, tmp_path):
     qfile = _qfile(tmp_path)
     _parked(qfile, ("Preferred team", {}), ("Number of talks", {"type": "number"}))

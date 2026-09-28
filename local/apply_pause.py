@@ -71,6 +71,7 @@ SECONDS_PER_MINUTE = 60         # the harness shortens a minute for its timeout 
 POLL_S = 0.5                    # how often the wait looks for the answer file
 MAX_PAUSES = 5                  # pauses one job may make
 MINUTES_MAX = 60
+STALE_MARGIN_S = 120            # past a request's wait, its run is gone (`pending_requests`)
 FOLDER = "apply_pause"
 MODES = ("fill", "browser", "park")
 KEPT = "kept"                   # a plan action: the field holds the person's own value
@@ -84,6 +85,9 @@ _SENSITIVE_RE = re.compile(r"^asks for .*which auto-apply never fills")
 # widgets a request names for a question
 W_CHOICE, W_YES_NO, W_NUMBER, W_TEXT, W_BROWSER = "choice", "yes_no", "number", "text", "browser"
 _NUMBER_RE = re.compile(r"^-?\d+(\.\d+)?$")
+
+# Windows process query (`pid_alive`)
+_QUERY_LIMITED, _ACCESS_DENIED, _STILL_ACTIVE = 0x1000, 5, 259
 
 
 class Replan(Exception):
@@ -116,10 +120,12 @@ def answer_path(job_id: Any) -> Path:
 
 def write_request(job: Mapping[str, Any], page_url: str, reason: str,
                   questions: Iterable[Mapping[str, Any]], *, headless: bool = False,
-                  pause_id: str = "") -> Path:
+                  pause_id: str = "", minutes: float = MINUTES_MAX) -> Path:
     """The request file for `job` (a queue entry, or a dict with
     `job_posting_id`, `company` and `title`). A stale answer from an earlier
-    pause is removed first."""
+    pause is removed first. The request names the run's process and the
+    minutes it waits, so a request whose run is gone is told apart
+    (`pending_requests`)."""
     job_id = str(job.get("job_posting_id") or job.get("job") or "")
     folder = pause_dir()
     folder.mkdir(parents=True, exist_ok=True)
@@ -137,6 +143,8 @@ def write_request(job: Mapping[str, Any], page_url: str, reason: str,
         "headless": bool(headless),
         "pause_id": str(pause_id or ""),
         "asked_at": datetime.now().isoformat(timespec="seconds"),
+        "pid": os.getpid(),
+        "minutes": minutes,
         "questions": [dict(q) for q in questions],
     })
     return path
@@ -150,9 +158,61 @@ def read_request(path: Path) -> dict | None:
     return data
 
 
+def pid_alive(pid: Any) -> bool:
+    """Is process `pid` still running? Never signals it: on Windows
+    `os.kill` ends the process, so the process is opened for a query and
+    its exit code read."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+        kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+        handle = kernel.OpenProcess(_QUERY_LIMITED, False, pid)
+        if not handle:
+            return ctypes.get_last_error() == _ACCESS_DENIED    # it runs as another user
+        try:
+            code = wintypes.DWORD()
+            if not kernel.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return True
+            return code.value == _STILL_ACTIVE
+        finally:
+            kernel.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _stale(data: Mapping[str, Any]) -> bool:
+    """A request whose run is gone: its process no longer runs, or it is
+    older than the minutes it waits plus `STALE_MARGIN_S`."""
+    pid = data.get("pid")
+    if pid not in (None, "") and not pid_alive(pid):
+        return True
+    try:
+        asked = datetime.fromisoformat(str(data.get("asked_at") or ""))
+        minutes = float(data.get("minutes") or MINUTES_MAX)
+    except (TypeError, ValueError):
+        return False
+    return (datetime.now() - asked).total_seconds() > minutes * 60 + STALE_MARGIN_S
+
+
 def pending_requests() -> list[dict]:
     """Every request in `pause_dir()` still waiting for its answer, the
-    oldest first."""
+    oldest first. A request whose run is gone (`_stale`: a drain killed
+    during its wait) is removed."""
     folder = pause_dir()
     if not folder.is_dir():
         return []
@@ -161,8 +221,12 @@ def pending_requests() -> list[dict]:
         if path.name.endswith(".answer.json"):
             continue
         data = read_request(path)
-        if data is not None and not answer_path(data.get("job", "")).exists():
-            out.append(data)
+        if data is None or answer_path(data.get("job", "")).exists():
+            continue
+        if _stale(data):
+            clear(data.get("job", ""))
+            continue
+        out.append(data)
     return sorted(out, key=lambda d: str(d.get("asked_at") or ""))
 
 
@@ -341,6 +405,20 @@ def apply_value(pf, f, value: str) -> bool:
     return True
 
 
+def valid_value(question: Mapping[str, Any], value: str) -> bool:
+    """Does `value` fit the request's `question` as its widget takes it: a
+    choice one of the live options, a yes / no a Yes or a No, a number a
+    number? Text fits as typed."""
+    widget = question.get("widget")
+    if widget == W_CHOICE:
+        return exact_option(value, question.get("options") or []) is not None
+    if widget == W_YES_NO:
+        return apply_answers.yes_no(value) in ("Yes", "No")
+    if widget == W_NUMBER:
+        return bool(_NUMBER_RE.match(str(value or "").strip()))
+    return True
+
+
 def holds_value(f, got: str) -> bool:
     """Does the read-back `got` of field `f` hold an answer (the person's,
     typed in the browser)? A list must show one of its options, a tick box
@@ -486,6 +564,21 @@ def _path_of(url: str) -> str:
     return f"{parts.hostname or ''}{parts.path}"
 
 
+def field_keys(fields: Iterable[Any], path: str) -> dict[int, tuple]:
+    """n -> the field's key across a replan: the page's path, its id (else
+    name), its label, and its place among the page's fields with the same
+    id and label. Two fields labelled alike keep their own answers (review
+    I2): by id, else by their order on the page."""
+    seen: dict[tuple[str, str], int] = {}
+    out: dict[int, tuple] = {}
+    for f in fields:
+        base = (str(getattr(f, "id_or_name", "") or ""), _norm(f.label))
+        place = seen.get(base, 0)
+        seen[base] = place + 1
+        out[f.n] = (path, *base, place)
+    return out
+
+
 class Pauser:
     """The pauses of one job run (`apply_run._JobRun`): `jr` gives the page,
     the settings, the clock and the run's own steps; `parked` is the run's
@@ -496,8 +589,11 @@ class Pauser:
         self.jr = jr
         self.parked = parked
         self.count = 0
-        self.pending: dict[tuple[str, str], str] = {}   # (page path, label) -> value
-        self.asked: set[tuple[str, str]] = set()        # fields to read back on a replan
+        # kept for the next plan only (`apply_pending` clears them), each
+        # field by `field_keys`
+        self.pending: dict[tuple, str] = {}     # key -> the card's value
+        self.asked: set[tuple] = set()          # asked fields, read back on the replan
+        self.typed: dict[tuple, str] = {}       # key -> what a box the run filled read before
         self.saved: list[str] = []                      # questions saved this job
         self.refused: list[tuple[str, str]] = []        # (question, why) not saved
 
@@ -538,35 +634,64 @@ class Pauser:
         """Before a page's fill: the person's answers kept for this page (a
         page that changed during a pause, a disabled way on) go in their
         fields, and the fields asked on it that the person filled in the
-        browser stay as they are (`KEPT`)."""
-        if not self.pending and not self.asked:
+        browser stay as they are (`KEPT`), and so does a box the run filled
+        that the person changed in the browser (review I3). Each field is
+        found by its own key (`field_keys`), and what was kept applies to
+        this plan only (review M7)."""
+        if not self.pending and not self.asked and not self.typed:
             return
-        path = _path_of(self._url())
+        pending, asked, typed = self.pending, self.asked, self.typed
+        self.pending, self.asked, self.typed = {}, set(), {}
+        keys = field_keys(digest.fields, _path_of(self._url()))
         fields = {f.n: f for f in digest.fields}
         changed = False
         answered: set[str] = set()
         import apply_fill
         for pf in plan.fields:
             f = fields.get(pf.n)
-            if f is None or pf.action == apply_judge.PASSWORD_ACTION:
+            key = keys.get(pf.n)
+            if f is None or key is None or pf.action == apply_judge.PASSWORD_ACTION:
                 continue
-            key = (path, _norm(pf.label))
-            value = self.pending.get(key)
+            value = pending.get(key)
             if value is not None and not is_sensitive(f) and apply_value(pf, f, value):
-                self.pending.pop(key, None)
                 answered.add(pf.label)
                 changed = True
                 self.jr._decide("pause_answer", f"the answer you gave for {pf.label!r} goes in "
                                                 "its field on the page read again",
                                 fields=[pf.label])
-            elif key in self.asked and pf.action not in ("fill", "select", "upload") \
+            elif key in asked and pf.action not in ("fill", "select", "upload") \
                     and holds_value(f, apply_fill.read_back(self.jr.page, pf)):
                 pf.action, pf.fact_key = KEPT, USER_SOURCE
                 answered.add(pf.label)
                 changed = True
+            elif key in typed and pf.action in ("fill", "select"):
+                now = apply_fill.read_back(self.jr.page, pf)
+                if _norm(now) != typed[key] and holds_value(f, now):
+                    pf.action, pf.fact_key = KEPT, USER_SOURCE
+                    answered.add(pf.label)
+                    changed = True
+                    self.jr._decide("pause_kept", f"you changed {pf.label!r} in the browser "
+                                                  "during the pause: your value stays",
+                                    fields=[pf.label])
         if changed:
             plan.missing = [(q, c) for q, c in plan.missing if q not in answered]
             recompute_park(plan, fields)
+
+    def _typed_now(self, digest, plan) -> dict[tuple, str]:
+        """Key -> what each labelled box the run filled on this page reads
+        now, before a pause after the fill: a box that reads otherwise on the
+        replan is the person's (review I3)."""
+        import apply_fill
+        keys = field_keys(digest.fields, _path_of(self._url()))
+        out: dict[tuple, str] = {}
+        for pf in plan.fields:
+            if pf.action not in ("fill", "select") or not pf.label or pf.n not in keys:
+                continue
+            try:
+                out[keys[pf.n]] = _norm(apply_fill.read_back(self.jr.page, pf))
+            except Exception:       # noqa: BLE001  (a control gone, a page double)
+                continue
+        return out
 
     def at_plan(self, digest, plan) -> None:
         """PR-1: a page whose plan parks on a required field with no answer,
@@ -597,10 +722,11 @@ class Pauser:
         if not asked:
             return []
         first = required[0]
+        typed = self._typed_now(digest, plan)
         answer, before = self._wait(f"{_REQUIRED_HEAD}: {first.label} ({tied[first.n]})", asked)
         if answer is None:
             return []
-        picked = self._resume_same_page(digest, plan, asked, answer, before)
+        picked = self._resume_same_page(digest, plan, asked, answer, before, typed)
         import apply_fill
         errors: list[dict] = []
         filled = apply_fill.apply(self.jr.page, apply_judge.FillPlan(fields=picked),
@@ -616,17 +742,20 @@ class Pauser:
     def at_disabled(self, digest, plan, reason: str) -> None:
         """PR-1: a way on still disabled after the fill pauses: the person
         fixes the page in the browser (or answers its blank fields in the
-        card), then the page is read and planned again (`Replan`). Returns
-        when no answer came (the caller parks as before)."""
+        card), then the page is read and planned again (`Replan`). Every
+        labelled box the run filled is read before the wait, so a value the
+        person changes stays theirs on the replan. Returns when no answer
+        came (the caller parks as before)."""
         if not self.can_pause():
             return
         fields = {f.n: f for f in digest.fields}
         asked = [fields[pf.n] for pf in plan.fields
                  if pf.action == "skip" and pf.label and pf.n in fields]
+        typed = self._typed_now(digest, plan)
         answer, _before = self._wait(f"{reason}; fix it in the browser, then continue", asked)
         if answer is None:
             return
-        self._keep_for_replan(asked, answer)
+        self._keep_for_replan(digest, asked, answer, typed)
         raise Replan("the way on was disabled")
 
     # -- the wait and the resume
@@ -634,15 +763,29 @@ class Pauser:
     def _wait(self, reason: str, asked: list) -> tuple[dict | None, tuple | None]:
         """Write the request, give the notice, wait. Returns (the answer,
         the page's print at the start), the answer None on a timeout or
-        "Park it". A window closed during the wait parks with `reason`."""
+        "Park it". A window closed during the wait parks with `reason`.
+
+        A headless run whose questions only the browser takes parks at once
+        (review M4). After the wait the run reads the page against its print
+        and text from before (`_pause_moved`): a page that moved on (the
+        person may have sent it) raises the run's park, whatever the answer
+        (review I1). Each value is checked against its question
+        (`valid_value`) before anything is saved or filled (review M5), and
+        every resume reads the answer store again (review M2)."""
         jr = self.jr
-        self.count += 1
         minutes = self.minutes()
-        pid = uuid.uuid4().hex[:12]
         questions = [question_for(f) for f in asked]
+        if self._headless() and all(q["widget"] == W_BROWSER for q in questions):
+            jr._decide("pause_skipped", "the browser is headless and nothing here can be "
+                                        "answered in the dashboard: the job parks as before",
+                       fields=[q["label"] for q in questions])
+            return None, None
+        self.count += 1
+        pid = uuid.uuid4().hex[:12]
         before = self._print()
+        text = self._text()
         write_request(jr.entry, self._url(), reason, questions, headless=self._headless(),
-                      pause_id=pid)
+                      pause_id=pid, minutes=minutes)
         labels = [q["label"] for q in questions]
         jr._decide("pause", f"waiting for you (up to {minutes} min): {reason}", fields=labels)
         jr._trace("pause", reason=reason, fields=labels, minutes=minutes)
@@ -669,25 +812,55 @@ class Pauser:
         clear(jr.job_id)
         if not _page_closed(jr.page):
             outline(jr.page, asked, False)
+            moved = getattr(jr, "_pause_moved", None)
+            park = moved(before, text, reason) if callable(moved) else None
+            if park is not None:
+                raise park
         if answer is None:
             jr._decide("pause_timeout", f"no answer in {minutes} min: the job parks as before")
             return None, before
         if answer["mode"] == "park":
             jr._decide("pause_park", "you chose Park it: the job parks as before")
             return None, before
+        answer = self._checked(questions, answer)
         jr._decide("pause_resume", f"you answered ({answer['mode']}): the run goes on",
                    answered=sorted(q["label"] for q in questions
                                    if q["key"] in answer["values"]))
         self._save(questions, answer)
+        reload = getattr(jr, "_pause_reload", None)
+        if callable(reload):
+            reload()
         return answer, before
 
+    def _text(self) -> str:
+        read = getattr(self.jr, "_page_text", None)
+        try:
+            return str(read() or "") if callable(read) else ""
+        except Exception:       # noqa: BLE001  (a page mid-navigation)
+            return ""
+
+    def _checked(self, questions: list[dict], answer: dict) -> dict:
+        """The answer less each value its question does not take
+        (`valid_value`): a choice that names no live option is never saved
+        or filled (review M5)."""
+        by_key = {q["key"]: q for q in questions}
+        values = {}
+        for key, value in answer["values"].items():
+            q = by_key.get(key)
+            if q is not None and not valid_value(q, value):
+                self.jr._decide("pause_value_refused", f"the answer for {q['label']!r} does not "
+                                                       "fit the field: it is left out",
+                                fields=[q["label"]])
+                continue
+            values[key] = value
+        return {**answer, "values": values}
+
     def _save(self, questions: list[dict], answer: dict) -> None:
-        """PR-6: each value flagged "save" kept as a custom answer, then the
-        run reads the store again and rebuilds its facts."""
+        """PR-6: each value flagged "save" kept as a custom answer (the run
+        reads the store again after every resume, `_wait`)."""
         if answer["mode"] != "fill":
             return
         company = str(self.jr.entry.get("company") or "")
-        wrote = False
         for q in questions:
             value = answer["values"].get(q["key"])
             if not value or not answer["save"].get(q["key"]) or q["sensitive"] \
@@ -699,35 +872,38 @@ class Pauser:
                 self.jr._decide("pause_save_refused", f"{q['label']!r} was not saved: {why}")
             else:
                 self.saved.append(q["label"])
-                wrote = True
                 self.jr._decide("pause_saved", f"{q['label']!r} saved for future runs")
-        if wrote:
-            reload = getattr(self.jr, "_pause_reload", None)
-            if callable(reload):
-                reload()
 
-    def _keep_for_replan(self, asked: list, answer: dict) -> None:
-        path = _path_of(self._url())
+    def _keep_for_replan(self, digest, asked: list, answer: dict,
+                         typed: Mapping[tuple, str] | None = None) -> None:
+        """What the next plan takes (`apply_pending`): the card's values and
+        the asked fields by their own keys (`field_keys`), and what each box
+        the run filled read before the wait."""
+        keys = field_keys(digest.fields, _path_of(self._url()))
         for f in asked:
-            key = (path, _norm(f.label))
+            key = keys.get(f.n)
+            if key is None:
+                continue
             self.asked.add(key)
             value = answer["values"].get(str(f.n))
             if answer["mode"] == "fill" and value and widget_for(f) != W_BROWSER:
                 self.pending[key] = value
+        self.typed.update(typed or {})
 
     def _resume_same_page(self, digest, plan, asked: list, answer: dict,
-                          before: tuple | None) -> list:
+                          before: tuple | None, typed: Mapping[tuple, str] | None = None
+                          ) -> list:
         """A "fill" answer on the page as it was: each value into its plan
         field; a field the card left blank that the person filled in the
         browser is `KEPT`. A "browser" answer, or a page that changed during
         the wait, raises `Replan` with the answers kept for the new plan.
         Returns the plan fields that took a value."""
         if answer["mode"] == "browser":
-            self._keep_for_replan(asked, answer)
+            self._keep_for_replan(digest, asked, answer, typed)
             raise Replan("filled in the browser")
         after = self._print()
         if before is None or after != before:
-            self._keep_for_replan(asked, answer)
+            self._keep_for_replan(digest, asked, answer, typed)
             self.jr._decide("pause_page_changed", "the page changed during the wait: it is "
                                                   "read and planned again before any fill")
             raise Replan("the page changed")
@@ -765,10 +941,10 @@ def kept_locators(plan) -> list:
 
 
 __all__ = ["FOLDER", "KEPT", "MAX_PAUSES", "MODES", "NEVER_WAIT", "POLL_S", "PageClosed",
-           "Pauser", "Replan", "SECONDS_PER_MINUTE", "USER_SOURCE", "answer_path", "answerable",
-           "apply_value", "builtin_answering", "clear", "exact_option", "holds_value",
-           "kept_locators", "outline", "pause_dir", "pending_requests", "question_for",
-           "read_answer", "read_request", "recompute_park", "request_path", "save_answer",
-           "save_refusal", "user_drafts", "wait_for_answer", "widget_for", "write_answer",
-           "write_request"]
+           "Pauser", "Replan", "SECONDS_PER_MINUTE", "STALE_MARGIN_S", "USER_SOURCE",
+           "answer_path", "answerable", "apply_value", "builtin_answering", "clear",
+           "exact_option", "field_keys", "holds_value", "kept_locators", "outline", "pause_dir",
+           "pending_requests", "pid_alive", "question_for", "read_answer", "read_request",
+           "recompute_park", "request_path", "save_answer", "save_refusal", "user_drafts",
+           "valid_value", "wait_for_answer", "widget_for", "write_answer", "write_request"]
 

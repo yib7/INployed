@@ -258,6 +258,9 @@ def test_load_jobs_reads_the_text_score_jobs_reads(tmp_path):
     ({"extracted_date": "2026-09-27"}, (3, "formatted")),    # before: stays in
     ({"extracted_date": "not a date"}, (3, "formatted")),     # unparseable: stays in
     ({"extracted_date": ""}, (3, "formatted")),               # missing: stays in
+    # M1: a timezone-offset date must not raise comparing tz-aware to naive.
+    ({"extracted_date": "2026-09-29T08:00:00-04:00"}, None),               # after (UTC): excluded
+    ({"extracted_date": "2026-09-26T08:00:00-04:00"}, (3, "formatted")),   # before (UTC): stays in
 ])
 def test_eligible_rows(extra, got):
     assert calib.eligible(_row(1, 3, **extra)) == got

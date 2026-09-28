@@ -134,14 +134,16 @@ def _row_text(row: dict) -> tuple[str, str]:
 
 def _jev_scored_by_date(row: dict) -> bool:
     """Whether `row`'s `extracted_date` falls on or after JEV_START_DATE. A
-    missing or unparseable date reads as False (stays eligible)."""
+    missing or unparseable date reads as False (stays eligible). Parsed as
+    UTC so a date carrying a timezone offset compares against the naive
+    start date without raising."""
     raw = row.get("extracted_date", "")
     if not str(raw or "").strip():
         return False
-    parsed = pd.to_datetime(raw, format="mixed", errors="coerce")
+    parsed = pd.to_datetime(raw, format="mixed", errors="coerce", utc=True)
     if pd.isna(parsed):
         return False
-    return parsed >= pd.Timestamp(JEV_START_DATE)
+    return parsed >= pd.Timestamp(JEV_START_DATE, tz="UTC")
 
 
 def eligible(row: dict) -> tuple[int, str] | None:

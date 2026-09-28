@@ -433,7 +433,19 @@ def test_an_unrecorded_skip_blocks_the_prune(pytester, monkeypatch, tmp_path):
     pytester.syspathinsert(REPO / "local")
     pytester.makepyfile(test_inner=_INNER_UNRECORDED_PRUNE.format(STATE=STATE,
                                                                   QUESTIONS=QUESTIONS))
+    # SP8 fix round 3: test_inner.py's own `pytest_plugins = ["conftest_jev"]`
+    # loads the plugin too late to register the `jev_unrecorded` marker
+    # before this same module's `@pytest.mark.jev_unrecorded` line is
+    # evaluated at import time (a module's own `pytest_plugins` list is
+    # only considered once the module has fully imported, after its
+    # decorators already ran) -- an order-dependent `PytestUnknownMarkWarning`
+    # this test's own `-W error::...` then promoted to a collection error,
+    # only masked when an earlier test in the same process happened to
+    # register the same mark first. `-p conftest_jev` forces the plugin in
+    # before collection starts, the same way
+    # test_jev_harness.py's two `_INNER_UNRECORDED` tests already do.
     result = pytester.runpytest_inprocess("-q", "-rs", "-p", "no:cacheprovider",
+                                          "-p", "conftest_jev",
                                           "-W", "error::pytest.PytestUnknownMarkWarning")
     result.assert_outcomes(skipped=1)
     result.stdout.fnmatch_lines(["*jev prune refused:*miss*"])

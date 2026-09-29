@@ -9,11 +9,15 @@ and recommendation. Task 1 fixes the loader; Task 2 heals the rows already writt
 
 Every test points the master and the run folders at tmp_path.
 """
+import asyncio
+import gzip
 import sys
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "local"))
@@ -165,3 +169,547 @@ def test_a_reused_repost_keeps_all_six_values_through_run_scoring(tmp_path, monk
     assert row["strengths"] == "python | sql"
     assert pd.isna(row["gaps"]) or row["gaps"] == ""
     assert row["recommendation"] == "apply"
+
+
+# --- Task 2: heal the reused rows already written blank --------------------------
+
+NAN = float("nan")
+SECRET = "distinctive reason text 9f3a"   # must never reach the one-shot's output
+
+
+def _src(job_id="OLD-1", **overrides):
+    row = {"job_posting_id": job_id, "reason": "good fit", "deep_score": "8.0",
+           "strengths": "python | sql", "gaps": "no spark", "recommendation": "apply"}
+    row.update(overrides)
+    return row
+
+
+def _reused(job_id="NEW-1", origin="OLD-1", **overrides):
+    row = {"job_posting_id": job_id, "score_reused": True, "score_reused_from": origin,
+           "reason": NAN, "deep_score": NAN, "strengths": NAN, "gaps": NAN,
+           "recommendation": NAN}
+    row.update(overrides)
+    return row
+
+
+def _apply(frame, healed):
+    """What a caller does with the healed rows: fill the frame's blank cells."""
+    out = frame.copy().astype(object).set_index("job_posting_id")
+    out.update(healed.astype(object).set_index("job_posting_id"))
+    return out.reset_index()
+
+
+def test_heal_reused_rows_fills_every_blank_spelling():
+    frame = pd.DataFrame([_reused(reason=None, deep_score="", strengths="nan", gaps="  ")])
+    healed = sj.heal_reused_rows(frame, pd.DataFrame([_src()]))
+
+    assert list(healed.columns) == ["job_posting_id", *FIVE]
+    assert len(healed) == 1
+    row = healed.iloc[0]
+    assert row["job_posting_id"] == "NEW-1"
+    assert row["reason"] == "good fit"
+    assert row["deep_score"] == "8.0"
+    assert row["strengths"] == "python | sql"
+    assert row["gaps"] == "no spark"
+    assert row["recommendation"] == "apply"
+
+
+@pytest.mark.parametrize("flag", ["True", "true", "1", True])
+def test_heal_reused_rows_reads_every_truthy_spelling_of_score_reused(flag):
+    frame = pd.DataFrame([_reused(score_reused=flag)])
+    assert len(sj.heal_reused_rows(frame, pd.DataFrame([_src()]))) == 1
+
+
+@pytest.mark.parametrize("flag", ["False", "false", "0", False, NAN, ""])
+def test_heal_reused_rows_leaves_a_row_that_is_not_reused_alone(flag):
+    frame = pd.DataFrame([_reused(score_reused=flag)])
+    assert sj.heal_reused_rows(frame, pd.DataFrame([_src()])).empty
+
+
+def test_heal_reused_rows_never_overwrites_a_non_blank_cell():
+    frame = pd.DataFrame([_reused(reason="kept reason", gaps="kept gaps")])
+    healed = sj.heal_reused_rows(frame, pd.DataFrame([_src()]))
+
+    row = healed.iloc[0]
+    assert pd.isna(row["reason"]) and pd.isna(row["gaps"])      # left for update() to skip
+    assert row["deep_score"] == "8.0" and row["strengths"] == "python | sql"
+    assert row["recommendation"] == "apply"
+
+
+def test_heal_reused_rows_takes_nothing_from_a_blank_source_cell():
+    frame = pd.DataFrame([_reused()])
+    healed = sj.heal_reused_rows(frame, pd.DataFrame([_src(gaps="", strengths=None)]))
+
+    row = healed.iloc[0]
+    assert pd.isna(row["gaps"]) and pd.isna(row["strengths"])
+    assert row["reason"] == "good fit"
+    all_blank = pd.DataFrame([_src(reason="", deep_score=NAN, strengths="nan", gaps=None,
+                                   recommendation=" ")])
+    assert sj.heal_reused_rows(frame, all_blank).empty
+
+
+def test_heal_reused_rows_skips_an_unknown_source_id():
+    frame = pd.DataFrame([_reused(origin="GONE-9"), _reused("NEW-2", origin=NAN)])
+    assert sj.heal_reused_rows(frame, pd.DataFrame([_src()])).empty
+
+
+def test_heal_reused_rows_compares_ids_as_stripped_strings():
+    frame = pd.DataFrame([_reused(origin=" OLD-1 ")])
+    healed = sj.heal_reused_rows(frame, pd.DataFrame([_src(" OLD-1")]))
+    assert len(healed) == 1
+
+
+def test_heal_reused_rows_returns_only_the_changed_rows_and_is_idempotent():
+    frame = pd.DataFrame([
+        _reused("NEW-1"),
+        _reused("NEW-2", reason="own", deep_score="7.0", strengths="own", gaps="own",
+                recommendation="own"),          # already complete
+        {"job_posting_id": "PLAIN-1", "score_reused": False, "score_reused_from": NAN,
+         "reason": NAN, "deep_score": NAN, "strengths": NAN, "gaps": NAN,
+         "recommendation": NAN},
+    ])
+    sources = pd.DataFrame([_src()])
+
+    healed = sj.heal_reused_rows(frame, sources)
+    assert healed["job_posting_id"].tolist() == ["NEW-1"]
+
+    again = sj.heal_reused_rows(_apply(frame, healed), sources)
+    assert again.empty
+    assert list(again.columns) == ["job_posting_id", *FIVE]
+
+
+def test_heal_reused_rows_tolerates_frames_that_lack_the_reuse_columns():
+    sources = pd.DataFrame([_src()])
+    assert sj.heal_reused_rows(pd.DataFrame(), sources).empty
+    assert sj.heal_reused_rows(pd.DataFrame([{"job_posting_id": "N"}]), sources).empty
+    assert sj.heal_reused_rows(pd.DataFrame([_reused()]), pd.DataFrame()).empty
+
+
+# The master fixture below is written through pandas (the writer update_master_scores
+# uses), so its line endings match the rewrite and a text diff is a byte diff.
+
+MASTER_COLS = ["job_posting_id", "job_title", "external_ref", "score", "reason",
+               "deep_score", "strengths", "gaps", "recommendation", "score_reused",
+               "score_reused_from"]
+
+
+def _m(job_id, **kw):
+    row = dict.fromkeys(MASTER_COLS, "")
+    row.update(job_posting_id=job_id, job_title="Data Engineer", external_ref="007",
+               score="5.0")
+    row.update(kw)
+    return row
+
+
+def _master_rows():
+    return [
+        _m("SRC-1", reason=SECRET + ", with a comma", deep_score="8.0",
+           strengths="python | sql", gaps="no spark", recommendation="apply",
+           score_reused="False"),
+        _m("NEW-1", score_reused="True", score_reused_from="SRC-1"),      # all five blank
+        _m("NEW-2", reason="kept text", score_reused="True",
+           score_reused_from="SRC-1"),                                     # partly filled
+        _m("PLAIN-1", score="", score_reused="False"),                     # no score, no reuse flag
+        _m("NEW-3", score_reused="True", score_reused_from="GONE-9"),      # unknown source
+        _m("SRC-2", reason="second", deep_score="6.5", strengths="sql", gaps="",
+           recommendation="skip", score_reused="False"),
+        _m("NEW-4", score_reused="true", score_reused_from="SRC-2"),       # source gaps blank
+    ]
+
+
+def _write_master_rows(tmp_path, monkeypatch, rows):
+    master = tmp_path / "linkedin_jobs_master.csv"
+    pd.DataFrame(rows, dtype=object).to_csv(master, index=False, encoding="utf-8")
+    monkeypatch.setattr(sj, "MASTER_CSV", master)
+    monkeypatch.setattr(sj, "OUTPUT_DIR", tmp_path)
+    return master
+
+
+def _read_all(path):
+    return pd.read_csv(path, dtype=str, keep_default_na=False).set_index("job_posting_id")
+
+
+def test_heal_master_reuse_fills_each_blank_reused_row_and_leaves_the_rest_byte_stable(
+        tmp_path, monkeypatch):
+    master = _write_master_rows(tmp_path, monkeypatch, _master_rows())
+    before = master.read_text(encoding="utf-8").splitlines()
+    before_frame = _read_all(master)
+
+    healed = sj.heal_master_reuse()
+
+    assert healed == 3                          # NEW-1, NEW-2 (four cells) and NEW-4
+    after = _read_all(master)
+    n1 = after.loc["NEW-1"]
+    assert n1["reason"] == SECRET + ", with a comma"
+    assert (n1["deep_score"], n1["strengths"], n1["gaps"], n1["recommendation"]) == (
+        "8.0", "python | sql", "no spark", "apply")
+    n2 = after.loc["NEW-2"]
+    assert n2["reason"] == "kept text"          # a non-blank cell is never overwritten
+    assert n2["deep_score"] == "8.0" and n2["gaps"] == "no spark"
+    n4 = after.loc["NEW-4"]
+    assert n4["reason"] == "second" and n4["deep_score"] == "6.5"
+    assert n4["gaps"] == ""                     # the source's gaps is blank too
+
+    # Every other row is untouched, line for line, and no column changed shape.
+    after_lines = master.read_text(encoding="utf-8").splitlines()
+    assert after_lines[0] == before[0]
+    assert len(after_lines) == len(before)
+    for job_id in ("SRC-1", "PLAIN-1", "NEW-3", "SRC-2"):
+        i = list(before_frame.index).index(job_id) + 1
+        assert after_lines[i] == before[i]
+    assert list(after.columns) == list(before_frame.columns)
+    assert after.loc["SRC-1", "external_ref"] == "007"
+    assert after.loc["SRC-1", "score"] == "5.0"
+
+
+def test_heal_master_reuse_is_idempotent(tmp_path, monkeypatch):
+    master = _write_master_rows(tmp_path, monkeypatch, _master_rows())
+    assert sj.heal_master_reuse() == 3
+    once = master.read_bytes()
+
+    assert sj.heal_master_reuse() == 0
+    assert master.read_bytes() == once
+
+
+def test_heal_master_reuse_dry_run_counts_and_writes_nothing(tmp_path, monkeypatch):
+    master = _write_master_rows(tmp_path, monkeypatch, _master_rows())
+    before = master.read_bytes()
+
+    assert sj.heal_master_reuse(dry_run=True) == 3
+    assert master.read_bytes() == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == [master.name]   # no temp file left
+
+
+def test_heal_master_reuse_is_zero_without_a_master_or_the_origin_column(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(sj, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(sj, "MASTER_CSV", tmp_path / "linkedin_jobs_master.csv")
+    assert sj.heal_master_reuse() == 0                                    # no master
+
+    rows = [{k: v for k, v in r.items() if k != "score_reused_from"} for r in _master_rows()]
+    master = _write_master_rows(tmp_path, monkeypatch, rows)
+    before = master.read_bytes()
+    assert sj.heal_master_reuse() == 0                                    # older schema
+    assert master.read_bytes() == before
+
+
+def _run_file_rows():
+    return [
+        {"job_posting_id": "NEW-1", "job_title": "Data Engineer", "score": "5.0",
+         "reason": "", "deep_score": "", "strengths": "", "gaps": "", "recommendation": "",
+         "score_reused": "True", "score_reused_from": "SRC-1", "is_seen": "no"},
+        {"job_posting_id": "FRESH-1", "job_title": "Data Analyst", "score": "3.0",
+         "reason": "scored fresh", "deep_score": "", "strengths": "", "gaps": "",
+         "recommendation": "", "score_reused": "False", "score_reused_from": "",
+         "is_seen": "yes"},
+    ]
+
+
+def _write_run_gz(path, rows):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows, dtype=object).to_csv(path, index=False, encoding="utf-8",
+                                            compression="gzip")
+
+
+def _read_run(path):
+    return pd.read_csv(path, dtype=object, keep_default_na=False).set_index("job_posting_id")
+
+
+def test_heal_run_files_heals_only_the_blank_reused_row_of_a_gz_file(tmp_path, monkeypatch):
+    _write_master_rows(tmp_path, monkeypatch, _master_rows())
+    run = tmp_path / "morning" / "linkedin_jobs_2026-09-25_morning_scored.csv.gz"
+    _write_run_gz(run, _run_file_rows())
+    before = _read_run(run)
+
+    assert sj.heal_run_files() == (1, 1)
+
+    after = _read_run(run)
+    n1 = after.loc["NEW-1"]
+    assert n1["reason"] == SECRET + ", with a comma"
+    assert (n1["deep_score"], n1["strengths"], n1["gaps"], n1["recommendation"]) == (
+        "8.0", "python | sql", "no spark", "apply")
+    assert n1["score"] == "5.0" and n1["is_seen"] == "no"
+    pd.testing.assert_series_equal(after.loc["FRESH-1"], before.loc["FRESH-1"])
+    assert list(after.columns) == list(before.columns)
+    with gzip.open(run, "rb") as fh:                       # still a gzip file
+        assert fh.read(4)
+    assert sorted(p.name for p in run.parent.iterdir()) == [run.name]   # no temp file left
+
+
+def test_heal_run_files_dry_run_reports_and_writes_nothing(tmp_path, monkeypatch):
+    _write_master_rows(tmp_path, monkeypatch, _master_rows())
+    run = tmp_path / "evening" / "linkedin_jobs_2026-09-25_evening_scored.csv.gz"
+    _write_run_gz(run, _run_file_rows())
+    before = run.read_bytes()
+
+    assert sj.heal_run_files(dry_run=True) == (1, 1)
+    assert run.read_bytes() == before
+
+
+def test_heal_run_files_is_idempotent_and_skips_files_with_nothing_to_heal(
+        tmp_path, monkeypatch):
+    _write_master_rows(tmp_path, monkeypatch, _master_rows())
+    healable = tmp_path / "morning" / "linkedin_jobs_a_scored.csv.gz"
+    _write_run_gz(healable, _run_file_rows())
+    clean = tmp_path / "night" / "linkedin_jobs_b_scored.csv.gz"
+    _write_run_gz(clean, _run_file_rows()[1:])
+    plain = tmp_path / "afternoon" / "linkedin_jobs_c_scored.csv"
+    plain.parent.mkdir()
+    pd.DataFrame(_run_file_rows(), dtype=object).to_csv(plain, index=False, encoding="utf-8")
+    clean_before = clean.read_bytes()
+
+    assert sj.heal_run_files() == (2, 2)                   # the gz file and the plain csv
+    assert clean.read_bytes() == clean_before
+    assert _read_run(plain).loc["NEW-1", "reason"].startswith(SECRET)
+    assert not plain.read_bytes().startswith(b"\x1f\x8b")  # a plain file stays plain
+
+    assert sj.heal_run_files() == (0, 0)
+
+
+def test_heal_run_files_ignores_temp_files_other_folders_and_input_csvs(
+        tmp_path, monkeypatch):
+    _write_master_rows(tmp_path, monkeypatch, _master_rows())
+    stray = tmp_path / "morning" / "linkedin_jobs_a_scored.csv.k3j9x1.tmp"
+    stray.parent.mkdir()
+    pd.DataFrame(_run_file_rows(), dtype=object).to_csv(stray, index=False)
+    raw_input = tmp_path / "morning" / "linkedin_jobs_a.csv"
+    pd.DataFrame(_run_file_rows(), dtype=object).to_csv(raw_input, index=False)
+    elsewhere = tmp_path / "somewhere_else" / "linkedin_jobs_z_scored.csv.gz"
+    _write_run_gz(elsewhere, _run_file_rows())
+    snapshot = {p: p.read_bytes() for p in (stray, raw_input, elsewhere)}
+
+    assert sj.heal_run_files() == (0, 0)
+    assert {p: p.read_bytes() for p in snapshot} == snapshot
+
+
+def test_heal_run_files_is_zero_without_a_master(tmp_path, monkeypatch):
+    monkeypatch.setattr(sj, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(sj, "MASTER_CSV", tmp_path / "linkedin_jobs_master.csv")
+    run = tmp_path / "morning" / "linkedin_jobs_a_scored.csv.gz"
+    _write_run_gz(run, _run_file_rows())
+    before = run.read_bytes()
+
+    assert sj.heal_run_files() == (0, 0)
+    assert run.read_bytes() == before
+
+
+def test_heal_run_files_skips_an_unreadable_file_and_still_heals_the_others(
+        tmp_path, monkeypatch, capsys):
+    _write_master_rows(tmp_path, monkeypatch, _master_rows())
+    bad = tmp_path / "morning" / "linkedin_jobs_bad_scored.csv.gz"
+    bad.parent.mkdir()
+    bad.write_bytes(b"not a gzip file at all")
+    good = tmp_path / "evening" / "linkedin_jobs_good_scored.csv.gz"
+    _write_run_gz(good, _run_file_rows())
+
+    assert sj.heal_run_files() == (1, 1)
+    assert bad.read_bytes() == b"not a gzip file at all"
+    assert "linkedin_jobs_bad_scored.csv.gz" in capsys.readouterr().out
+
+
+# --- main(): the per-run heal and the one-shot ----------------------------------
+
+def _main_args(**kw):
+    ns = {"csv": None, "heal_reused": False, "dry_run": False}
+    ns.update(kw)
+    return SimpleNamespace(**ns)
+
+
+def _stub_run(monkeypatch, **args):
+    """Everything main() touches before the heal step, faked; returns the log."""
+    seen = {"rescored": 0, "stats": None}
+
+    class Pool:
+        def stats(self):
+            return {}
+
+    async def rescore(pool, resume, *, jev_run=None):
+        seen["rescored"] += 1
+        return 0, 0
+
+    monkeypatch.setattr(sj, "parse_args", lambda: _main_args(**args))
+    monkeypatch.setattr(sj, "load_resume", lambda: "resume")
+    monkeypatch.setattr(sj, "latest_input_csv", lambda: None)
+    monkeypatch.setattr(sj, "make_jev_judge", lambda: None)
+    monkeypatch.setattr(sj, "make_pool", lambda required=True: Pool())
+    monkeypatch.setattr(sj, "rescore_master_failures", rescore)
+    monkeypatch.setattr(sj, "append_run_stats", lambda stats: seen.update(stats=stats))
+    return seen
+
+
+def test_main_prints_the_healed_count_only_when_it_is_positive(monkeypatch, capsys):
+    seen = _stub_run(monkeypatch)
+    monkeypatch.setattr(sj, "heal_master_reuse", lambda dry_run=False: 3)
+    asyncio.run(sj.main())
+    assert "Healed 3 reused rows in the master" in capsys.readouterr().out
+
+    monkeypatch.setattr(sj, "heal_master_reuse", lambda dry_run=False: 0)
+    asyncio.run(sj.main())
+    assert "Healed" not in capsys.readouterr().out
+    assert seen["rescored"] == 2
+
+
+@pytest.mark.parametrize("error", [OSError("disk on fire"), ValueError("bad csv")])
+def test_a_failing_heal_step_does_not_stop_the_run(monkeypatch, capsys, error):
+    seen = _stub_run(monkeypatch)
+
+    def boom(dry_run=False):
+        raise error
+
+    monkeypatch.setattr(sj, "heal_master_reuse", boom)
+
+    asyncio.run(sj.main())
+
+    out = capsys.readouterr().out
+    assert "could not heal" in out.lower() and str(error) in out
+    assert seen["rescored"] == 1            # the rescore pass still ran
+    assert seen["stats"] is not None         # and the run's stats row was written
+
+
+def test_the_heal_step_runs_after_this_runs_scores_reach_the_master(monkeypatch, tmp_path):
+    """With a scored input, the heal comes after save_output's master update."""
+    order = []
+    seen = _stub_run(monkeypatch)
+    inp = tmp_path / "morning" / "linkedin_jobs_x.csv"
+    inp.parent.mkdir()
+    pd.DataFrame([{"job_posting_id": "1", "job_title": "t", "company_name": "c",
+                   "job_description_formatted": "<p>" + "text " * 30 + "</p>"}]
+                 ).to_csv(inp, index=False)
+    monkeypatch.setattr(sj, "latest_input_csv", lambda: inp)
+
+    async def fake_scoring(pool, resume, df, *, jev_run=None):
+        out = df.copy()
+        for col, val in (("score", 4), ("reason", "r"), ("deep_score", None),
+                         ("strengths", ""), ("gaps", ""), ("recommendation", "")):
+            out[col] = val
+        return out
+
+    monkeypatch.setattr(sj, "run_scoring", fake_scoring)
+    monkeypatch.setattr(sj, "load_master_for_reuse", lambda: None)
+    monkeypatch.setattr(sj, "save_output",
+                        lambda df, path: order.append("save_output") or path)
+    monkeypatch.setattr(sj, "heal_master_reuse",
+                        lambda dry_run=False: order.append("heal") or 0)
+
+    asyncio.run(sj.main())
+
+    assert order == ["save_output", "heal"]
+    assert seen["rescored"] == 1
+
+
+def test_heal_reused_flag_parses(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["score_jobs.py", "--heal-reused"])
+    args = sj.parse_args()
+    assert args.heal_reused is True and args.dry_run is False and args.csv is None
+
+    monkeypatch.setattr(sys, "argv", ["score_jobs.py", "--heal-reused", "--dry-run"])
+    args = sj.parse_args()
+    assert args.heal_reused is True and args.dry_run is True
+
+    monkeypatch.setattr(sys, "argv", ["score_jobs.py"])
+    args = sj.parse_args()
+    assert args.heal_reused is False and args.dry_run is False
+
+
+def test_dry_run_without_heal_reused_is_refused(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["score_jobs.py", "--dry-run"])
+    with pytest.raises(SystemExit):
+        sj.parse_args()
+    err = capsys.readouterr().err
+    assert "--dry-run" in err and "--heal-reused" in err and "unrecognized" not in err
+
+
+def _stub_one_shot(monkeypatch, **args):
+    calls = []
+
+    def refuse(name):
+        def fail(*a, **k):
+            raise AssertionError(f"--heal-reused must not reach {name}")
+        return fail
+
+    monkeypatch.setattr(sj, "parse_args", lambda: _main_args(heal_reused=True, **args))
+    for name in ("load_resume", "make_jev_judge", "make_pool", "latest_input_csv",
+                 "rescore_master_failures", "append_run_stats", "run_scoring"):
+        monkeypatch.setattr(sj, name, refuse(name))
+    monkeypatch.setattr(sj, "heal_run_files",
+                        lambda dry_run=False: calls.append(("files", dry_run)) or (2, 5))
+    monkeypatch.setattr(sj, "heal_master_reuse",
+                        lambda dry_run=False: calls.append(("master", dry_run)) or 7)
+    return calls
+
+
+def test_heal_reused_runs_the_run_files_first_then_the_master_and_scores_nothing(
+        monkeypatch, capsys):
+    calls = _stub_one_shot(monkeypatch)
+
+    asyncio.run(sj.main())
+
+    assert calls == [("files", False), ("master", False)]
+    out = capsys.readouterr().out
+    assert "Healed 5 reused rows in 2 run files" in out
+    assert "Healed 7 reused rows in the master" in out
+
+
+def test_heal_reused_dry_run_passes_the_flag_and_says_would(monkeypatch, capsys):
+    calls = _stub_one_shot(monkeypatch, dry_run=True)
+
+    asyncio.run(sj.main())
+
+    assert calls == [("files", True), ("master", True)]
+    out = capsys.readouterr().out
+    assert "Would heal 5 reused rows in 2 run files" in out
+    assert "Would heal 7 reused rows in the master" in out
+
+
+def test_heal_reused_prints_counts_only_never_row_contents(tmp_path, monkeypatch, capsys):
+    _write_master_rows(tmp_path, monkeypatch, _master_rows())
+    run = tmp_path / "morning" / "linkedin_jobs_a_scored.csv.gz"
+    _write_run_gz(run, _run_file_rows())
+    monkeypatch.setattr(sj, "parse_args", lambda: _main_args(heal_reused=True))
+    monkeypatch.setattr(sj, "load_resume", lambda: pytest.fail("must not load the resume"))
+    monkeypatch.setattr(sj, "make_pool", lambda **k: pytest.fail("must not build a pool"))
+
+    asyncio.run(sj.main())
+
+    out = capsys.readouterr().out
+    assert SECRET not in out and "Data Engineer" not in out and "SRC-1" not in out
+    assert _read_run(run).loc["NEW-1", "reason"].startswith(SECRET)
+    assert _read_all(tmp_path / "linkedin_jobs_master.csv").loc["NEW-1", "reason"].startswith(
+        SECRET)
+
+
+UNREADABLE_MASTERS = [
+    b"job_posting_id,score_reused,score_reused_from,reason\n1,True,2,\xff\xfe\x00\n",
+    b"",
+]
+
+
+@pytest.mark.parametrize("content", UNREADABLE_MASTERS)
+def test_an_unreadable_master_raises_oserror_naming_the_file(tmp_path, monkeypatch, content):
+    master = tmp_path / "linkedin_jobs_master.csv"
+    master.write_bytes(content)
+    monkeypatch.setattr(sj, "MASTER_CSV", master)
+    monkeypatch.setattr(sj, "OUTPUT_DIR", tmp_path)
+
+    with pytest.raises(OSError, match="linkedin_jobs_master.csv"):
+        sj.heal_master_reuse()
+    with pytest.raises(OSError, match="linkedin_jobs_master.csv"):
+        sj.heal_run_files()
+    assert master.read_bytes() == content
+
+
+@pytest.mark.parametrize("content", UNREADABLE_MASTERS)
+def test_heal_reused_reports_an_unreadable_master_and_exits_nonzero(
+        tmp_path, monkeypatch, content):
+    master = tmp_path / "linkedin_jobs_master.csv"
+    master.write_bytes(content)
+    monkeypatch.setattr(sj, "MASTER_CSV", master)
+    monkeypatch.setattr(sj, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(sj, "parse_args", lambda: _main_args(heal_reused=True))
+    monkeypatch.setattr(sj, "load_resume", lambda: pytest.fail("must not load the resume"))
+
+    with pytest.raises(SystemExit) as exc:
+        asyncio.run(sj.main())
+
+    assert exc.value.code not in (0, None)
+    assert "master" in str(exc.value.code).lower()

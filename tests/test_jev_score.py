@@ -1428,7 +1428,8 @@ def _main_stubs(monkeypatch, sj, judge):
         seen["rescore_jev"] = jev_run
         return 0, 0
 
-    monkeypatch.setattr(sj, "parse_args", lambda: SimpleNamespace(csv=None))
+    monkeypatch.setattr(sj, "parse_args",
+                        lambda: SimpleNamespace(csv=None, heal_reused=False, dry_run=False))
     monkeypatch.setattr(sj, "load_resume", lambda: RESUME)
     monkeypatch.setattr(sj, "latest_input_csv", lambda: None)
     monkeypatch.setattr(sj, "make_jev_judge", lambda: judge)

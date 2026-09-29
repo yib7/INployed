@@ -937,7 +937,16 @@ def latest_input_csv() -> Path | None:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("csv", nargs="?", help="CSV to score (default: auto-discover latest in morning/ or evening/)")
-    return p.parse_args()
+    p.add_argument("--heal-reused", action="store_true",
+                   help="fill the blank reason, deep score, strengths, gaps and recommendation "
+                        "of reposts that reused a score (run files first, then the master), "
+                        "print the counts and exit without scoring or scraping")
+    p.add_argument("--dry-run", action="store_true",
+                   help="with --heal-reused: print the counts and write nothing")
+    args = p.parse_args()
+    if args.dry_run and not args.heal_reused:
+        p.error("--dry-run only applies with --heal-reused")
+    return args
 
 
 def is_junk_title(title: Any) -> bool:
@@ -1602,6 +1611,224 @@ def load_master_for_reuse() -> pd.DataFrame | None:
         return None
 
 
+# --- Heal reused rows an earlier build wrote blank --------------------------------
+# From 0b0d664 until the loader fix above, a reused repost was written with its
+# copied score and a blank reason, deep score, strengths, gaps and recommendation.
+# The rows are recoverable: the row named by `score_reused_from` still holds the
+# real values. heal_reused_rows is the pure rule; heal_master_reuse and
+# heal_run_files apply it to the master and to the local run files.
+
+_HEAL_COLS = ("reason", "deep_score", "strengths", "gaps", "recommendation")
+_HEAL_TRUE = ("true", "1", "1.0")
+_HEAL_FLOAT_ID_RE = re.compile(r"\d+\.0")
+
+
+def _cell_blank(value: Any) -> bool:
+    """A NaN, None, empty or whitespace-only cell, or the text "nan"."""
+    if isinstance(value, str):
+        return value.strip().lower() in ("", "nan")
+    if value is None:
+        return True
+    try:
+        if pd.isna(value):
+            return True
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip().lower() in ("", "nan")
+
+
+def _heal_id(value: Any) -> str:
+    """A job id as a stripped string, "" when blank. An id a float column turned
+    into "123.0" reads as "123"."""
+    if _cell_blank(value):
+        return ""
+    text = str(value).strip()
+    return text[:-2] if _HEAL_FLOAT_ID_RE.fullmatch(text) else text
+
+
+def _source_lookup(sources: pd.DataFrame,
+                   wanted: set[str] | None = None) -> dict[str, dict[str, Any]]:
+    """Job id -> {heal column: value} for `sources`, first row per id winning.
+    With `wanted`, only those ids are kept."""
+    if sources is None or sources.empty or "job_posting_id" not in sources.columns:
+        return {}
+    cols = [c for c in _HEAL_COLS if c in sources.columns]
+    if not cols:
+        return {}
+    values = [sources[c].tolist() for c in cols]
+    lookup: dict[str, dict[str, Any]] = {}
+    for i, raw in enumerate(sources["job_posting_id"].tolist()):
+        key = _heal_id(raw)
+        if key and key not in lookup and (wanted is None or key in wanted):
+            lookup[key] = {c: v[i] for c, v in zip(cols, values)}
+    return lookup
+
+
+def _heal_cells(frame: pd.DataFrame, sources: pd.DataFrame,
+                lookup: dict[str, dict[str, Any]] | None = None) -> list[tuple[int, str, Any]]:
+    """(row position, column, value) for each blank reuse cell of a reused row of
+    `frame` that its source row in `sources` can fill. Only columns `frame` has.
+    A caller that heals many frames from one `sources` passes its `_source_lookup`
+    as `lookup` so the sources are indexed once."""
+    if frame is None or frame.empty:
+        return []
+    if not {"job_posting_id", "score_reused", "score_reused_from"} <= set(frame.columns):
+        return []
+    frame_cols = [c for c in _HEAL_COLS if c in frame.columns]
+    if not frame_cols:
+        return []
+
+    own_ids = frame["job_posting_id"].tolist()
+    origins = frame["score_reused_from"].tolist()
+    reused = [pos for pos, flag in enumerate(frame["score_reused"].tolist())
+              if not _cell_blank(flag) and str(flag).strip().lower() in _HEAL_TRUE
+              and _heal_id(own_ids[pos])]
+    if not reused:
+        return []
+    if lookup is None:
+        wanted = {_heal_id(origins[pos]) for pos in reused} - {""}
+        lookup = _source_lookup(sources, wanted)
+    if not lookup:
+        return []
+
+    cells: list[tuple[int, str, Any]] = []
+    frame_vals = {c: frame[c].tolist() for c in frame_cols}
+    for pos in reused:
+        source = lookup.get(_heal_id(origins[pos]))
+        if source is None:
+            continue
+        for col in frame_cols:
+            if (col in source and _cell_blank(frame_vals[col][pos])
+                    and not _cell_blank(source[col])):
+                cells.append((pos, col, source[col]))
+    return cells
+
+
+def heal_reused_rows(frame: pd.DataFrame, sources: pd.DataFrame) -> pd.DataFrame:
+    """The blank score cells of `frame`'s reused rows, filled from their source rows.
+
+    A row counts when `score_reused` is truthy ("True", "true", "1", True) and
+    `score_reused_from` names a row of `sources`. Each of reason, deep_score,
+    strengths, gaps and recommendation that is blank on the row and not blank on
+    the source takes the source's value; a cell with content is never replaced.
+
+    Returns only the changed rows: `job_posting_id` plus the five columns, with
+    every cell that stays as it is NaN so DataFrame.update leaves it alone. The
+    frame is empty when nothing heals, which makes a second pass a no-op.
+    """
+    out_cols = ["job_posting_id", *_HEAL_COLS]
+    cells = _heal_cells(frame, sources)
+    if not cells:
+        return pd.DataFrame(columns=out_cols)
+    by_pos: dict[int, dict[str, Any]] = {}
+    for pos, col, value in cells:
+        by_pos.setdefault(pos, {})[col] = value
+    ids = frame["job_posting_id"].tolist()
+    rows = [{"job_posting_id": str(ids[pos]),
+             **{c: filled.get(c, float("nan")) for c in _HEAL_COLS}}
+            for pos, filled in sorted(by_pos.items())]
+    return pd.DataFrame(rows, columns=out_cols, dtype=object)
+
+
+def _read_master_for_heal() -> pd.DataFrame | None:
+    """The master's id, reuse flag, reuse origin and the five heal columns it has,
+    all as text; None when there is no master or it has no job_posting_id.
+
+    dtype=object + keep_default_na=False, the same read update_master_scores does,
+    so a value comes back exactly as it sits in the file."""
+    if not MASTER_CSV.exists():
+        return None
+    try:
+        header = pd.read_csv(MASTER_CSV, nrows=0).columns.tolist()
+        use = [c for c in ("job_posting_id", "score_reused", "score_reused_from", *_HEAL_COLS)
+               if c in header]
+        if "job_posting_id" not in use:
+            return None
+        return pd.read_csv(MASTER_CSV, usecols=use, dtype=object, keep_default_na=False)
+    except (ValueError, UnicodeDecodeError, pd.errors.ParserError) as e:
+        raise OSError(f"cannot read {MASTER_CSV.name} to heal reused rows ({e})") from e
+
+
+def heal_master_reuse(dry_run: bool = False) -> int:
+    """Heal the master's blank reused rows from their source rows in the master.
+
+    Returns how many rows healed (would heal, on a dry run). The write is
+    update_master_scores with only the changed cells, so its atomic chunked
+    rewrite keeps every other cell of the master as it was. A missing master, or
+    one without the score_reused_from column, has nothing to heal: 0.
+    """
+    master = _read_master_for_heal()
+    if master is None or not {"score_reused", "score_reused_from"} <= set(master.columns):
+        return 0
+    healed = heal_reused_rows(master, master)
+    if healed.empty:
+        return 0
+    if not dry_run:
+        keep = ["job_posting_id"] + [c for c in _HEAL_COLS if c in master.columns]
+        update_master_scores(healed[keep])
+    return len(healed)
+
+
+def _run_score_files() -> list[Path]:
+    """Every local `*_scored.csv` / `*_scored.csv.gz` under the run-label folders
+    latest_input_csv scans. The suffix check keeps out the `.tmp` files that
+    _atomic_to_csv leaves beside a write in flight."""
+    found: list[Path] = []
+    for label in RUN_LABELS:
+        run_dir = OUTPUT_DIR / label
+        if run_dir.is_dir():
+            found.extend(p for p in sorted(run_dir.glob("*_scored.csv*"))
+                         if p.name.endswith((".csv", ".csv.gz")))
+    return found
+
+
+def heal_run_files(dry_run: bool = False) -> tuple[int, int]:
+    """Heal the blank reused rows of the local run files from the master's rows.
+
+    Returns (files changed, rows healed); on a dry run, the counts it would reach.
+    A changed file is rewritten atomically with its own compression and every
+    other cell as read (dtype=object, keep_default_na=False). An unreadable file is
+    skipped with a line naming it, so one bad file never blocks the rest.
+    """
+    master = _read_master_for_heal()
+    if master is None:
+        return 0, 0
+    lookup = _source_lookup(master)
+    files_changed = rows_healed = 0
+    for path in _run_score_files():
+        try:
+            frame = pd.read_csv(path, dtype=object, keep_default_na=False)
+        except (OSError, EOFError, ValueError) as e:
+            print(f"Heal: skipping {path.name} (unreadable: {type(e).__name__})")
+            continue
+        cells = _heal_cells(frame, master, lookup)
+        if not cells:
+            continue
+        files_changed += 1
+        rows_healed += len({pos for pos, _, _ in cells})
+        if dry_run:
+            continue
+        for pos, col, value in cells:
+            frame.iat[pos, frame.columns.get_loc(col)] = value
+        _atomic_to_csv(frame, path, compression="gzip" if path.name.endswith(".gz") else None)
+    return files_changed, rows_healed
+
+
+def run_heal_reused(dry_run: bool = False) -> None:
+    """`--heal-reused`: heal the run files, then the master, and print the counts.
+
+    The run files go first so that a crash between the two steps is retried on
+    the next call. Counts only: no row content reaches the output."""
+    verb = "Would heal" if dry_run else "Healed"
+    try:
+        files, rows = heal_run_files(dry_run=dry_run)
+        print(f"{verb} {rows} reused rows in {files} run files")
+        in_master = heal_master_reuse(dry_run=dry_run)
+        print(f"{verb} {in_master} reused rows in the master")
+    except (OSError, ValueError) as e:
+        sys.exit(f"Heal failed: {e}")
+
+
 def _restore_reused_scores(result: pd.DataFrame, reused_snapshot: pd.DataFrame) -> pd.DataFrame:
     """Copy `_REPOST_REUSE_COLS` from `reused_snapshot` back onto `result`.
 
@@ -1920,6 +2147,9 @@ def load_resume() -> str:
 
 async def main() -> None:
     args = parse_args()
+    if args.heal_reused:
+        run_heal_reused(dry_run=args.dry_run)
+        return
     resume = load_resume()
     # SC-4: Jev scores first when its switch is on (make_jev_judge); the LLM
     # provider is then optional, so missing credentials no longer end the run.
@@ -1999,6 +2229,17 @@ async def main() -> None:
                 .fillna("").astype(str).str.startswith("ERROR:").sum()
             )
             stats["stage2_done"] = int(n_deep)
+
+    # Every run heals reused rows an earlier build left blank: the VM's master
+    # gets its fix here once this file is deployed there. Like append_run_stats,
+    # a failure prints and the run goes on.
+    try:
+        n_healed = heal_master_reuse()
+    except (OSError, ValueError) as e:
+        print(f"WARNING: could not heal reused rows in the master ({e})")
+    else:
+        if n_healed:
+            print(f"Healed {n_healed} reused rows in the master")
 
     rescore_attempted, rescore_scored = await rescore_master_failures(pool, resume,
                                                                       jev_run=jev_run)

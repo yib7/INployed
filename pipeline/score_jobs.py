@@ -1351,6 +1351,21 @@ def is_junk_desc(text: Any) -> bool:
         return False
     return any(p.search(text) for p in JUNK_DESC_PATTERNS)
 
+# An intern or co-op posting is for a student. A candidate who has finished school
+# is dropped from these before any scorer call (filter_internship); a candidate
+# still in school keeps them. Word boundaries keep "Internal Audit Analyst",
+# "International Data Analyst" and "Cooperative Systems Analyst" out.
+INTERNSHIP_TITLE_RE = re.compile(
+    r"\b(?:intern|interns|internship|internships|co-?op|co-?ops)\b", re.I)
+
+
+def is_internship_title(title: Any) -> bool:
+    """True when the job title names an internship or a co-op."""
+    if not isinstance(title, str):
+        return False
+    return bool(INTERNSHIP_TITLE_RE.search(title))
+
+
 def requires_clearance(text: Any) -> bool:
     """True when the JD requires a US security clearance / polygraph.
 
@@ -1615,7 +1630,8 @@ CHUNK = 2000  # Chunked streaming row count for update_master_scores (memory bou
 SCORE_COLS = [
     "score", "reason", "deep_score", "strengths", "gaps", "recommendation",
     "filter_junk_title", "filter_junk_desc", "filter_too_many_years",
-    "filter_clearance", "filter_degree", "filter_easy_apply", "filtered_out", "is_seen",
+    "filter_clearance", "filter_degree", "filter_easy_apply", "filter_internship",
+    "filtered_out", "is_seen",
     "score_reused", "score_reused_from",
 ]
 MASTER_CSV = OUTPUT_DIR / "linkedin_jobs_master.csv"
@@ -1758,14 +1774,18 @@ def save_output(df: pd.DataFrame, input_csv: Path) -> Path:
 
 
 def add_filter_columns(df: pd.DataFrame, desc_col: str, title_col: str | None,
-                       drop_easy_apply: bool | None = None) -> pd.DataFrame:
+                       drop_easy_apply: bool | None = None,
+                       profile: CandidateProfile | None = None) -> pd.DataFrame:
     """Add job_description_md + the mechanical-filter columns.
 
     `drop_easy_apply=None` resolves to the module default DROP_EASY_APPLY; an
-    explicit bool overrides it (keeps tests monkeypatch-free).
+    explicit bool overrides it (keeps tests monkeypatch-free). `profile=None`
+    resolves to candidate_profile(), the candidate the settings describe.
     """
     if drop_easy_apply is None:
         drop_easy_apply = DROP_EASY_APPLY
+    if profile is None:
+        profile = candidate_profile()
     df["job_description_md"] = df[desc_col].apply(html_to_md)
     df["filter_junk_title"] = df[title_col].apply(is_junk_title) if title_col else False
     df["filter_junk_desc"] = df["job_description_md"].apply(is_junk_desc)
@@ -1780,9 +1800,17 @@ def add_filter_columns(df: pd.DataFrame, desc_col: str, title_col: str | None,
                                    .str.lower().isin(("true", "1", "yes")))
     else:
         df["filter_easy_apply"] = False
+    # An intern or co-op title is dropped only for a candidate who has finished
+    # school. Added UNCONDITIONALLY (all-False for a student or with no title
+    # column) so the scored-CSV and master schema is stable either way.
+    if title_col and profile.status == "finished":
+        df["filter_internship"] = df[title_col].apply(is_internship_title)
+    else:
+        df["filter_internship"] = False
     df["filtered_out"] = (
         df["filter_junk_title"] | df["filter_junk_desc"] | df["filter_too_many_years"]
         | df["filter_clearance"] | df["filter_degree"] | df["filter_easy_apply"]
+        | df["filter_internship"]
     )
     # An unscoreable (empty/missing) description would otherwise be retried by
     # the rescore pass forever — park it as filtered.
@@ -2534,7 +2562,7 @@ async def rescore_master_failures(pool, resume: str, *,
     todo["job_posting_id"] = todo["job_posting_id"].astype(str)
     todo = todo.drop(columns=[c for c in SCORE_COLS if c in todo.columns], errors="ignore")
     title_col = pick_col(master, ("job_title", "job_posting_title", "title"))
-    todo = add_filter_columns(todo, desc_col, title_col)
+    todo = add_filter_columns(todo, desc_col, title_col, profile=candidate_profile())
     merged = await run_scoring(pool, resume, todo, jev_run=jev_run)
     # Fold back WITHOUT is_seen so locally-triaged state is never reset here.
     update_master_scores(merged.drop(columns=["is_seen"], errors="ignore"))
@@ -2610,10 +2638,13 @@ async def main() -> None:
             if id_col != "job_posting_id":
                 df = df.rename(columns={id_col: "job_posting_id"})
 
-            df = add_filter_columns(df, desc_col, title_col)
+            df = add_filter_columns(df, desc_col, title_col, profile=candidate_profile())
             n_easy = int(df["filter_easy_apply"].sum())
             if n_easy > 0:
                 print(f"Easy Apply drop: {n_easy} job(s) filtered before scoring")
+            n_intern = int(df["filter_internship"].sum())
+            if n_intern > 0:
+                print(f"Dropped {n_intern} internship / co-op titles (finished school)")
             master_for_reuse = load_master_for_reuse()
             df, n_reused = reuse_repost_scores(df, master_for_reuse, REPOST_REUSE_DAYS)
             stats["scores_reused"] = n_reused

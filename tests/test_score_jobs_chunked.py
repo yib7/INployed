@@ -83,6 +83,7 @@ def test_bool_filter_column_into_float64_master_does_not_raise(tmp_path, monkeyp
         "job_title": ["a", "b", "c"],
         "filtered_out": [None, None, None],       # all-empty -> reads back float64
         "filter_clearance": [None, None, None],
+        "filter_internship": [None, None, None],
     })
     m = tmp_path / "linkedin_jobs_master.csv"
     master_df.to_csv(m, index=False)
@@ -93,6 +94,7 @@ def test_bool_filter_column_into_float64_master_does_not_raise(tmp_path, monkeyp
         "job_posting_id": ["1", "2"],
         "filtered_out": [True, False],
         "filter_clearance": [False, True],
+        "filter_internship": [True, False],
     })
     assert scored["filtered_out"].dtype == bool  # as add_filter_columns produces
 
@@ -105,6 +107,8 @@ def test_bool_filter_column_into_float64_master_does_not_raise(tmp_path, monkeyp
     assert str(out.loc["2", "filtered_out"]) == "False"
     assert str(out.loc["1", "filter_clearance"]) == "False"
     assert str(out.loc["2", "filter_clearance"]) == "True"
+    assert str(out.loc["1", "filter_internship"]) == "True"
+    assert str(out.loc["2", "filter_internship"]) == "False"
     assert pd.isna(out.loc["3", "filtered_out"])  # id not in scored -> untouched
 
 

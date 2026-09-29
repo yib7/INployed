@@ -340,7 +340,8 @@ def test_rows_needing_rescore_treats_float_and_padded_filtered_out_as_filtered()
 
 def test_score_cols_include_all_filter_columns():
     for col in ("filter_junk_title", "filter_junk_desc", "filter_too_many_years",
-               "filter_clearance", "filter_degree", "filter_easy_apply", "filtered_out"):
+               "filter_clearance", "filter_degree", "filter_easy_apply", "filter_internship",
+               "filtered_out"):
         assert col in sj.SCORE_COLS, col
 
 
@@ -356,6 +357,7 @@ def test_update_master_scores_folds_all_filter_columns_into_master(tmp_path, mon
         "filter_too_many_years": False,
         "filter_clearance": True,
         "filter_degree": False,
+        "filter_internship": True,
         "filtered_out": True,
     }])
     sj.update_master_scores(scored)
@@ -365,6 +367,7 @@ def test_update_master_scores_folds_all_filter_columns_into_master(tmp_path, mon
     assert bool(row1["filter_junk_desc"]) is True
     assert bool(row1["filter_clearance"]) is True
     assert bool(row1["filter_degree"]) is False
+    assert bool(row1["filter_internship"]) is True
 
 
 # P2-11: re-scoring a fresh scrape must NOT reset an existing master row's

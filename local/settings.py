@@ -255,6 +255,18 @@ TARGET_FILES: dict[str, Path] = {
     "env": ROOT / ".env",
 }
 
+# The graduation month's format rule (the "About you" section), a copy of the
+# month grammar in score_jobs.GRADUATION_MONTH_RE with a blank allowed: a month
+# name or its three-letter form (Sept and Sep too), an optional period, then a
+# four-digit year, with spaces around it all. score_jobs is copied alone to the
+# VM and this module does not import it, so the text is duplicated and
+# test_candidate_settings.py holds the two together with a differential test.
+_GRADUATION_MONTHS = (r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?"
+                      r"|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?"
+                      r"|dec(?:ember)?")
+GRADUATION_MONTH_PATTERN = (r"(?i)\s*(?:(?:" + _GRADUATION_MONTHS
+                            + r")\.?\s+(?:19|20)\d{2})?\s*")
+
 
 SETTINGS_SCHEMA: list[Field] = [
     # --- Jev (cycle 19): one switch for every Jev use, read by local/jev_switch.py
@@ -332,6 +344,44 @@ SETTINGS_SCHEMA: list[Field] = [
           help="When on, the Apply button opens the job's application page in Chrome as well "
                "as showing the apply sheet. Off keeps you in the dashboard; the posting URL "
                "is still on the apply sheet and the Open-folder button still works."),
+
+    # --- About you (cycle 21): the candidate's school status and clearance, written
+    # to root-level scoring_config.json. score_jobs.candidate_profile() resolves
+    # these four keys into the profile the scorer's prompts and filters read. The
+    # two dropdown lists and every default mirror score_jobs (EDUCATION_STATUSES,
+    # CLEARANCE_LEVELS, _SCORING_DEFAULTS); tests/test_candidate_settings.py pins
+    # each of them against the scorer, and the month rule below against
+    # parse_graduation_month, so this module never imports score_jobs.
+    Field("education_status", "School status", "choice", "Finished school", "About you",
+          "scoring", choices=("Finished school", "In school: undergraduate",
+                              "In school: graduate"),
+          help="Where you are in school, stated to the scorer the way it already knows "
+               "today's date. Finished school drops internship and co-op titles before "
+               "scoring, and postings for current students score 1. In school keeps "
+               "internships and co-ops, and postings for a different degree level score 1. "
+               "Graduate means a master's or PhD program."),
+    # The pattern is drawn at what score_jobs.parse_graduation_month keeps, and a
+    # blank is kept too: the scorer reads it as "no date", so the row must let it
+    # save. validate() runs re.fullmatch(pattern, value) with NO flags, so the
+    # case-insensitivity the scorer gets from re.I travels inline as (?i).
+    Field("graduation_month", "Graduation month", "str", "May 2026", "About you",
+          "scoring", optional=True, pattern=GRADUATION_MONTH_PATTERN,
+          pattern_help="A month and year, such as May 2026.",
+          help="The month you graduated or expect to, such as May 2026. Postings limited "
+               "to a graduation window this date falls outside score 1. An in-school "
+               "status whose month has passed counts as finished school. Leave it blank "
+               "to leave the date out."),
+    Field("clearance_level", "Security clearance held", "choice", "None", "About you",
+          "scoring", choices=("None", "Public Trust", "Secret", "Top Secret", "TS/SCI"),
+          help="The active US security clearance you hold. Postings that need this level "
+               "or a lower one are kept and scored. Postings that need a higher level are "
+               "dropped before scoring, unless the open box is on and the employer "
+               "sponsors it."),
+    Field("clearance_sponsorship", "Open to getting a clearance through the employer",
+          "bool", False, "About you", "scoring",
+          help="On: postings that sponsor a clearance, or ask for the ability to obtain "
+               "one, are kept and scored. Postings that need an active clearance you do "
+               "not hold are still dropped."),
 
     # --- Scraper: written to root-level search_config.json (read by scraper.py) ---
     Field("keywords", "Search keywords", "list",

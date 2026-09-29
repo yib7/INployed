@@ -57,6 +57,12 @@ SECTION_HELP = {
                "free-key pool), and which model each tailoring stage runs. Jev's checks "
                "around the writing are switched in the Jev section."),
     "Dashboard": "How the dashboard surfaces and tracks jobs.",
+    # Cycle 21: the four scorer-read profile rows. Names both scripts because the
+    # VM copy of each is uploaded by hand, once (there is no automated code push).
+    "About you": ("What the scorer knows about you. It states your school status and "
+                  "clearance in every scoring prompt and uses them to drop postings you "
+                  "cannot apply to. If you use the cloud VM, push config to the VM after "
+                  "changing these, and upload the new score_jobs.py and jev_score.py once."),
     "Scraper": "What job searches the discovery step runs (this drives its API spend).",
     # Rewritten in P8: the old blurb ("which models score jobs … changing the model
     # names can silently break scoring") described rows a fresh profile cannot see.
@@ -87,7 +93,7 @@ SECTION_HELP = {
 # Jev first (cycle 19's ST-1): its master switch changes what Scoring, the
 # résumé tailor and Auto-apply do, so it is read before any of them.
 SECTION_ORDER = ["Jev", "Credentials", "Connection & paths", "Engine",
-                 "Dashboard", "Scraper", "Scoring", "Resume", "Auto-apply",
+                 "Dashboard", "About you", "Scraper", "Scoring", "Resume", "Auto-apply",
                  "Settings history", "VM (cloud scraper)"]
 
 # Friendlier section headers shown in the UI. The dict KEYS above stay the canonical
@@ -108,6 +114,7 @@ SECTION_TAGLINE = {
     "Connection & paths": "Project, your name, file locations",
     "Engine": "Tailor AI service, billing & per-stage models",
     "Dashboard": "How jobs are surfaced & tracked",
+    "About you": "School status and security clearance, read by the scorer",
     "Scraper": "What job searches to run",
     # Not "(advanced)": the section is not, and four of its rows are on screen at
     # shipped defaults. The parenthetical was a leftover from before P4 gave the
@@ -1852,7 +1859,10 @@ class SettingsForm(QtWidgets.QWidget):
     def _coerce(f: settings.Field, raw):
         if f.type == "bool":
             return SettingsForm._checked(f, raw), None
-        text = str(raw).strip()
+        # A stored JSON null reads as blank, the way every text setter shows it
+        # ("" if value is None): str(None) would open a null graduation month
+        # (which the scorer reads as no date) as "None" and mark it changed.
+        text = "" if raw is None else str(raw).strip()
         if f.type == "int":
             try:
                 return int(text), None

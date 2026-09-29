@@ -3067,10 +3067,15 @@ def test_every_field_whose_help_gives_a_blank_a_meaning_keeps_it_through_a_save(
     """Each field whose help says what a blank does opens blank from a blank
     .env line, and a Save writes that line back blank. A help text that starts
     to mention a blank joins the list here (auto_apply_generate's "stays blank"
-    is about the answers it drafts)."""
+    is about the answers it drafts).
+
+    Cycle 21 Task 4: graduation_month is also exempt. It is a scoring_config.json
+    row, not an .env line, and its blank round trip (saved as "", read by the
+    scorer as no date) is pinned in tests/test_candidate_settings.py."""
     mentions = {f.key for f in settings.SETTINGS_SCHEMA
                 if re.search(r"\bblank\b", f.help, re.IGNORECASE)}
-    assert mentions - {"auto_apply_generate"} == set(_BLANK_MEANS_SOMETHING)
+    assert (mentions - {"auto_apply_generate", "graduation_month"}
+            == set(_BLANK_MEANS_SOMETHING))
     env = _targets(tmp_path)["env"]
     env.write_text("".join(f"{key}=\n" for key in _BLANK_MEANS_SOMETHING), encoding="utf-8")
     form = _form(tmp_path)

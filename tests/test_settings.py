@@ -504,11 +504,14 @@ def test_the_offsets_pattern_is_never_stricter_than_its_consumer(text):
 
 def test_pattern_is_declared_on_the_field_and_off_by_default():
     """A format rule is schema DATA, like `choices` — not a branch in validate()."""
+    # Cycle 21 Task 4: the About you section's graduation_month is the second rule.
     assert settings.Field("k", "L", "str", "", "S", "config").pattern is None
-    f = {x.key: x for x in settings.SETTINGS_SCHEMA}["local_task_offsets"]
-    assert f.pattern and f.pattern_help
-    # ...and it is the only one today, so nothing else silently gained a rule.
-    assert [x.key for x in settings.SETTINGS_SCHEMA if x.pattern] == ["local_task_offsets"]
+    by_key = {x.key: x for x in settings.SETTINGS_SCHEMA}
+    for key in ("local_task_offsets", "graduation_month"):
+        assert by_key[key].pattern and by_key[key].pattern_help, key
+    # ...and these are the only two today, so nothing else silently gained a rule.
+    assert [x.key for x in settings.SETTINGS_SCHEMA if x.pattern] == [
+        "graduation_month", "local_task_offsets"]
 
 
 def test_pattern_must_match_the_WHOLE_value():

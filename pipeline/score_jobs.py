@@ -1538,6 +1538,13 @@ def reuse_repost_scores(df: pd.DataFrame, master: pd.DataFrame | None, reuse_day
         if master_id == str(row["job_posting_id"]):
             continue
         for col in _REPOST_REUSE_COLS:
+            # object, so a blank cell copied first (NaN in a float column) never
+            # pins a dtype that a later reused row's text cannot be written into:
+            # pandas 3 raises on an incompatible setitem instead of upcasting.
+            if col not in df.columns:
+                df[col] = pd.Series(None, index=df.index, dtype=object)
+            elif df[col].dtype != object:
+                df[col] = df[col].astype(object)
             df.at[idx, col] = candidate.get(col)
         df.at[idx, "score_reused"] = True
         df.at[idx, "score_reused_from"] = master_id
@@ -1555,6 +1562,10 @@ _REPOST_MASTER_COL_CANDIDATES = (
     ("job_location", "location"),
     ("job_description_md", "job_description_formatted", "job_description"),
     ("score_reused",),
+    # The five columns reuse_repost_scores copies besides `score`
+    # (_REPOST_REUSE_COLS). Left out of this projection, every reused repost
+    # got a blank reason, deep score, strengths, gaps and recommendation.
+    ("reason",), ("deep_score",), ("strengths",), ("gaps",), ("recommendation",),
 )
 
 

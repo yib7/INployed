@@ -18,6 +18,7 @@ Template is self-contained (ported from Resume_Tailor) so there's no file dep.
 from __future__ import annotations
 
 import calendar
+import logging
 import re
 from datetime import date
 from pathlib import Path
@@ -27,6 +28,8 @@ from . import aiwriting, assets, compose, config, jev_assist, verify
 from .llm import LLMError
 from .compile import CompileResult, compile_tex
 from .latexutil import to_latex
+
+log = logging.getLogger(__name__)
 
 # A plain left-aligned business letter (article, not the `letter` class), matching
 # the layout of the hand-written reference letter. There is no letterhead at all:
@@ -146,6 +149,83 @@ def _strip_trailing_signoff(body: str) -> str:
     return body.strip()
 
 
+# A letter reply is the letter and nothing else, but a model can still wrap it in a
+# note about its own task. On 2026-09-28 a letter opened with one ("Using
+# avoid-ai-writing's own review output already provided, I'll finalize the repaired
+# body as-is..."). drop_task_notes removes that kind of text before the letter uses
+# a reply. Markdown goes wherever it sits, since the letter is plain prose: fence
+# and rule lines, list paragraphs, and every section that opens on a heading or a
+# bold title, from that line to the end of its paragraph (the skill's report put
+# each section's text right under its title). A paragraph naming the vendored rules
+# goes wherever it sits too. The softer tells (a "Here is the revised body:"
+# lead-in, a "Let me know..." close) only count at either end of the reply, since a
+# real letter can say "Here's what drew me to Globex" in its middle.
+_FENCE_OR_RULE_RE = re.compile(r"^\s*(?:```|~~~|([-*_])\1{2,}\s*$)")
+_SECTION_TITLE_RE = re.compile(r"^\s*(?:#{1,6}\s|\*\*|__)")
+_LIST_LINE_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
+_NOTE_ANYWHERE_RE = re.compile(r"\bavoid[- ]ai[- ]writing\b", re.I)
+_NOTE_EDGE_RE = re.compile(
+    r"^\s*(?:sure|certainly|okay|ok|done|absolutely|of course)\s*[,.!:]"
+    r"|^\s*here(?:'s|’s| is| are)\s+(?:the|your|a|an|my)\s+(?:[\w-]+\s+){0,3}?"
+    r"(?:body|letter|draft|version|rewrite|revision|text)\b"
+    r"|^\s*(?:no|zero)\s+(?:changes|edits|issues|problems|patterns|findings|violations)\b"
+    r"|^\s*(?:issues|patterns|findings|violations|changes)\s+(?:found|remain|remaining|detected|made)\b"
+    r"|\b(?:repaired|revised|rewritten|refined|edited|humanized|cleaned[- ]up)\s+"
+    r"(?:cover[- ]letter\s+)?(?:body|letter|draft)\b"
+    r"|\bthe flagged\s+(?:phrases?|phrasing|wording|sentences?|words?|terms?|findings?)\b"
+    r"|\bas-is\b"
+    r"|\b(?:let me know|feel free)\b.{0,80}\b(?:changes|edits|adjustments|tweaks|revisions|anything else)\b",
+    re.I | re.S)
+# A short lead-in line of its own that ends on a colon ("Revised body:").
+_NOTE_LEAD_IN_RE = re.compile(r"^[^\n]{0,100}:\s*$")
+
+
+def drop_task_notes(text: str) -> str:
+    """`text` without any note the model wrote about its own task; the input
+    unchanged, byte for byte, when there is none. "" when the reply was only a
+    note, so a caller's `reply or body` keeps the body it already had."""
+    lines = (text or "").splitlines()
+    kept_lines = [ln for ln in lines if not _FENCE_OR_RULE_RE.match(ln)]
+    dropped = len(kept_lines) < len(lines)
+    paras: List[str] = []
+    for para in re.split(r"\n\s*\n", "\n".join(kept_lines)):
+        para_lines = para.strip().splitlines()
+        title = next((j for j, ln in enumerate(para_lines) if _SECTION_TITLE_RE.match(ln)),
+                     len(para_lines))
+        dropped = dropped or title < len(para_lines)
+        para = "\n".join(para_lines[:title]).strip()
+        if not para:
+            continue
+        if _NOTE_ANYWHERE_RE.search(para) or all(
+                _LIST_LINE_RE.match(ln) for ln in para.splitlines()):
+            dropped = True
+            continue
+        paras.append(para)
+
+    def edge_note(para: str) -> bool:
+        return bool(_NOTE_EDGE_RE.search(para) or _NOTE_LEAD_IN_RE.match(para))
+
+    for first in (True, False):
+        while paras:
+            i = 0 if first else -1
+            if edge_note(paras[i]):
+                paras.pop(i)
+                dropped = True
+                continue
+            # A lead-in (or sign-off note) on its own line inside the edge paragraph.
+            para_lines = paras[i].splitlines()
+            end = para_lines[0] if first else para_lines[-1]
+            if len(para_lines) > 1 and _NOTE_EDGE_RE.search(end):
+                paras[i] = "\n".join(para_lines[1:] if first else para_lines[:-1]).strip()
+                dropped = True
+                continue
+            break
+    if not dropped:
+        return text or ""
+    log.warning("cover letter: dropped the model's task notes from a reply")
+    return "\n\n".join(paras)
+
+
 # One-line style instruction per Settings tone choice. The body's content rules
 # (grounded, narrative, no sign-off) never change; only the voice does.
 _TONE_DIRECTIVES: Dict[str, str] = {
@@ -187,6 +267,15 @@ def _body_violations(body: str, bullets: Dict[str, str]) -> list:
     names += aiwriting.bullet_echo(body, bullets)
     names += aiwriting.uniform_rhythm(body)
     return names
+
+
+def _clean_reply(reply) -> str:
+    """A letter call's reply (the draft, the humanizer or a repair), stripped and
+    cleared of any task note (drop_task_notes). Every letter pass hands its reply
+    through here, so no pass can hand the letter a model's commentary. Each pass
+    keeps its own `compose.call(system, user, ...)` so test_prompt_hygiene's
+    call-site trace still reaches the letter prompts."""
+    return drop_task_notes((reply or "").strip())
 
 
 def _bullets_block(bullets: Dict[str, str]) -> str:
@@ -355,7 +444,10 @@ TODAY'S DATE: {date.today():%B %d, %Y}.
 EDUCATION: {_education_context()}
 
 Write the body now."""
-    body = compose.call(system, user, config.TIER_PRO, json_out=False, temperature=0.4)
+    body = _clean_reply(compose.call(system, user, config.TIER_PRO,
+                                     json_out=False, temperature=0.4))
+    if not body:
+        raise LLMError("the cover letter draft came back empty")
     # Second (flash) pass: the humanizer. Rhythm, paragraph variance, any pasted
     # bullet retold as narrative, tone pulled to measured, still grounded in the
     # draft, the bullets and the background. THEN the deterministic gate runs
@@ -429,8 +521,8 @@ LETTER BODY TO REPAIR:
 
 Rewrite the body now with every unsupported item removed."""
     try:
-        fixed = (compose.call(system, user, config.TIER_FLASH, json_out=False,
-                              temperature=0.2) or "").strip()
+        fixed = _clean_reply(compose.call(system, user, config.TIER_FLASH,
+                                          json_out=False, temperature=0.2))
     except Exception:  # noqa: BLE001 - repair is best-effort; the re-check decides
         return body
     return fixed or body
@@ -479,8 +571,8 @@ COVER-LETTER DRAFT TO EDIT:
 
 Return ONLY the revised body: no preamble, no sign-off."""
     try:
-        refined = (compose.call(system, user, config.TIER_FLASH, json_out=False,
-                                temperature=0.3) or "").strip()
+        refined = _clean_reply(compose.call(system, user, config.TIER_FLASH,
+                                            json_out=False, temperature=0.3))
     except Exception:  # noqa: BLE001 - refine is advisory; the draft still stands
         return body
     return refined or body
@@ -524,8 +616,8 @@ LETTER BODY TO REPAIR (findings: {", ".join(violations)}):
 
 Rewrite the body now, clearing every finding."""
         try:
-            fixed = (compose.call(system, user, config.TIER_FLASH, json_out=False,
-                                  temperature=0.2) or "").strip()
+            fixed = _clean_reply(compose.call(system, user, config.TIER_FLASH,
+                                              json_out=False, temperature=0.2))
             # Commit only strict improvement, so a bad repair can't make it worse.
             if fixed and len(_body_violations(fixed, bullets)) < len(violations):
                 body = fixed

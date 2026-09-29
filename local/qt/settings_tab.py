@@ -59,9 +59,9 @@ SECTION_HELP = {
     "Dashboard": "How the dashboard surfaces and tracks jobs.",
     # Cycle 21: the four scorer-read profile rows. Names score_jobs.py, the one script
     # the VM reads them from, which is uploaded by hand once (no automated code push).
-    "About you": ("What the scorer knows about you. It states your school status and "
-                  "clearance in every scoring prompt and uses them to drop postings you "
-                  "cannot apply to. If you use the cloud VM, push config to the VM after "
+    "About you": ("What the scorer knows about you. It states your school status in "
+                  "every scoring prompt, and your clearance when you hold one or tick the "
+                  "box, and uses them to drop postings you cannot apply to. If you use the cloud VM, push config to the VM after "
                   "changing these, and upload the new score_jobs.py once: the VM reads "
                   "these rows only from that script."),
     "Scraper": "What job searches the discovery step runs (this drives its API spend).",

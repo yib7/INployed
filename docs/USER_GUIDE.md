@@ -528,11 +528,12 @@ counts as needing an active clearance. Visa and work-authorization sponsorship n
 for or against the clearance: "no visa sponsorship" beside "able to obtain a Secret
 clearance" leaves the clearance obtainable.
 
-The filter can miss unusual wording, so the scoring prompts carry the same facts. A job that
-slips through and needs an active level above the one you hold scores 1, and with the
-checkbox ticked a clearance the employer sponsors is never counted as a gap. Jev reads
-your clearance in its own fit question, and it caps a posting at 1 when the filter's
-clearance test fails on it.
+When you hold a clearance or tick the checkbox, the scoring prompts state it as well, which
+catches wording the filter misses. A job that needs an active clearance you do not hold
+scores 1, and with the checkbox ticked a clearance the employer sponsors or asks you to
+obtain is never counted as a gap. With clearance None and the checkbox unticked, the
+prompts leave clearance out and the filter does this work alone. Jev reads your clearance
+in its own fit question, and a clearance you do not hold puts a posting at its lowest fit.
 
 **If you use the VM.** The VM scores with Gemini from its own copy of your scoring settings
 and its own copy of `score_jobs.py`. On the VM, that script is the only one that reads the

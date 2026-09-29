@@ -48,7 +48,8 @@ from typing import Any
 # here (skills-fit thresholds, domain weighting) no longer applies: this module
 # no longer builds the score from those narrow reads.
 YEARS_CAPS: tuple[tuple[int, int], ...] = ((5, 1), (3, 2), (1, 3))  # min_years -> score cap
-CLEARANCE_CAP = 1               # a new graduate cannot hold an active clearance
+CLEARANCE_CAP = 1               # a clearance the candidate does not hold
+NOT_ELIGIBLE_CAP = 1            # an enrollment or graduation-date rule that excludes the candidate
 ADVANCED_DEGREE_CAP = 2         # a hard master's/PhD requirement the candidate lacks
 SCORE_LABELS: dict[int, str] = {1: "No match", 2: "Weak match", 3: "Borderline",
                                 4: "Good match", 5: "Strong match"}
@@ -221,18 +222,117 @@ def usage() -> dict[str, Any]:
 
 # --- the state (SC-1) -----------------------------------------------------------------
 
-# The fixed candidate context the scorer prompts carry (score_jobs.STAGE1_TEMPLATE_RESUME).
-CANDIDATE: dict[str, str] = {
-    "status": ("New graduate: B.S. in Computer Science (AI/ML concentration, Data Science "
-               "minor), graduated May 2026 and available to start now."),
-    "experience": ("One data-science internship plus academic and personal projects. No "
-                   "full-time work since graduating."),
-    "target": "Entry-level and early-career roles.",
-    "does_not_count": ("Location, on-site, hybrid or remote terms, relocation, time zone, "
-                       "visa sponsorship and work authorization never count for or against "
-                       "a job. The candidate will relocate and is authorized to work in the "
-                       "U.S. without sponsorship."),
-}
+# The candidate context the scorer prompts carry (score_jobs.candidate_prompt_vars),
+# rendered from the four profile settings. jev_score never imports score_jobs, so
+# it keeps its own copy of the clearance levels; a test holds the two equal.
+CLEARANCE_LEVELS: tuple[str, ...] = ("None", "Public Trust", "Secret", "Top Secret", "TS/SCI")
+_STATUS_CODES = ("finished", "undergrad", "grad")
+DEFAULT_PROFILE: dict[str, Any] = {"status": "finished", "graduation": "May 2026",
+                                   "clearance": "None", "sponsorship": False}
+
+_DOES_NOT_COUNT = ("Location, on-site, hybrid or remote terms, relocation, time zone, "
+                   "visa sponsorship and work authorization never count for or against "
+                   "a job. The candidate will relocate and is authorized to work in the "
+                   "U.S. without sponsorship.")
+_CURRENT_STUDENTS_ONLY = ("Jobs open only to current students (internships, co-ops, or a rule "
+                          "to be enrolled in a degree program) exclude the candidate")
+_OUTSIDE_WINDOW = "jobs limited to a graduation window that {g} falls outside"
+_EXPERIENCE = "One data-science internship plus academic and personal projects. "
+
+
+def _profile_status(profile: Mapping[str, Any]) -> str:
+    """The status code a profile names (finished, undergrad or grad); a missing,
+    unknown or non-text value reads as the default."""
+    raw = profile.get("status", DEFAULT_PROFILE["status"])
+    code = " ".join(raw.split()).casefold() if isinstance(raw, str) else ""
+    return code if code in _STATUS_CODES else str(DEFAULT_PROFILE["status"])
+
+
+def _profile_graduation(profile: Mapping[str, Any]) -> str:
+    """The graduation month text a profile names, "" when it names none. A key the
+    mapping lacks reads as the default month; a None or blank value is no month
+    (`CandidateProfile.jev_profile` carries None for an unknown month)."""
+    if "graduation" not in profile:
+        return str(DEFAULT_PROFILE["graduation"])
+    raw = profile["graduation"]
+    if raw is None:
+        return ""
+    if not isinstance(raw, str):
+        return str(DEFAULT_PROFILE["graduation"])
+    return " ".join(raw.split())
+
+
+def _profile_clearance(profile: Mapping[str, Any]) -> int:
+    """The rank (an index into CLEARANCE_LEVELS) of the clearance a profile
+    names; a missing, unknown or non-text value reads as None, rank 0."""
+    raw = profile.get("clearance", DEFAULT_PROFILE["clearance"])
+    folded = " ".join(raw.split()).casefold() if isinstance(raw, str) else ""
+    return next((i for i, level in enumerate(CLEARANCE_LEVELS) if level.casefold() == folded), 0)
+
+
+def candidate_for(profile: Mapping[str, Any] | None) -> dict[str, str]:
+    """The candidate block of a Jev request for `profile`, a mapping with the keys
+    `status` ("finished", "undergrad" or "grad"), `graduation` (a month such as
+    "May 2026", blank for none), `clearance` (one of CLEARANCE_LEVELS) and
+    `sponsorship` (open to a clearance the employer sponsors), as
+    `score_jobs.CandidateProfile.jev_profile` builds it. Pure. None, anything
+    but a mapping, a key it lacks and a value it does not know read as the
+    defaults (finished school, May 2026, no clearance, the box off); a None or
+    blank graduation is a candidate with no month. The keys keep the order the
+    prompt reads them in."""
+    if not isinstance(profile, Mapping):
+        profile = DEFAULT_PROFILE
+    status = _profile_status(profile)
+    g = _profile_graduation(profile)
+    rank = _profile_clearance(profile)
+    label = CLEARANCE_LEVELS[rank]
+    open_ = switch_on(profile.get("sponsorship", DEFAULT_PROFILE["sponsorship"]))
+    window = ", and so do " + _OUTSIDE_WINDOW.format(g=g) if g else ""
+
+    if status == "finished":
+        state = (f"Finished school: graduated {g} and available to start now." if g
+                 else "Finished school and available to start now.")
+        eligibility = f"{_CURRENT_STUDENTS_ONLY}{window}."
+        experience = _EXPERIENCE + "No full-time work since graduating."
+        target = "Entry-level and early-career roles."
+    else:
+        if status == "undergrad":
+            state = ("In school: an undergraduate student"
+                     + (f", expected to graduate in {g}." if g else "."))
+            eligibility = ("Internships and co-ops for undergraduates are open to the "
+                           "candidate. Jobs open only to graduate students (master's or PhD) "
+                           f"exclude the candidate{window}.")
+        else:
+            state = ("In school: a graduate student (master's or PhD)"
+                     + (f", expected to finish in {g}." if g else "."))
+            eligibility = ("Internships and co-ops for graduate students are open to the "
+                           "candidate. Jobs open only to undergraduate students exclude "
+                           f"the candidate{window}.")
+        experience = _EXPERIENCE + "No full-time work yet."
+        target = "Internships, co-ops and entry-level roles."
+
+    if rank == 0 and open_:
+        clearance = ("Holds no security clearance and is open to getting one through the "
+                     "employer: a job that sponsors a clearance or asks for the ability to "
+                     "obtain one is open to the candidate.")
+    elif rank == 0:
+        clearance = "Holds no security clearance."
+    elif rank == len(CLEARANCE_LEVELS) - 1:
+        clearance = (f"Holds an active {label} clearance: a job that needs any clearance "
+                     "level is open to the candidate.")
+    elif open_:
+        clearance = (f"Holds an active {label} clearance and is open to a higher level "
+                     f"through the employer: a job that needs {label} or a lower level is "
+                     "open to the candidate, and so is a higher level the employer sponsors.")
+    else:
+        clearance = (f"Holds an active {label} clearance: a job that needs {label} or a "
+                     "lower level is open to the candidate.")
+
+    return {"status": state, "eligibility": eligibility, "experience": experience,
+            "target": target, "clearance": clearance, "does_not_count": _DOES_NOT_COUNT}
+
+
+CANDIDATE: dict[str, str] = candidate_for(None)
 
 
 def _job_parts(job: Any) -> tuple[str, Mapping[str, Any]]:
@@ -247,8 +347,20 @@ def _job_parts(job: Any) -> tuple[str, Mapping[str, Any]]:
     return "", {}
 
 
-def fitted_state(job_md: str, resume: str, questions: Mapping[str, Any]) -> dict | None:
-    """The request's state `{candidate, resume, job}`, with the job text cut from
+def _job_profile(job: Any) -> Mapping[str, Any] | None:
+    """The candidate profile a job given as a mapping carries under `profile`
+    (`score_jobs.CandidateProfile.jev_profile`), or None: `candidate_for` reads
+    None as the defaults."""
+    if isinstance(job, Mapping):
+        profile = job.get("profile")
+        return profile if isinstance(profile, Mapping) else None
+    return None
+
+
+def fitted_state(job_md: str, resume: str, questions: Mapping[str, Any],
+                 candidate: Mapping[str, str] | None = None) -> dict | None:
+    """The request's state `{candidate, resume, job}` (`candidate` is a
+    `candidate_for` block, CANDIDATE when None), with the job text cut from
     its end until `jev.request_fits` passes: a halving search for the longest
     start of the job that fits, to within TRIM_STEP_CHARS. None when even the
     first MIN_JOB_CHARS do not fit (a large résumé, say) or `local/jev.py` is missing."""
@@ -256,7 +368,7 @@ def fitted_state(job_md: str, resume: str, questions: Mapping[str, Any]) -> dict
         jev = _jev_module()
     except Exception:           # noqa: BLE001  (no size check means no request)
         return None
-    state = {"candidate": CANDIDATE, "resume": resume, "job": job_md}
+    state = {"candidate": candidate or CANDIDATE, "resume": resume, "job": job_md}
     if jev.request_fits(state, questions):
         return state
     fits, over = MIN_JOB_CHARS, len(job_md)     # job_md[:fits] fits; job_md[:over] does not
@@ -325,8 +437,9 @@ def _score_read(answer: Any, levels: int) -> float | None:
 FIT_LEVELS = (
     "No match: the job is in another field (sales, recruiting, hardware, electrical, embedded "
     "or firmware work, or other work with no data, analysis or software in it), or it has a "
-    "hard requirement the candidate cannot meet, such as a required master's degree or PhD or "
-    "an active security clearance.",
+    "hard requirement the candidate cannot meet, such as a required master's degree or PhD, a "
+    "security clearance the candidate does not hold, or an enrollment or graduation-date rule "
+    "that excludes the candidate (see `candidate`).",
     "Weak match: the job needs 3 or more years of experience or is a senior, staff, principal, "
     "lead or manager role, or the candidate's skills and tools mostly do not carry over to it.",
     "Borderline: the job asks for 1 or more years of experience, or only part of the "
@@ -367,7 +480,11 @@ MAIN_FACTOR_OPTIONS: dict[str, str] = {
                         "recruiting, hardware, embedded work, or work with no data, analysis "
                         "or software in it."),
     "degree": "The job requires a master's degree or PhD.",
-    "clearance": "The job requires an active security clearance.",
+    "clearance": "The job requires a security clearance the candidate does not hold.",
+    "not_eligible": ("An enrollment or graduation-date rule in the job excludes the candidate "
+                     "(see `candidate`): the job is only for current students when the "
+                     "candidate has finished school, only for a different degree level, or "
+                     "only for a graduation window the candidate's date falls outside."),
 }
 
 # option id -> what the reason says.
@@ -379,7 +496,8 @@ FACTOR_TEXT: dict[str, str] = {
     "senior": "a senior, lead or manager role",
     "different_field": "a field outside data, analytics and software",
     "degree": "requires a master's degree or PhD",
-    "clearance": "requires an active security clearance",
+    "clearance": "requires a security clearance the candidate does not hold",
+    "not_eligible": "an enrollment or graduation-date rule excludes the candidate",
 }
 
 
@@ -416,9 +534,12 @@ def _years_cap(years: int) -> int | None:
 
 def compose_stage1(facts: Mapping[str, Any], reads: Mapping[str, Any]) -> tuple[int, str]:
     """(score 1-5, reason) from Jev's `fit` level and `main_factor` choice, and
-    the code facts (`min_years`, `advanced_degree`, `clearance`). `fit` is
-    scaled 0-1 (the level over the top level); its raw level (0-4) maps to the
-    score by `floor(value + 0.5) + 1`. When a code fact caps the score below
+    the code facts (`min_years`, `advanced_degree`, `clearance`, `student_cue`).
+    `fit` is scaled 0-1 (the level over the top level); its raw level (0-4)
+    maps to the score by `floor(value + 0.5) + 1`. A `main_factor` of
+    `not_eligible` caps the score at NOT_ELIGIBLE_CAP unless `student_cue` is
+    False (the posting shows no student or graduate cue, so an enrollment
+    rule is unlikely). When a code fact caps the score below
     what `fit` gave, the reason names that fact in place of `main_factor` (the
     lowest cap's fact when several caps apply). Pure: the rules and constants
     at the top of the module."""
@@ -438,9 +559,13 @@ def compose_stage1(facts: Mapping[str, Any], reads: Mapping[str, Any]) -> tuple[
         if cap is not None:
             cap_facts.append((cap, f"the posting asks for {years}+ years of experience"))
     if clearance:
-        cap_facts.append((CLEARANCE_CAP, "the posting requires a security clearance"))
+        cap_facts.append((CLEARANCE_CAP,
+                          "the posting requires a security clearance the candidate does not hold"))
     if degree:
         cap_facts.append((ADVANCED_DEGREE_CAP, "the posting requires a master's degree or PhD"))
+    if main_factor == "not_eligible" and facts.get("student_cue", True):
+        cap_facts.append((NOT_ELIGIBLE_CAP, "an enrollment or graduation-date rule in the "
+                                            "posting excludes the candidate"))
 
     final, cap_text = score, None
     if cap_facts:
@@ -457,14 +582,15 @@ def stage1(judge: Any, job: Any, resume: str) -> dict | None:
     """{"score", "reason"} for one job from one Jev request, or None to score
     that job on the LLM path (no judge, a request that failed or did not fit,
     an answer that could not be read). `job` is the job's markdown or a mapping
-    with `md` and `facts` (code facts; see `compose_stage1`)."""
+    with `md`, `facts` (code facts; see `compose_stage1`) and `profile` (the
+    candidate profile `candidate_for` renders; none reads as the defaults)."""
     if judge is None:
         return None
     md, facts = _job_parts(job)
     if not md.strip() or not str(resume or "").strip():
         return None
     questions = stage1_questions()
-    state = fitted_state(md, resume, questions)
+    state = fitted_state(md, resume, questions, candidate_for(_job_profile(job)))
     if state is None:
         return None
     answers = _ask(judge, state, questions)
@@ -810,7 +936,7 @@ def stage2(judge: Any, job: Any, resume: str) -> dict | None:
         return None
     reqs = requirement_lines(md)
     questions = stage2_questions(reqs)
-    state = fitted_state(md, resume, questions)
+    state = fitted_state(md, resume, questions, candidate_for(_job_profile(job)))
     if state is None:
         return None
     answers = _ask(judge, state, questions)

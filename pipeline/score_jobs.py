@@ -2570,6 +2570,10 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame, *,
     sem1 = asyncio.Semaphore(max(1, STAGE1_CONCURRENCY))
     jev_on = jev_run is not None and jev_run.on
     jsem = asyncio.Semaphore(max(1, JEV_CONCURRENCY))    # see sem1 on max(1, ...)
+    # One profile per run: both Jev stages and jev_facts read this object, so a
+    # setting edited mid-run cannot split a job's stages across two candidates.
+    profile = candidate_profile() if jev_on else None
+    jev_profile = profile.jev_profile() if profile is not None else None
     if not jev_on:
         via = STAGE1_MODEL
     elif pool is None:
@@ -2581,7 +2585,8 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame, *,
     async def stage1_one(job_id, job_md):
         if jev_on:
             got = await jev_run.ask(jsem, 1, job_id,
-                                    {"md": job_md, "facts": jev_facts(job_md)}, resume)
+                                    {"md": job_md, "facts": jev_facts(job_md, profile),
+                                     "profile": jev_profile}, resume)
             if got is not None:
                 return {"job_posting_id": job_id, "score": int(got["score"]),
                         "reason": got["reason"]}
@@ -2612,7 +2617,8 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame, *,
 
         async def stage2_one(job_id, job_md):
             if jev_on:
-                got = await jev_run.ask(jsem, 2, job_id, {"md": job_md}, resume)
+                got = await jev_run.ask(jsem, 2, job_id,
+                                        {"md": job_md, "profile": jev_profile}, resume)
                 if got is not None:
                     # `findings` is for the writer (SP2); the row never carries it.
                     row, findings = _pop_jev_findings(got)

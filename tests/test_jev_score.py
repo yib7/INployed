@@ -342,7 +342,7 @@ def _all_strings(value):
     ("senior", "a senior, lead or manager role"),
     ("different_field", "a field outside data, analytics and software"),
     ("degree", "requires a master's degree or PhD"),
-    ("clearance", "requires an active security clearance"),
+    ("clearance", "requires a security clearance the candidate does not hold"),
 ])
 def test_stage1_reason_names_each_main_factor_word_for_word(main_factor, text):
     score, reason = jev_score.compose_stage1(NO_FACTS, _reads(fit=1.0, main_factor=main_factor))
@@ -373,7 +373,8 @@ def test_stage1_rounds_fit_half_up_to_a_1_to_5_score(frac, score, label):
     (dict(NO_FACTS, min_years=4), 2, "the posting asks for 4+ years of experience"),
     (dict(NO_FACTS, min_years=1), 3, "the posting asks for 1+ years of experience"),
     (dict(NO_FACTS, min_years=2), 3, "the posting asks for 2+ years of experience"),
-    (dict(NO_FACTS, clearance=True), 1, "the posting requires a security clearance"),
+    (dict(NO_FACTS, clearance=True), 1,
+     "the posting requires a security clearance the candidate does not hold"),
     (dict(NO_FACTS, advanced_degree=True), 2, "the posting requires a master's degree or PhD"),
 ])
 def test_stage1_a_code_cap_that_lowers_the_score_names_the_fact(facts, score, text):
@@ -426,7 +427,8 @@ def test_stage1_uses_the_lowest_cap_when_several_apply():
     facts = dict(NO_FACTS, min_years=3, clearance=True, advanced_degree=True)
     got, reason = jev_score.compose_stage1(facts, _reads(fit=1.0))
     assert got == 1
-    assert reason == "No match: the posting requires a security clearance."
+    assert reason == ("No match: the posting requires a security clearance the candidate "
+                      "does not hold.")
 
 
 def test_stage1_breaks_a_cap_tie_by_years_then_clearance_then_degree():
@@ -447,7 +449,7 @@ def test_stage1_asks_the_fit_score_and_main_factor_choice():
     assert levels[-1].startswith("Strong match")
     assert list(qs["main_factor"]["criteria"]) == [
         "skills_fit", "partial_skills", "years_1_2", "years_3_plus", "senior",
-        "different_field", "degree", "clearance"]
+        "different_field", "degree", "clearance", "not_eligible"]
     assert qs["fit"]["instructions"]["question"] == (
         "How well does the job in `job` fit the candidate described in `candidate` "
         "and `resume`?")
@@ -477,7 +479,7 @@ def test_stage1_sends_one_request_with_the_candidate_resume_and_job():
     assert set(state) == {"candidate", "resume", "job"}
     assert state["resume"] == RESUME and state["job"] == JOB_MD
     cand = json.dumps(state["candidate"]).lower()
-    for words in ("new grad", "may 2026", "entry", "location", "work authorization"):
+    for words in ("finished school", "may 2026", "entry", "location", "work authorization"):
         assert words in cand, words
     assert set(questions) == set(jev_score.stage1_questions())
 
@@ -532,10 +534,38 @@ def test_stage1_returns_none_for_an_empty_resume():
     assert judge.calls == []
 
 
+def _candidate_variants():
+    """Every `candidate_for` block: each status, with and without a graduation
+    month, each clearance level, the open box on and off."""
+    return [jev_score.candidate_for({"status": status, "graduation": graduation,
+                                     "clearance": level, "sponsorship": open_})
+            for status in ("finished", "undergrad", "grad")
+            for graduation in ("December 2027", "")
+            for level in jev_score.CLEARANCE_LEVELS
+            for open_ in (False, True)]
+
+
+def _stage1_reason_texts():
+    """The reason `compose_stage1` writes for each main factor and for each cap."""
+    facts = dict(NO_FACTS, student_cue=False)
+    reasons = [jev_score.compose_stage1(facts, _reads(fit=1.0, main_factor=option))[1]
+               for option in jev_score.MAIN_FACTOR_OPTIONS]
+    for capped in (dict(facts, min_years=5), dict(facts, clearance=True),
+                   dict(facts, advanced_degree=True), dict(facts, student_cue=True)):
+        reasons.append(jev_score.compose_stage1(
+            capped, _reads(fit=1.0, main_factor="not_eligible"))[1])
+    return reasons
+
+
 def test_stage_questions_pass_the_prompt_hygiene_census():
     import test_prompt_hygiene as hygiene
-    texts = _all_strings(jev_score.CANDIDATE) + _all_strings(jev_score.stage1_questions())
+    variants = _candidate_variants()
+    assert len(variants) == 3 * 2 * len(jev_score.CLEARANCE_LEVELS) * 2
+    texts = (_all_strings(jev_score.CANDIDATE) + _all_strings(variants)
+             + _all_strings(jev_score.stage1_questions())
+             + _all_strings(jev_score.FACTOR_TEXT) + _stage1_reason_texts())
     assert texts
+    assert any("not_eligible" in q for q in jev_score.stage1_questions()["main_factor"]["criteria"])
     for text in texts:
         for label, pattern in hygiene.BANNED:
             assert not pattern.search(text), (label, text)

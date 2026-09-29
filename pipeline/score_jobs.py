@@ -26,6 +26,7 @@ import sys
 import tempfile
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -134,6 +135,15 @@ _SCORING_DEFAULTS: dict[str, tuple[str, object, str]] = {
     # LLM call. 0 disables reuse entirely -- every incoming row is scored
     # fresh, exactly like before this feature existed.
     "repost_reuse_days": ("SCORE_REPOST_REUSE_DAYS", 30, "int"),
+    # Cycle 21: who the candidate is right now. The prompts, the mechanical filters
+    # and the Jev scorer all read these four through candidate_profile() below.
+    # The defaults are the candidate before this cycle: school finished, no
+    # clearance, so a fresh install and the VM (no scoring_config.json) score
+    # exactly as they did.
+    "education_status": ("SCORE_EDUCATION_STATUS", "Finished school", "str"),
+    "graduation_month": ("SCORE_GRADUATION_MONTH", "May 2026", "str"),
+    "clearance_level": ("SCORE_CLEARANCE_LEVEL", "None", "str"),
+    "clearance_sponsorship": ("SCORE_CLEARANCE_SPONSORSHIP", False, "bool"),
 }
 
 
@@ -301,6 +311,154 @@ MAX_SCORED_PER_RUN = _SCORING["max_scored_per_run"]
 RESCORE_CAP = _SCORING["rescore_cap"]
 DROP_EASY_APPLY = _SCORING["drop_easy_apply"]
 REPOST_REUSE_DAYS = _SCORING["repost_reuse_days"]
+EDUCATION_STATUS = _SCORING["education_status"]
+GRADUATION_MONTH = _SCORING["graduation_month"]
+CLEARANCE_LEVEL = _SCORING["clearance_level"]
+CLEARANCE_SPONSORSHIP = _SCORING["clearance_sponsorship"]
+
+# --- The candidate profile (cycle 21) -------------------------------------------
+# The four keys above resolve into one CandidateProfile. candidate_profile() is
+# pure: each input is an argument that defaults to the module constant, read at
+# CALL time (a test or a caller can rebind the constant), and `today` is
+# injectable. A stale or hand-edited setting degrades to the default plus a note
+# and never stops a run that spends money.
+
+EDUCATION_STATUSES = ("Finished school", "In school: undergraduate", "In school: graduate")
+# One code per label, in the same order; the rest of the pipeline speaks the codes.
+EDUCATION_STATUS_CODES = ("finished", "undergrad", "grad")
+# The rank of a level is its index: the filters compare a held rank to a needed one.
+CLEARANCE_LEVELS = ("None", "Public Trust", "Secret", "Top Secret", "TS/SCI")
+_MONTH_NAMES = ("January", "February", "March", "April", "May", "June", "July",
+                "August", "September", "October", "November", "December")
+# Month name or abbreviation, an optional period ("Sept."), then a four-digit year.
+GRADUATION_MONTH_RE = re.compile(
+    r"\s*(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?"
+    r"|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+"
+    r"((?:19|20)\d{2})\s*", re.I)
+
+
+def parse_graduation_month(text) -> tuple[int, int] | None:
+    """(year, month) for "May 2026", "Sept. 2027" and the like; None otherwise.
+
+    None covers a blank, a non-string, and anything that is not a month name (or
+    its three-letter form) followed by a four-digit year. "May 26" is None on
+    purpose: a two-digit year is ambiguous, and guessing the century here would
+    move the rollover date by 100 years.
+    """
+    if not isinstance(text, str):
+        return None
+    m = GRADUATION_MONTH_RE.fullmatch(text)
+    if not m:
+        return None
+    prefix = m.group(1)[:3].lower()
+    month = next(i for i, name in enumerate(_MONTH_NAMES, 1) if name[:3].lower() == prefix)
+    return int(m.group(2)), month
+
+
+@dataclass(frozen=True)
+class CandidateProfile:
+    """The candidate as the scorers see them today.
+
+    `status` is the EFFECTIVE code ("finished", "undergrad", "grad"): a
+    configured in-school status whose graduation month has passed reads
+    "finished" with `rolled_over` True. `notes` are human-readable warnings about
+    a setting that was ignored or adjusted.
+    """
+    status: str
+    graduation: tuple[int, int] | None
+    graduation_text: str | None       # canonical "May 2026": full month name and year
+    clearance_rank: int               # index into CLEARANCE_LEVELS
+    clearance_label: str
+    sponsorship: bool                 # open to a clearance the employer sponsors
+    rolled_over: bool = False
+    notes: tuple[str, ...] = ()
+
+    def jev_profile(self) -> dict:
+        """The mapping the Jev scorer takes (jev_score.candidate_for)."""
+        return {"status": self.status, "graduation": self.graduation_text,
+                "clearance": self.clearance_label, "sponsorship": self.sponsorship}
+
+
+def _setting_text(value) -> str:
+    """A config value as stripped text; a JSON null is blank."""
+    return "" if value is None else str(value).strip()
+
+
+def candidate_profile(status=None, graduation=None, clearance=None, sponsorship=None,
+                      today: date | None = None) -> CandidateProfile:
+    """Resolve the four settings into a CandidateProfile. Pure: prints nothing.
+
+    Each argument defaults to its module constant. A blank value reads as unset
+    (the default, no note); a value that names nothing known falls back to the
+    default with a note. An in-school status whose graduation month is before
+    today's month rolls over to "finished"; a "finished" status with a graduation
+    month after today's drops that date.
+    """
+    status = _setting_text(EDUCATION_STATUS if status is None else status)
+    graduation = _setting_text(GRADUATION_MONTH if graduation is None else graduation)
+    clearance = _setting_text(CLEARANCE_LEVEL if clearance is None else clearance)
+    sponsorship = _as_bool(CLEARANCE_SPONSORSHIP if sponsorship is None else sponsorship)
+    now = today if today is not None else datetime.now().date()
+    notes: list[str] = []
+
+    code = "finished"
+    if status:
+        folded = " ".join(status.split()).casefold()
+        for label, label_code in zip(EDUCATION_STATUSES, EDUCATION_STATUS_CODES):
+            if folded == label.casefold():
+                code = label_code
+                break
+        else:
+            notes.append(f"Unknown school status {status!r}; using Finished school.")
+
+    rank = 0
+    if clearance:
+        folded = " ".join(clearance.split()).casefold()
+        for i, level in enumerate(CLEARANCE_LEVELS):
+            if folded == level.casefold():
+                rank = i
+                break
+        else:
+            notes.append(f"Unknown clearance level {clearance!r}; using None.")
+
+    grad = parse_graduation_month(graduation) if graduation else None
+    if graduation and grad is None:
+        notes.append(f"Graduation month {graduation!r} is not a month and a four-digit "
+                     "year such as May 2026; ignoring it.")
+    grad_text = f"{_MONTH_NAMES[grad[1] - 1]} {grad[0]}" if grad else None
+
+    rolled_over = False
+    if grad is not None:
+        if code != "finished" and grad < (now.year, now.month):
+            code = "finished"
+            rolled_over = True
+            notes.append(f"Graduation month {grad_text} has passed; the candidate now "
+                         "counts as Finished school.")
+        elif code == "finished" and grad > (now.year, now.month):
+            notes.append(f"Finished school with a graduation month in the future "
+                         f"({grad_text}); ignoring the graduation month.")
+            grad, grad_text = None, None
+
+    return CandidateProfile(
+        status=code, graduation=grad, graduation_text=grad_text,
+        clearance_rank=rank, clearance_label=CLEARANCE_LEVELS[rank],
+        sponsorship=sponsorship, rolled_over=rolled_over, notes=tuple(notes))
+
+
+def describe_profile(profile: CandidateProfile) -> str:
+    """The run-log line for a profile, then one indented line per note.
+
+    "Candidate: Finished school (graduated May 2026); clearance: None, not open
+    to sponsorship". An in-school candidate reads "(expected May 2027)".
+    """
+    label = EDUCATION_STATUSES[EDUCATION_STATUS_CODES.index(profile.status)]
+    if profile.graduation_text:
+        verb = "graduated" if profile.status == "finished" else "expected"
+        label = f"{label} ({verb} {profile.graduation_text})"
+    sponsor = "open to sponsorship" if profile.sponsorship else "not open to sponsorship"
+    lines = [f"Candidate: {label}; clearance: {profile.clearance_label}, {sponsor}"]
+    lines.extend(f"  Note: {note}" for note in profile.notes)
+    return "\n".join(lines)
 
 # Per-run metrics appended to run_stats.csv (uploaded to Drive by run_scraper.sh,
 # shown in the dashboard's Stats tab). One row per score_jobs.py invocation, so
@@ -2164,6 +2322,7 @@ async def main() -> None:
     # provider is then optional, so missing credentials no longer end the run.
     jev_run = JevRun(make_jev_judge())
     pool = make_pool(required=not jev_run.on)
+    print(describe_profile(candidate_profile()))
 
     stats = {
         "timestamp": datetime.now().isoformat(timespec="seconds"),

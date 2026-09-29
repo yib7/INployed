@@ -35,6 +35,8 @@ def _clear_env(monkeypatch):
         "SCORE_MIN_FILTER_YEARS", "SCORE_DROP_EASY_APPLY",
         "SCORE_STAGE1_MODELS", "SCORE_STAGE2_MODELS", "SCORE_MODEL_LIMITS",
         "SCORE_REPOST_REUSE_DAYS",
+        "SCORE_EDUCATION_STATUS", "SCORE_GRADUATION_MONTH",
+        "SCORE_CLEARANCE_LEVEL", "SCORE_CLEARANCE_SPONSORSHIP",
     ):
         monkeypatch.delenv(k, raising=False)
 

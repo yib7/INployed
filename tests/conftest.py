@@ -113,6 +113,10 @@ for _leaked in (
     "SCORE_STAGE2_THRESHOLD", "SCORE_MAX_PER_RUN", "SCORE_RESCORE_CAP",
     "SCORE_MIN_FILTER_YEARS", "SCORE_DROP_EASY_APPLY", "SCORE_HTTP_TIMEOUT_S",
     "SCORE_JEV_WRITER", "SCORE_REPOST_REUSE_DAYS",
+    # cycle 21: the candidate's school status and clearance. Read by
+    # score_jobs.candidate_profile() through module constants frozen at import.
+    "SCORE_EDUCATION_STATUS", "SCORE_GRADUATION_MONTH",
+    "SCORE_CLEARANCE_LEVEL", "SCORE_CLEARANCE_SPONSORSHIP",
     # The multi-model pool's names, read live by keypool.limits_from_disk,
     # score_jobs.load_scoring_config and config.gemini_fallback_models. Proved
     # to leak before this line existed: exporting SCORE_MODEL_LIMITS and
@@ -442,7 +446,11 @@ def _hermetic_repo_data(tmp_path_factory):
                             ("MIN_FILTER_YEARS", "min_filter_years"),
                             ("DROP_EASY_APPLY", "drop_easy_apply"),
                             ("REPOST_REUSE_DAYS", "repost_reuse_days"),
-                            ("JEV_WRITER", "jev_writer")):
+                            ("JEV_WRITER", "jev_writer"),
+                            ("EDUCATION_STATUS", "education_status"),
+                            ("GRADUATION_MONTH", "graduation_month"),
+                            ("CLEARANCE_LEVEL", "clearance_level"),
+                            ("CLEARANCE_SPONSORSHIP", "clearance_sponsorship")):
             mp.setattr(score_jobs, _attr, _scoring[_key])
         yield
 

@@ -126,3 +126,7 @@ def test_score_jobs_scoring_constants_are_the_builtin_defaults():
     assert score_jobs.RESCORE_CAP == defaults["rescore_cap"]
     assert score_jobs.MIN_FILTER_YEARS == defaults["min_filter_years"]
     assert score_jobs.DROP_EASY_APPLY == defaults["drop_easy_apply"]
+    assert score_jobs.EDUCATION_STATUS == defaults["education_status"]
+    assert score_jobs.GRADUATION_MONTH == defaults["graduation_month"]
+    assert score_jobs.CLEARANCE_LEVEL == defaults["clearance_level"]
+    assert score_jobs.CLEARANCE_SPONSORSHIP == defaults["clearance_sponsorship"]

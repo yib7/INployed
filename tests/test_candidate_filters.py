@@ -6,8 +6,8 @@ them.
 
 Task 7: the clearance filter is level-aware. A clearance the candidate holds
 passes; a clearance the employer sponsors passes when the candidate is open to
-sponsorship. Under the default profile (no clearance, not open) it blocks
-exactly what `requires_clearance` blocks.
+sponsorship. Under the default profile (no clearance, closed to sponsorship) it
+blocks exactly what `requires_clearance` blocks.
 
 Every test runs against the sandboxed scoring constants that conftest's
 _hermetic_repo_data rebinds, so the author's scoring_config.json never leaks in.
@@ -324,3 +324,393 @@ def test_main_prints_no_internship_line_for_a_student(monkeypatch, tmp_path, cap
     monkeypatch.setattr(sj, "GRADUATION_MONTH", "")
     asyncio.run(sj.main())
     assert "internship / co-op" not in capsys.readouterr().out
+
+
+# --- Task 7: the clearance filter is level-aware ---------------------------------
+
+# The clearance table of tests/test_jd_filters.py::test_requires_clearance, copied
+# so the default profile is pinned to today's requires_clearance verdicts.
+JD_FILTER_CASES = [
+    "Active TS/SCI clearance required for this role.",
+    "Must be able to obtain a Secret clearance.",
+    "Applicants must possess a top secret clearance.",
+    "This position requires a polygraph.",
+    "Ability to obtain a clearance is necessary.",
+    "Requires an active Secret clearance.",
+    "No clearance required for this position.",
+    "Security clearance is not required.",
+    "We build software for a security-cleared facility; tours available.",
+    "Backend engineer building web apps and REST APIs.",
+    "No polygraph required.",
+    "A polygraph is not required for this role.",
+    "You will collaborate with TS/SCI clearance holders on the team.",
+    None,
+    float("nan"),
+    12345,
+]
+
+POSITIVE_SENTENCES = [
+    "Active TS/SCI clearance required for this role.",
+    "Must be able to obtain a Secret clearance.",
+    "Applicants must possess a top secret clearance.",
+    "This position requires a polygraph.",
+    "Ability to obtain a clearance is necessary.",
+    "Requires an active Secret clearance.",
+    "Public Trust clearance is required.",
+    "Current Top-Secret clearance required",
+    "Must hold an interim Secret clearance pending adjudication.",
+    "Willingness to undergo a polygraph is required.",
+    "Eligibility for a TS clearance is required.",
+    "Clearance is required.",
+    "Secret clearance sponsorship available for the right candidate.",
+    "Active Secret clearance required; ability to obtain TS/SCI",
+]
+NEGATED_SENTENCES = [
+    "No clearance required for this position.",
+    "Security clearance is not required.",
+    "No polygraph required.",
+    "A polygraph is not required for this role.",
+    "You will collaborate with TS/SCI clearance holders on the team.",
+]
+NEUTRAL_SENTENCES = [
+    "Backend engineer building web apps and REST APIs.",
+    "We build software for a security-cleared facility; tours available.",
+    "Strong SQL and Python skills.",
+    "Team lunches on Fridays!",
+]
+SEPARATORS = (" ", "\n", "; ", ". ")
+
+
+def _synthetic_postings():
+    pool = POSITIVE_SENTENCES + NEGATED_SENTENCES + NEUTRAL_SENTENCES
+    yield from pool
+    for a in pool:
+        for b in pool:
+            for sep in SEPARATORS:
+                yield a + sep + b
+    yield ("About us\nWe build things.\nRequirements:\n- Python\n- Active Secret clearance\n"
+           "- Must be able to obtain a TS clearance\nBenefits: lunch")
+    yield "Must be able to hold; a clearance"
+    yield "Who you are? Someone who must hold! a Secret clearance."
+
+
+@pytest.mark.parametrize("text", JD_FILTER_CASES, ids=lambda t: repr(t)[:40])
+def test_the_default_profile_blocks_what_requires_clearance_blocks_on_the_jd_filter_cases(text):
+    assert sj.clearance_blocks(text) is sj.requires_clearance(text)
+
+
+def test_the_default_profile_blocks_what_requires_clearance_blocks_on_synthetic_postings():
+    seen = 0
+    for text in _synthetic_postings():
+        assert sj.clearance_blocks(text) is sj.requires_clearance(text), text
+        seen += 1
+    assert seen > 1000
+
+
+def test_the_default_arguments_are_no_clearance_and_not_open():
+    text = "Active Secret clearance required."
+    assert sj.clearance_blocks(text) is True
+    assert sj.clearance_blocks(text, 0, False) is True
+    assert sj.clearance_blocks(text, held_rank=0, sponsorship=False) is True
+
+
+# --- Task 7: the requirement list ------------------------------------------------
+
+@pytest.mark.parametrize(("text", "expected"), [
+    ("Public Trust clearance is required.", [(1, False)]),
+    ("Active Secret clearance required.", [(2, False)]),
+    ("Top Secret clearance required.", [(3, False)]),
+    ("Top-Secret clearance required.", [(3, False)]),
+    ("TS clearance required.", [(3, False)]),
+    ("Active TS/SCI clearance required.", [(4, False)]),
+    ("TS-SCI clearance required.", [(4, False)]),
+    ("Top Secret/SCI clearance required.", [(4, False)]),
+    ("SCI clearance required.", [(4, False)]),
+    ("This position requires a polygraph.", [(4, False)]),
+    ("Clearance is required.", [(0, False)]),
+    ("Requires an active clearance.", [(0, False)]),
+    ("Must be able to obtain a Secret clearance.", [(2, True)]),
+    ("Eligibility for a Top Secret clearance is required.", [(3, True)]),
+    ("An interim Secret clearance is fine pending final adjudication.", [(2, True)]),
+    ("Willingness to undergo a polygraph is required.", [(4, True)]),
+    ("Secret clearance sponsorship available for the right candidate.", [(2, True)]),
+    ("Must be able to obtain a Public Trust clearance.", [(1, True)]),
+    ("Active Secret clearance required. Must obtain a TS/SCI clearance.",
+     [(2, False), (4, True)]),
+    ("Requirements:\nActive Secret clearance\nMust be able to obtain a TS clearance",
+     [(2, False), (3, True)]),
+    ("Active Secret clearance required; ability to obtain TS/SCI", [(2, False)]),
+])
+def test_the_requirement_is_one_pair_per_sentence_that_names_a_clearance(text, expected):
+    assert sj.clearance_requirement(text) == expected
+
+
+@pytest.mark.parametrize("text", NEGATED_SENTENCES + NEUTRAL_SENTENCES
+                         + [None, float("nan"), 12345, ""])
+def test_a_posting_without_a_clearance_requirement_has_an_empty_list(text):
+    assert sj.clearance_requirement(text) == []
+
+
+def test_the_list_is_empty_exactly_when_requires_clearance_is_false():
+    for text in _synthetic_postings():
+        assert (sj.clearance_requirement(text) == []) is (not sj.requires_clearance(text)), text
+
+
+def test_a_match_that_spans_a_sentence_break_falls_back_to_one_unnamed_mention():
+    """CLEARANCE_PATTERNS may match across a `;`, `!` or `?`, so splitting into
+    sentences can leave no single sentence that matches. The fallback keeps the
+    default profile blocking what requires_clearance blocks."""
+    for text in ("Must be able to hold; a clearance",
+                 "Must hold! a clearance",
+                 "Must you maintain? a clearance"):
+        assert sj.requires_clearance(text) is True
+        assert sj.clearance_requirement(text) == [(0, False)], text
+        assert sj.clearance_blocks(text) is True
+    # An unnamed level counts as Secret, so a Secret holder passes it.
+    assert sj.clearance_blocks("Must be able to hold; a clearance", 2) is False
+
+
+# --- Task 7: the level table -----------------------------------------------------
+
+SECRET_REQUIRED = "Active Secret clearance required."
+PUBLIC_TRUST_REQUIRED = "Public Trust clearance is required."
+TOP_SECRET_REQUIRED = "Top Secret clearance required."
+TSSCI_REQUIRED = "Active TS/SCI clearance required."
+POLYGRAPH_REQUIRED = "This position requires a polygraph."
+OBTAIN_SECRET = "Must be able to obtain a Secret clearance."
+SPONSORED_SECRET = "Secret clearance sponsorship available for the right candidate."
+MIXED = "Active Secret clearance required; ability to obtain TS/SCI"
+TWO_MENTIONS = "Active Secret clearance required. Must obtain a TS/SCI clearance."
+
+
+@pytest.mark.parametrize(("text", "held", "open_", "blocks"), [
+    # held Secret
+    (SECRET_REQUIRED, 2, False, False),
+    (PUBLIC_TRUST_REQUIRED, 2, False, False),
+    (TSSCI_REQUIRED, 2, False, True),
+    (TOP_SECRET_REQUIRED, 2, False, True),
+    (POLYGRAPH_REQUIRED, 2, False, True),
+    ("Clearance is required.", 2, False, False),
+    # held TS/SCI passes every level, the polygraph included
+    (SECRET_REQUIRED, 4, False, False),
+    (PUBLIC_TRUST_REQUIRED, 4, False, False),
+    (TOP_SECRET_REQUIRED, 4, False, False),
+    (TSSCI_REQUIRED, 4, False, False),
+    (POLYGRAPH_REQUIRED, 4, False, False),
+    # held Top Secret stops at the SCI and the polygraph
+    (TOP_SECRET_REQUIRED, 3, False, False),
+    (TSSCI_REQUIRED, 3, False, True),
+    (POLYGRAPH_REQUIRED, 3, False, True),
+    # held Public Trust
+    (PUBLIC_TRUST_REQUIRED, 1, False, False),
+    (SECRET_REQUIRED, 1, False, True),
+    ("Clearance is required.", 1, False, True),
+    # no clearance and closed to sponsorship: everything blocks
+    (PUBLIC_TRUST_REQUIRED, 0, False, True),
+    (OBTAIN_SECRET, 0, False, True),
+    (SPONSORED_SECRET, 0, False, True),
+    # no clearance, open to sponsorship: only an obtainable clearance passes
+    (OBTAIN_SECRET, 0, True, False),
+    (SPONSORED_SECRET, 0, True, False),
+    ("Eligibility for a Top Secret clearance is required.", 0, True, False),
+    ("Willingness to undergo a polygraph is required.", 0, True, False),
+    ("An interim Secret clearance is fine pending final adjudication.", 0, True, False),
+    ("clearance sponsorship available", 0, True, False),
+    (TSSCI_REQUIRED, 0, True, True),
+    (SECRET_REQUIRED, 0, True, True),
+    (POLYGRAPH_REQUIRED, 0, True, True),
+    ("Clearance is required.", 0, True, True),
+    # open does not help a candidate who is already short of a required level
+    (SECRET_REQUIRED, 1, True, True),
+    # every mention has to be satisfied
+    (MIXED, 2, True, False),
+    (MIXED, 2, False, False),
+    (MIXED, 0, True, True),
+    (MIXED, 0, False, True),
+    (TWO_MENTIONS, 2, False, True),
+    (TWO_MENTIONS, 2, True, False),
+    (TWO_MENTIONS, 0, True, True),
+    ("Must obtain a Secret clearance. Must obtain a TS/SCI clearance.", 0, True, False),
+    ("Must obtain a Secret clearance. Active TS/SCI clearance required.", 0, True, True),
+])
+def test_the_level_table(text, held, open_, blocks):
+    assert sj.clearance_blocks(text, held, open_) is blocks
+
+
+@pytest.mark.parametrize("text", NEGATED_SENTENCES + [
+    "No clearance required. Pay is competitive.",
+    None, float("nan"), 12345,
+])
+@pytest.mark.parametrize("held", range(5))
+@pytest.mark.parametrize("open_", [False, True])
+def test_a_negated_or_absent_requirement_never_blocks(text, held, open_):
+    assert sj.clearance_blocks(text, held, open_) is False
+
+
+def test_more_clearance_or_openness_never_turns_a_pass_into_a_block():
+    for text in _synthetic_postings():
+        for open_ in (False, True):
+            verdicts = [sj.clearance_blocks(text, rank, open_) for rank in range(5)]
+            assert verdicts == sorted(verdicts, reverse=True), (text, open_, verdicts)
+        for rank in range(5):
+            if sj.clearance_blocks(text, rank, True):
+                assert sj.clearance_blocks(text, rank, False), (text, rank)
+
+
+# --- Task 7: the filter column follows the profile -------------------------------
+
+def _clearance_frame(texts):
+    return pd.DataFrame({"desc": [f"{t} {CLEAN_DESC}" for t in texts],
+                         "title": ["Software Engineer"] * len(texts)})
+
+
+CLEARANCE_TEXTS = [OBTAIN_SECRET, SECRET_REQUIRED, TSSCI_REQUIRED, "No clearance required.",
+                   "Build web apps."]
+
+
+def test_the_default_profile_drops_every_clearance_posting():
+    out = sj.add_filter_columns(_clearance_frame(CLEARANCE_TEXTS), "desc", "title",
+                                profile=sj.candidate_profile(today=TODAY))
+    assert list(out["filter_clearance"]) == [True, True, True, False, False]
+    assert list(out["filtered_out"]) == [True, True, True, False, False]
+
+
+def test_a_held_secret_keeps_the_secret_postings_and_drops_the_ts_sci_one():
+    profile = sj.candidate_profile(clearance="Secret", today=TODAY)
+    out = sj.add_filter_columns(_clearance_frame(CLEARANCE_TEXTS), "desc", "title",
+                                profile=profile)
+    assert list(out["filter_clearance"]) == [False, False, True, False, False]
+    assert list(out["filtered_out"]) == [False, False, True, False, False]
+
+
+def test_open_to_sponsorship_keeps_the_obtainable_clearance_only():
+    profile = sj.candidate_profile(sponsorship=True, today=TODAY)
+    out = sj.add_filter_columns(_clearance_frame(CLEARANCE_TEXTS), "desc", "title",
+                                profile=profile)
+    assert list(out["filter_clearance"]) == [False, True, True, False, False]
+
+
+def test_a_missing_profile_reads_the_clearance_constants_at_call_time(monkeypatch):
+    monkeypatch.setattr(sj, "CLEARANCE_LEVEL", "Secret")
+    out = sj.add_filter_columns(_clearance_frame(CLEARANCE_TEXTS), "desc", "title")
+    assert list(out["filter_clearance"]) == [False, False, True, False, False]
+    monkeypatch.setattr(sj, "CLEARANCE_LEVEL", "None")
+    monkeypatch.setattr(sj, "CLEARANCE_SPONSORSHIP", True)
+    out = sj.add_filter_columns(_clearance_frame(CLEARANCE_TEXTS), "desc", "title")
+    assert list(out["filter_clearance"]) == [False, True, True, False, False]
+
+
+def test_the_clearance_column_is_a_plain_bool_column():
+    out = sj.add_filter_columns(_clearance_frame(CLEARANCE_TEXTS), "desc", "title",
+                                profile=FINISHED)
+    assert out["filter_clearance"].dtype == bool
+
+
+def test_the_rescore_pass_uses_the_clearance_profile(tmp_path, monkeypatch):
+    master = tmp_path / "linkedin_jobs_master.csv"
+    pd.DataFrame({
+        "job_posting_id": ["1", "2"],
+        "job_title": ["Data Analyst", "Data Engineer"],
+        "job_description_formatted": [f"<p>{SECRET_REQUIRED} {CLEAN_DESC}</p>",
+                                      f"<p>{TSSCI_REQUIRED} {CLEAN_DESC}</p>"],
+        "score": [None, None], "filtered_out": [False, False],
+        "reason": [None, None], "recommendation": [None, None],
+    }).to_csv(master, index=False)
+    monkeypatch.setattr(sj, "MASTER_CSV", master)
+    monkeypatch.setattr(sj, "CLEARANCE_LEVEL", "Secret")
+    seen = []
+
+    async def run_scoring(pool, resume, df, **_kw):
+        seen.append(df.copy())
+        out = df.copy()
+        for col, val in (("score", 1), ("reason", "stub"), ("deep_score", None),
+                         ("strengths", ""), ("gaps", ""), ("recommendation", "stub")):
+            out[col] = val
+        return out
+
+    monkeypatch.setattr(sj, "run_scoring", run_scoring)
+    asyncio.run(sj.rescore_master_failures(pool=None, resume="resume"))
+    frame = seen[0].set_index("job_posting_id")
+    assert bool(frame.loc["1", "filter_clearance"]) is False
+    assert bool(frame.loc["2", "filter_clearance"]) is True
+
+
+# --- Task 7: jev_facts and the student cue ---------------------------------------
+
+def test_the_student_cue_regex_is_the_specified_pattern():
+    assert sj.STUDENT_CUE_RE.pattern == (
+        r"\b(?:intern(?:s|ship|ships)?|co-?ops?|students?|enrolled|enrollment|pursuing"
+        r"|graduat\w*|class of|new[\s-]?grads?|campus)\b")
+    assert sj.STUDENT_CUE_RE.flags & re.I
+
+
+@pytest.mark.parametrize("text", [
+    "Summer internship program for data analysts.",
+    "Data Science Intern",
+    "Our interns work on real projects.",
+    "Co-op position starting in January.",
+    "Coops rotate every four months.",
+    "Currently enrolled in a bachelor's program.",
+    "Proof of enrollment is required.",
+    "Pursuing a degree in computer science.",
+    "Graduating in May 2027.",
+    "Recent graduates are encouraged to apply.",
+    "Class of 2027 candidates welcome.",
+    "This is a new grad role.",
+    "New-grad program for analysts.",
+    "New Grads welcome.",
+    "Join our campus recruiting team.",
+    "Students welcome to apply.",
+    "A student with SQL skills.",
+])
+def test_a_student_cue_is_found(text):
+    assert sj.has_student_cue(text) is True
+
+
+@pytest.mark.parametrize("text", [
+    "Internal tools team building dashboards.",
+    "International clients across Europe.",
+    "Internet-scale data pipelines.",
+    "Build data pipelines for an analytics team.",
+    "Cooperative culture and flat teams.",
+    "We value studentship and mentoring.",
+    "Newgrade software for the classroom.",
+    "",
+    None,
+    float("nan"),
+    12345,
+])
+def test_no_student_cue_is_found(text):
+    assert sj.has_student_cue(text) is False
+
+
+def test_jev_facts_carries_the_four_facts():
+    facts = sj.jev_facts(CLEAN_DESC)
+    assert facts == {"min_years": None, "advanced_degree": False, "clearance": False,
+                     "student_cue": False}
+
+
+def test_jev_facts_reads_the_student_cue():
+    assert sj.jev_facts(CLEAN_DESC + " Open to current students.")["student_cue"] is True
+
+
+def test_jev_facts_clearance_under_the_default_profile_is_requires_clearance():
+    for text in _synthetic_postings():
+        assert sj.jev_facts(text)["clearance"] is sj.requires_clearance(text), text
+
+
+def test_jev_facts_clearance_follows_the_profile_argument():
+    text = f"{OBTAIN_SECRET} {CLEAN_DESC}"
+    held = sj.candidate_profile(clearance="Secret", today=TODAY)
+    open_ = sj.candidate_profile(sponsorship=True, today=TODAY)
+    assert sj.jev_facts(text)["clearance"] is True
+    assert sj.jev_facts(text, held)["clearance"] is False
+    assert sj.jev_facts(text, open_)["clearance"] is False
+    assert sj.jev_facts(f"{TSSCI_REQUIRED} {CLEAN_DESC}", held)["clearance"] is True
+    assert sj.jev_facts(f"{TSSCI_REQUIRED} {CLEAN_DESC}", open_)["clearance"] is True
+
+
+def test_jev_facts_reads_the_configured_profile_when_none_is_given(monkeypatch):
+    text = f"{SECRET_REQUIRED} {CLEAN_DESC}"
+    monkeypatch.setattr(sj, "CLEARANCE_LEVEL", "TS/SCI")
+    assert sj.jev_facts(text)["clearance"] is False

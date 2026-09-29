@@ -587,9 +587,13 @@ NONREQ_CTX = ("founded", "founding", " ago", "of service", "sabbatical",
 MIN_FILTER_YEARS = _SCORING["min_filter_years"]
 
 # --- security-clearance requirement -------------------------------------------
-# A new grad provably cannot hold an active US clearance, so a real
-# clearance requirement is a hard drop. The negation guard keeps "no clearance
-# required" / "clearance is not required" postings (precision bias: keep on doubt).
+# A clearance requirement drops the job unless the candidate profile covers it.
+# clearance_blocks() passes a mention when the candidate holds that level or a
+# higher one, or when the employer will obtain or sponsor it and the candidate is
+# open to sponsorship. Under the default profile (no clearance held, closed to
+# sponsorship) it blocks exactly what requires_clearance() flags. The negation
+# guard keeps "no clearance required" / "clearance is not required" postings
+# (precision bias: keep on doubt).
 # Note: a bare mention of a clearance LEVEL ("Secret clearance shop", "team holds
 # an active clearance") is treated as a drop -- such roles effectively require
 # clearance. Only clearly-non-requiring phrasings ("no clearance required",
@@ -1284,12 +1288,18 @@ class JevRun:
         return line
 
 
-def jev_facts(job_md: str) -> dict:
+def jev_facts(job_md: str, profile: CandidateProfile | None = None) -> dict:
     """The code facts Jev's stage 1 composes with (SC-2): the same detectors
-    the mechanical filter runs."""
+    the mechanical filter runs. `clearance` is the filter's verdict for
+    `profile` (None reads candidate_profile()); `student_cue` says the posting
+    reads as one for a student or a new graduate."""
+    if profile is None:
+        profile = candidate_profile()
     return {"min_years": min_required_years(job_md),
             "advanced_degree": requires_advanced_degree(job_md),
-            "clearance": requires_clearance(job_md)}
+            "clearance": clearance_blocks(job_md, profile.clearance_rank,
+                                          profile.sponsorship),
+            "student_cue": has_student_cue(job_md)}
 
 
 def latest_input_csv() -> Path | None:
@@ -1377,6 +1387,77 @@ def requires_clearance(text: Any) -> bool:
     if not any(p.search(text) for p in CLEARANCE_PATTERNS):
         return False
     return not bool(_CLEARANCE_NEG.search(text))
+
+
+# One mention is one sentence (or line) in which a CLEARANCE_PATTERNS pattern matches.
+_CLEARANCE_SENTENCE_SPLIT = re.compile(r"(?<=[.!?;])\s+|\n")
+# The level a sentence names, highest first: the first pattern that matches wins.
+# A polygraph reads as the top rank, the level that comes with the SCI.
+_CLEARANCE_RANK_PATTERNS = (
+    (4, re.compile(r"ts/sci|ts-sci|top[\s-]*secret/sci|\bsci\b|polygraph", re.I)),
+    (3, re.compile(r"top[\s-]*secret|\bts\b", re.I)),
+    (2, re.compile(r"\bsecret\b", re.I)),
+    (1, re.compile(r"public[\s-]*trust", re.I)),
+)
+# Wording that says the clearance can be obtained, sponsored or is still in process.
+_CLEARANCE_OBTAINABLE = re.compile(
+    r"obtain|eligib|sponsor|interim|willing(?:ness)? to (?:undergo|apply|get)"
+    r"|able to (?:get|be granted)|pending", re.I)
+
+
+def clearance_requirement(text: Any) -> list[tuple[int, bool]]:
+    """The clearances a JD asks for: one (rank_needed, obtainable) per mention.
+
+    `[]` when requires_clearance(text) is False. Otherwise one pair for each
+    sentence (or line) in which a CLEARANCE_PATTERNS pattern matches. rank_needed
+    is the highest level that sentence names on the CLEARANCE_LEVELS scale (4
+    TS/SCI or polygraph, 3 Top Secret, 2 Secret, 1 Public Trust) and 0 when it
+    names none. obtainable is True when the sentence says the clearance can be
+    obtained or sponsored. A pattern can match across a `;`, `!` or `?` that the
+    sentence split cuts at; when requires_clearance is True and no single sentence
+    matches, the answer is `[(0, False)]`, so the default profile blocks exactly
+    what requires_clearance blocks.
+    """
+    if not requires_clearance(text):
+        return []
+    mentions: list[tuple[int, bool]] = []
+    for sentence in _CLEARANCE_SENTENCE_SPLIT.split(text):
+        if not any(p.search(sentence) for p in CLEARANCE_PATTERNS):
+            continue
+        rank = next((r for r, p in _CLEARANCE_RANK_PATTERNS if p.search(sentence)), 0)
+        mentions.append((rank, bool(_CLEARANCE_OBTAINABLE.search(sentence))))
+    return mentions or [(0, False)]
+
+
+def clearance_blocks(text: Any, held_rank: int = 0, sponsorship: bool = False) -> bool:
+    """True when the JD asks for a clearance the candidate can neither hold nor get.
+
+    A mention needs its named level, and a clearance that names no level counts as
+    Secret. It is satisfied when `held_rank` (a CLEARANCE_LEVELS index) is at least
+    that level, or when the JD says the clearance is obtainable and the candidate
+    is open to `sponsorship`. The JD blocks when any mention is unsatisfied.
+    """
+    for rank_needed, obtainable in clearance_requirement(text):
+        if held_rank >= (rank_needed or 2):
+            continue
+        if obtainable and sponsorship:
+            continue
+        return True
+    return False
+
+
+# Words a posting uses to say it is for a student or a recent graduate. jev_facts
+# hands the answer to the Jev scorer as a fact.
+STUDENT_CUE_RE = re.compile(
+    r"\b(?:intern(?:s|ship|ships)?|co-?ops?|students?|enrolled|enrollment|pursuing"
+    r"|graduat\w*|class of|new[\s-]?grads?|campus)\b", re.I)
+
+
+def has_student_cue(text: Any) -> bool:
+    """True when the JD text carries a student or new-graduate cue."""
+    if not isinstance(text, str):
+        return False
+    return bool(STUDENT_CUE_RE.search(text))
 
 
 def requires_advanced_degree(text: Any) -> bool:
@@ -1790,7 +1871,8 @@ def add_filter_columns(df: pd.DataFrame, desc_col: str, title_col: str | None,
     df["filter_junk_title"] = df[title_col].apply(is_junk_title) if title_col else False
     df["filter_junk_desc"] = df["job_description_md"].apply(is_junk_desc)
     df["filter_too_many_years"] = df["job_description_md"].apply(has_too_many_years)
-    df["filter_clearance"] = df["job_description_md"].apply(requires_clearance)
+    df["filter_clearance"] = df["job_description_md"].apply(
+        lambda md: clearance_blocks(md, profile.clearance_rank, profile.sponsorship))
     df["filter_degree"] = df["job_description_md"].apply(requires_advanced_degree)
     # Added UNCONDITIONALLY (all-False when off / column absent) so the scored-CSV
     # and master schema is stable either way. Truthiness mirrors the dashboard's

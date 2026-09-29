@@ -1089,7 +1089,8 @@ def test_run_scoring_sends_the_code_facts_with_stage_one(monkeypatch):
     md = "Requires 3+ years of experience. A Master's degree is required.\n" + JOB2_MD
     asyncio.run(sj.run_scoring(RecordingPool(), RESUME, _jobs_df("JOB-A", md=md),
                                jev_run=sj.JevRun(ScriptedJudge())))
-    assert seen == [{"min_years": 3, "advanced_degree": True, "clearance": False}]
+    assert seen == [{"min_years": 3, "advanced_degree": True, "clearance": False,
+                     "student_cue": False}]
 
 
 def test_a_job_jev_cannot_score_takes_the_llm_path(monkeypatch):

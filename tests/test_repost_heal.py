@@ -149,8 +149,6 @@ def test_an_older_master_without_deep_score_still_loads_and_reuses_the_score(
 
 
 def test_a_reused_repost_keeps_all_six_values_through_run_scoring(tmp_path, monkeypatch):
-    import asyncio
-
     class NoCalls:
         def __getattr__(self, name):
             raise AssertionError(f"a reused row must not reach the pool ({name})")
@@ -214,7 +212,7 @@ def test_heal_reused_rows_fills_every_blank_spelling():
     assert row["recommendation"] == "apply"
 
 
-@pytest.mark.parametrize("flag", ["True", "true", "1", True])
+@pytest.mark.parametrize("flag", ["True", "true", "1", "1.0", True])
 def test_heal_reused_rows_reads_every_truthy_spelling_of_score_reused(flag):
     frame = pd.DataFrame([_reused(score_reused=flag)])
     assert len(sj.heal_reused_rows(frame, pd.DataFrame([_src()]))) == 1
@@ -257,6 +255,21 @@ def test_heal_reused_rows_compares_ids_as_stripped_strings():
     frame = pd.DataFrame([_reused(origin=" OLD-1 ")])
     healed = sj.heal_reused_rows(frame, pd.DataFrame([_src(" OLD-1")]))
     assert len(healed) == 1
+
+
+def test_heal_reused_rows_matches_an_id_a_float_column_turned_into_dot_zero():
+    healed = sj.heal_reused_rows(pd.DataFrame([_reused(origin="123.0")]),
+                                 pd.DataFrame([_src("123")]))
+    assert healed["job_posting_id"].tolist() == ["NEW-1"]
+    assert healed.iloc[0]["reason"] == "good fit"
+
+    healed = sj.heal_reused_rows(pd.DataFrame([_reused(origin="123")]),
+                                 pd.DataFrame([_src("123.0")]))
+    assert healed["job_posting_id"].tolist() == ["NEW-1"]
+
+    # only a bare ".0" tail is float noise; other ids stay distinct
+    assert sj.heal_reused_rows(pd.DataFrame([_reused(origin="123.5")]),
+                               pd.DataFrame([_src("123")])).empty
 
 
 def test_heal_reused_rows_returns_only_the_changed_rows_and_is_idempotent():
@@ -507,6 +520,45 @@ def test_heal_run_files_skips_an_unreadable_file_and_still_heals_the_others(
     assert "linkedin_jobs_bad_scored.csv.gz" in capsys.readouterr().out
 
 
+def test_heal_run_files_skips_a_file_it_cannot_write_and_still_heals_the_other(
+        tmp_path, monkeypatch, capsys):
+    """A PermissionError from the atomic replace (Drive or the dashboard holding the
+    file on Windows) skips that one file: a line names it and it adds nothing to the counts."""
+    _write_master_rows(tmp_path, monkeypatch, _master_rows())
+    locked = tmp_path / "morning" / "linkedin_jobs_locked_scored.csv.gz"
+    free = tmp_path / "evening" / "linkedin_jobs_free_scored.csv.gz"
+    _write_run_gz(locked, _run_file_rows())
+    _write_run_gz(free, _run_file_rows())
+    locked_before = locked.read_bytes()
+    real_write = sj._atomic_to_csv
+
+    def write(df, path, **kwargs):
+        if Path(path) == locked:
+            raise PermissionError(13, "file is in use")
+        real_write(df, path, **kwargs)
+
+    monkeypatch.setattr(sj, "_atomic_to_csv", write)
+
+    assert sj.heal_run_files() == (1, 1)                   # only the free file counts
+
+    assert locked.read_bytes() == locked_before
+    assert _read_run(free).loc["NEW-1", "reason"].startswith(SECRET)
+    out = capsys.readouterr().out
+    assert str(locked) in out and "PermissionError" in out
+    assert SECRET not in out                                # the line carries no row content
+
+
+def test_heal_run_files_reads_no_master_when_there_are_no_run_files(tmp_path, monkeypatch):
+    _write_master_rows(tmp_path, monkeypatch, _master_rows())
+
+    def no_read():
+        raise AssertionError("the master must not be read with no run files")
+
+    monkeypatch.setattr(sj, "_read_master_for_heal", no_read)
+    assert sj.heal_run_files() == (0, 0)
+    assert sj.heal_run_files(dry_run=True) == (0, 0)
+
+
 # --- main(): the per-run heal and the one-shot ----------------------------------
 
 def _main_args(**kw):
@@ -549,7 +601,8 @@ def test_main_prints_the_healed_count_only_when_it_is_positive(monkeypatch, caps
     assert seen["rescored"] == 2
 
 
-@pytest.mark.parametrize("error", [OSError("disk on fire"), ValueError("bad csv")])
+@pytest.mark.parametrize("error", [OSError("disk on fire"), ValueError("bad csv"),
+                                   TypeError("unexpected cell type")])
 def test_a_failing_heal_step_does_not_stop_the_run(monkeypatch, capsys, error):
     seen = _stub_run(monkeypatch)
 
@@ -562,6 +615,7 @@ def test_a_failing_heal_step_does_not_stop_the_run(monkeypatch, capsys, error):
 
     out = capsys.readouterr().out
     assert "could not heal" in out.lower() and str(error) in out
+    assert type(error).__name__ in out
     assert seen["rescored"] == 1            # the rescore pass still ran
     assert seen["stats"] is not None         # and the run's stats row was written
 
@@ -690,10 +744,11 @@ def test_an_unreadable_master_raises_oserror_naming_the_file(tmp_path, monkeypat
     master.write_bytes(content)
     monkeypatch.setattr(sj, "MASTER_CSV", master)
     monkeypatch.setattr(sj, "OUTPUT_DIR", tmp_path)
+    _write_run_gz(tmp_path / "morning" / "linkedin_jobs_a_scored.csv.gz", _run_file_rows())
 
     with pytest.raises(OSError, match="linkedin_jobs_master.csv"):
         sj.heal_master_reuse()
-    with pytest.raises(OSError, match="linkedin_jobs_master.csv"):
+    with pytest.raises(OSError, match="linkedin_jobs_master.csv"):     # a run file exists
         sj.heal_run_files()
     assert master.read_bytes() == content
 

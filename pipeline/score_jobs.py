@@ -1549,7 +1549,7 @@ def reuse_repost_scores(df: pd.DataFrame, master: pd.DataFrame | None, reuse_day
         for col in _REPOST_REUSE_COLS:
             # object, so a blank cell copied first (NaN in a float column) never
             # pins a dtype that a later reused row's text cannot be written into:
-            # pandas 3 raises on an incompatible setitem instead of upcasting.
+            # pandas 3 raises on an incompatible setitem; it does not upcast.
             if col not in df.columns:
                 df[col] = pd.Series(None, index=df.index, dtype=object)
             elif df[col].dtype != object:
@@ -1787,15 +1787,20 @@ def heal_run_files(dry_run: bool = False) -> tuple[int, int]:
 
     Returns (files changed, rows healed); on a dry run, the counts it would reach.
     A changed file is rewritten atomically with its own compression and every
-    other cell as read (dtype=object, keep_default_na=False). An unreadable file is
-    skipped with a line naming it, so one bad file never blocks the rest.
+    other cell as read (dtype=object, keep_default_na=False). An unreadable file, or
+    one that cannot be written (Drive or the dashboard holding it open on Windows),
+    is skipped with a line naming it, so one bad file never blocks the rest; a
+    skipped file counts for nothing in the result.
     """
+    paths = _run_score_files()
+    if not paths:
+        return 0, 0
     master = _read_master_for_heal()
     if master is None:
         return 0, 0
     lookup = _source_lookup(master)
     files_changed = rows_healed = 0
-    for path in _run_score_files():
+    for path in paths:
         try:
             frame = pd.read_csv(path, dtype=object, keep_default_na=False)
         except (OSError, EOFError, ValueError) as e:
@@ -1804,13 +1809,17 @@ def heal_run_files(dry_run: bool = False) -> tuple[int, int]:
         cells = _heal_cells(frame, master, lookup)
         if not cells:
             continue
+        if not dry_run:
+            for pos, col, value in cells:
+                frame.iat[pos, frame.columns.get_loc(col)] = value
+            try:
+                _atomic_to_csv(frame, path,
+                               compression="gzip" if path.name.endswith(".gz") else None)
+            except OSError as e:
+                print(f"Heal: skipping {path} (cannot write: {type(e).__name__}: {e})")
+                continue
         files_changed += 1
         rows_healed += len({pos for pos, _, _ in cells})
-        if dry_run:
-            continue
-        for pos, col, value in cells:
-            frame.iat[pos, frame.columns.get_loc(col)] = value
-        _atomic_to_csv(frame, path, compression="gzip" if path.name.endswith(".gz") else None)
     return files_changed, rows_healed
 
 
@@ -2231,12 +2240,13 @@ async def main() -> None:
             stats["stage2_done"] = int(n_deep)
 
     # Every run heals reused rows an earlier build left blank: the VM's master
-    # gets its fix here once this file is deployed there. Like append_run_stats,
-    # a failure prints and the run goes on.
+    # gets its fix here once this file is deployed there. The step is optional, so
+    # any failure prints one line (the exception type and message, never a row) and
+    # the run goes on.
     try:
         n_healed = heal_master_reuse()
-    except (OSError, ValueError) as e:
-        print(f"WARNING: could not heal reused rows in the master ({e})")
+    except Exception as e:  # noqa: BLE001 - an optional step must never stop a run
+        print(f"WARNING: could not heal reused rows in the master ({type(e).__name__}: {e})")
     else:
         if n_healed:
             print(f"Healed {n_healed} reused rows in the master")

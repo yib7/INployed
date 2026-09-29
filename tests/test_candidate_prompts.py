@@ -325,6 +325,27 @@ def test_stage_one_for_a_graduate_student_keeps_internships_in_scope():
     assert "only for undergraduate students" in text
 
 
+@pytest.mark.parametrize("with_date", [True, False])
+def test_stage_one_for_a_graduate_student_skips_the_advanced_degree_clause(with_date):
+    v = _vars("grad", with_date)
+    text = _render_all(v)["stage1"]
+    skip = "skip the advanced-degree clause above"
+    assert skip in v["eligibility_rule"]
+    # The skip sentence sits between the clause it withdraws and the next section.
+    bullet = text.index("- Also score 1-2 for a hard advanced-degree requirement")
+    assert bullet < text.index(skip) < text.index("ADJACENT ANALYTICAL ROLES ARE IN-DOMAIN")
+    assert "a posting that asks for a master's or PhD stays in scope" in text
+    assert "judged on skills, stack and domain" in v["eligibility_rule"]
+
+
+@pytest.mark.parametrize("status", ["finished", "undergrad"])
+@pytest.mark.parametrize("with_date", [True, False])
+def test_stage_one_keeps_the_advanced_degree_clause_for_every_other_status(status, with_date):
+    text = _render_all(_vars(status, with_date))["stage1"]
+    assert "skip the advanced-degree clause" not in text
+    assert "a hard advanced-degree requirement the candidate lacks" in text
+
+
 def test_stage_one_places_the_eligibility_rule_after_the_advanced_degree_bullet():
     v = _vars("undergrad")
     text = _render_all(v)["stage1"]

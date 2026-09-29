@@ -1097,3 +1097,65 @@ def test_jev_facts_reads_the_configured_profile_when_none_is_given(monkeypatch):
     text = f"{SECRET_REQUIRED} {CLEAN_DESC}"
     monkeypatch.setattr(sj, "CLEARANCE_LEVEL", "TS/SCI")
     assert sj.jev_facts(text)["clearance"] is False
+
+
+# --- Final review, A: a graduate student keeps the postings for their own degree ---
+
+GRAD_ENROLLMENT_TEXTS = [
+    "Minimum qualifications: currently enrolled in a PhD program.",
+    "Requirements: Currently pursuing a Master's or PhD in Computer Science.",
+    "Qualifications: pursuing a Master's degree (required).",
+]
+
+
+@pytest.mark.parametrize("text", GRAD_ENROLLMENT_TEXTS)
+def test_the_degree_filter_reads_graduate_enrollment_wording_as_a_requirement(text):
+    assert sj.requires_advanced_degree(f"{CLEAN_DESC} {text}") is True
+
+
+@pytest.mark.parametrize("text", GRAD_ENROLLMENT_TEXTS)
+@pytest.mark.parametrize("profile,dropped", [(FINISHED, True), (UNDERGRAD, True), (GRAD, False)],
+                         ids=["finished", "undergrad", "grad"])
+def test_the_degree_filter_follows_the_school_status(profile, dropped, text):
+    frame = _title_frame(["Data Science Intern"], desc=f"{CLEAN_DESC} {text}")
+    out = sj.add_filter_columns(frame, "desc", "title", profile=profile)
+    assert bool(out.iloc[0]["filter_degree"]) is dropped
+    assert bool(out.iloc[0]["filtered_out"]) is dropped
+    assert out["filter_degree"].dtype == bool
+
+
+def test_a_graduate_student_keeps_a_row_only_the_degree_filter_would_drop():
+    text = f"{CLEAN_DESC} Minimum qualifications: currently enrolled in a PhD program."
+    out = sj.add_filter_columns(_title_frame(["Data Science Intern"], desc=text), "desc",
+                                "title", profile=GRAD)
+    assert bool(out.iloc[0]["filtered_out"]) is False
+
+
+def test_the_degree_column_stays_when_the_status_is_graduate():
+    out = sj.add_filter_columns(_title_frame(TITLES), "desc", "title", profile=GRAD)
+    assert "filter_degree" in out.columns
+    assert list(out["filter_degree"]) == [False] * len(TITLES)
+
+
+def test_the_degree_filter_reads_the_configured_status_when_no_profile_is_given(monkeypatch):
+    text = f"{CLEAN_DESC} Minimum qualifications: currently enrolled in a PhD program."
+    monkeypatch.setattr(sj, "EDUCATION_STATUS", "In school: graduate")
+    monkeypatch.setattr(sj, "GRADUATION_MONTH", "May 2099")
+    out = sj.add_filter_columns(_title_frame(["Data Science Intern"], desc=text), "desc", "title")
+    assert bool(out.iloc[0]["filter_degree"]) is False
+    monkeypatch.setattr(sj, "EDUCATION_STATUS", "Finished school")
+    out = sj.add_filter_columns(_title_frame(["Data Science Intern"], desc=text), "desc", "title")
+    assert bool(out.iloc[0]["filter_degree"]) is True
+
+
+@pytest.mark.parametrize("profile,expected", [(FINISHED, True), (UNDERGRAD, True), (GRAD, False)],
+                         ids=["finished", "undergrad", "grad"])
+def test_jev_facts_advanced_degree_follows_the_school_status(profile, expected):
+    text = f"{CLEAN_DESC} Minimum qualifications: currently enrolled in a PhD program."
+    assert sj.jev_facts(text, profile)["advanced_degree"] is expected
+
+
+def test_jev_facts_advanced_degree_is_the_detector_verdict_under_the_default_profile():
+    for text in (f"{CLEAN_DESC} Master's degree required.", CLEAN_DESC,
+                 f"{CLEAN_DESC} Master's degree preferred."):
+        assert sj.jev_facts(text)["advanced_degree"] is sj.requires_advanced_degree(text), text

@@ -903,12 +903,16 @@ _ELIGIBILITY_RULE = {
         "undergraduate students (for example \"currently pursuing a bachelor's degree\"), or "
         "limits applicants to a graduation window that the candidate's expected {G} graduation "
         "falls outside. Internships and co-ops for graduate students are in scope: judge them "
-        "on skills like any entry-level role."),
+        "on skills like any entry-level role. This candidate is pursuing a graduate degree, so "
+        "skip the advanced-degree clause above: a posting that asks for a master's or PhD stays "
+        "in scope and is judged on skills, stack and domain."),
     ("grad", False): (
         "- Score 1 when the candidate is not eligible to apply: the posting is only for "
         "undergraduate students (for example \"currently pursuing a bachelor's degree\"). "
         "Internships and co-ops for graduate students are in scope: judge them on skills like "
-        "any entry-level role."),
+        "any entry-level role. This candidate is pursuing a graduate degree, so skip the "
+        "advanced-degree clause above: a posting that asks for a master's or PhD stays in "
+        "scope and is judged on skills, stack and domain."),
 }
 
 # Completes stage 1's closing line "... (0-year floor) just because ".
@@ -1321,12 +1325,14 @@ class JevRun:
 def jev_facts(job_md: str, profile: CandidateProfile | None = None) -> dict:
     """The code facts Jev's stage 1 composes with (SC-2): the same detectors
     the mechanical filter runs. `clearance` is the filter's verdict for
-    `profile` (None reads candidate_profile()); `student_cue` says the posting
-    reads as one for a student or a new graduate."""
+    `profile` (None reads candidate_profile()); `advanced_degree` is always False
+    for a graduate student, whose own degree is the one the posting asks for;
+    `student_cue` says the posting reads as one for a student or a new graduate."""
     if profile is None:
         profile = candidate_profile()
     return {"min_years": min_required_years(job_md),
-            "advanced_degree": requires_advanced_degree(job_md),
+            "advanced_degree": (profile.status != "grad"
+                                and requires_advanced_degree(job_md)),
             "clearance": clearance_blocks(job_md, profile.clearance_rank,
                                           profile.sponsorship),
             "student_cue": has_student_cue(job_md)}
@@ -2005,7 +2011,14 @@ def add_filter_columns(df: pd.DataFrame, desc_col: str, title_col: str | None,
     df["filter_too_many_years"] = df["job_description_md"].apply(has_too_many_years)
     df["filter_clearance"] = df["job_description_md"].apply(
         lambda md: clearance_blocks(md, profile.clearance_rank, profile.sponsorship))
-    df["filter_degree"] = df["job_description_md"].apply(requires_advanced_degree)
+    # A graduate student is working on the degree these postings ask for, and an
+    # internship states its enrollment rule in exactly that wording ("currently
+    # enrolled in a Master's or PhD program"). The column stays, all False, so the
+    # scored-CSV and master schema is stable either way.
+    if profile.status == "grad":
+        df["filter_degree"] = False
+    else:
+        df["filter_degree"] = df["job_description_md"].apply(requires_advanced_degree)
     # Added UNCONDITIONALLY (all-False when off / column absent) so the scored-CSV
     # and master schema is stable either way. Truthiness mirrors the dashboard's
     # normalization in local/jobsdata.py (is_easy_apply -> str -> lower -> in set).

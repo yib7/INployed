@@ -639,6 +639,12 @@ def test_a_posting_that_refuses_to_sponsor_blocks_an_open_candidate(text):
     "Must be eligible to hold a Secret clearance.",
     "An interim Secret clearance is fine pending final adjudication.",
     "Secret clearance sponsorship available for the right candidate.",
+    # A visa or work-authorization line in the same sentence says nothing about the
+    # clearance, so the offer to obtain it still counts.
+    "Must be authorized to work in the US and able to obtain a Secret clearance.",
+    "Must be a US citizen with work authorization and able to obtain a Secret clearance.",
+    "No visa sponsorship is available and candidates must be able to obtain a Secret clearance.",
+    "Visa sponsorship is not available and you must be able to obtain a Secret clearance.",
 ])
 def test_a_posting_that_offers_the_clearance_keeps_an_open_candidate(text):
     assert sj.clearance_blocks(text, held_rank=0, sponsorship=True) is False

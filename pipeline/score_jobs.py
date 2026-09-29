@@ -1424,19 +1424,19 @@ _CLEARANCE_RANK_PATTERNS = (
 _CLEARANCE_OBTAINABLE_WORDS = re.compile(
     r"obtain(?!ed)"
     r"|eligib(?:le|ility)\s+(?:for|to\s+(?:obtain|hold|get|receive))\b"
-    r"|sponsor|interim|willing(?:ness)? to (?:undergo|apply|get)"
+    r"|(?<!visa\s)(?<!visa-)sponsor|interim|willing(?:ness)? to (?:undergo|apply|get)"
     r"|able to (?:get|be granted)|pending", re.I)
 # Wording that says the employer will not sponsor or obtain the clearance. It cancels
 # an obtainable cue in the same sentence: a negator before sponsor, obtain or interim,
-# a sponsorship that is not available, a visa or work authorization line, "obtained",
-# and "interim not accepted". It only narrows what counts as obtainable, so the
-# default profile and the monotonicity of clearance_blocks are unchanged.
+# a sponsorship that is not available, "obtained", and "interim not accepted". A visa
+# sponsorship line says nothing about the clearance, so "visa sponsor" is neither an
+# obtainable cue nor a refusal: "authorized to work in the US and able to obtain a
+# Secret clearance" stays obtainable. It only narrows what counts as obtainable, so
+# the default profile and the monotonicity of clearance_blocks are unchanged.
 _CLEARANCE_REFUSAL = re.compile(
     r"\b(?:no|not|cannot|can['\u2019]?t|unable to|will not|won['\u2019]?t|does not|do not"
-    r"|don['\u2019]?t|doesn['\u2019]?t)\b[^.\n]{0,25}\b(?:sponsor|obtain|interim)"
-    r"|\bsponsor\w*[^.\n]{0,45}\b(?:not|unavailable|isn['\u2019]?t)\b"
-    r"|\bvisa\b"
-    r"|\bwork authorization\b|\bauthorized to work\b|\beligible to work\b"
+    r"|don['\u2019]?t|doesn['\u2019]?t)\b(?:(?!visa)[^.\n]){0,25}\b(?:sponsor|obtain|interim)"
+    r"|(?<!visa\s)(?<!visa-)\bsponsor\w*[^.\n]{0,45}\b(?:not|unavailable|isn['\u2019]?t)\b"
     r"|\bobtained\b"
     r"|\binterim\b[^.\n]{0,20}\bnot\s+accepted\b", re.I)
 

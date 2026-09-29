@@ -195,6 +195,12 @@ def _ordered_sections() -> list[tuple[str, list[settings.Field]]]:
     return ordered
 
 
+# The rows of the "About you" section. Their VM copy of score_jobs.py and jev_score.py
+# is uploaded by hand, so a Save that changes one of them says so (see
+# `_maybe_prompt_vm_push`).
+ABOUT_YOU_KEYS = frozenset(f.key for f in settings.SETTINGS_SCHEMA if f.section == "About you")
+
+
 class SettingsForm(QtWidgets.QWidget):
     def __init__(self, on_saved: Callable[[], None] | None = None, targets: dict | None = None,
                  vm_panel_factory: Callable[[QtWidgets.QWidget], QtWidgets.QWidget] | None = None,
@@ -1849,11 +1855,16 @@ class SettingsForm(QtWidgets.QWidget):
     @staticmethod
     def _checked(f: settings.Field, value) -> bool:
         """A bool field's stored `value` as its checkbox shows it. The Jev
-        switches read by `settings.switch_on`, the rule `jev_switch` reads them
-        by, so a hand-edited "false", null, 0 or "" shows off here and spends
-        nothing there (SP1 follow-up 3). Every other bool keeps `bool()`: its
+        switches are read by `settings.switch_on`, the rule `jev_switch` reads
+        them by, so a hand-edited "false", null, 0 or "" shows off here and
+        spends nothing there (SP1 follow-up 3). The scoring_config.json bools go
+        through the same word list, which is the one `score_jobs._as_bool` reads
+        them by, so a stored "false" opens unchecked and the next Save keeps it
+        off (cycle 21 Task 4 fix round). Every other bool keeps `bool()`: its
         runtime readers spell their own rule."""
-        return settings.switch_on(value) if f.key in settings.JEV_SWITCHES else bool(value)
+        if f.key in settings.JEV_SWITCHES or f.target == "scoring":
+            return settings.switch_on(value)
+        return bool(value)
 
     @staticmethod
     def _coerce(f: settings.Field, raw):
@@ -2010,7 +2021,14 @@ class SettingsForm(QtWidgets.QWidget):
             return
         text = ("You changed settings the VM reads from its config copy. Push the "
                 "updated config to the VM now?")
-        if "drop_easy_apply" in changed_vm:
+        if changed_vm & ABOUT_YOU_KEYS:
+            # The VM reads these keys only from the new scripts, and it holds its
+            # own copy of each; the section blurb names both files too.
+            text += ("\n\nNote: score_jobs.py and jev_score.py themselves must be "
+                     "re-uploaded to the VM once (there is no automated code push); run:\n"
+                     "  gcloud compute scp pipeline/score_jobs.py pipeline/jev_score.py "
+                     "<user>@<vm>:~ --zone=<zone>")
+        elif "drop_easy_apply" in changed_vm:
             text += ("\n\nNote: score_jobs.py itself must be re-uploaded to the VM once "
                      "(there is no automated code push); run:\n"
                      "  gcloud compute scp pipeline/score_jobs.py <user>@<vm>:~ --zone=<zone>")

@@ -15,6 +15,7 @@ staying in step with the consumer:
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -313,7 +314,7 @@ def test_a_stored_month_opens_and_a_blank_one_saves_from_the_form(qtbot, tmp_pat
 
 
 def test_a_null_month_in_the_file_opens_blank_and_clean_and_saves(qtbot, tmp_path, monkeypatch):
-    """Null means no date to the scorer: the row opens blank, not dirty, and Save is allowed."""
+    """Null means no date to the scorer: the row opens blank and clean, and Save is allowed."""
     targets = _targets(tmp_path)
     targets["scoring"].write_text(json.dumps({"graduation_month": None}), encoding="utf-8")
     form = SettingsForm(targets=targets)
@@ -345,10 +346,11 @@ def test_an_about_you_change_prompts_the_vm_push(qtbot, tmp_path, monkeypatch):
                                         lambda self, skip_confirm=False: pushed.append(skip_confirm)})()
     monkeypatch.setattr(QtWidgets.QMessageBox, "information",
                         staticmethod(lambda *a, **k: None))
-    asked = []
+    asked, texts = [], []
 
     def question(parent, title, text, *a, **k):
         asked.append(title)
+        texts.append(text)
         return QtWidgets.QMessageBox.StandardButton.Yes
 
     monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(question))
@@ -357,3 +359,165 @@ def test_an_about_you_change_prompts_the_vm_push(qtbot, tmp_path, monkeypatch):
     assert form.save() is True
     assert asked == ["Push config to VM?"]
     assert pushed == [True]
+    # The VM holds its own copy of both scripts and reads the new keys only from the
+    # new code, so the prompt says both files must be uploaded once.
+    assert "score_jobs.py" in texts[0] and "jev_score.py" in texts[0]
+    assert "gcloud compute scp" in texts[0]
+
+
+@pytest.mark.parametrize("key", ["education_status", "graduation_month", "clearance_level",
+                                 "clearance_sponsorship"])
+def test_each_about_you_change_puts_the_code_upload_note_in_the_vm_prompt(
+        qtbot, tmp_path, monkeypatch, key):
+    """Any of the four keys needs the new score_jobs.py and jev_score.py on the VM."""
+    form = SettingsForm(targets=_targets(tmp_path))
+    qtbot.addWidget(form)
+    form._vm_panel = type("Panel", (), {"push_config": lambda self, skip_confirm=False: None})()
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information",
+                        staticmethod(lambda *a, **k: None))
+    texts = []
+
+    def question(parent, title, text, *a, **k):
+        texts.append(text)
+        return QtWidgets.QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(question))
+    form._setters["vm_enabled"](True)
+    new = {"education_status": sj.EDUCATION_STATUSES[1], "graduation_month": "June 2027",
+           "clearance_level": "Secret", "clearance_sponsorship": True}[key]
+    form._setters[key](new)
+    assert form.save() is True
+    assert len(texts) == 1
+    assert "score_jobs.py" in texts[0] and "jev_score.py" in texts[0], key
+
+
+def test_the_code_note_covers_exactly_the_four_about_you_keys():
+    assert st.ABOUT_YOU_KEYS == frozenset(KEYS)
+
+
+def test_a_vm_config_change_outside_about_you_keeps_the_code_note_off(qtbot, tmp_path, monkeypatch):
+    """The note names code files only for the keys that need new code on the VM."""
+    form = SettingsForm(targets=_targets(tmp_path))
+    qtbot.addWidget(form)
+    form._vm_panel = type("Panel", (), {"push_config": lambda self, skip_confirm=False: None})()
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information",
+                        staticmethod(lambda *a, **k: None))
+    texts = []
+
+    def question(parent, title, text, *a, **k):
+        texts.append(text)
+        return QtWidgets.QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(question))
+    form._setters["vm_enabled"](True)
+    form._setters["location"]("Canada")
+    assert form.save() is True
+    assert len(texts) == 1
+    assert "score_jobs.py" not in texts[0] and "jev_score.py" not in texts[0]
+
+
+# --- the checkbox reads a hand-edited string bool the way the scorer does --------
+
+_SCORING_BOOLS = [f.key for f in settings.SETTINGS_SCHEMA
+                  if f.type == "bool" and f.target == "scoring"]
+_STRING_BOOLS = ["false", "False", " FALSE ", "0", "no", "off", "", "maybe",
+                 "true", "True", " TRUE ", "1", "yes", "on"]
+
+
+def test_the_scoring_file_bools_include_the_sponsorship_box():
+    assert "clearance_sponsorship" in _SCORING_BOOLS
+
+
+@pytest.mark.parametrize("key", _SCORING_BOOLS)
+@pytest.mark.parametrize("stored", _STRING_BOOLS)
+def test_a_stored_string_bool_opens_as_the_scorer_reads_it(qtbot, tmp_path, key, stored):
+    """score_jobs._as_bool reads every scoring_config.json bool; the box must agree."""
+    targets = _targets(tmp_path)
+    targets["scoring"].write_text(json.dumps({key: stored}), encoding="utf-8")
+    form = SettingsForm(targets=targets)
+    qtbot.addWidget(form)
+    assert form._getters[key]() is sj._as_bool(stored)
+    assert form._field_value(BY_KEY[key]) == (sj._as_bool(stored), None)
+
+
+def test_a_stored_false_string_opens_unchecked_and_a_true_one_checked(qtbot, tmp_path, monkeypatch):
+    targets = _targets(tmp_path)
+    targets["scoring"].write_text(json.dumps({"clearance_sponsorship": "false"}), encoding="utf-8")
+    form = SettingsForm(targets=targets)
+    qtbot.addWidget(form)
+    assert form._getters["clearance_sponsorship"]() is False
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information",
+                        staticmethod(lambda *a, **k: None))
+    # the next Save keeps it off as a real False (bool("false") gave True)
+    assert form.save() is True
+    assert json.loads(targets["scoring"].read_text(encoding="utf-8"))[
+        "clearance_sponsorship"] is False
+
+    targets["scoring"].write_text(json.dumps({"clearance_sponsorship": "true"}), encoding="utf-8")
+    form = SettingsForm(targets=targets)
+    qtbot.addWidget(form)
+    assert form._getters["clearance_sponsorship"]() is True
+
+
+def test_a_real_bool_and_a_missing_key_read_as_before(qtbot, tmp_path):
+    targets = _targets(tmp_path)
+    targets["scoring"].write_text(json.dumps({"clearance_sponsorship": True,
+                                              "drop_easy_apply": False}), encoding="utf-8")
+    form = SettingsForm(targets=targets)
+    qtbot.addWidget(form)
+    assert form._getters["clearance_sponsorship"]() is True
+    assert form._getters["drop_easy_apply"]() is False
+    assert form._getters["jev_writer"]() is True        # missing key: the default
+
+
+# --- the default clearance "None" is a string, and stays one --------------------
+
+def test_the_default_clearance_none_round_trips_the_form_as_the_string(qtbot, tmp_path, monkeypatch):
+    """The scorer's default clearance is the word "None" (no clearance held). It stays
+    that string from the schema default through the form to the saved file."""
+    targets = _targets(tmp_path)
+    form = SettingsForm(targets=targets)
+    qtbot.addWidget(form)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information",
+                        staticmethod(lambda *a, **k: None))
+    assert form._field_value(BY_KEY["clearance_level"]) == ("None", None)
+    assert "clearance_level" not in form._dirty
+    assert form.save() is True
+    saved = json.loads(targets["scoring"].read_text(encoding="utf-8"))
+    assert saved["clearance_level"] == "None"
+    assert isinstance(saved["clearance_level"], str)
+    reopened = SettingsForm(targets=targets)
+    qtbot.addWidget(reopened)
+    assert reopened._field_value(BY_KEY["clearance_level"]) == ("None", None)
+    assert "clearance_level" not in reopened._dirty
+
+
+def test_a_stored_null_on_a_text_field_opens_clean(qtbot, tmp_path):
+    """The Task 4 fix reads a stored null as blank for every str field, so a null
+    in search_config.json shows an empty box and marks nothing changed."""
+    targets = _targets(tmp_path)
+    targets["search"].write_text(json.dumps({"location": None}), encoding="utf-8")
+    form = SettingsForm(targets=targets)
+    qtbot.addWidget(form)
+    assert form._getters["location"]() == ""
+    assert form._field_value(BY_KEY["location"]) == ("", None)
+    assert "location" not in form._dirty
+
+
+# --- the month pattern cannot backtrack quadratically ---------------------------
+
+def test_the_month_pattern_fails_fast_on_a_long_run_of_spaces():
+    """A pasted run of spaces ending in a stray character must reject in linear time."""
+    pattern = BY_KEY["graduation_month"].pattern
+    value = " " * 50_000 + "x"
+    started = time.perf_counter()
+    assert re.fullmatch(pattern, value) is None
+    assert settings.field_problem(BY_KEY["graduation_month"], value) is not None
+    assert time.perf_counter() - started < 0.5
+
+
+def test_the_month_pattern_still_accepts_padding_around_a_month_and_a_blank_run():
+    pattern = BY_KEY["graduation_month"].pattern
+    assert re.fullmatch(pattern, " " * 50_000) is not None
+    assert re.fullmatch(pattern, " " * 5_000 + "May 2026" + " " * 5_000) is not None
+    assert re.fullmatch(pattern, " " * 5_000 + "May 2026" + " " * 5_000 + "x") is None

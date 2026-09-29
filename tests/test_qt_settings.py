@@ -3069,8 +3069,8 @@ def test_every_field_whose_help_gives_a_blank_a_meaning_keeps_it_through_a_save(
     to mention a blank joins the list here (auto_apply_generate's "stays blank"
     is about the answers it drafts).
 
-    Cycle 21 Task 4: graduation_month is also exempt. It is a scoring_config.json
-    row, not an .env line, and its blank round trip (saved as "", read by the
+    Cycle 21 Task 4: graduation_month is also exempt. It is an .env-free
+    scoring_config.json row, and its blank round trip (saved as "", read by the
     scorer as no date) is pinned in tests/test_candidate_settings.py."""
     mentions = {f.key for f in settings.SETTINGS_SCHEMA
                 if re.search(r"\bblank\b", f.help, re.IGNORECASE)}

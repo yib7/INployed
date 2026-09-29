@@ -261,11 +261,14 @@ TARGET_FILES: dict[str, Path] = {
 # four-digit year, with spaces around it all. score_jobs is copied alone to the
 # VM and this module does not import it, so the text is duplicated and
 # test_candidate_settings.py holds the two together with a differential test.
+# The trailing \s* sits inside the optional group: two adjacent \s* around an
+# optional group backtrack quadratically on a long run of spaces ending in a
+# stray character, and test_candidate_settings.py pins the run-time on 50,000.
 _GRADUATION_MONTHS = (r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?"
                       r"|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?"
                       r"|dec(?:ember)?")
 GRADUATION_MONTH_PATTERN = (r"(?i)\s*(?:(?:" + _GRADUATION_MONTHS
-                            + r")\.?\s+(?:19|20)\d{2})?\s*")
+                            + r")\.?\s+(?:19|20)\d{2}\s*)?")
 
 
 SETTINGS_SCHEMA: list[Field] = [

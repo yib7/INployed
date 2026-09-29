@@ -1283,8 +1283,10 @@ def test_a_for_phrase_after_the_sponsored_clearance_carries_the_refusal():
 
 
 def test_a_for_phrase_stops_at_a_conjunction():
-    """The phrase takes plain words only, so an offer joined by a conjunction stays one."""
-    text = "Secret clearance sponsorship for this role and relocation is not available."
+    """The phrase takes plain words only, so a refusal that a conjunction sets apart
+    from the offer ("for employees but not available for contractors") is no refusal."""
+    text = "Secret clearance sponsorship for employees but not available for contractors."
+    assert sj.clearance_requirement(text) == [(2, True)]
     assert sj.clearance_blocks(text, 0, True) is False
 
 

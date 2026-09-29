@@ -402,29 +402,40 @@ def test_score_stage1_claude_pool_raises_yields_error_row(monkeypatch):
 # Prompt-split pins
 # --------------------------------------------------------------------------
 
-# The two literals below are the ORIGINAL pre-split STAGE1_TEMPLATE /
-# STAGE2_TEMPLATE, copied VERBATIM from `git show 2304ee2:score_jobs.py`
-# (the commit before the resume/job split landed). They are the frozen
-# ground truth for the "gemini bytes unchanged" invariant: do NOT "fix"
-# them to track score_jobs.py -- if an assertion against them fails, the
-# split drifted and the SOURCE must be fixed, not these strings. Asserting
-# against sj.STAGE1_TEMPLATE alone would be a tautology (the source now
-# defines it as RESUME + JOB), which is exactly why these exist.
+# The two literals below are the frozen ground truth for the "gemini bytes
+# unchanged" invariant: do NOT "fix" them to track score_jobs.py. If an
+# assertion against them fails, the SOURCE drifted; fix the source and leave
+# these strings alone. Asserting against sj.STAGE1_TEMPLATE alone would be a
+# tautology (the source defines it as RESUME + JOB), which is exactly why
+# these exist.
+#
+# _FROZEN_STAGE2_TEMPLATE is the ORIGINAL pre-split STAGE2_TEMPLATE, copied
+# VERBATIM from `git show 2304ee2:score_jobs.py` (the commit before the
+# resume/job split landed). Cycle 21 made the candidate text data-driven, so
+# the real template now carries placeholders; the test renders it at the
+# default profile and that render must equal this literal.
+#
+# _FROZEN_STAGE1_TEMPLATE pins the DEFAULT render of STAGE1_TEMPLATE after
+# cycle 21: the candidate variables are rendered in (Finished school, May
+# 2026, no clearance) and {resume}, {job} and {today} stay as placeholders.
+# Stage 1 changed in that cycle (a new eligibility line, a shorter candidate
+# paragraph), so it no longer equals the pre-split original.
 _FROZEN_STAGE1_TEMPLATE = """\
 Rate how well this job matches the resume below, on a 1-5 scale.
 
 CANDIDATE CONTEXT (read this before scoring):
 TODAY'S DATE IS {today}. Judge every date in the resume and the job posting relative to that date, NOT relative to your training data. In particular, the candidate's May 2026 graduation is already in the PAST: the degree is COMPLETED and they are available to start immediately. Never treat the candidate as a current student or the degree as pending/"expected," and never lower the score because the graduation date is recent or looks like a future date to you.
 
-This candidate is a new graduate (B.S. Computer Science, AI/ML concentration, Data Science minor, graduated May 2026, available to start immediately) with one strong data-science internship plus substantial, advanced personal and academic projects. They are actively targeting ENTRY-LEVEL and EARLY-CAREER roles. Score with that in mind:
+This candidate is a new graduate (graduated May 2026, available to start immediately) with one strong data-science internship plus substantial, advanced personal and academic projects. They are actively targeting ENTRY-LEVEL and EARLY-CAREER roles. Score with that in mind:
 
 GEOGRAPHY / LOCATION / WORK AUTHORIZATION (IGNORE COMPLETELY): Do not factor in geography, location, onsite / hybrid / remote requirements, relocation, time zone, or work authorization at all. This job has already been vetted against the candidate's geographic preferences, regardless of where they currently live they are 100% willing to relocate, and they are authorized to work in the U.S. without sponsorship. Never raise or lower the score for location, onsite/hybrid/remote requirements, relocation, time zone, or work authorization / visa sponsorship; those have already been consented to by the candidate.
 
-The candidate has essentially no full-time post-graduation experience yet (one internship plus strong projects) and is targeting roles a 0-experience applicant can clear. Apply this required-experience bar strictly:
+The candidate has essentially no full-time experience yet (one internship plus strong projects) and is targeting roles a 0-experience applicant can clear. Apply this required-experience bar strictly:
   * 0 years required, OR a range with a floor of 0 ("0-2 years"), OR labeled entry-level / junior / new-grad / associate / university-grad / level "I", OR no stated experience requirement -> judge purely on SKILLS, STACK, and DOMAIN fit; a good skills match here is a 4 or 5.
   * Requires 1 or more years ("1+ years", "1-2 years", "2 years", "3+ years", etc.) -> the candidate does NOT clear the bar; this is a real gap. Cap the score at 3, and lower it toward 1-2 as the requirement or seniority rises (5+ years, OR senior/staff/principal/lead/manager/director titles -> 1-2).
   For a RANGE, use the LOWER bound: "0-2 years" clears the bar, "1-2 years" does not.
 - Also score 1-2 for a hard advanced-degree requirement the candidate lacks ("Master's/PhD required"), or a genuine domain/stack mismatch where the candidate's skills do not map: low-level C/C++ kernel/embedded/firmware, hardware/electrical, or roles with NO data, analysis, or engineering component (e.g. pure quota-carrying sales, recruiting, manual non-technical QA, copywriting). Do NOT use this clause for data / analytics / BI / analyst roles; those are in-domain (see ADJACENT ANALYTICAL ROLES below).
+- Score 1 when the candidate is not eligible to apply: the posting is an internship or co-op for current students, requires current enrollment in a degree program ("currently pursuing a degree," "returning to school"), or limits applicants to a graduation window that the candidate's May 2026 graduation falls outside.
 
 ADJACENT ANALYTICAL ROLES ARE IN-DOMAIN (read carefully; this is a common mistake):
 Treat data-analytical roles as a DOMAIN MATCH even when the title is business-flavored: Data Analyst, Business Analyst, Business Intelligence / BI Analyst, Reporting Analyst, Analytics Analyst, Product Analyst, Operations Analyst, Marketing / Research Analyst, and similar. These map directly to the candidate's SQL + Python + statistics + data-visualization / dashboarding skills (Tableau, Power BI, Looker Studio), their data-science internship, and their stakeholder / customer-facing experience. Judge such roles ONLY on whether the candidate can perform the listed RESPONSIBILITIES (querying and analyzing data, building reports/dashboards, drawing insights, communicating findings to stakeholders). Do NOT lower the score because the candidate lacks a business / finance / economics degree, because their prior experience or projects are "technical" rather than "business," or for any "career trajectory" / "career path" reason. A degree-field or job-title-history mismatch is NOT a disqualifier when the responsibilities are analytical; score these on skills like any other in-domain role (a good skills match with a 0-year floor is a 4 or 5).
@@ -470,13 +481,22 @@ Job description:
 """
 
 
+def _default_candidate_vars():
+    return sj.candidate_prompt_vars(sj.candidate_profile())
+
+
 def test_gemini_stage1_contents_byte_identical_to_combined_template(monkeypatch):
-    """Gemini lane: contents must equal the OLD (pre-split) template render --
+    """Gemini lane: contents must equal the default render of the template,
     reconstructed here as STAGE1_TEMPLATE_RESUME + STAGE1_TEMPLATE_JOB, which
-    must equal the FROZEN pre-split original embedded above -- an
-    independent expected value, so a drifted split point can't self-certify."""
-    assert sj.STAGE1_TEMPLATE_RESUME + sj.STAGE1_TEMPLATE_JOB == _FROZEN_STAGE1_TEMPLATE
-    assert sj.STAGE1_TEMPLATE == _FROZEN_STAGE1_TEMPLATE
+    must equal the FROZEN default render embedded above. That is an independent
+    expected value, so a drifted split point can't self-certify."""
+    v = _default_candidate_vars()
+    assert (sj.STAGE1_TEMPLATE_RESUME.format(resume="{resume}", today="{today}", **v)
+            + sj.STAGE1_TEMPLATE_JOB) == _FROZEN_STAGE1_TEMPLATE
+    assert sj.STAGE1_TEMPLATE.format(
+        resume="{resume}", job="{job}", today="{today}", **v) == _FROZEN_STAGE1_TEMPLATE
+    assert (sj.STAGE1_TEMPLATE.format(resume="R", job="J", today="T", **v)
+            == _FROZEN_STAGE1_TEMPLATE.format(resume="R", job="J", today="T"))
     monkeypatch.setattr(sj, "SCORING_PROVIDER", "gemini")
     pool = _ClaudeShapedPool()  # shape-compatible; provider decides rendering
     asyncio.run(sj.score_stage1(pool, asyncio.Semaphore(1), "MY RESUME", "J1", "MY JOB"))
@@ -487,8 +507,13 @@ def test_gemini_stage1_contents_byte_identical_to_combined_template(monkeypatch)
 
 
 def test_gemini_stage2_contents_byte_identical_to_combined_template(monkeypatch):
-    assert sj.STAGE2_TEMPLATE_RESUME + sj.STAGE2_TEMPLATE_JOB == _FROZEN_STAGE2_TEMPLATE
-    assert sj.STAGE2_TEMPLATE == _FROZEN_STAGE2_TEMPLATE
+    """Stage 2 at the default profile renders byte-identical to the pre-split
+    original, so the candidate placeholders changed no byte of it."""
+    v = _default_candidate_vars()
+    assert (sj.STAGE2_TEMPLATE_RESUME.format(resume="{resume}", today="{today}", **v)
+            + sj.STAGE2_TEMPLATE_JOB) == _FROZEN_STAGE2_TEMPLATE
+    assert sj.STAGE2_TEMPLATE.format(
+        resume="{resume}", job="{job}", today="{today}", **v) == _FROZEN_STAGE2_TEMPLATE
     monkeypatch.setattr(sj, "SCORING_PROVIDER", "gemini")
     pool = _ClaudeShapedPool()
 

@@ -644,21 +644,25 @@ STAGE1_SYSTEM = "You honestly evaluate how well a new-grad candidate fits early-
 # score_stage1/score_stage2 below. RESUME + JOB is a plain string
 # concatenation of the two literals below, so on the gemini path
 # STAGE1_TEMPLATE.format(...) is byte-identical to before the split.
+# Cycle 21: the candidate text (school status, graduation month, clearance) enters
+# through the placeholders below, filled by candidate_prompt_vars(). Every one sits
+# in a RESUME half, so the cached half is the same for every job in a run.
 STAGE1_TEMPLATE_RESUME = """\
 Rate how well this job matches the resume below, on a 1-5 scale.
 
 CANDIDATE CONTEXT (read this before scoring):
-TODAY'S DATE IS {today}. Judge every date in the resume and the job posting relative to that date, NOT relative to your training data. In particular, the candidate's May 2026 graduation is already in the PAST: the degree is COMPLETED and they are available to start immediately. Never treat the candidate as a current student or the degree as pending/"expected," and never lower the score because the graduation date is recent or looks like a future date to you.
+TODAY'S DATE IS {today}. Judge every date in the resume and the job posting relative to that date, NOT relative to your training data. {status_dates}
 
-This candidate is a new graduate (B.S. Computer Science, AI/ML concentration, Data Science minor, graduated May 2026, available to start immediately) with one strong data-science internship plus substantial, advanced personal and academic projects. They are actively targeting ENTRY-LEVEL and EARLY-CAREER roles. Score with that in mind:
+{status_intro} with one strong data-science internship plus substantial, advanced personal and academic projects. They are actively targeting {target}. Score with that in mind:
 
 GEOGRAPHY / LOCATION / WORK AUTHORIZATION (IGNORE COMPLETELY): Do not factor in geography, location, onsite / hybrid / remote requirements, relocation, time zone, or work authorization at all. This job has already been vetted against the candidate's geographic preferences, regardless of where they currently live they are 100% willing to relocate, and they are authorized to work in the U.S. without sponsorship. Never raise or lower the score for location, onsite/hybrid/remote requirements, relocation, time zone, or work authorization / visa sponsorship; those have already been consented to by the candidate.
 
-The candidate has essentially no full-time post-graduation experience yet (one internship plus strong projects) and is targeting roles a 0-experience applicant can clear. Apply this required-experience bar strictly:
+{clearance_context}The candidate has essentially no full-time experience yet (one internship plus strong projects) and is targeting roles a 0-experience applicant can clear. Apply this required-experience bar strictly:
   * 0 years required, OR a range with a floor of 0 ("0-2 years"), OR labeled entry-level / junior / new-grad / associate / university-grad / level "I", OR no stated experience requirement -> judge purely on SKILLS, STACK, and DOMAIN fit; a good skills match here is a 4 or 5.
   * Requires 1 or more years ("1+ years", "1-2 years", "2 years", "3+ years", etc.) -> the candidate does NOT clear the bar; this is a real gap. Cap the score at 3, and lower it toward 1-2 as the requirement or seniority rises (5+ years, OR senior/staff/principal/lead/manager/director titles -> 1-2).
   For a RANGE, use the LOWER bound: "0-2 years" clears the bar, "1-2 years" does not.
 - Also score 1-2 for a hard advanced-degree requirement the candidate lacks ("Master's/PhD required"), or a genuine domain/stack mismatch where the candidate's skills do not map: low-level C/C++ kernel/embedded/firmware, hardware/electrical, or roles with NO data, analysis, or engineering component (e.g. pure quota-carrying sales, recruiting, manual non-technical QA, copywriting). Do NOT use this clause for data / analytics / BI / analyst roles; those are in-domain (see ADJACENT ANALYTICAL ROLES below).
+{eligibility_rule}
 
 ADJACENT ANALYTICAL ROLES ARE IN-DOMAIN (read carefully; this is a common mistake):
 Treat data-analytical roles as a DOMAIN MATCH even when the title is business-flavored: Data Analyst, Business Analyst, Business Intelligence / BI Analyst, Reporting Analyst, Analytics Analyst, Product Analyst, Operations Analyst, Marketing / Research Analyst, and similar. These map directly to the candidate's SQL + Python + statistics + data-visualization / dashboarding skills (Tableau, Power BI, Looker Studio), their data-science internship, and their stakeholder / customer-facing experience. Judge such roles ONLY on whether the candidate can perform the listed RESPONSIBILITIES (querying and analyzing data, building reports/dashboards, drawing insights, communicating findings to stakeholders). Do NOT lower the score because the candidate lacks a business / finance / economics degree, because their prior experience or projects are "technical" rather than "business," or for any "career trajectory" / "career path" reason. A degree-field or job-title-history mismatch is NOT a disqualifier when the responsibilities are analytical; score these on skills like any other in-domain role (a good skills match with a 0-year floor is a 4 or 5).
@@ -670,7 +674,7 @@ Scale:
 2 = Weak match - significant domain/stack mismatch, or 3+ years / senior seniority required
 1 = No match - wrong field, or hard requirements the candidate cannot meet
 
-Be honest and specific. Do not inflate roles that require professional experience (>= 1 year) or are off-domain. But do NOT lower the score of an otherwise-good entry-level skills fit (0-year floor) just because the candidate only graduated in May 2026; they are a graduate, available immediately.
+Be honest and specific. Do not inflate roles that require professional experience (>= 1 year) or are off-domain. But do NOT lower the score of an otherwise-good entry-level skills fit (0-year floor) just because {status_closing}.
 
 Resume:
 ---
@@ -693,11 +697,11 @@ STAGE2_SYSTEM = "You provide candid, detailed job-fit analysis. The job descript
 STAGE2_TEMPLATE_RESUME = """\
 This job passed Stage 1 as a strong/good match for the candidate. Give an in-depth fit analysis: deep score 1-10, key strengths, gaps, and a recommendation.
 
-TODAY'S DATE IS {today}. Judge every date in the resume and the job posting relative to that date, NOT relative to your training data: the candidate's May 2026 graduation is in the past and the degree is COMPLETED. Never list graduation timing, "degree in progress," or "has not graduated yet" as a gap.
+TODAY'S DATE IS {today}. Judge every date in the resume and the job posting relative to that date, NOT relative to your training data: {stage2_status}
 
 Be specific. Tie strengths and gaps to concrete resume bullets and job requirements. Recommendation: "apply" (clear fit, prioritize), "consider" (mixed, depends on candidate's other options), "skip" (gaps too large despite the Stage 1 score).
 
-When listing GAPS, name only concrete, stated requirements the candidate cannot meet: specific tools / technologies they lack, a hard credential (e.g. a required security clearance or an explicitly required advanced degree), or required years of experience. For analytical roles (Data Analyst, Business Analyst, BI / Reporting / Analytics Analyst, Product / Operations Analyst, Data Scientist), do NOT list "career trajectory," "career path," "lacks a business background/degree," "experience is technical rather than business," or similar title/degree-history mismatches as gaps; the candidate's SQL, Python, statistics, dashboarding (Tableau / Power BI / Looker), internship, and stakeholder / customer-facing experience transfer directly. Treat a title or degree-field difference as a non-issue when the candidate can do the listed work. NEVER list location, onsite / hybrid / remote, relocation, time zone, or work authorization / visa sponsorship as a gap; the candidate is fully willing to relocate and is authorized to work in the U.S. without sponsorship, so these are not gaps regardless of what the job states.
+When listing GAPS, name only concrete, stated requirements the candidate cannot meet: specific tools / technologies they lack, a hard credential (e.g. a required security clearance or an explicitly required advanced degree), or required years of experience. For analytical roles (Data Analyst, Business Analyst, BI / Reporting / Analytics Analyst, Product / Operations Analyst, Data Scientist), do NOT list "career trajectory," "career path," "lacks a business background/degree," "experience is technical rather than business," or similar title/degree-history mismatches as gaps; the candidate's SQL, Python, statistics, dashboarding (Tableau / Power BI / Looker), internship, and stakeholder / customer-facing experience transfer directly. Treat a title or degree-field difference as a non-issue when the candidate can do the listed work. NEVER list location, onsite / hybrid / remote, relocation, time zone, or work authorization / visa sponsorship as a gap; the candidate is fully willing to relocate and is authorized to work in the U.S. without sponsorship, so these are not gaps regardless of what the job states.{clearance_gap_note}
 
 Resume:
 ---
@@ -749,7 +753,7 @@ WRITER_SYSTEM = ("You write short, specific job-fit notes that explain findings 
 WRITER_TEMPLATE_RESUME = """\
 Another system has already judged how well this job fits the candidate. Its findings come after the resume. Write the notes that explain those findings to the candidate. The scores and the recommendation are final.
 
-TODAY'S DATE IS {today}. The candidate graduated in May 2026 and the degree is complete, so graduation timing is never a gap.
+TODAY'S DATE IS {today}. {writer_status}{clearance_gap_note}
 
 Write three fields:
 - "reason": one or two sentences on why the job got its fit score, naming what decided it (skills and tools, the field, the experience the job asks for).
@@ -786,9 +790,224 @@ WRITER_SCHEMA = {
 }
 
 
+# --- The candidate text in the scorer prompts (cycle 21) ---------------------------
+# candidate_prompt_vars() turns a CandidateProfile into the nine strings the three
+# *_TEMPLATE_RESUME templates carry as placeholders. Every placeholder sits in a
+# RESUME half, and the profile is fixed for a run, so the Claude lane's cached
+# system prompt stays identical for every job. The status tables are keyed by
+# (status code, whether there is a graduation month) and name the month as {G};
+# the clearance tables are keyed by case and name the level as {L}. At the default
+# profile (Finished school, May 2026, no clearance) stage 2 and the writer render
+# to exactly the wording they carried as fixed text before this cycle.
+
+# Fills "TODAY'S DATE IS {today}. ... training data. " in stage 1.
+_STATUS_DATES = {
+    ("finished", True): (
+        "In particular, the candidate's {G} graduation is already in the PAST: the degree is "
+        "COMPLETED and they are available to start immediately. Never treat the candidate as "
+        "a current student or the degree as pending/\"expected,\" and never lower the score "
+        "because the graduation date is recent or looks like a future date to you."),
+    ("finished", False): (
+        "The candidate has finished school: the degree is COMPLETED and they are available to "
+        "start immediately. Never treat the candidate as a current student or the degree as "
+        "pending/\"expected.\""),
+    ("undergrad", True): (
+        "The candidate is a CURRENT undergraduate student, expected to graduate in {G}: the "
+        "bachelor's degree is in progress."),
+    ("undergrad", False): (
+        "The candidate is a CURRENT undergraduate student: the bachelor's degree is in "
+        "progress."),
+    ("grad", True): (
+        "The candidate is a CURRENT graduate student (master's or PhD), expected to finish in "
+        "{G}: the graduate degree is in progress."),
+    ("grad", False): (
+        "The candidate is a CURRENT graduate student (master's or PhD): the graduate degree is "
+        "in progress."),
+}
+
+# Opens stage 1's candidate paragraph: "{status_intro} with one strong data-science ...".
+_STATUS_INTRO = {
+    ("finished", True): "This candidate is a new graduate (graduated {G}, available to start immediately)",
+    ("finished", False): "This candidate is a new graduate (available to start immediately)",
+    ("undergrad", True): "This candidate is a current undergraduate student (expected to graduate {G})",
+    ("undergrad", False): "This candidate is a current undergraduate student",
+    ("grad", True): (
+        "This candidate is a current graduate student (master's or PhD, expected to finish "
+        "{G})"),
+    ("grad", False): "This candidate is a current graduate student (master's or PhD)",
+}
+
+# Stage 1's "They are actively targeting {target}."
+_TARGET = {
+    "finished": "ENTRY-LEVEL and EARLY-CAREER roles",
+    "undergrad": "INTERNSHIPS, CO-OPS and ENTRY-LEVEL roles",
+    "grad": "INTERNSHIPS, CO-OPS and ENTRY-LEVEL roles",
+}
+
+# One bullet line in stage 1: who the candidate is not eligible to apply for.
+_ELIGIBILITY_RULE = {
+    ("finished", True): (
+        "- Score 1 when the candidate is not eligible to apply: the posting is an internship or "
+        "co-op for current students, requires current enrollment in a degree program "
+        "(\"currently pursuing a degree,\" \"returning to school\"), or limits applicants to a "
+        "graduation window that the candidate's {G} graduation falls outside."),
+    ("finished", False): (
+        "- Score 1 when the candidate is not eligible to apply: the posting is an internship or "
+        "co-op for current students, or requires current enrollment in a degree program "
+        "(\"currently pursuing a degree,\" \"returning to school\")."),
+    ("undergrad", True): (
+        "- Score 1 when the candidate is not eligible to apply: the posting is only for graduate "
+        "students (master's or PhD), or limits applicants to a graduation window that the "
+        "candidate's expected {G} graduation falls outside. Internships and co-ops for current "
+        "undergraduates are in scope: judge them on skills like any entry-level role."),
+    ("undergrad", False): (
+        "- Score 1 when the candidate is not eligible to apply: the posting is only for graduate "
+        "students (master's or PhD). Internships and co-ops for current undergraduates are in "
+        "scope: judge them on skills like any entry-level role."),
+    ("grad", True): (
+        "- Score 1 when the candidate is not eligible to apply: the posting is only for "
+        "undergraduate students (for example \"currently pursuing a bachelor's degree\"), or "
+        "limits applicants to a graduation window that the candidate's expected {G} graduation "
+        "falls outside. Internships and co-ops for graduate students are in scope: judge them "
+        "on skills like any entry-level role."),
+    ("grad", False): (
+        "- Score 1 when the candidate is not eligible to apply: the posting is only for "
+        "undergraduate students (for example \"currently pursuing a bachelor's degree\"). "
+        "Internships and co-ops for graduate students are in scope: judge them on skills like "
+        "any entry-level role."),
+}
+
+# Completes stage 1's closing line "... (0-year floor) just because ".
+_STATUS_CLOSING = {
+    ("finished", True): "the candidate only graduated in {G}; they are a graduate, available immediately",
+    ("finished", False): (
+        "the candidate only recently finished school; they are a graduate, available "
+        "immediately"),
+    ("undergrad", True): "the candidate is still an undergraduate student",
+    ("undergrad", False): "the candidate is still an undergraduate student",
+    ("grad", True): "the candidate is still a graduate student",
+    ("grad", False): "the candidate is still a graduate student",
+}
+
+# Completes stage 2's "... NOT relative to your training data: ".
+_STAGE2_STATUS = {
+    ("finished", True): (
+        "the candidate's {G} graduation is in the past and the degree is COMPLETED. Never list "
+        "graduation timing, \"degree in progress,\" or \"has not graduated yet\" as a gap."),
+    ("finished", False): (
+        "the candidate has finished school and the degree is COMPLETED. Never list graduation "
+        "timing, \"degree in progress,\" or \"has not graduated yet\" as a gap."),
+    ("undergrad", True): (
+        "the candidate is a current undergraduate student, expected to graduate in {G}, so the "
+        "degree is in progress. List graduation timing as a gap only when the posting needs the "
+        "degree finished before that date."),
+    ("undergrad", False): (
+        "the candidate is a current undergraduate student, so the degree is in progress. List "
+        "graduation timing as a gap only when the posting needs a completed degree."),
+    ("grad", True): (
+        "the candidate is a current graduate student (master's or PhD), expected to finish in "
+        "{G}, so the degree is in progress. List graduation timing as a gap only when the "
+        "posting needs the degree finished before that date."),
+    ("grad", False): (
+        "the candidate is a current graduate student (master's or PhD), so the degree is in "
+        "progress. List graduation timing as a gap only when the posting needs a completed "
+        "degree."),
+}
+
+# The writer's status sentence after "TODAY'S DATE IS {today}. ".
+_WRITER_STATUS = {
+    ("finished", True): (
+        "The candidate graduated in {G} and the degree is complete, so graduation timing is "
+        "never a gap."),
+    ("finished", False): (
+        "The candidate has finished school and the degree is complete, so graduation timing is "
+        "never a gap."),
+    ("undergrad", True): (
+        "The candidate is a current undergraduate student expected to graduate in {G}; list the "
+        "degree in progress as a gap only when the job needs it finished before then."),
+    ("undergrad", False): (
+        "The candidate is a current undergraduate student; list the degree in progress as a gap "
+        "only when the job needs a completed degree."),
+    ("grad", True): (
+        "The candidate is a current graduate student (master's or PhD) expected to finish in "
+        "{G}; list the degree in progress as a gap only when the job needs it finished before "
+        "then."),
+    ("grad", False): (
+        "The candidate is a current graduate student (master's or PhD); list the degree in "
+        "progress as a gap only when the job needs a completed degree."),
+}
+
+# (stage 1 paragraph, ending in a blank line; the one-sentence note that stage 2 and the
+# writer append to a sentence, with a leading space), by clearance case. No clearance and
+# no openness to one is the empty case: it adds nothing to any prompt.
+_CLEARANCE_TEXT = {
+    "none_open": (
+        "SECURITY CLEARANCE: The candidate holds no security clearance and is open to getting "
+        "one through the employer. A posting that sponsors a clearance or asks for the ability "
+        "to obtain one is NOT a gap: judge it on skills like any other role. A posting that "
+        "needs an active clearance at hire is a hard requirement the candidate cannot meet "
+        "(score 1).\n\n",
+        " The candidate is open to getting a clearance through the employer, so a clearance "
+        "the employer sponsors or asks the candidate to obtain is never a gap."),
+    "top": (
+        "SECURITY CLEARANCE: The candidate holds an active TS/SCI clearance. A posting that "
+        "needs any clearance level, or the ability to obtain one, is met and is NOT a gap.\n\n",
+        " The candidate holds an active TS/SCI clearance, so a required clearance is never a "
+        "gap."),
+    "held": (
+        "SECURITY CLEARANCE: The candidate holds an active {L} clearance. A posting that needs "
+        "{L} or a lower level, or the ability to obtain one of those, is met and is NOT a gap. "
+        "A posting that needs a higher level is a hard requirement the candidate cannot meet "
+        "(score 1).\n\n",
+        " The candidate holds an active {L} clearance, so a clearance at or below {L} is never "
+        "a gap."),
+    "held_open": (
+        "SECURITY CLEARANCE: The candidate holds an active {L} clearance and is open to a "
+        "higher level through the employer. A posting that needs {L} or a lower level is met "
+        "and is NOT a gap, and so is a higher level the employer sponsors or asks the candidate "
+        "to obtain. A higher level needed active at hire is a hard requirement the candidate "
+        "cannot meet (score 1).\n\n",
+        " The candidate holds an active {L} clearance and is open to a higher level, so a "
+        "clearance at or below {L}, or a higher level the employer sponsors, is never a gap."),
+}
+
+
+def candidate_prompt_vars(profile: CandidateProfile) -> dict[str, str]:
+    """The nine strings the stage 1, stage 2 and writer prompts carry for `profile`.
+
+    Every template call site passes `**candidate_prompt_vars(candidate_profile())`.
+    A status code the tables lack reads as "finished" (as `status_label` does); a
+    clearance rank of 0 or below reads as None and 4 or above as TS/SCI. The
+    returned text names no graduation month when the profile has none.
+    """
+    code = profile.status if profile.status in EDUCATION_STATUS_CODES else "finished"
+    grad = profile.graduation_text or ""
+    key = (code, bool(grad))
+    rank = profile.clearance_rank
+    if rank <= 0:
+        case = "none_open" if profile.sponsorship else None
+    elif rank >= len(CLEARANCE_LEVELS) - 1:
+        case = "top"
+    else:
+        case = "held_open" if profile.sponsorship else "held"
+    context, note = _CLEARANCE_TEXT[case] if case else ("", "")
+    fill = {"G": grad, "L": profile.clearance_label}
+    return {
+        "status_dates": _STATUS_DATES[key].format(**fill),
+        "status_intro": _STATUS_INTRO[key].format(**fill),
+        "target": _TARGET[code],
+        "eligibility_rule": _ELIGIBILITY_RULE[key].format(**fill),
+        "status_closing": _STATUS_CLOSING[key].format(**fill),
+        "clearance_context": context.format(**fill),
+        "stage2_status": _STAGE2_STATUS[key].format(**fill),
+        "clearance_gap_note": note.format(**fill),
+        "writer_status": _WRITER_STATUS[key].format(**fill),
+    }
+
+
 def today_str() -> str:
     """Current date for the scoring prompts, e.g. 'July 3, 2026'. The models'
-    training data predates the resume's May 2026 graduation, so without an
+    training data predates the candidate's graduation date, so without an
     explicit 'today' they judge it as upcoming and dock the score."""
     now = datetime.now()
     return f"{now:%B} {now.day}, {now.year}"
@@ -1213,16 +1432,19 @@ def pick_col(df: pd.DataFrame, candidates: tuple[str, ...]) -> str | None:
 async def score_stage1(pool, sem: asyncio.Semaphore, resume: str, job_id: str, job_md: str) -> dict:
     async with sem:
         today = today_str()
+        candidate = candidate_prompt_vars(candidate_profile())
         if SCORING_PROVIDER == "claude":
             # Cache-friendly split: the resume half (stable across every job
             # in a run) rides system_instruction (the CLI's cache
             # breakpoint), the job half (volatile) rides contents/stdin.
+            # The candidate placeholders all sit in the resume half.
             system_instruction = STAGE1_SYSTEM + STAGE1_TEMPLATE_RESUME.format(
-                resume=resume, today=today)
+                resume=resume, today=today, **candidate)
             contents = STAGE1_TEMPLATE_JOB.format(job=job_md)
         else:
             system_instruction = STAGE1_SYSTEM
-            contents = STAGE1_TEMPLATE.format(resume=resume, job=job_md, today=today)
+            contents = STAGE1_TEMPLATE.format(
+                resume=resume, job=job_md, today=today, **candidate)
         try:
             resp = await pool.generate(
                 model=STAGE1_MODELS,
@@ -1245,13 +1467,15 @@ async def score_stage1(pool, sem: asyncio.Semaphore, resume: str, job_id: str, j
 async def score_stage2(pool, sem: asyncio.Semaphore, resume: str, job_id: str, job_md: str) -> dict:
     async with sem:
         today = today_str()
+        candidate = candidate_prompt_vars(candidate_profile())
         if SCORING_PROVIDER == "claude":
             system_instruction = STAGE2_SYSTEM + STAGE2_TEMPLATE_RESUME.format(
-                resume=resume, today=today)
+                resume=resume, today=today, **candidate)
             contents = STAGE2_TEMPLATE_JOB.format(job=job_md)
         else:
             system_instruction = STAGE2_SYSTEM
-            contents = STAGE2_TEMPLATE.format(resume=resume, job=job_md, today=today)
+            contents = STAGE2_TEMPLATE.format(
+                resume=resume, job=job_md, today=today, **candidate)
         try:
             resp = await pool.generate(
                 model=STAGE2_MODELS,
@@ -1343,13 +1567,14 @@ async def write_notes(pool, sem: asyncio.Semaphore, resume: str, job_id: str, jo
     fixed word for bad JSON, a blank reason or no strengths, once each."""
     async with sem:
         today = today_str()
+        candidate = candidate_prompt_vars(candidate_profile())
         if SCORING_PROVIDER == "claude":
             system_instruction = WRITER_SYSTEM + WRITER_TEMPLATE_RESUME.format(
-                resume=resume, today=today)
+                resume=resume, today=today, **candidate)
             contents = WRITER_TEMPLATE_JOB.format(findings=findings_block, job=job_md)
         else:
             system_instruction = WRITER_SYSTEM
-            contents = (WRITER_TEMPLATE_RESUME.format(resume=resume, today=today)
+            contents = (WRITER_TEMPLATE_RESUME.format(resume=resume, today=today, **candidate)
                        + WRITER_TEMPLATE_JOB.format(findings=findings_block, job=job_md))
         try:
             resp = await pool.generate(

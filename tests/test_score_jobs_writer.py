@@ -31,7 +31,9 @@ def test_writer_system_flags_the_job_description_and_findings_as_untrusted():
 
 
 def test_writer_template_bans_the_same_gaps_as_stage_two():
-    low = sj.WRITER_TEMPLATE_RESUME.lower()
+    low = sj.WRITER_TEMPLATE_RESUME.format(
+        resume="RESUME", today="TODAY",
+        **sj.candidate_prompt_vars(sj.candidate_profile())).lower()
     for kw in ("relocat", "on-site", "hybrid", "remote", "time zone",
               "work authorization", "sponsorship", "career path", "business background"):
         assert kw in low, kw
@@ -50,7 +52,9 @@ def test_writer_prompt_still_asks_for_no_em_dashes_alongside_the_code_backstop()
 
 
 def test_writer_templates_format_with_resume_today_findings_and_job():
-    resume_half = sj.WRITER_TEMPLATE_RESUME.format(resume="RESUME-TEXT", today="Sep 28, 2026")
+    resume_half = sj.WRITER_TEMPLATE_RESUME.format(
+        resume="RESUME-TEXT", today="Sep 28, 2026",
+        **sj.candidate_prompt_vars(sj.candidate_profile()))
     assert "RESUME-TEXT" in resume_half and "Sep 28, 2026" in resume_half
     job_half = sj.WRITER_TEMPLATE_JOB.format(findings="FINDINGS-TEXT", job="JOB-TEXT")
     assert "FINDINGS-TEXT" in job_half and "JOB-TEXT" in job_half

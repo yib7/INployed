@@ -58,10 +58,16 @@ class FakePool:
         return {"free_calls": len(self.calls), "vertex_calls": 0}
 
 
+def _default_render(template):
+    """The template as the model reads it at the default candidate profile."""
+    return template.format(resume="RESUME", job="JOB", today="TODAY",
+                           **sj.candidate_prompt_vars(sj.candidate_profile()))
+
+
 def test_stage1_template_ignores_geography_and_workauth():
     """A1: Stage 1 must explicitly ignore location/relocation/work-auth so JD text
     can't implicitly dock onsite/relocation roles."""
-    t = sj.STAGE1_TEMPLATE.lower()
+    t = _default_render(sj.STAGE1_TEMPLATE).lower()
     assert "ignore completely" in t
     for kw in ("relocat", "onsite", "remote", "time zone", "work authorization"):
         assert kw in t, kw
@@ -69,7 +75,7 @@ def test_stage1_template_ignores_geography_and_workauth():
 
 def test_stage2_template_excludes_location_and_workauth_gaps():
     """A1: Stage 2 must not list location/relocation/work-auth as a gap."""
-    t = sj.STAGE2_TEMPLATE.lower()
+    t = _default_render(sj.STAGE2_TEMPLATE).lower()
     assert "never list location" in t
     for kw in ("relocat", "work authorization", "sponsorship"):
         assert kw in t, kw
@@ -81,7 +87,7 @@ def test_templates_anchor_current_date():
     May 2026 graduation, so without an explicit current date they read it as
     upcoming ("hasn't graduated yet") and dock the score."""
     for tmpl in (sj.STAGE1_TEMPLATE, sj.STAGE2_TEMPLATE):
-        t = tmpl.lower()
+        t = _default_render(tmpl).lower()
         assert "{today}" in tmpl
         assert "today's date" in t
         assert "training data" in t

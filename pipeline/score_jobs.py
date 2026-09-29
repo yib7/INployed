@@ -1387,9 +1387,9 @@ def is_junk_desc(text: Any) -> bool:
 # is dropped from these before any scorer call (filter_internship); a candidate
 # still in school keeps them. Word boundaries keep "Internal Audit Analyst",
 # "International Data Analyst" and "Cooperative Systems Analyst" out. The co-op
-# separator may be a space, a hyphen or any dash (U+2010 to U+2015, which covers the
-# non-breaking hyphen and the en dash).
-_INTERNSHIP_TOKEN = r"\b(?:interns?|internships?|co[\s\-\u2010-\u2015]?ops?)\b"
+# separator may be a space, a hyphen, a slash, a period, a soft hyphen, a minus sign
+# or any dash (U+2010 to U+2015, which covers the non-breaking hyphen and the en dash).
+_INTERNSHIP_TOKEN = r"\b(?:interns?|internships?|co[\s\-\u00ad\u2010-\u2015\u2212/.]?ops?)\b"
 INTERNSHIP_TITLE_RE = re.compile(_INTERNSHIP_TOKEN, re.I)
 # A title that runs the program or recruits for it is a full-time job ("Internship
 # Program Manager", "Intern Recruiter", "Director of Intern Programs", "Manager,

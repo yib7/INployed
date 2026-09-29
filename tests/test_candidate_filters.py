@@ -54,6 +54,10 @@ CLEAN_DESC = "We are hiring a backend software engineer to build web apps and RE
     "Data Analyst Co\u2010op",   # hyphen
     "Data Analyst Co\u2014Op",   # em dash
     "Data Analyst Co ops",
+    "Data Analyst Co\u2212op",   # minus sign
+    "Data Analyst Co\u00adop",   # soft hyphen
+    "Data Analyst Co/op",
+    "Data Analyst Co.op",
     # A role word before the token, or apart from it, names the student's team.
     "Product Manager Intern",
     "Project Manager Intern",

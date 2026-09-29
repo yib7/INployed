@@ -468,6 +468,14 @@ def test_claude_version_warnings_silent_for_models_with_no_minimum():
         (1, 0, 0), ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5"]) == []
 
 
+def test_claude_version_warnings_silent_for_sonnet_5_5_on_an_old_cli():
+    """Sonnet 5.5 swaps to Sonnet 5 on a CLI that refuses it but has no minimum
+    version on record, so the warning has no version to name and stays silent."""
+    assert setup_check.claude_version_warnings((2, 1, 207), ["claude-sonnet-5-5"]) == []
+    assert setup_check.claude_version_warnings(
+        (2, 1, 207), ["claude-sonnet-5-5", "claude-opus-5-5"]) == [OLD_LINE]
+
+
 def _fake_cli(monkeypatch, version_out="2.1.207 (Claude Code)\n", *, on_path=True):
     """Stub the version probe's subprocess. Returns the list of argv it saw."""
     calls = []
@@ -548,6 +556,26 @@ def test_claude_version_problems_never_probes_when_no_selected_model_needs_it(mo
     _claude_config(monkeypatch, {"tailor_provider": "claude"},
                    {"RESUME_TAILOR_CLAUDE_MODEL_MODE": "simple",
                     "RESUME_TAILOR_CLAUDE_MODEL_ALL": "claude-sonnet-5"})
+    assert setup_check.claude_version_problems() == []
+    assert calls == []
+
+
+def test_claude_version_problems_gives_no_line_for_sonnet_5_5_on_an_old_cli(monkeypatch):
+    """Every selectable Claude model set to Sonnet 5.5, on a CLI far older than any
+    version on record: no line, and no `claude --version` probe either."""
+    calls = _fake_cli(monkeypatch, "2.1.207 (Claude Code)\n")
+    _claude_config(monkeypatch, {"tailor_provider": "claude"},
+                   {"provider": "claude",
+                    "stage1_model_claude": "claude-sonnet-5-5",
+                    "stage2_model_claude": "claude-sonnet-5-5",
+                    "RESUME_TAILOR_CLAUDE_MODEL_MODE": "tiers",
+                    "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE": "claude-sonnet-5-5",
+                    "RESUME_TAILOR_CLAUDE_MODEL_FLASH": "claude-sonnet-5-5",
+                    "RESUME_TAILOR_CLAUDE_MODEL_PRO": "claude-sonnet-5-5"})
+    assert setup_check.claude_version_problems() == []
+    _claude_config(monkeypatch, {"tailor_provider": "claude"},
+                   {"RESUME_TAILOR_CLAUDE_MODEL_MODE": "simple",
+                    "RESUME_TAILOR_CLAUDE_MODEL_ALL": "claude-sonnet-5-5"})
     assert setup_check.claude_version_problems() == []
     assert calls == []
 

@@ -2852,6 +2852,26 @@ def test_the_six_claude_dropdowns_offer_opus_5_5(qtbot, tmp_path):
     assert form._widgets["RESUME_TAILOR_CLAUDE_MODEL_PRO"].currentText() == "claude-opus-5-5"
 
 
+def test_the_six_claude_dropdowns_offer_sonnet_5_5_and_open_on_their_old_defaults(qtbot, tmp_path):
+    """Cycle 21 Task 10 through the real widgets: Sonnet 5.5 sits between Sonnet 5
+    and Opus 5 in every Claude dropdown, and no dropdown opens on it."""
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    opens_on = {"stage1_model_claude": "claude-haiku-4-5",
+                "stage2_model_claude": "claude-sonnet-5",
+                "RESUME_TAILOR_CLAUDE_MODEL_ALL": "claude-sonnet-5",
+                "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE": "claude-haiku-4-5",
+                "RESUME_TAILOR_CLAUDE_MODEL_FLASH": "claude-sonnet-5",
+                "RESUME_TAILOR_CLAUDE_MODEL_PRO": "claude-opus-5-5"}
+    assert set(opens_on) == set(_CLAUDE_DROPDOWNS)
+    for key in _CLAUDE_DROPDOWNS:
+        combo = form._widgets[key]
+        items = [combo.itemText(i) for i in range(combo.count())]
+        assert items == ["claude-haiku-4-5", "claude-sonnet-5", "claude-sonnet-5-5",
+                         "claude-opus-5", "claude-opus-5-5"], key
+        assert combo.currentText() == opens_on[key], key
+
+
 def test_set_combo_matches_another_case_and_keeps_one_unknown_value(qtbot):
     """ST-7 at the unit: c18's U1 read a hand-edited "Api_Key" as index 0 (vertex
     billing); it now reads as api_key, and a value matching nothing in any case

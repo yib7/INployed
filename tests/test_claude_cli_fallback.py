@@ -28,6 +28,10 @@ TOO_OLD = ("API Error: 400 Claude Code 2.1.207 does not support this model; vers
            "desktop app, then try again.")
 NEW = "claude-opus-5-5"
 OLD = "claude-opus-5"
+SONNET_NEW = "claude-sonnet-5-5"
+SONNET_OLD = "claude-sonnet-5"
+# Every model that swaps, with the model it swaps to (cycle 21 Task 10 added Sonnet).
+PAIRS = [pytest.param(NEW, OLD, id="opus"), pytest.param(SONNET_NEW, SONNET_OLD, id="sonnet")]
 
 
 def _proc(returncode=0, stdout="", stderr=""):
@@ -48,9 +52,10 @@ def fake_exe(monkeypatch):
     monkeypatch.setattr(claude_cli, "find_claude", lambda: "C:/bin/claude.exe")
 
 
-def _old_cli(monkeypatch, *, via="envelope", fallback_result=None):
-    """A fake CLI that refuses NEW the way 2.1.207 does and answers anything
-    else. Returns the list of models it was asked for, in call order."""
+def _old_cli(monkeypatch, *, via="envelope", fallback_result=None, refused=(NEW,)):
+    """A fake CLI that refuses the `refused` models (NEW by default) the way
+    2.1.207 does and answers anything else. Returns the list of models it was
+    asked for, in call order."""
     models: list[str] = []
     lock = threading.Lock()
 
@@ -58,7 +63,7 @@ def _old_cli(monkeypatch, *, via="envelope", fallback_result=None):
         m = _model(argv)
         with lock:
             models.append(m)
-        if m == NEW:
+        if m in refused:
             if via == "envelope":
                 return _proc(stdout=_envelope(TOO_OLD, is_error=True))
             return _proc(returncode=1, stderr=TOO_OLD)
@@ -95,8 +100,13 @@ def test_a_required_version_holding_429_still_maps_to_cli_too_old():
     assert claude_cli._error_kind(text) == "cli_too_old"
 
 
-def test_model_fallbacks_names_the_opus_pair():
-    assert claude_cli.MODEL_FALLBACKS == {NEW: OLD}
+def test_model_fallbacks_names_the_opus_and_sonnet_pairs():
+    assert claude_cli.MODEL_FALLBACKS == {NEW: OLD, SONNET_NEW: SONNET_OLD}
+
+
+def test_no_fallback_is_itself_swapped():
+    """One hop only: every fallback target is a model with no entry of its own."""
+    assert not set(claude_cli.MODEL_FALLBACKS.values()) & set(claude_cli.MODEL_FALLBACKS)
 
 
 # --- the kind, on both failure paths --------------------------------------------
@@ -116,16 +126,28 @@ def test_a_model_with_no_fallback_raises_cli_too_old(monkeypatch, fake_exe, via)
     assert calls == ["claude-future-9"]          # no fallback to run
 
 
+@pytest.mark.parametrize("new,old", PAIRS)
 @pytest.mark.parametrize("via", ["envelope", "exit"])
 def test_the_fallback_runs_once_then_later_calls_go_straight_to_it(
-        monkeypatch, fake_exe, capsys, via):
-    models = _old_cli(monkeypatch, via=via)
-    first = claude_cli.run_claude("sys", "user", NEW)
-    assert first.text == f"answer from {OLD}"
-    assert models == [NEW, OLD]
-    second = claude_cli.run_claude("sys", "user", NEW)
-    assert second.text == f"answer from {OLD}"
-    assert models == [NEW, OLD, OLD]             # no wasted first call
+        monkeypatch, fake_exe, capsys, via, new, old):
+    models = _old_cli(monkeypatch, via=via, refused=(new,))
+    first = claude_cli.run_claude("sys", "user", new)
+    assert first.text == f"answer from {old}"
+    assert models == [new, old]
+    second = claude_cli.run_claude("sys", "user", new)
+    assert second.text == f"answer from {old}"
+    assert models == [new, old, old]             # no wasted first call
+
+
+def test_the_two_pairs_swap_independently(monkeypatch, fake_exe):
+    """A refusal of Sonnet 5.5 leaves Opus 5.5 to be tried on its own first call
+    (and the other way round): each pair keeps its own remembered swap."""
+    models = _old_cli(monkeypatch, refused=(NEW, SONNET_NEW))
+    claude_cli.run_claude("sys", "user", SONNET_NEW)
+    assert claude_cli.active_swaps() == {SONNET_NEW: SONNET_OLD}
+    claude_cli.run_claude("sys", "user", NEW)
+    assert claude_cli.active_swaps() == {SONNET_NEW: SONNET_OLD, NEW: OLD}
+    assert models == [SONNET_NEW, SONNET_OLD, NEW, OLD]
 
 
 def test_the_fallback_run_keeps_the_effort_level(monkeypatch, fake_exe):
@@ -143,14 +165,15 @@ def test_the_fallback_run_keeps_the_effort_level(monkeypatch, fake_exe):
     assert efforts == ["low", "low", "low"]
 
 
-def test_the_warning_prints_once_per_process(monkeypatch, fake_exe, capsys):
-    _old_cli(monkeypatch)
+@pytest.mark.parametrize("new,old", PAIRS)
+def test_the_warning_prints_once_per_process(monkeypatch, fake_exe, capsys, new, old):
+    _old_cli(monkeypatch, refused=(new,))
     for _ in range(3):
-        claude_cli.run_claude("sys", "user", NEW)
+        claude_cli.run_claude("sys", "user", new)
     err = capsys.readouterr().err
-    line = f"claude CLI does not support {NEW} yet"
+    line = f"claude CLI does not support {new} yet"
     assert err.count(line) == 1
-    assert f"using {OLD}" in err
+    assert f"using {old}" in err
     assert "Run `claude update` to use it." in err
     assert "2.1.280" in err                      # the required version, parsed
 
@@ -254,13 +277,14 @@ def test_racing_threads_warn_once(monkeypatch, fake_exe, capsys):
     assert models[-1] == OLD
 
 
-def test_the_result_names_the_model_that_ran(monkeypatch, fake_exe):
-    """llm.USAGE records CLIResult.model, so a call opus 5 answered is never
-    booked as opus 5.5."""
-    _old_cli(monkeypatch)
-    assert claude_cli.run_claude("sys", "user", NEW).model == OLD      # the swap call
-    assert claude_cli.run_claude("sys", "user", NEW).model == OLD      # the remembered swap
-    assert claude_cli.run_claude("sys", "user", "claude-sonnet-5").model == "claude-sonnet-5"
+@pytest.mark.parametrize("new,old", PAIRS)
+def test_the_result_names_the_model_that_ran(monkeypatch, fake_exe, new, old):
+    """llm.USAGE records CLIResult.model, so a call the older model answered is
+    never booked as the newer one."""
+    _old_cli(monkeypatch, refused=(new,))
+    assert claude_cli.run_claude("sys", "user", new).model == old      # the swap call
+    assert claude_cli.run_claude("sys", "user", new).model == old      # the remembered swap
+    assert claude_cli.run_claude("sys", "user", "claude-haiku-4-5").model == "claude-haiku-4-5"
 
 
 def test_active_swaps_is_a_copy_of_the_remembered_swaps(monkeypatch, fake_exe):
@@ -365,5 +389,9 @@ def test_a_test_can_opt_in_to_the_real_lookup(monkeypatch):
     assert claude_cli.find_claude() == "/bin/claude"
 
 
-def test_min_cli_version_names_opus_5_5():
+def test_min_cli_version_names_only_opus_5_5():
+    """Sonnet 5.5 has a fallback and no minimum: the first CLI version that runs it
+    is not known without a live call, so Check setup stays silent about it."""
     assert claude_cli.MIN_CLI_VERSION == {NEW: (2, 1, 280)}
+    assert SONNET_NEW in claude_cli.MODEL_FALLBACKS
+    assert SONNET_NEW not in claude_cli.MIN_CLI_VERSION

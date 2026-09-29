@@ -110,11 +110,18 @@ def is_cli_too_old_message(text: str | None) -> bool:
 
 # A model the installed CLI may be too old for, mapped to the model a run uses
 # instead until the user runs `claude update` (VL-5). One hop only: a fallback
-# is never itself swapped.
-MODEL_FALLBACKS: dict[str, str] = {"claude-opus-5-5": "claude-opus-5"}
+# is never itself swapped. claude-sonnet-5-5 joined in cycle 21 (2026-09-29).
+MODEL_FALLBACKS: dict[str, str] = {
+    "claude-opus-5-5": "claude-opus-5",
+    "claude-sonnet-5-5": "claude-sonnet-5",
+}
 
 # The CLI version each model first ran on, for Check setup's warning. The CLI
 # error text is the source: "version 2.1.280 or newer is required".
+# claude-sonnet-5-5 has no entry on purpose: the first CLI version that runs it
+# is not known without a live call. Check setup stays silent about it (no
+# version to name), and a CLI too old for it still swaps to claude-sonnet-5 at
+# run time through MODEL_FALLBACKS. Add the entry once a refusal names the version.
 MIN_CLI_VERSION: dict[str, tuple[int, int, int]] = {"claude-opus-5-5": (2, 1, 280)}
 
 # Models the installed CLI refused this process, mapped to the fallback in use.

@@ -1610,6 +1610,34 @@ def test_opus_5_5_is_offered_in_all_six_claude_dropdowns_and_is_the_pro_default(
     assert by_key["stage2_model_claude"].default == "claude-sonnet-5"
 
 
+# Every Claude dropdown's default, as it stood before Sonnet 5.5 joined the list.
+CLAUDE_DEFAULTS = {
+    "stage1_model_claude": "claude-haiku-4-5",
+    "stage2_model_claude": "claude-sonnet-5",
+    "RESUME_TAILOR_CLAUDE_MODEL_ALL": "claude-sonnet-5",
+    "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE": "claude-haiku-4-5",
+    "RESUME_TAILOR_CLAUDE_MODEL_FLASH": "claude-sonnet-5",
+    "RESUME_TAILOR_CLAUDE_MODEL_PRO": "claude-opus-5-5",
+}
+
+
+def test_sonnet_5_5_is_offered_in_all_six_claude_dropdowns_and_no_default_moves():
+    """Cycle 21 Task 10: claude-sonnet-5-5 is one pick away everywhere a Claude
+    model is chosen, through the shared tuple. Nothing defaults to it, and the
+    older ids stay listed so a stored config naming one keeps resolving."""
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    assert "claude-sonnet-5-5" in settings.CLAUDE_MODELS
+    assert settings.CLAUDE_MODELS == ("claude-haiku-4-5", "claude-sonnet-5",
+                                      "claude-sonnet-5-5", "claude-opus-5", "claude-opus-5-5")
+    offering = {f.key for f in settings.SETTINGS_SCHEMA if f.choices == settings.CLAUDE_MODELS}
+    assert offering == CLAUDE_DROPDOWNS
+    for key in CLAUDE_DROPDOWNS:
+        assert "claude-sonnet-5-5" in by_key[key].choices, key
+        assert settings.validate({key: "claude-sonnet-5-5"}) == {}, key
+    assert {key: by_key[key].default for key in CLAUDE_DROPDOWNS} == CLAUDE_DEFAULTS
+    assert "claude-sonnet-5-5" not in CLAUDE_DEFAULTS.values()
+
+
 def test_a_blank_choice_names_the_fix_in_plain_words():
     """A stored choice the form keeps on screen (ST-7) can be blank; the note
     under it then asks for a pick, since "Not allowed: ." names nothing."""

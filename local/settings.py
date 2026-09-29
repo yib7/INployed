@@ -191,19 +191,24 @@ GEMINI_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-f
 # the API-side deprecation of temperature/top_p/top_k on Opus 4.7 and later does
 # not reach this project: llm._call_claude accepts those arguments for signature
 # parity with _call_gemini and drops them, because print-mode exposes neither.
-# The first three were re-checked against Anthropic's model-deprecation table on
-# 2026-09-04: state Active, none deprecated, none retired. The tier map (haiku
-# fast, sonnet standard, opus deep) still matches what each tier is for. The
-# nearest horizon in the whole model set, Gemini included, is
-# claude-haiku-4-5-20251001's tentative retirement "not sooner than October 15,
-# 2026"; Anthropic gives at least 60 days' notice and there is no newer haiku to
-# move to, so the id stays and this comment is the reminder to re-check it.
+# The three ids the tuple held then (haiku 4.5, sonnet 5, opus 5) were re-checked
+# against Anthropic's model-deprecation table on 2026-09-04: state Active, none
+# deprecated, none retired. The tier map (haiku fast, sonnet standard, opus deep)
+# still matches what each tier is for. The nearest horizon in the whole model
+# set, Gemini included, is claude-haiku-4-5-20251001's tentative retirement "not
+# sooner than October 15, 2026"; Anthropic gives at least 60 days' notice and
+# there is no newer haiku to move to, so the id stays and this comment is the
+# reminder to re-check it.
 #
 # claude-opus-5-5 joined in cycle 19 (2026-09-27) as the deep tier's default
 # (RESUME_TAILOR_CLAUDE_MODEL_PRO here and resume_tailor/config.py's tier map).
 # claude-opus-5 stays in the tuple, so a stored config naming it keeps resolving
 # and it stays one pick away in all six Claude dropdowns.
-CLAUDE_MODELS = ("claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-opus-5-5")
+#
+# claude-sonnet-5-5 joined in cycle 21 (2026-09-29) as an option in all six Claude
+# dropdowns; no default changed.
+CLAUDE_MODELS = ("claude-haiku-4-5", "claude-sonnet-5", "claude-sonnet-5-5", "claude-opus-5",
+                 "claude-opus-5-5")
 
 # How the résumé tailor picks a model for each stage, per provider. The strings
 # are the ones `local/resume_tailor/config.py` compares against

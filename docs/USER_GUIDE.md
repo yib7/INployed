@@ -322,8 +322,10 @@ the VM keeps running unchanged.
 > **Scoring provider** to `claude` (both default to `gemini`). The Claude path drives the
 > headless CLI with your subscription auth (no API key) and prompt caching; left on `tiers`
 > (the default), the tailor stages map fast → `claude-haiku-4-5`, standard →
-> `claude-sonnet-5`, deep → `claude-opus-5-5` (Opus 5.5). The cloud VM always scores with
-> Gemini, regardless of this setting.
+> `claude-sonnet-5`, deep → `claude-opus-5-5` (Opus 5.5). Sonnet 5.5
+> (`claude-sonnet-5-5`) is one pick away in every Claude model dropdown. On a CLI too old
+> for it, runs switch to `claude-sonnet-5` by themselves, and `claude update` brings it
+> back. The cloud VM always scores with Gemini, regardless of this setting.
 >
 > Opus 5.5 needs Claude CLI version 2.1.280 or newer. On an older CLI the tailor switches
 > to `claude-opus-5` by itself and goes on. The first run that hits it carries a warning in

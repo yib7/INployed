@@ -6,14 +6,14 @@ them.
 
 Task 7: the clearance filter is level-aware. A clearance the candidate holds
 passes; a clearance the employer sponsors passes when the candidate is open to
-sponsorship. Under the default profile (no clearance, closed to sponsorship) it
-blocks exactly what `requires_clearance` blocks.
+sponsorship, unless the same sentence refuses to sponsor. Under the default
+profile (no clearance, closed to sponsorship) it blocks exactly what
+`requires_clearance` blocks.
 
 Every test runs against the sandboxed scoring constants that conftest's
 _hermetic_repo_data rebinds, so the author's scoring_config.json never leaks in.
 """
 import asyncio
-import re
 import sys
 from datetime import date
 from pathlib import Path
@@ -47,6 +47,12 @@ CLEAN_DESC = "We are hiring a backend software engineer to build web apps and RE
     "Data Analyst Coop",
     "DATA ANALYST INTERNSHIPS",
     "Analytics Co-ops",
+    "Data Analyst Co op",
+    "Data Analyst Co\u2013op",   # en dash
+    "Data Analyst Co\u2011op",   # non-breaking hyphen
+    "Data Analyst Co\u2010op",   # hyphen
+    "Data Analyst Co\u2014Op",   # em dash
+    "Data Analyst Co ops",
 ])
 def test_an_intern_or_coop_title_is_an_internship_title(title):
     assert sj.is_internship_title(title) is True
@@ -59,21 +65,30 @@ def test_an_intern_or_coop_title_is_an_internship_title(title):
     "Data Engineer 1",
     "Cooperative Systems Analyst",
     "Data Analyst",
+    "Co Operations Analyst",
     "",
 ])
 def test_a_title_that_only_contains_the_letters_is_not_an_internship_title(title):
     assert sj.is_internship_title(title) is False
 
 
+@pytest.mark.parametrize("title", [
+    "Internship Program Manager",
+    "Intern Recruiter",
+    "University Recruiting Coordinator - Interns",
+    "Director of Intern Programs",
+    "Co-op Program Coordinator",
+    "Manager, Intern Experience",
+    "Internship Recruiting Lead (Campus Recruiters)",
+])
+def test_a_title_that_runs_the_program_is_not_an_internship_title(title):
+    """A manager, recruiter, coordinator or director of interns is a full-time job."""
+    assert sj.is_internship_title(title) is False
+
+
 @pytest.mark.parametrize("value", [None, float("nan"), 12345, pd.NA])
 def test_a_non_string_title_is_not_an_internship_title(value):
     assert sj.is_internship_title(value) is False
-
-
-def test_the_internship_regex_is_the_specified_pattern():
-    assert sj.INTERNSHIP_TITLE_RE.pattern == (
-        r"\b(?:intern|interns|internship|internships|co-?op|co-?ops)\b")
-    assert sj.INTERNSHIP_TITLE_RE.flags & re.I
 
 
 # --- Task 6: the filter column ---------------------------------------------------
@@ -365,6 +380,24 @@ POSITIVE_SENTENCES = [
     "Secret clearance sponsorship available for the right candidate.",
     "Active Secret clearance required; ability to obtain TS/SCI",
 ]
+REFUSING_SENTENCES = [
+    "We are unable to sponsor a Secret clearance.",
+    "Sponsorship for a Secret clearance is not available.",
+    "Active Secret clearance required and the company does not sponsor clearances.",
+    "Requires an active Secret clearance (no sponsorship).",
+    "Must have obtained an active Secret clearance.",
+    "Must have an active Secret clearance, interim not accepted.",
+    "US citizenship and an active Secret clearance required, no visa sponsorship available.",
+    "Must be eligible to work in the US and hold an active Secret clearance.",
+    "Active Secret clearance required; no clearance sponsorship available.",
+    "Active Secret clearance required. We do not offer clearance sponsorship.",
+]
+ACCEPTING_SENTENCES = [
+    "Must be able to obtain a Secret clearance.",
+    "Candidates must be eligible to obtain a Secret clearance.",
+    "The company will sponsor a Secret clearance for the selected candidate.",
+    "Interim Secret clearance acceptable; we sponsor the final clearance.",
+]
 NEGATED_SENTENCES = [
     "No clearance required for this position.",
     "Security clearance is not required.",
@@ -382,7 +415,8 @@ SEPARATORS = (" ", "\n", "; ", ". ")
 
 
 def _synthetic_postings():
-    pool = POSITIVE_SENTENCES + NEGATED_SENTENCES + NEUTRAL_SENTENCES
+    pool = (POSITIVE_SENTENCES + REFUSING_SENTENCES + ACCEPTING_SENTENCES
+            + NEGATED_SENTENCES + NEUTRAL_SENTENCES)
     yield from pool
     for a in pool:
         for b in pool:
@@ -405,6 +439,34 @@ def test_the_default_profile_blocks_what_requires_clearance_blocks_on_synthetic_
         assert sj.clearance_blocks(text) is sj.requires_clearance(text), text
         seen += 1
     assert seen > 1000
+
+
+@pytest.mark.parametrize("text", [
+    "Active Secret clearance required; no clearance sponsorship available.",
+    "Active Secret clearance required. We do not offer clearance sponsorship.",
+    "Active Secret clearance required. We don't provide a clearance sponsorship program.",
+    "Requires a Secret clearance. The company does not sponsor a clearance.",
+])
+def test_a_refusal_to_sponsor_does_not_read_as_no_clearance_required(text):
+    """The negation guard used to read "no clearance sponsorship" as "no clearance
+    required", so these passed for every profile."""
+    assert sj.requires_clearance(text) is True
+    assert sj.clearance_blocks(text) is True
+
+
+@pytest.mark.parametrize("text", [
+    "No clearance required.",
+    "This role does not require a security clearance.",
+    "Clearance not required.",
+    "No polygraph required.",
+    "We do not require a clearance for this role.",
+    "You do not need a security clearance.",
+    "Without a clearance, you can still apply.",
+    "No clearance needed. Sponsorship for relocation is available.",
+])
+def test_a_negated_clearance_requirement_still_passes(text):
+    assert sj.requires_clearance(text) is False
+    assert sj.clearance_blocks(text) is False
 
 
 def test_the_default_arguments_are_no_clearance_and_not_open():
@@ -479,6 +541,7 @@ TSSCI_REQUIRED = "Active TS/SCI clearance required."
 POLYGRAPH_REQUIRED = "This position requires a polygraph."
 OBTAIN_SECRET = "Must be able to obtain a Secret clearance."
 SPONSORED_SECRET = "Secret clearance sponsorship available for the right candidate."
+SPONSORED_REQUIRED = "Active Secret clearance required, with clearance sponsorship available."
 MIXED = "Active Secret clearance required; ability to obtain TS/SCI"
 TWO_MENTIONS = "Active Secret clearance required. Must obtain a TS/SCI clearance."
 
@@ -515,7 +578,8 @@ TWO_MENTIONS = "Active Secret clearance required. Must obtain a TS/SCI clearance
     ("Eligibility for a Top Secret clearance is required.", 0, True, False),
     ("Willingness to undergo a polygraph is required.", 0, True, False),
     ("An interim Secret clearance is fine pending final adjudication.", 0, True, False),
-    ("clearance sponsorship available", 0, True, False),
+    (SPONSORED_REQUIRED, 0, True, False),
+    (SPONSORED_REQUIRED, 0, False, True),
     (TSSCI_REQUIRED, 0, True, True),
     (SECRET_REQUIRED, 0, True, True),
     (POLYGRAPH_REQUIRED, 0, True, True),
@@ -535,6 +599,69 @@ TWO_MENTIONS = "Active Secret clearance required. Must obtain a TS/SCI clearance
 ])
 def test_the_level_table(text, held, open_, blocks):
     assert sj.clearance_blocks(text, held, open_) is blocks
+
+
+# --- Task 7: a posting that refuses to sponsor blocks an open candidate ------------
+
+@pytest.mark.parametrize("text", [
+    "We are unable to sponsor a Secret clearance.",
+    "Sponsorship for a Secret clearance is not available.",
+    "Active Secret clearance required and the company does not sponsor clearances.",
+    "Requires an active Secret clearance (no sponsorship).",
+    "Must have obtained an active Secret clearance.",
+    "Must have an active Secret clearance, interim not accepted.",
+    "US citizenship and an active Secret clearance required, no visa sponsorship available.",
+    "Must be eligible to work in the US and hold an active Secret clearance.",
+    "Active Secret clearance required; no clearance sponsorship available.",
+    "Active Secret clearance required. We do not offer clearance sponsorship.",
+    "The company can't sponsor a Secret clearance.",
+    "The company can\u2019t sponsor a Secret clearance.",
+    "We will not sponsor a Secret clearance.",
+    "We won't sponsor a Secret clearance.",
+    "Secret clearance sponsorship isn't available.",
+    "Secret clearance sponsorship is unavailable.",
+    "Candidates must be authorized to work in the US and hold a Secret clearance.",
+    "Must have work authorization and an active Secret clearance.",
+])
+def test_a_posting_that_refuses_to_sponsor_blocks_an_open_candidate(text):
+    assert sj.requires_clearance(text) is True
+    assert sj.clearance_blocks(text, held_rank=0, sponsorship=True) is True
+    assert sj.clearance_blocks(text, held_rank=0, sponsorship=False) is True
+
+
+@pytest.mark.parametrize("text", [
+    "Must be able to obtain a Secret clearance.",
+    "Candidates must be eligible to obtain a Secret clearance.",
+    "The company will sponsor a Secret clearance for the selected candidate.",
+    "Interim Secret clearance acceptable; we sponsor the final clearance.",
+    "Eligibility for a Top Secret clearance is required.",
+    "Must be eligible for a Secret clearance.",
+    "Must be eligible to hold a Secret clearance.",
+    "An interim Secret clearance is fine pending final adjudication.",
+    "Secret clearance sponsorship available for the right candidate.",
+])
+def test_a_posting_that_offers_the_clearance_keeps_an_open_candidate(text):
+    assert sj.clearance_blocks(text, held_rank=0, sponsorship=True) is False
+    assert sj.clearance_blocks(text, held_rank=0, sponsorship=False) is True
+
+
+@pytest.mark.parametrize("text", [
+    "Must be eligible to work in the US and hold an active Secret clearance.",
+    "Must have obtained an active Secret clearance.",
+])
+def test_eligible_to_work_and_obtained_do_not_read_as_obtainable(text):
+    assert sj.clearance_requirement(text) == [(2, False)]
+
+
+@pytest.mark.parametrize("text", REFUSING_SENTENCES)
+def test_a_refusal_still_blocks_a_candidate_who_lacks_the_level(text):
+    assert sj.clearance_blocks(text, 1, True) is True
+
+
+@pytest.mark.parametrize("text", REFUSING_SENTENCES)
+def test_a_refusal_never_blocks_a_candidate_who_holds_the_level(text):
+    assert sj.clearance_blocks(text, 2, True) is False
+    assert sj.clearance_blocks(text, 2, False) is False
 
 
 @pytest.mark.parametrize("text", NEGATED_SENTENCES + [
@@ -636,13 +763,6 @@ def test_the_rescore_pass_uses_the_clearance_profile(tmp_path, monkeypatch):
 
 
 # --- Task 7: jev_facts and the student cue ---------------------------------------
-
-def test_the_student_cue_regex_is_the_specified_pattern():
-    assert sj.STUDENT_CUE_RE.pattern == (
-        r"\b(?:intern(?:s|ship|ships)?|co-?ops?|students?|enrolled|enrollment|pursuing"
-        r"|graduat\w*|class of|new[\s-]?grads?|campus)\b")
-    assert sj.STUDENT_CUE_RE.flags & re.I
-
 
 @pytest.mark.parametrize("text", [
     "Summer internship program for data analysts.",

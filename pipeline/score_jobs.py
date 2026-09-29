@@ -590,10 +590,10 @@ MIN_FILTER_YEARS = _SCORING["min_filter_years"]
 # A clearance requirement drops the job unless the candidate profile covers it.
 # clearance_blocks() passes a mention when the candidate holds that level or a
 # higher one, or when the employer will obtain or sponsor it and the candidate is
-# open to sponsorship. Under the default profile (no clearance held, closed to
-# sponsorship) it blocks exactly what requires_clearance() flags. The negation
-# guard keeps "no clearance required" / "clearance is not required" postings
-# (precision bias: keep on doubt).
+# open to sponsorship (a sentence that refuses to sponsor does not count as an offer).
+# Under the default profile (no clearance held, closed to sponsorship) it blocks
+# exactly what requires_clearance() flags. The negation guard keeps "no clearance
+# required" / "clearance is not required" postings (precision bias: keep on doubt).
 # Note: a bare mention of a clearance LEVEL ("Secret clearance shop", "team holds
 # an active clearance") is treated as a drop -- such roles effectively require
 # clearance. Only clearly-non-requiring phrasings ("no clearance required",
@@ -609,8 +609,14 @@ CLEARANCE_PATTERNS = [
 # Keeps postings whose only clearance/polygraph signal is negated ("no clearance
 # required", "no polygraph required") or merely describes cleared colleagues
 # ("clearance holders"). Precision bias: a suppressor can only ever KEEP a job.
+# The first alternative skips a sponsorship phrase: "no clearance sponsorship
+# available" and "we do not offer clearance sponsorship" say the employer will not
+# sponsor, so the clearance is still required. That keeps them out of the
+# suppressor, which changes the default profile for that one phrasing (they used to
+# pass every profile as "no clearance required").
 _CLEARANCE_NEG = re.compile(
-    r"\b(no|not|without|does not|do not|don'?t|doesn'?t)\b[^.\n]{0,30}\bclearance\b"
+    r"\b(no|not|without|does not|do not|don'?t|doesn'?t)\b(?:(?!sponsor)[^.\n]){0,30}"
+    r"\bclearance\b(?!\s*sponsor)"
     r"|\bclearance\b[^.\n]{0,30}\bnot\s+(required|needed)\b"
     r"|\b(no|not|without|does not|do not|don'?t|doesn'?t)\b[^.\n]{0,20}\bpolygraph\b"
     r"|\bpolygraph\b[^.\n]{0,20}\bnot\s+(required|needed)\b"
@@ -1364,16 +1370,28 @@ def is_junk_desc(text: Any) -> bool:
 # An intern or co-op posting is for a student. A candidate who has finished school
 # is dropped from these before any scorer call (filter_internship); a candidate
 # still in school keeps them. Word boundaries keep "Internal Audit Analyst",
-# "International Data Analyst" and "Cooperative Systems Analyst" out.
+# "International Data Analyst" and "Cooperative Systems Analyst" out. The co-op
+# separator may be a space, a hyphen or any dash (U+2010 to U+2015, which covers the
+# non-breaking hyphen and the en dash).
 INTERNSHIP_TITLE_RE = re.compile(
-    r"\b(?:intern|interns|internship|internships|co-?op|co-?ops)\b", re.I)
+    r"\b(?:interns?|internships?|co[\s\-\u2010-\u2015]?ops?)\b", re.I)
+# A title that names one of these roles runs the program or recruits for it
+# ("Internship Program Manager", "Intern Recruiter", "Director of Intern
+# Programs"). Those are full-time jobs, so is_internship_title() leaves them alone.
+_INTERNSHIP_PROGRAM_ROLE_RE = re.compile(
+    r"\b(?:manager|recruit(?:er|ers|ing)|coordinator|director)\b", re.I)
 
 
 def is_internship_title(title: Any) -> bool:
-    """True when the job title names an internship or a co-op."""
+    """True when the job title names an internship or a co-op.
+
+    A title that also names a manager, recruiter, coordinator or director is a
+    full-time job that runs the program, so it is False.
+    """
     if not isinstance(title, str):
         return False
-    return bool(INTERNSHIP_TITLE_RE.search(title))
+    return bool(INTERNSHIP_TITLE_RE.search(title)
+                and not _INTERNSHIP_PROGRAM_ROLE_RE.search(title))
 
 
 def requires_clearance(text: Any) -> bool:
@@ -1400,9 +1418,33 @@ _CLEARANCE_RANK_PATTERNS = (
     (1, re.compile(r"public[\s-]*trust", re.I)),
 )
 # Wording that says the clearance can be obtained, sponsored or is still in process.
-_CLEARANCE_OBTAINABLE = re.compile(
-    r"obtain|eligib|sponsor|interim|willing(?:ness)? to (?:undergo|apply|get)"
+# "obtain" excludes "obtained" ("must have obtained"), which says the candidate
+# already holds it. "eligib" counts only as eligibility for a clearance or to obtain,
+# hold, get or receive one, so "eligible to work in the US" is not a sponsorship cue.
+_CLEARANCE_OBTAINABLE_WORDS = re.compile(
+    r"obtain(?!ed)"
+    r"|eligib(?:le|ility)\s+(?:for|to\s+(?:obtain|hold|get|receive))\b"
+    r"|sponsor|interim|willing(?:ness)? to (?:undergo|apply|get)"
     r"|able to (?:get|be granted)|pending", re.I)
+# Wording that says the employer will not sponsor or obtain the clearance. It cancels
+# an obtainable cue in the same sentence: a negator before sponsor, obtain or interim,
+# a sponsorship that is not available, a visa or work authorization line, "obtained",
+# and "interim not accepted". It only narrows what counts as obtainable, so the
+# default profile and the monotonicity of clearance_blocks are unchanged.
+_CLEARANCE_REFUSAL = re.compile(
+    r"\b(?:no|not|cannot|can['\u2019]?t|unable to|will not|won['\u2019]?t|does not|do not"
+    r"|don['\u2019]?t|doesn['\u2019]?t)\b[^.\n]{0,25}\b(?:sponsor|obtain|interim)"
+    r"|\bsponsor\w*[^.\n]{0,45}\b(?:not|unavailable|isn['\u2019]?t)\b"
+    r"|\bvisa\b"
+    r"|\bwork authorization\b|\bauthorized to work\b|\beligible to work\b"
+    r"|\bobtained\b"
+    r"|\binterim\b[^.\n]{0,20}\bnot\s+accepted\b", re.I)
+
+
+def _clearance_obtainable(sentence: str) -> bool:
+    """True when a clearance sentence says the employer will obtain or sponsor it."""
+    return bool(_CLEARANCE_OBTAINABLE_WORDS.search(sentence)
+                and not _CLEARANCE_REFUSAL.search(sentence))
 
 
 def clearance_requirement(text: Any) -> list[tuple[int, bool]]:
@@ -1413,7 +1455,8 @@ def clearance_requirement(text: Any) -> list[tuple[int, bool]]:
     is the highest level that sentence names on the CLEARANCE_LEVELS scale (4
     TS/SCI or polygraph, 3 Top Secret, 2 Secret, 1 Public Trust) and 0 when it
     names none. obtainable is True when the sentence says the clearance can be
-    obtained or sponsored. A pattern can match across a `;`, `!` or `?` that the
+    obtained or sponsored and does not also refuse to sponsor it (see
+    _CLEARANCE_REFUSAL). A pattern can match across a `;`, `!` or `?` that the
     sentence split cuts at; when requires_clearance is True and no single sentence
     matches, the answer is `[(0, False)]`, so the default profile blocks exactly
     what requires_clearance blocks.
@@ -1425,7 +1468,7 @@ def clearance_requirement(text: Any) -> list[tuple[int, bool]]:
         if not any(p.search(sentence) for p in CLEARANCE_PATTERNS):
             continue
         rank = next((r for r, p in _CLEARANCE_RANK_PATTERNS if p.search(sentence)), 0)
-        mentions.append((rank, bool(_CLEARANCE_OBTAINABLE.search(sentence))))
+        mentions.append((rank, _clearance_obtainable(sentence)))
     return mentions or [(0, False)]
 
 

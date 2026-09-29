@@ -16,6 +16,7 @@ import json
 import re
 import sys
 import time
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -522,3 +523,153 @@ def test_the_month_pattern_still_accepts_padding_around_a_month_and_a_blank_run(
     assert re.fullmatch(pattern, " " * 50_000) is not None
     assert re.fullmatch(pattern, " " * 5_000 + "May 2026" + " " * 5_000) is not None
     assert re.fullmatch(pattern, " " * 5_000 + "May 2026" + " " * 5_000 + "x") is None
+
+
+# --- final review, B: a graduation month that has passed is named at Save -----------
+#
+# The scorer rolls an in-school status whose graduation month is before this month
+# over to Finished school (score_jobs.candidate_profile). The shipped default month is
+# already in the past, so a user who picks "In school" and leaves the month gets the
+# opposite of what they chose, with nothing said. Save now says it. settings.py holds
+# a copy of the month grammar and the rollover rule (it never imports score_jobs), and
+# these pins hold the copy to the scorer's own answer.
+
+_MONTH_GRID = _ACCEPTED + _REJECTED + _BLANK + [
+    f"{name} {year}" for name in ("January", "May", "September", "December")
+    for year in (1999, 2025, 2026, 2027, 2099)]
+_TODAYS = (date(2026, 9, 29), date(2026, 9, 1), date(2026, 1, 31), date(2027, 5, 15),
+           date(2026, 12, 31))
+_STATUS_GRID = list(sj.EDUCATION_STATUSES) + list(sj.EDUCATION_STATUS_CODES) + [
+    "IN SCHOOL: GRADUATE", "  In   school: undergraduate ", "GRAD", "Unknown status", ""]
+
+
+@pytest.mark.parametrize("value", _MONTH_GRID)
+def test_the_settings_month_parser_agrees_with_the_scorers(value):
+    assert settings.parse_graduation_month(value) == sj.parse_graduation_month(value), value
+
+
+@pytest.mark.parametrize("value", [None, 5, 2026.0, ["May 2026"], b"May 2026"])
+def test_the_settings_month_parser_reads_a_non_string_as_no_month(value):
+    assert settings.parse_graduation_month(value) is None
+    assert sj.parse_graduation_month(value) is None
+
+
+@pytest.mark.parametrize("today", _TODAYS)
+def test_the_rollover_helper_agrees_with_the_scorers_profile(today):
+    """One rule in two modules: the helper names a month exactly when the scorer rolls over."""
+    disagreements = []
+    for status in _STATUS_GRID:
+        for month in _MONTH_GRID:
+            profile = sj.candidate_profile(status=status, graduation=month, today=today)
+            named = settings.graduation_month_passed(status, month, today)
+            if profile.rolled_over != (named is not None):
+                disagreements.append((status, month, named))
+            elif profile.rolled_over and named != profile.graduation_text:
+                disagreements.append((status, month, named))
+    assert disagreements == [], disagreements[:10]
+
+
+def test_the_rollover_helper_names_the_canonical_month():
+    today = date(2026, 9, 29)
+    assert settings.graduation_month_passed("In school: graduate", "sept. 2025", today) == "September 2025"
+    assert settings.graduation_month_passed("In school: undergraduate", "May 2026", today) == "May 2026"
+
+
+@pytest.mark.parametrize("status,month,today", [
+    ("Finished school", "May 2026", date(2026, 9, 29)),
+    ("In school: graduate", "September 2026", date(2026, 9, 29)),   # this month has not passed
+    ("In school: graduate", "October 2026", date(2026, 9, 29)),
+    ("In school: undergraduate", "", date(2026, 9, 29)),
+    ("In school: undergraduate", "May 26", date(2026, 9, 29)),
+    ("Something else", "May 2026", date(2026, 9, 29)),
+    (None, "May 2026", date(2026, 9, 29)),
+    ("In school: graduate", None, date(2026, 9, 29)),
+])
+def test_the_rollover_helper_stays_quiet(status, month, today):
+    assert settings.graduation_month_passed(status, month, today) is None
+
+
+def test_the_rollover_helper_reads_the_clock_when_no_date_is_given():
+    assert settings.graduation_month_passed("In school: graduate", "January 2000") == "January 2000"
+    assert settings.graduation_month_passed("In school: graduate", "May 2099") is None
+
+
+def _save_boxes(qtbot, tmp_path, monkeypatch, status, month, targets=None):
+    """Set the two rows, Save, and return (form, the texts of every message box shown)."""
+    form = SettingsForm(targets=targets or _targets(tmp_path))
+    qtbot.addWidget(form)
+    boxes = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information",
+                        staticmethod(lambda parent, title, text, *a, **k: boxes.append(text)))
+    form._setters["education_status"](status)
+    form._setters["graduation_month"](month)
+    assert form.save() is True
+    return form, boxes
+
+
+_PASSED_WARNING = ("Your graduation month ({month}) has passed, so the scorer counts you as "
+                   "Finished school. Set the month you expect to graduate.")
+
+
+@pytest.mark.parametrize("status", ["In school: undergraduate", "In school: graduate"])
+def test_save_warns_when_an_in_school_status_carries_a_month_that_has_passed(
+        qtbot, tmp_path, monkeypatch, status):
+    targets = _targets(tmp_path)
+    _form, boxes = _save_boxes(qtbot, tmp_path, monkeypatch, status, "January 2000", targets)
+    assert len(boxes) == 1
+    assert _PASSED_WARNING.format(month="January 2000") in boxes[0]
+    assert boxes[0].startswith("Settings saved.")
+    # Non-blocking: the save itself went through.
+    saved = json.loads(targets["scoring"].read_text(encoding="utf-8"))
+    assert saved["education_status"] == status and saved["graduation_month"] == "January 2000"
+
+
+def test_save_names_the_month_the_way_the_scorer_writes_it(qtbot, tmp_path, monkeypatch):
+    _form, boxes = _save_boxes(qtbot, tmp_path, monkeypatch, "In school: graduate", "dec. 1999")
+    assert _PASSED_WARNING.format(month="December 1999") in boxes[0]
+
+
+@pytest.mark.parametrize("status,month", [
+    ("Finished school", "January 2000"),            # finished with a past month is the normal case
+    ("In school: graduate", "May 2099"),
+    ("In school: undergraduate", "May 2099"),
+    ("In school: undergraduate", ""),
+])
+def test_save_stays_quiet_when_nothing_rolled_over(qtbot, tmp_path, monkeypatch, status, month):
+    _form, boxes = _save_boxes(qtbot, tmp_path, monkeypatch, status, month)
+    assert len(boxes) == 1
+    assert "has passed" not in boxes[0] and "Finished school." not in boxes[0]
+
+
+def test_a_save_with_no_changes_still_warns_about_a_stored_passed_month(
+        qtbot, tmp_path, monkeypatch):
+    targets = _targets(tmp_path)
+    targets["scoring"].write_text(json.dumps({"education_status": "In school: graduate",
+                                              "graduation_month": "May 2001"}), encoding="utf-8")
+    form = SettingsForm(targets=targets)
+    qtbot.addWidget(form)
+    boxes = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information",
+                        staticmethod(lambda parent, title, text, *a, **k: boxes.append(text)))
+    assert form.save() is True
+    assert len(boxes) == 1
+    assert boxes[0].startswith("No changes to save")
+    assert _PASSED_WARNING.format(month="May 2001") in boxes[0]
+
+
+def test_the_warning_is_one_line_of_the_saved_box_and_never_another_dialog(
+        qtbot, tmp_path, monkeypatch):
+    """Headless tests stub QMessageBox.information; an extra dialog kind would block them."""
+    def refuse(*_a, **_k):
+        raise AssertionError("the warning must not open another dialog")
+
+    for name in ("warning", "question", "critical"):
+        monkeypatch.setattr(QtWidgets.QMessageBox, name, staticmethod(refuse))
+    _form, boxes = _save_boxes(qtbot, tmp_path, monkeypatch, "In school: graduate", "January 2000")
+    assert len(boxes) == 1
+    assert _PASSED_WARNING.format(month="January 2000") in boxes[0]
+
+
+def test_the_warning_follows_the_writing_rules():
+    text = _PASSED_WARNING.format(month="May 2026")
+    assert _BANNED.search(text) is None

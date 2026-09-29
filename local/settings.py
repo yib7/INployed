@@ -34,6 +34,7 @@ import re
 import shutil
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -274,6 +275,55 @@ _GRADUATION_MONTHS = (r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun
                       r"|dec(?:ember)?")
 GRADUATION_MONTH_PATTERN = (r"(?i)\s*(?:(?:" + _GRADUATION_MONTHS
                             + r")\.?\s+(?:19|20)\d{2}\s*)?")
+
+# The rollover rule the scorer applies (score_jobs.candidate_profile): an in-school
+# status whose graduation month is before this month counts as Finished school. The
+# Settings tab names it at Save, because the shipped default month is already in the
+# past and the switch is silent. This is a copy of parse_graduation_month and of the
+# rollover comparison (score_jobs is copied alone to the VM and this module never
+# imports it); test_candidate_settings.py holds both to the scorer's own answer.
+_GRADUATION_MONTH_RE = re.compile(
+    r"\s*(" + _GRADUATION_MONTHS + r")\.?\s+((?:19|20)\d{2})\s*", re.I)
+_MONTH_NAMES = ("January", "February", "March", "April", "May", "June", "July",
+                "August", "September", "October", "November", "December")
+# The two in-school labels and their codes, whitespace-folded and casefolded.
+_IN_SCHOOL_STATUSES = frozenset(("in school: undergraduate", "in school: graduate",
+                                 "undergrad", "grad"))
+
+
+def parse_graduation_month(text: Any) -> tuple[int, int] | None:
+    """(year, month) for "May 2026", "Sept. 2027" and the like; None otherwise.
+
+    The same answer as score_jobs.parse_graduation_month, including for a
+    non-string (None) and for the casefold spellings the (?i) match admits.
+    """
+    if not isinstance(text, str):
+        return None
+    m = _GRADUATION_MONTH_RE.fullmatch(text)
+    if not m:
+        return None
+    prefix = m.group(1)[:3].casefold()
+    month = next((i for i, name in enumerate(_MONTH_NAMES, 1)
+                  if name[:3].casefold() == prefix), None)
+    return None if month is None else (int(m.group(2)), month)
+
+
+def graduation_month_passed(status: Any, month: Any, today: date | None = None) -> str | None:
+    """The month as "May 2026" when the scorer would count an in-school `status` as
+    finished for it (the month is before today's), else None.
+
+    A finished status, an unknown one, a blank month and a month that does not parse
+    all return None, as does the current month and any later one.
+    """
+    if not isinstance(status, str) or " ".join(status.split()).casefold() not in _IN_SCHOOL_STATUSES:
+        return None
+    grad = parse_graduation_month(month)
+    if grad is None:
+        return None
+    now = today if today is not None else datetime.now().date()
+    if grad < (now.year, now.month):
+        return f"{_MONTH_NAMES[grad[1] - 1]} {grad[0]}"
+    return None
 
 
 SETTINGS_SCHEMA: list[Field] = [

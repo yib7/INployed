@@ -1937,6 +1937,7 @@ class SettingsForm(QtWidgets.QWidget):
             return False
         summary = self._changed_summary(before, values)
         restart = self._restart_notice(before, values)
+        rollover = self._rollover_notice(values)
         archived = self._archive_after_save(values) if summary else False
         self._opening_values = settings.load(self.targets)
         self._clear_all_notes()   # every note described the file this Save replaced
@@ -1948,14 +1949,36 @@ class SettingsForm(QtWidgets.QWidget):
             note = "\n\nA snapshot was saved to the archive." if archived else ""
             QtWidgets.QMessageBox.information(
                 self, "Settings", "Settings saved. Updated:\n\n- " + "\n- ".join(summary)
-                + (f"\n\n{restart}" if restart else "") + note)
+                + (f"\n\n{restart}" if restart else "") + note
+                + (f"\n\n{rollover}" if rollover else ""))
         else:
             QtWidgets.QMessageBox.information(
-                self, "Settings", "No changes to save; your settings are unchanged.")
+                self, "Settings", "No changes to save; your settings are unchanged."
+                + (f"\n\n{rollover}" if rollover else ""))
         self._maybe_prompt_vm_push(before, values, summary)
         if self.on_saved:
             self.on_saved()
         return True
+
+    @staticmethod
+    def _rollover_notice(values: dict) -> str:
+        """The one-line warning for an in-school status saved with a graduation month
+        that has already passed, or "".
+
+        The scorer counts that candidate as Finished school (score_jobs.candidate_profile),
+        which drops intern and co-op titles and scores student postings 1: the inverse
+        of the choice. The shipped default month is already in the past, so picking
+        "In school" and saving without touching the month lands here, and nothing else
+        says so. The line rides in the box Save already shows, so Save still happens
+        and no second dialog can block. The rule is settings.graduation_month_passed,
+        which test_candidate_settings.py holds to the scorer's own rollover.
+        """
+        month = settings.graduation_month_passed(values.get("education_status"),
+                                                 values.get("graduation_month"))
+        if month is None:
+            return ""
+        return (f"Your graduation month ({month}) has passed, so the scorer counts you as "
+                "Finished school. Set the month you expect to graduate.")
 
     def _restart_notice(self, before: dict, values: dict) -> str:
         """"Restart the dashboard for these to take effect: A, B." — or "".

@@ -61,9 +61,10 @@ SECTION_HELP = {
     # the VM reads them from, which is uploaded by hand once (no automated code push).
     "About you": ("What the scorer knows about you. It states your school status in "
                   "every scoring prompt, and your clearance when you hold one or tick the "
-                  "box, and uses them to drop postings you cannot apply to. If you use the cloud VM, push config to the VM after "
-                  "changing these, and upload the new score_jobs.py once: the VM reads "
-                  "these rows only from that script."),
+                  "box, and uses them to drop postings you cannot apply to. If you use the "
+                  "cloud VM, push config to the VM after changing these, and upload the "
+                  "new score_jobs.py once, because only the new score_jobs.py knows how "
+                  "to use these settings."),
     "Scraper": "What job searches the discovery step runs (this drives its API spend).",
     # Rewritten in P8: the old blurb ("which models score jobs … changing the model
     # names can silently break scoring") described rows a fresh profile cannot see.
@@ -2050,8 +2051,8 @@ class SettingsForm(QtWidgets.QWidget):
             # local/jev.py or local/config.json, so jev_score.py is optional there;
             # the section blurb names score_jobs.py too.
             text += ("\n\nNote: score_jobs.py itself must be re-uploaded to the VM once "
-                     "(there is no automated code push), because the VM reads these "
-                     "settings only from it; run:\n"
+                     "(there is no automated code push), because only the new score_jobs.py "
+                     "knows how to use these settings; run:\n"
                      "  gcloud compute scp pipeline/score_jobs.py <user>@<vm>:~ --zone=<zone>")
         elif "drop_easy_apply" in changed_vm:
             text += ("\n\nNote: score_jobs.py itself must be re-uploaded to the VM once "

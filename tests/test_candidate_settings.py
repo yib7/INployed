@@ -272,6 +272,11 @@ def test_about_you_copy_is_the_documented_text():
     assert "push config to the VM" in blurb
     # The VM reads these rows only from score_jobs.py; jev_score.py is optional there.
     assert "score_jobs.py" in blurb and "jev_score.py" not in blurb
+    # The reason is that the new script is the one that understands the rows. The old
+    # "the VM reads these rows only from that script" could be read as "only the VM".
+    assert blurb.endswith("upload the new score_jobs.py once, because only the new "
+                          "score_jobs.py knows how to use these settings.")
+    assert "reads these rows only" not in blurb
 
 
 _BANNED = re.compile(
@@ -365,6 +370,9 @@ def test_an_about_you_change_prompts_the_vm_push(qtbot, tmp_path, monkeypatch):
     # optional there), so the prompt names that one file for the upload.
     assert "score_jobs.py" in texts[0] and "jev_score.py" not in texts[0]
     assert "gcloud compute scp" in texts[0]
+    assert ("(there is no automated code push), because only the new score_jobs.py knows "
+            "how to use these settings; run:") in texts[0]
+    assert "reads these settings only from it" not in texts[0]
 
 
 @pytest.mark.parametrize("key", ["education_status", "graduation_month", "clearance_level",

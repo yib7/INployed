@@ -102,6 +102,9 @@ for _leaked in (
     # developer's shell. Same reason RESUME_TAILOR_PROVIDER is on this list.
     "RESUME_TAILOR_MODEL_MODE", "RESUME_TAILOR_MODEL_ALL",
     "RESUME_TAILOR_CLAUDE_MODEL_MODE", "RESUME_TAILOR_CLAUDE_MODEL_ALL",
+    # Read live by config.claude_effort and claude_timeout_schedule, so a shell
+    # export would change the effort and the time limit every tailor test sees.
+    "RESUME_TAILOR_CLAUDE_EFFORT", "RESUME_TAILOR_CLAUDE_TIMEOUTS",
     # score_jobs' scoring config: env beats the file, and these decide the
     # module constants frozen at import (see _hermetic_repo_data).
     "SCORE_PROVIDER", "SCORE_STAGE1_MODEL", "SCORE_STAGE2_MODEL",

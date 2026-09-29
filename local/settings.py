@@ -817,6 +817,17 @@ SETTINGS_SCHEMA: list[Field] = [
           show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
           help="Claude provider only: writes the first draft of every bullet and the cover "
                "letter."),
+    # resume_tailor/config.py's CLAUDE_EFFORTS plus 'default' (send no --effort);
+    # claude_effort() reads this, and a value outside the set falls back to 'low'.
+    Field("RESUME_TAILOR_CLAUDE_EFFORT", "Claude thinking effort",
+          "choice", "low", "Engine", "env",
+          choices=("low", "medium", "high", "xhigh", "max", "default"),
+          show_if=("tailor_provider", ("claude",)), advanced=True, restart=True,
+          help="Claude provider only: how long Claude thinks before each tailoring answer. "
+               "'low' (the default) writes a full résumé's bullets in under half a minute. "
+               "Higher levels think longer, and each answer's time limit grows with the "
+               "level so they have room to finish; a whole tailoring run takes longer at "
+               "each step up. 'default' sends no level and lets the Claude CLI decide."),
 
     # --- VM (cloud scraper): NON-secret gcloud connection identifiers, in .env --
     # The VM tab pushes config/schedule/pause via `gcloud compute`. Auth is your

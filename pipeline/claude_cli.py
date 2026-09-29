@@ -228,10 +228,16 @@ def run_claude(
     json_mode: bool = False,
     allow_websearch: bool = False,
     timeout_s: float = DEFAULT_TIMEOUT_S,
+    effort: str | None = None,
 ) -> CLIResult:
     """One `claude -p` invocation, no retry, except the one model fallback
     (retry policy belongs to each caller -- `_call_claude` in llm.py,
     `ClaudePool.generate` here).
+
+    `effort` rides `--effort` (low / medium / high / xhigh / max); None or ''
+    sends no flag and leaves the CLI's own default. At that default Opus 4.8
+    spent about 14,600 output tokens thinking over 8 résumé bullets (176 s),
+    where `low` answered in 12 s, so the tailor pins it; the scorer passes none.
 
     Prompt rides stdin (`user`), the JSON envelope comes back on stdout.
     `--system-prompt-file` fully overrides the CLI's default system prompt (no
@@ -247,7 +253,7 @@ def run_claude(
     'cli_too_old' for a model with no fallback is raised as is.
     """
     kwargs = dict(json_mode=json_mode, allow_websearch=allow_websearch,
-                  timeout_s=timeout_s)
+                  timeout_s=timeout_s, effort=effort)
     swapped = _swapped_model(model)
     if swapped is not None:
         return _run_once(system, user, swapped, **kwargs)
@@ -269,6 +275,7 @@ def _run_once(
     json_mode: bool,
     allow_websearch: bool,
     timeout_s: float,
+    effort: str | None = None,
 ) -> CLIResult:
     """The single `claude -p` invocation behind run_claude."""
     exe = find_claude()
@@ -290,10 +297,21 @@ def _run_once(
     # characters ("The command line is too long."). The file also keeps the
     # résumé out of process listings (audit P2-17).
     sys_path = _write_system_prompt(sys_prompt)
+    # A bare completion: no built-in tools (WebSearch alone, and only on request),
+    # no skills and no MCP servers. With the CLI's full toolset the cover letter's
+    # repair prompt, which credits its rules to "avoid-ai-writing v3.18.0", made
+    # the model run the user's installed skill of that name, and the skill's audit
+    # text reached the letter (2026-09-28). The tool schemas also cost ~30k
+    # cache-write tokens on every call. An empty `--tools` argument survives the
+    # claude.CMD shim.
     argv = [
         exe, "-p", "--output-format", "json", "--model", model,
         "--system-prompt-file", sys_path, "--exclude-dynamic-system-prompt-sections",
+        "--tools", "WebSearch" if allow_websearch else "",
+        "--disable-slash-commands", "--strict-mcp-config",
     ]
+    if effort:
+        argv += ["--effort", effort]
     if allow_websearch:
         argv += ["--allowedTools", "WebSearch"]
     try:

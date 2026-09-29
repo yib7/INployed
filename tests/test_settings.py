@@ -842,6 +842,7 @@ SHOW_IF_GATES = {
     "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE": ("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)),
     "RESUME_TAILOR_CLAUDE_MODEL_FLASH": ("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)),
     "RESUME_TAILOR_CLAUDE_MODEL_PRO": ("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)),
+    "RESUME_TAILOR_CLAUDE_EFFORT": ("tailor_provider", ("claude",)),
     "gemini_auth": ("tailor_provider", ("gemini",)),
     "RESUME_TAILOR_GEMINI_API_KEY": ("gemini_auth", ("api_key",)),
     # The ranked fallback lists and the per-model limits table: same gate as the
@@ -874,7 +875,7 @@ SHOW_IF_GATES = {
 def test_every_gate_is_declared_on_the_schema():
     gated = {f.key: f.show_if for f in settings.SETTINGS_SCHEMA if f.show_if is not None}
     assert gated == SHOW_IF_GATES
-    assert len(SHOW_IF_GATES) == 29
+    assert len(SHOW_IF_GATES) == 30
 
 
 def test_show_if_is_a_declarative_tuple_not_a_callable():
@@ -971,10 +972,10 @@ def test_is_visible_falls_back_to_the_gates_default_when_it_is_absent():
 def test_visible_keys_at_the_shipped_defaults_hides_the_nine_inapplicable_fields(tmp_path):
     """The audit's headline finding, pinned. At the shipped defaults
     (provider=gemini, tailor_provider=gemini, gemini_auth=vertex,
-    RESUME_TAILOR_MODEL_MODE=tiers) these ten describe machinery that cannot run
+    RESUME_TAILOR_MODEL_MODE=tiers) these eleven describe machinery that cannot run
     — two Claude scorer pickers, the Claude tailor block (its mode field, its
-    one-model box and three tier pickers, the last four hidden TRANSITIVELY
-    through the mode field), the Gemini one-model box that only 'simple' mode
+    effort level, its one-model box and three tier pickers, the last four hidden
+    TRANSITIVELY through the mode field), the Gemini one-model box that only 'simple' mode
     reads, the Gemini API key that only 'api_key' billing reads, and the tailor's
     fallback-model chain, which only 'pool' billing can spend."""
     values = settings.load(_targets(tmp_path))
@@ -983,7 +984,7 @@ def test_visible_keys_at_the_shipped_defaults_hides_the_nine_inapplicable_fields
         "stage1_model_claude", "stage2_model_claude",
         "RESUME_TAILOR_CLAUDE_MODEL_MODE", "RESUME_TAILOR_CLAUDE_MODEL_ALL",
         "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "RESUME_TAILOR_CLAUDE_MODEL_FLASH",
-        "RESUME_TAILOR_CLAUDE_MODEL_PRO",
+        "RESUME_TAILOR_CLAUDE_MODEL_PRO", "RESUME_TAILOR_CLAUDE_EFFORT",
         "RESUME_TAILOR_MODEL_ALL", "RESUME_TAILOR_GEMINI_API_KEY",
         "tailor_fallback_models",          # belongs to 'simple' mode; default is tiers
     }
@@ -1024,6 +1025,8 @@ ADVANCED_KEYS = {
     "RESUME_TAILOR_MODEL_FLASH_LITE", "RESUME_TAILOR_MODEL_FLASH", "RESUME_TAILOR_MODEL_PRO",
     "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "RESUME_TAILOR_CLAUDE_MODEL_FLASH",
     "RESUME_TAILOR_CLAUDE_MODEL_PRO",
+    # how long the Claude tailor thinks: 'low' is right unless you want slower drafts
+    "RESUME_TAILOR_CLAUDE_EFFORT",
     # VM plumbing, inert unless you run the cloud job-discovery VM
     "VM_GCLOUD_PATH", "VM_REMOTE_DIR", "local_task_offsets",
     # the ranked fallback chains and the per-model limits table: empty is right
@@ -1042,13 +1045,13 @@ def test_the_advanced_set_is_declared_on_the_schema():
     LIMITS fix made 22; dropping those four for one per-model table and adding
     the multi-model rows makes 25; SP6's repost-reuse window (cycle 15) makes
     26; cycle 19's three Jev area switches and the Auto-apply judge make 30;
-    cycle 20's SP2 writer switch makes 31.
+    cycle 20's SP2 writer switch makes 31; the Claude tailor's effort level makes 32.
     The enumeration names every key explicitly, so it is the authoritative
     half; see DECISIONS.md. Nothing in the UI hardcodes either number: the
     checkbox counts at runtime."""
     declared = {f.key for f in settings.SETTINGS_SCHEMA if f.advanced}
     assert declared == ADVANCED_KEYS
-    assert len(ADVANCED_KEYS) == 31
+    assert len(ADVANCED_KEYS) == 32
 
 
 def test_advanced_set_excludes_country_pdflatex_and_max_scored():
@@ -1121,6 +1124,7 @@ RESTART_KEYS = {
     "RESUME_TAILOR_CLAUDE_MODEL_MODE", "RESUME_TAILOR_CLAUDE_MODEL_ALL",
     # read live from os.environ — but os.environ is the stale startup snapshot
     "RESUME_TAILOR_GEMINI_API_KEY",     # llm.py, per call
+    "RESUME_TAILOR_CLAUDE_EFFORT",      # config.claude_effort, per call
     "GEMINI_API_KEYS",                  # keypool.KeyPool.from_env, per run
     "LINKEDIN_CHROME_ACCOUNT",          # chrome_launch.CHROME_ACCOUNT, at import
     # module constants inside a SUBPROCESS that inherits the stale snapshot
@@ -1135,7 +1139,7 @@ RESTART_KEYS = {
 def test_the_restart_set_is_declared_on_the_schema():
     declared = {f.key for f in settings.SETTINGS_SCHEMA if f.restart}
     assert declared == RESTART_KEYS
-    assert len(RESTART_KEYS) == 21
+    assert len(RESTART_KEYS) == 22
 
 
 def test_every_env_field_needs_a_restart_except_the_six_the_vm_tab_re_reads():

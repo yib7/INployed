@@ -175,6 +175,104 @@ def test_claude_timeout_schedule_empty_string_falls_back(monkeypatch):
     assert config.claude_timeout_schedule() == [180, 300]
 
 
+@pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh", "max", "default"])
+def test_claude_timeout_schedule_follows_the_effort(monkeypatch, effort):
+    """Raising the effort in Settings raises the time limit with it: without an
+    explicit RESUME_TAILOR_CLAUDE_TIMEOUTS the schedule is the effort's own."""
+    monkeypatch.setenv("RESUME_TAILOR_CLAUDE_EFFORT", effort)
+    key = "" if effort == "default" else effort
+    assert config.claude_timeout_schedule() == config.CLAUDE_TIMEOUTS_BY_EFFORT[key]
+
+
+def test_every_effort_level_has_an_escalating_schedule():
+    assert set(config.CLAUDE_TIMEOUTS_BY_EFFORT) == set(config.CLAUDE_EFFORTS) | {""}
+    for schedule in config.CLAUDE_TIMEOUTS_BY_EFFORT.values():
+        assert len(schedule) >= 2 and schedule == sorted(schedule)
+
+
+def test_a_higher_effort_never_gets_less_time():
+    by = config.CLAUDE_TIMEOUTS_BY_EFFORT
+    levels = [by[e] for e in config.CLAUDE_EFFORTS]
+    assert all(a[0] <= b[0] and a[-1] <= b[-1] for a, b in zip(levels, levels[1:]))
+    # The CLI's own level ran Opus 4.8 past [180, 300]; it gets at least high's room.
+    assert by[""][0] >= by["high"][0]
+
+
+def test_the_low_schedule_is_the_one_the_tailor_always_had():
+    assert config.CLAUDE_TIMEOUTS_BY_EFFORT["low"] == [180, 300]
+
+
+@pytest.mark.parametrize("effort", ["low", "max"])
+def test_an_explicit_timeout_list_beats_the_effort(monkeypatch, effort):
+    monkeypatch.setenv("RESUME_TAILOR_CLAUDE_EFFORT", effort)
+    monkeypatch.setenv("RESUME_TAILOR_CLAUDE_TIMEOUTS", "60,120")
+    assert config.claude_timeout_schedule() == [60, 120]
+
+
+def test_a_garbage_timeout_list_falls_back_to_the_effort_schedule(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_CLAUDE_EFFORT", "max")
+    monkeypatch.setenv("RESUME_TAILOR_CLAUDE_TIMEOUTS", "abc")
+    assert config.claude_timeout_schedule() == config.CLAUDE_TIMEOUTS_BY_EFFORT["max"]
+
+
+# -- claude_effort --------------------------------------------------------------
+def test_claude_effort_defaults_to_low(monkeypatch):
+    monkeypatch.delenv("RESUME_TAILOR_CLAUDE_EFFORT", raising=False)
+    assert config.claude_effort() == "low"
+
+
+@pytest.mark.parametrize("raw, want", [
+    ("medium", "medium"), ("high", "high"), ("xhigh", "xhigh"), ("max", "max"),
+    (" High ", "high"), ("LOW", "low"),
+])
+def test_claude_effort_reads_the_env_live(monkeypatch, raw, want):
+    monkeypatch.setenv("RESUME_TAILOR_CLAUDE_EFFORT", raw)
+    assert config.claude_effort() == want
+
+
+def test_claude_effort_default_word_leaves_it_to_the_cli(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_CLAUDE_EFFORT", "default")
+    assert config.claude_effort() == ""
+
+
+@pytest.mark.parametrize("raw", ["", "  ", "fast", "very high"])
+def test_claude_effort_blank_or_unknown_falls_back_to_low(monkeypatch, raw):
+    monkeypatch.setenv("RESUME_TAILOR_CLAUDE_EFFORT", raw)
+    assert config.claude_effort() == "low"
+
+
+def test_claude_effort_default_matches_its_settings_default():
+    import settings
+    field = {f.key: f for f in settings.SETTINGS_SCHEMA}["RESUME_TAILOR_CLAUDE_EFFORT"]
+    assert field.default == config.CLAUDE_EFFORT_DEFAULT == "low"
+    assert set(field.choices) == set(config.CLAUDE_EFFORTS) | {"default"}
+
+
+def _recording_cli(monkeypatch):
+    seen: dict = {}
+
+    def run_claude(system, user, model, **kwargs):
+        seen.update(kwargs)
+        return claude_cli.CLIResult("ok", 1, 2)
+
+    monkeypatch.setattr(llm, "_claude_cli", lambda: types.SimpleNamespace(run_claude=run_claude))
+    return seen
+
+
+def test_invoke_claude_passes_the_configured_effort(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_CLAUDE_EFFORT", "high")
+    seen = _recording_cli(monkeypatch)
+    llm._invoke_claude("sys", "user", "claude-opus-4-8", json_out=True, tools=None, timeout_s=180)
+    assert seen["effort"] == "high"
+
+
+def test_invoke_claude_sends_no_effort_when_set_to_default(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_CLAUDE_EFFORT", "default")
+    seen = _recording_cli(monkeypatch)
+    llm._invoke_claude("sys", "user", "claude-opus-5-5", json_out=False, tools=None, timeout_s=180)
+    assert seen["effort"] is None
+
+
 # -- Pinned schedule tests: verify tailor_timeout_schedule stays green ---------
 def test_schedule_default_still_green(monkeypatch):
     """Pinned: tailor_timeout_schedule() default must stay [60, 120, 180]."""
@@ -314,6 +412,17 @@ def test_call_claude_timeout_escalates_then_raises(monkeypatch, claude_env):
     assert seen == [180, 300]           # default schedule, escalated fully
     assert recorded == []               # timeouts never sleep
     assert "300" in str(ei.value)       # names the last timeout
+
+
+def test_call_claude_waits_longer_at_a_higher_effort(monkeypatch, claude_env):
+    monkeypatch.setenv("RESUME_TAILOR_CLAUDE_EFFORT", "max")
+    excs = [ClaudeCLIErrorLike("timed out", kind="timeout")] * 99
+    fake, seen = _invoke_claude_seq(excs)
+    monkeypatch.setattr(llm, "_invoke_claude", fake)
+    with pytest.raises(llm.LLMError) as ei:
+        llm._call_claude("sys", "user", "claude-opus-5-5")
+    assert seen == config.CLAUDE_TIMEOUTS_BY_EFFORT["max"]
+    assert str(seen[-1]) in str(ei.value)
 
 
 def test_call_claude_timeout_then_succeeds(monkeypatch, claude_env):

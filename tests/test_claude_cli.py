@@ -250,6 +250,72 @@ def test_run_claude_no_websearch_flag_by_default(monkeypatch, fake_exe):
     assert "--allowedTools" not in captured["argv"]
 
 
+def test_run_claude_gives_the_model_no_tools_skills_or_mcp_servers(monkeypatch, fake_exe):
+    """Each call is a bare completion. With the CLI's full toolset the letter's
+    repair prompt, which credits its rules to "avoid-ai-writing v3.18.0", made
+    the model run the user's installed skill of that name through the Skill tool,
+    and the skill's audit text ("Using avoid-ai-writing's own review output ...")
+    landed in the cover letter."""
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        return _proc(stdout=_envelope("hi"))
+
+    monkeypatch.setattr(claude_cli.subprocess, "run", fake_run)
+    claude_cli.run_claude("sys", "user", "m")
+    argv = captured["argv"]
+    assert argv.count("--tools") == 1 and argv[argv.index("--tools") + 1] == ""
+    assert "--disable-slash-commands" in argv
+    assert "--strict-mcp-config" in argv
+
+
+def test_run_claude_websearch_is_the_only_tool_it_ever_offers(monkeypatch, fake_exe):
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        return _proc(stdout=_envelope("hi"))
+
+    monkeypatch.setattr(claude_cli.subprocess, "run", fake_run)
+    claude_cli.run_claude("sys", "user", "m", allow_websearch=True)
+    argv = captured["argv"]
+    assert argv.count("--tools") == 1 and argv[argv.index("--tools") + 1] == "WebSearch"
+    assert argv[argv.index("--allowedTools") + 1] == "WebSearch"
+    assert "--disable-slash-commands" in argv and "--strict-mcp-config" in argv
+
+
+def test_run_claude_passes_the_effort_level(monkeypatch, fake_exe):
+    """The tailor pins how long the model thinks: Opus 4.8 at the CLI's own
+    default spent about 14,600 output tokens on 8 bullets and timed out on a
+    full résumé, where --effort low answered in 12 seconds."""
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        return _proc(stdout=_envelope("hi"))
+
+    monkeypatch.setattr(claude_cli.subprocess, "run", fake_run)
+    claude_cli.run_claude("sys", "user", "m", effort="low")
+    argv = captured["argv"]
+    assert argv.count("--effort") == 1
+    assert argv[argv.index("--effort") + 1] == "low"
+
+
+@pytest.mark.parametrize("effort", [None, ""])
+def test_run_claude_leaves_the_effort_to_the_cli_by_default(monkeypatch, fake_exe, effort):
+    """The scorer passes no effort, so its calls keep the CLI's own default."""
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        return _proc(stdout=_envelope("hi"))
+
+    monkeypatch.setattr(claude_cli.subprocess, "run", fake_run)
+    claude_cli.run_claude("sys", "user", "m", effort=effort)
+    assert "--effort" not in captured["argv"]
+
+
 # --------------------------------------------------------------------------
 # run_claude: envelope -> CLIResult (incl. cache token parsing)
 # --------------------------------------------------------------------------

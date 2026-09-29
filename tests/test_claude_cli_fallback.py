@@ -128,6 +128,21 @@ def test_the_fallback_runs_once_then_later_calls_go_straight_to_it(
     assert models == [NEW, OLD, OLD]             # no wasted first call
 
 
+def test_the_fallback_run_keeps_the_effort_level(monkeypatch, fake_exe):
+    efforts: list = []
+
+    def fake_run(argv, **kwargs):
+        efforts.append(argv[argv.index("--effort") + 1] if "--effort" in argv else None)
+        if _model(argv) == NEW:
+            return _proc(stdout=_envelope(TOO_OLD, is_error=True))
+        return _proc(stdout=_envelope("ok"))
+
+    monkeypatch.setattr(claude_cli.subprocess, "run", fake_run)
+    claude_cli.run_claude("sys", "user", NEW, effort="low")   # refused, then the fallback
+    claude_cli.run_claude("sys", "user", NEW, effort="low")   # straight to the remembered swap
+    assert efforts == ["low", "low", "low"]
+
+
 def test_the_warning_prints_once_per_process(monkeypatch, fake_exe, capsys):
     _old_cli(monkeypatch)
     for _ in range(3):

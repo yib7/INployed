@@ -672,11 +672,16 @@ def _invoke_claude(
 ):
     """One raw `claude -p` invocation with a bounded timeout. Returns a
     claude_cli.CLIResult. Split out so the retry/escalation logic in
-    `_call_claude` is unit-testable without the real CLI."""
+    `_call_claude` is unit-testable without the real CLI.
+
+    Every call sends the configured effort (config.claude_effort(), 'low' by
+    default): at the CLI's own default a deep model can think past the whole
+    timeout schedule on the bullet-writing call."""
     cc = _claude_cli()
     return cc.run_claude(
         system, user, model,
         json_mode=json_out, allow_websearch=bool(tools), timeout_s=timeout_s,
+        effort=config.claude_effort() or None,
     )
 
 

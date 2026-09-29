@@ -330,6 +330,26 @@ the VM keeps running unchanged.
 > its `tailor_report.txt` (the dashboard's batch summary shows it), and later runs carry a
 > note. Run `claude update`, then close and reopen
 > the dashboard, to get Opus 5.5 back. **Check setup** names the version gap too.
+>
+> **Claude thinking effort** (under *Show advanced settings*) sets how long Claude thinks
+> before each tailoring answer. It defaults to `low`. Each answer's time limit grows with the
+> level, so a higher one has room to finish instead of failing with "Claude CLI timed out
+> after 2 attempts". Writing 16 bullets on Opus 5.5 took:
+>
+> | Effort | Time | Time limit per try |
+> |---|---|---|
+> | `low` | 21 s | 3 min, then 5 min |
+> | `medium` | 27 s | 4 min, then 7 min |
+> | `high` | 42 s | 5 min, then 10 min |
+> | `xhigh` | 72 s | 7 min, then 15 min |
+> | `max` | about 10 min | 20 min, then 30 min |
+>
+> A tailoring run makes several of these calls, so the whole run slows down by about the
+> same factor, and a higher level also uses more of your Claude plan's usage (`max` wrote
+> about 44 times the tokens of `low`). `default` sends no level and lets the CLI decide.
+> To set your own limits, put them in `RESUME_TAILOR_CLAUDE_TIMEOUTS` in `.env` (for
+> example `600,1200`); that list wins at any level. Close and reopen the dashboard after
+> changing either.
 
 #### One model for every step, or one per stage
 Settings → Résumé tailor, **Tailor models: simple or per stage** (and, on the Claude provider,

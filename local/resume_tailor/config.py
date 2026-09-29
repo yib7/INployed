@@ -664,11 +664,50 @@ def _parse_timeouts(raw: str, default: list[int]) -> list[int]:
 
 
 def claude_timeout_schedule() -> list[int]:
-    """Escalating per-attempt Claude CLI timeouts, default [180, 300] (CLI
-    cold-start + opus latency; Gemini's 60s first slot would burn attempts).
-    Override RESUME_TAILOR_CLAUDE_TIMEOUTS='180,300'; garbage falls back."""
+    """Escalating per-attempt Claude CLI timeouts for the configured effort
+    (CLAUDE_TIMEOUTS_BY_EFFORT; [180, 300] at the default 'low', which covers
+    the CLI's cold start and opus latency, where Gemini's 60s first slot would
+    burn attempts). A higher effort thinks longer, so it gets a longer schedule.
+    RESUME_TAILOR_CLAUDE_TIMEOUTS='180,300' overrides it at any effort; garbage
+    falls back to the effort's schedule."""
     raw = os.getenv("RESUME_TAILOR_CLAUDE_TIMEOUTS", "")
-    return _parse_timeouts(raw, [180, 300])
+    return _parse_timeouts(raw, list(CLAUDE_TIMEOUTS_BY_EFFORT[claude_effort()]))
+
+
+# The `claude --effort` levels, and the one every tailoring call sends unless
+# RESUME_TAILOR_CLAUDE_EFFORT names another. At the CLI's own default Opus 4.8
+# thought for 176 s over 8 synthetic bullets and timed out (180 s, then 300 s)
+# on a full résumé; `low` wrote the same 8 in 12 s, every one inside its
+# character cap. settings.py's RESUME_TAILOR_CLAUDE_EFFORT default carries the
+# same value (test_claude_effort_default_matches_its_settings_default).
+CLAUDE_EFFORTS = ("low", "medium", "high", "xhigh", "max")
+CLAUDE_EFFORT_DEFAULT = "low"
+
+# Per-attempt timeouts (seconds) for each effort; "" is the CLI's own level. Set
+# from the rephrase call on 16 synthetic bullets (2026-09-28, Opus 5.5 / Opus 5):
+# low 21/14 s, medium 27 s, high 42/43 s, xhigh 72 s, max 596/149 s. Each first
+# slot leaves about double the slowest time for a longer résumé. The CLI's own
+# level gets xhigh's room: Opus 4.8 there took 176 s over 8 bullets.
+CLAUDE_TIMEOUTS_BY_EFFORT = {
+    "low": [180, 300],
+    "medium": [240, 420],
+    "high": [300, 600],
+    "xhigh": [420, 900],
+    "max": [1200, 1800],
+    "": [420, 900],
+}
+
+
+def claude_effort() -> str:
+    """The `--effort` level for the tailor's Claude calls, read live.
+
+    RESUME_TAILOR_CLAUDE_EFFORT='default' returns '' (no flag: the CLI decides).
+    Blank or unknown values return CLAUDE_EFFORT_DEFAULT, the same way a garbage
+    timeout schedule falls back to its default."""
+    val = os.getenv("RESUME_TAILOR_CLAUDE_EFFORT", "").strip().lower()
+    if val == "default":
+        return ""
+    return val if val in CLAUDE_EFFORTS else CLAUDE_EFFORT_DEFAULT
 
 
 def model_for(tier: str) -> str:

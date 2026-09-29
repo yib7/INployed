@@ -75,6 +75,14 @@ CLEAN_DESC = "We are hiring a backend software engineer to build web apps and RE
     # "program" counts only when it follows the token directly.
     "Intern - Program Analyst",
     "Data Analyst Intern (Program Management Office)",
+    # A bare singular "program" after the token names the student posting.
+    "Software Engineer Intern Program",
+    "Summer 2027 Internship Program",
+    "Accounting Co-op Program",
+    "Data Science Intern Program - Summer 2027",
+    # A role word before the token names the team, so a recruiter title with
+    # "(Internship Program)" reads as a student posting too.
+    "Campus Recruiter (Internship Program)",
 ])
 def test_an_intern_or_coop_title_is_an_internship_title(title):
     assert sj.is_internship_title(title) is True
@@ -104,9 +112,9 @@ def test_a_title_that_only_contains_the_letters_is_not_an_internship_title(title
     "Intern Program Lead",
     "Head of Internships",
     "Coordinator of the Co-op Program",
-    # The token followed by "program" names the program, whatever role goes with it.
+    # The token followed by "programs", or by "program" and a staff role word,
+    # names the program.
     "Program Manager - Intern Programs",
-    "Campus Recruiter (Internship Program)",
     "Internship Program Specialist",
     "Internship Program Associate",
     "VP, Intern Programs",
@@ -799,6 +807,11 @@ def test_a_posting_with_no_offer_of_the_clearance_blocks_an_open_candidate(text)
     "Must obtain, and maintain, a Secret clearance.",
     "An active Secret clearance or the ability to obtain one is required.",
     "You will need to obtain a Secret clearance within 90 days of hire.",
+    "Must be capable of obtaining a Secret clearance.",
+    "Must be able to obtain/maintain a Secret clearance.",
+    "Must be able to obtain and maintain a Top Secret security clearance.",
+    "Must be able to obtain a Secret (or higher) clearance.",
+    "An active Secret clearance is required or must be obtainable within 90 days.",
 ])
 def test_a_posting_that_offers_the_clearance_keeps_an_open_candidate(text):
     assert sj.clearance_blocks(text, held_rank=0, sponsorship=True) is False

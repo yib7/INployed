@@ -1401,11 +1401,13 @@ _INTERNSHIP_TOKEN = r"\b(?:interns?|internships?|co[\s\-\u00ad\u2010-\u2015\u221
 INTERNSHIP_TITLE_RE = re.compile(_INTERNSHIP_TOKEN, re.I)
 # A title that runs the program or recruits for it is a full-time job ("Internship
 # Program Manager", "Intern Recruiter", "Director of Intern Programs", "Manager,
-# Intern Experience"), so is_internship_title() leaves it alone. Four shapes count:
+# Intern Experience"), so is_internship_title() leaves it alone. Five shapes count:
 # a role word after the intern token with at most two plain words between them; a
 # role word, "of" and the token; a role word, a comma, the token and another word;
-# and the token directly followed by "program" or "programs" ("Internship Program
-# Specialist", "Program Manager - Intern Programs", "VP, Intern Programs").
+# the token directly followed by "programs" ("Program Manager - Intern Programs",
+# "VP, Intern Programs"); and the token, "program" and a staff role word
+# ("Internship Program Specialist"). A bare singular "program" after the token
+# names the student posting ("Software Engineer Intern Program").
 # A role word before the token ("Product Manager Intern", "Recruiting Intern") or
 # apart from it, after a parenthesis, comma or dash ("Sales Co-op (Account
 # Manager)"), names the team the student joins, so those titles stay internships.
@@ -1416,7 +1418,9 @@ _INTERNSHIP_PROGRAM_ROLE_RE = re.compile(
     + _INTERNSHIP_TOKEN
     + r"|\b(?:manager|director|coordinator|head|lead),\s+(?:the\s+)?"
     + _INTERNSHIP_TOKEN + r"\s+[a-z]"
-    + r"|" + _INTERNSHIP_TOKEN + r"\s+programs?\b", re.I)
+    + r"|" + _INTERNSHIP_TOKEN + r"\s+programs\b"
+    + r"|" + _INTERNSHIP_TOKEN
+    + r"\s+program\s+(?:specialist|associate|analyst|administrator|assistant|partner)\b", re.I)
 
 
 def is_internship_title(title: Any) -> bool:
@@ -1477,7 +1481,8 @@ _SPONSOR_PERSON = (
     r"sponsor\s+(?:you|them|one|it|candidates|applicants|(?:new\s+)?hires)\b"
     r"(?=\s*(?:$|[.,;:()!?\n\u2013\u2014-])|\s+(?:or|but|if|once|after|upon|when)\b)")
 _CLEARANCE_OBTAINABLE_WORDS = re.compile(
-    r"obtain(?!ed)(?:[\s,]+[\w/'-]+){0,5}?[\s,]+(?:clearances?|one|it)\b"
+    r"obtain(?!ed\b)\w*(?:[\s,/()]+[\w/'-]+){0,8}?[\s,/()]+(?:clearances?|one|it)\b"
+    r"|\bobtainable\b"
     r"|\b(?:will|would|can|shall)\s+be\s+obtained\b"
     r"|eligib(?:le|ility)\s+(?:for\s+(?:(?:an?|the)\s+)?"
     r"(?:(?!(?:with|in|at|of|from|as|who|that)\b)[\w/-]+\s+){0,4}clearance"

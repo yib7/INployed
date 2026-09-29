@@ -264,6 +264,8 @@ The sections, in the order the tab shows them:
   bills: your Vertex project, one API key, or **pool**, the scorer's free keys with Vertex
   as the spillover (see *Tailoring on the scorer's free keys* below). See the Claude backend
   note below.
+- **About you:** your school status, graduation month and security clearance, which the
+  scorer reads (see *About you: school status and clearance* below).
 - **Dashboard / Job discovery / Scoring / Resume:** scores, follow-up days, search
   keywords, remote types, spend caps, artifact toggles, and more. **Drop Easy Apply jobs
   before scoring** (off by default) discards LinkedIn Easy-Apply postings before they cost
@@ -455,6 +457,108 @@ from the first draft, the tailor re-asks once from the same atoms with the unsup
 banned, then gates the answer again: the re-ask. It has no Settings row;
 `RESUME_TAILOR_REGROUND=0` in `.env` or `"reground": false` in `local/config.json` turns it
 off, and `tailor_report.txt` names each bullet it recovered.
+
+#### About you: school status and clearance
+The scorer needs to know who is applying: whether you are in school, when you graduate and
+which security clearance you hold. Settings → **About you** has four rows, saved to
+`scoring_config.json`:
+
+| Row | Choices | Default |
+|---|---|---|
+| **School status** | *Finished school*, *In school: undergraduate*, *In school: graduate* (a master's or PhD program) | *Finished school* |
+| **Graduation month** | a month name or its three-letter form plus a four-digit year, such as `May 2026` or `Sept. 2027`; blank leaves the date out | `May 2026` |
+| **Security clearance held** | *None*, *Public Trust*, *Secret*, *Top Secret*, *TS/SCI* | *None* |
+| **Open to getting a clearance through the employer** | a checkbox | unticked |
+
+A fresh install, and a VM with no `scoring_config.json`, use the defaults. Every scoring run
+prints your profile before it scores, with a `Note:` line beneath it when a setting was
+ignored or adjusted. For example:
+
+```
+Candidate: In school: undergraduate (expected May 2027); clearance: Secret, open to sponsorship
+```
+
+**If you have finished school:**
+
+- A title that names an internship or co-op is dropped before scoring, so it costs no
+  scoring call. A title for the person who runs the program, such as "Internship Program
+  Manager", stays. The run prints how many titles it dropped.
+- A posting that requires current enrollment ("currently pursuing a degree"), or that limits
+  applicants to a graduation window your graduation month falls outside, scores 1 in the LLM
+  scorer and in Jev. The window rule applies while a graduation month is set. Jev gives the 1
+  only when the posting carries a student or graduate cue, such as *student*, *enrolled* or
+  *graduation*.
+
+**If you are in school (undergraduate or graduate):**
+
+- Internships and co-ops for your degree level are kept and scored like any entry-level role.
+- A posting open only to the other degree level scores 1: a graduate-only posting for an
+  undergraduate, an undergraduate-only posting for a graduate student.
+- A posting limited to a graduation window your graduation month falls outside scores 1.
+
+**Rollover.** An in-school status whose graduation month has passed counts as finished
+school. With **In school: undergraduate** and `May 2027`, you count as a student through May
+2027, and from June 2027 the scorer treats you as finished (the run prints a `Note:` line
+saying so). A blank graduation month never rolls over. **Finished school** with a graduation
+month still in the future ignores that month and prints a `Note:` line too.
+
+**Clearance.** The clearance filter runs before scoring and drops a posting when its text
+asks for a clearance you cannot cover. A posting can name several clearances, and one
+uncovered mention drops it. A mention that names no level counts as Secret, and a polygraph
+counts as TS/SCI. A posting that says no clearance is required stays. What stays and what
+drops depends on the level you hold and on the checkbox:
+
+| You hold | Checkbox unticked | Checkbox ticked |
+|---|---|---|
+| *None* | Any posting that asks for a clearance is dropped. | A posting that sponsors the clearance, or asks for the ability to obtain it, stays. A posting that needs an active clearance is dropped. |
+| *Public Trust*, *Secret* or *Top Secret* | A posting that needs your level or a lower one stays. A higher level is dropped. | The same, and a higher level stays when the employer sponsors it or asks you to obtain it. |
+| *TS/SCI* | Nothing is dropped for a clearance. | Nothing is dropped for a clearance. |
+
+Three kinds of wording offer a clearance: sponsoring it, an ability to obtain it, and an
+interim clearance. A sentence that refuses ("we will not sponsor a clearance", "interim not
+accepted") cancels the offer, so that mention counts as needing an active clearance. Visa and
+work-authorization sponsorship never count for or against the clearance: "no visa
+sponsorship" beside "able to obtain a Secret clearance" leaves the clearance obtainable.
+
+The filter can miss unusual wording, so the scoring prompts carry the same facts. A job that
+slips through and needs an active level above the one you hold scores 1, and with the
+checkbox ticked a clearance the employer sponsors is never counted as a gap. Jev caps such a
+job at 1 through the same clearance test.
+
+**If you use the VM.** The VM keeps its own copy of your scoring settings and its own copy of
+the two scoring scripts. After you save a change to an About you row, the dashboard's
+**Push config to VM?** prompt (VM features on) offers to push `scoring_config.json`, and it
+adds a note with the upload command:
+
+```
+gcloud compute scp pipeline/score_jobs.py pipeline/jev_score.py <user>@<vm>:~ --zone=<zone>
+```
+
+Upload the two scripts once. There is no automated code push, and until both are uploaded the
+VM keeps scoring with the defaults, whatever `scoring_config.json` says.
+
+#### Repair reposts that reused a score
+**Repost score reuse window (days)** (Scoring, under *Show advanced settings*) copies a
+matching, still-fresh master row's score onto a new posting. Reposts reused from 2026-09-19
+until the fix carried only the copied score, with a blank reason, deep score, strengths, gaps
+and recommendation. This command fills them in. It makes no scrape, no scoring call and no
+model call, and it prints counts only:
+
+```
+python pipeline/score_jobs.py --heal-reused --dry-run
+python pipeline/score_jobs.py --heal-reused
+```
+
+`--dry-run` prints "Would heal ..." lines and writes nothing, so run it first. The second
+command copies the reason, deep score, strengths, gaps and recommendation from the master row
+named by `score_reused_from` into the blank cells of each reused row, and never replaces a
+cell that has content. It heals your local run files (`*_scored.csv.gz` in the run folders)
+first, then the master, and prints one count line for each ("Healed N reused rows in M run
+files", "Healed N reused rows in the master"). A second pass changes nothing.
+
+New reposts carry all six score columns from the start. Every scoring run also heals the
+master's reused rows after it saves its scored file, so the VM's master repairs itself once it
+has the new `score_jobs.py`. The command is how you repair the run files on this PC.
 
 ### Jev
 Jev is TypeSafe's "System One" model. It writes no text. It answers typed questions (yes

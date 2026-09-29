@@ -338,8 +338,8 @@ the VM keeps running unchanged.
 >
 > **Claude thinking effort** (under *Show advanced settings*) sets how long Claude thinks
 > before each tailoring answer. It defaults to `low`. Each answer's time limit grows with the
-> level, so a higher one has room to finish instead of failing with "Claude CLI timed out
-> after 2 attempts". Writing 16 bullets on Opus 5.5 took:
+> level, so a higher one has room to finish before the "Claude CLI timed out after 2
+> attempts" error. Writing 16 bullets on Opus 5.5 took:
 >
 > | Effort | Time | Time limit per try |
 > |---|---|---|
@@ -497,15 +497,28 @@ Candidate: In school: undergraduate (expected May 2027); clearance: Secret, open
   undergraduate, an undergraduate-only posting for a graduate student.
 - A posting limited to a graduation window your graduation month falls outside scores 1,
   while a graduation month is set.
+- With **In school: graduate**, a posting that asks for a master's or PhD is kept. The
+  mechanical filter that drops postings requiring an advanced degree is off, and Jev does
+  not cap those postings for the degree. Graduate internships state their enrollment rule
+  in exactly that wording ("currently enrolled in a Master's or PhD program").
+  **Finished** and **In school: undergraduate** keep the filter.
+- The scraper's defaults are Job type *Full-time* and Experience level *Entry level*, so it
+  collects few internships, whatever the scorer keeps. To collect them, choose *Internship*
+  under Settings → Scraper → **Job type** and **Experience level**. Each of the two settings
+  holds one value, so this replaces *Full-time* and *Entry level* until you change them back.
 
-For every status, Jev gives these 1s only when the posting carries a student or graduate
-cue, such as *student*, *enrolled* or *graduation*.
+For every status, Jev's not-eligible check applies only when the posting carries a student
+or graduate cue, such as *student*, *enrolled* or *graduation*.
 
 **Rollover.** An in-school status whose graduation month has passed counts as finished
 school. With **In school: undergraduate** and `May 2027`, you count as a student through May
 2027, and from June 2027 the scorer treats you as finished (the run prints a `Note:` line
 saying so). A blank graduation month never rolls over. **Finished school** with a graduation
-month still in the future ignores that month and prints a `Note:` line too.
+month still in the future ignores that month and prints a `Note:` line too. The row opens on
+`May 2026`, a month that has passed, so when you pick an in-school status, also set the month
+you expect to graduate. Save still saves, and adds a line to its message when an in-school
+status carries a month that has passed: "Your graduation month (May 2026) has passed, so the
+scorer counts you as Finished school."
 
 **Clearance.** The clearance filter runs before scoring and drops a posting when its text
 asks for a clearance you cannot cover. A dropped posting gets no score and no scoring
@@ -569,6 +582,10 @@ cell that has content. It heals your local run files (`*_scored.csv` and
 `*_scored.csv.gz` in the run folders) first, then the master, and prints one count line for
 each ("Healed N reused rows in M run files", "Healed N reused rows in the master"). A second
 pass changes nothing.
+
+Run it while no scrape or scoring run is going. It takes no lock against a run that writes
+the same files, so an overlap can lose one side's write. On the VM, run it outside the cron
+window.
 
 New reposts carry all six score columns from the start. Every scoring run also heals the
 master's reused rows after it saves its scored file, so the VM's master repairs itself once it

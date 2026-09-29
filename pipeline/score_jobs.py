@@ -326,6 +326,7 @@ CLEARANCE_SPONSORSHIP = _SCORING["clearance_sponsorship"]
 EDUCATION_STATUSES = ("Finished school", "In school: undergraduate", "In school: graduate")
 # One code per label, in the same order; the rest of the pipeline speaks the codes.
 EDUCATION_STATUS_CODES = ("finished", "undergrad", "grad")
+_STATUS_LABEL_BY_CODE = dict(zip(EDUCATION_STATUS_CODES, EDUCATION_STATUSES))
 # The rank of a level is its index: the filters compare a held rank to a needed one.
 CLEARANCE_LEVELS = ("None", "Public Trust", "Secret", "Top Secret", "TS/SCI")
 _MONTH_NAMES = ("January", "February", "March", "April", "May", "June", "July",
@@ -343,15 +344,21 @@ def parse_graduation_month(text) -> tuple[int, int] | None:
     None covers a blank, a non-string, and anything that is not a month name (or
     its three-letter form) followed by a four-digit year. "May 26" is None on
     purpose: a two-digit year is ambiguous, and guessing the century here would
-    move the rollover date by 100 years.
+    move the rollover date by 100 years. The function never raises: the regex is
+    case-insensitive over Unicode, so a long s (U+017F) in "sep" matches it, and
+    casefold() maps that spelling to its month. A prefix that still names no
+    month reads as None.
     """
     if not isinstance(text, str):
         return None
     m = GRADUATION_MONTH_RE.fullmatch(text)
     if not m:
         return None
-    prefix = m.group(1)[:3].lower()
-    month = next(i for i, name in enumerate(_MONTH_NAMES, 1) if name[:3].lower() == prefix)
+    prefix = m.group(1)[:3].casefold()
+    month = next((i for i, name in enumerate(_MONTH_NAMES, 1)
+                  if name[:3].casefold() == prefix), None)
+    if month is None:
+        return None
     return int(m.group(2)), month
 
 
@@ -373,6 +380,11 @@ class CandidateProfile:
     rolled_over: bool = False
     notes: tuple[str, ...] = ()
 
+    @property
+    def status_label(self) -> str:
+        """The label for `status`; "Finished school" for a code this table lacks."""
+        return _STATUS_LABEL_BY_CODE.get(self.status, EDUCATION_STATUSES[0])
+
     def jev_profile(self) -> dict:
         """The mapping the Jev scorer takes (jev_score.candidate_for)."""
         return {"status": self.status, "graduation": self.graduation_text,
@@ -390,9 +402,12 @@ def candidate_profile(status=None, graduation=None, clearance=None, sponsorship=
 
     Each argument defaults to its module constant. A blank value reads as unset
     (the default, no note); a value that names nothing known falls back to the
-    default with a note. An in-school status whose graduation month is before
-    today's month rolls over to "finished"; a "finished" status with a graduation
-    month after today's drops that date.
+    default with a note. A status is one of the three labels or one of the three
+    codes ("finished", "undergrad", "grad"), in any case, with no note. An
+    in-school status whose graduation month is before today's month rolls over to
+    "finished"; a "finished" status with a graduation month after today's drops
+    that date. A graduation month that is null in the config file means no date;
+    a key that is absent from the file keeps the default, "May 2026".
     """
     status = _setting_text(EDUCATION_STATUS if status is None else status)
     graduation = _setting_text(GRADUATION_MONTH if graduation is None else graduation)
@@ -405,7 +420,7 @@ def candidate_profile(status=None, graduation=None, clearance=None, sponsorship=
     if status:
         folded = " ".join(status.split()).casefold()
         for label, label_code in zip(EDUCATION_STATUSES, EDUCATION_STATUS_CODES):
-            if folded == label.casefold():
+            if folded in (label.casefold(), label_code):
                 code = label_code
                 break
         else:
@@ -451,7 +466,7 @@ def describe_profile(profile: CandidateProfile) -> str:
     "Candidate: Finished school (graduated May 2026); clearance: None, not open
     to sponsorship". An in-school candidate reads "(expected May 2027)".
     """
-    label = EDUCATION_STATUSES[EDUCATION_STATUS_CODES.index(profile.status)]
+    label = profile.status_label
     if profile.graduation_text:
         verb = "graduated" if profile.status == "finished" else "expected"
         label = f"{label} ({verb} {profile.graduation_text})"

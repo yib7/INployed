@@ -12,6 +12,7 @@ _hermetic_repo_data rebinds, so the author's scoring_config.json never leaks in.
 import asyncio
 import dataclasses
 import json
+import re
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -104,8 +105,11 @@ def test_the_sponsorship_env_string_reads_as_true(monkeypatch, tmp_path, raw):
     assert sj.load_scoring_config()["clearance_sponsorship"] is True
 
 
-def test_a_json_null_in_the_file_resolves_to_the_defaults(monkeypatch, tmp_path):
-    """The loader leaves a "str" value alone, so a null reaches candidate_profile()."""
+def test_a_null_graduation_month_means_no_date_and_an_absent_key_means_may_2026(
+        monkeypatch, tmp_path):
+    """The loader leaves a "str" value alone, so a null reaches candidate_profile()
+    and reads as blank: no graduation date. A key that is absent from the file keeps
+    the default, "May 2026"."""
     _clear_env(monkeypatch)
     monkeypatch.setattr(sj, "OUTPUT_DIR", tmp_path)
     (tmp_path / "scoring_config.json").write_text(json.dumps({
@@ -120,18 +124,29 @@ def test_a_json_null_in_the_file_resolves_to_the_defaults(monkeypatch, tmp_path)
     assert p.clearance_rank == 0 and p.clearance_label == "None"
     assert p.graduation is None and p.graduation_text is None
 
+    (tmp_path / "scoring_config.json").write_text("{}", encoding="utf-8")
+    cfg = sj.load_scoring_config()
+    assert cfg["graduation_month"] == "May 2026"
+    monkeypatch.setattr(sj, "GRADUATION_MONTH", cfg["graduation_month"])
+    p = sj.candidate_profile(today=TODAY)
+    assert p.graduation == (2026, 5) and p.graduation_text == "May 2026"
+
 
 def test_conftest_sandboxes_all_four_keys():
     """A shell export or the author's scoring_config.json must never reach a test:
-    conftest pops each env name and rebinds each module constant."""
+    conftest pops each env name and rebinds each module constant. This is a
+    source-text guard against shell-export leaks: it reads conftest.py as text and
+    checks that each name appears there, whatever the formatting."""
     conftest = (Path(__file__).resolve().parent / "conftest.py").read_text(encoding="utf-8")
     for env_name in FOUR_ENV:
-        assert f'"{env_name}"' in conftest, env_name
+        assert env_name in conftest, env_name
     for attr, key in (("EDUCATION_STATUS", "education_status"),
                       ("GRADUATION_MONTH", "graduation_month"),
                       ("CLEARANCE_LEVEL", "clearance_level"),
                       ("CLEARANCE_SPONSORSHIP", "clearance_sponsorship")):
-        assert f'("{attr}", "{key}")' in conftest, attr
+        # The bare constant name: the lookbehind skips the SCORE_ env spelling.
+        assert re.search(rf"(?<![A-Z_]){attr}(?![A-Z_])", conftest), attr
+        assert key in conftest, key
 
 
 # --- the constants --------------------------------------------------------------
@@ -177,6 +192,7 @@ def test_the_status_and_clearance_tables():
     ("  May   2026  ", (2026, 5)),
     ("\tDec.\t2030\n", (2030, 12)),
     ("May 1999", (1999, 5)),
+    ("\u017fep 2026", (2026, 9)),          # long s: the regex matches it, casefold maps it
 ])
 def test_parse_graduation_month_accepts(text, expected):
     assert sj.parse_graduation_month(text) == expected
@@ -189,6 +205,14 @@ def test_parse_graduation_month_accepts(text, expected):
 ])
 def test_parse_graduation_month_rejects(text):
     assert sj.parse_graduation_month(text) is None
+
+
+def test_parse_graduation_month_is_none_when_a_match_names_no_month(monkeypatch):
+    """The regex matched but the prefix lookup came up empty: None, never StopIteration."""
+    monkeypatch.setattr(sj, "_MONTH_NAMES", ("Xanuary",) + sj._MONTH_NAMES[1:])
+    assert sj.GRADUATION_MONTH_RE.fullmatch("Jan 2026")
+    assert sj.parse_graduation_month("Jan 2026") is None
+    assert sj.parse_graduation_month("Feb 2026") == (2026, 2)
 
 
 # --- candidate_profile: defaults, statuses, clearances --------------------------
@@ -232,7 +256,24 @@ def test_every_clearance_label_resolves_in_any_case(rank, label, variant):
     assert p.notes == ()
 
 
-@pytest.mark.parametrize("bad", ["Graduated", "in school", "phd", "In school: PhD", "finished"])
+@pytest.mark.parametrize("code", sj.EDUCATION_STATUS_CODES)
+@pytest.mark.parametrize("variant", [
+    lambda s: s, lambda s: s.upper(), lambda s: f"  {s}  ", lambda s: s.swapcase(),
+])
+def test_every_status_code_is_an_alias_for_its_label(code, variant):
+    p = sj.candidate_profile(status=variant(code), graduation="", today=TODAY)
+    assert p.status == code
+    assert p.notes == ()
+
+
+def test_a_status_code_and_its_label_resolve_alike():
+    for code, label in zip(sj.EDUCATION_STATUS_CODES, sj.EDUCATION_STATUSES):
+        by_code = sj.candidate_profile(status=code, graduation="May 2027", today=TODAY)
+        by_label = sj.candidate_profile(status=label, graduation="May 2027", today=TODAY)
+        assert by_code == by_label
+
+
+@pytest.mark.parametrize("bad", ["Graduated", "in school", "phd", "In school: PhD", "alumnus"])
 def test_an_unknown_status_falls_back_to_finished_with_a_note(bad):
     p = sj.candidate_profile(status=bad, graduation="May 2027", today=TODAY)
     assert p.status == "finished"
@@ -412,6 +453,35 @@ def test_jev_profile_reads_the_effective_status_after_a_rollover():
     assert p.jev_profile()["status"] == "finished"
 
 
+@pytest.mark.parametrize("code, label", list(zip(sj.EDUCATION_STATUS_CODES,
+                                                 sj.EDUCATION_STATUSES)))
+def test_status_label_reads_the_label_for_each_code(code, label):
+    p = sj.candidate_profile(status=code, graduation="", today=TODAY)
+    assert p.status_label == label
+
+
+def test_status_label_follows_the_effective_status_after_a_rollover():
+    p = sj.candidate_profile(status="In school: graduate", graduation="May 2026",
+                             today=date(2026, 6, 1))
+    assert p.status == "finished"
+    assert p.status_label == "Finished school"
+
+
+def _hand_built(status):
+    return sj.CandidateProfile(status=status, graduation=None, graduation_text=None,
+                               clearance_rank=0, clearance_label="None", sponsorship=False)
+
+
+@pytest.mark.parametrize("odd", ["alumnus", "", "GRAD", "In school: graduate"])
+def test_status_label_is_finished_school_for_a_code_the_table_lacks(odd):
+    assert _hand_built(odd).status_label == "Finished school"
+
+
+def test_describe_a_hand_built_profile_with_an_odd_code_does_not_raise():
+    line = sj.describe_profile(_hand_built("alumnus"))
+    assert line == "Candidate: Finished school; clearance: None, not open to sponsorship"
+
+
 # --- describe_profile -----------------------------------------------------------
 
 def test_describe_the_default_profile():
@@ -484,7 +554,6 @@ def test_the_notes_and_the_run_line_obey_the_writing_rules():
 
 def _stub_main(monkeypatch, **args):
     """Everything main() touches before the heal step, faked."""
-    seen = {"pool_required": None}
 
     class Pool:
         def stats(self):
@@ -494,7 +563,6 @@ def _stub_main(monkeypatch, **args):
         return 0, 0
 
     def make_pool(required=True):
-        seen["pool_required"] = required
         return Pool()
 
     ns = {"csv": None, "heal_reused": False, "dry_run": False}
@@ -507,7 +575,6 @@ def _stub_main(monkeypatch, **args):
     monkeypatch.setattr(sj, "heal_master_reuse", lambda dry_run=False: 0)
     monkeypatch.setattr(sj, "rescore_master_failures", rescore)
     monkeypatch.setattr(sj, "append_run_stats", lambda stats: None)
-    return seen
 
 
 def test_main_prints_the_candidate_line_once_per_run(monkeypatch, capsys):
@@ -523,13 +590,14 @@ def test_main_prints_the_configured_candidate_and_its_notes(monkeypatch, capsys)
     _stub_main(monkeypatch)
     monkeypatch.setattr(sj, "EDUCATION_STATUS", "In school: undergraduate")
     monkeypatch.setattr(sj, "GRADUATION_MONTH", "May 2099")
-    monkeypatch.setattr(sj, "CLEARANCE_LEVEL", "Secret")
+    monkeypatch.setattr(sj, "CLEARANCE_LEVEL", "Confidential")     # unknown: yields a note
     monkeypatch.setattr(sj, "CLEARANCE_SPONSORSHIP", True)
     asyncio.run(sj.main())
     out = capsys.readouterr().out
     assert out.count("Candidate: ") == 1
     assert ("Candidate: In school: undergraduate (expected May 2099); "
-            "clearance: Secret, open to sponsorship") in out
+            "clearance: None, open to sponsorship") in out
+    assert "  Note: Unknown clearance level 'Confidential'; using None." in out.splitlines()
 
 
 def test_main_prints_the_note_for_a_bad_setting(monkeypatch, capsys):

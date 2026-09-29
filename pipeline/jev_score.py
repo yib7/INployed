@@ -802,6 +802,10 @@ MUST_CRITERIA = {
 }
 
 # Levels index 0 (poor fit) to 4 (excellent fit), the stage 2 prompt's own wording.
+# DEEP_FIT_LEVELS and DEEP_FIT_INSTRUCTIONS are the finished candidate's text, the
+# text the deep-score tuning and its replay cache were made with; change either and
+# every cached stage 2 answer misses. The in-school variants below change one
+# sentence each and stage2_questions picks the set by the candidate's status.
 DEEP_FIT_LEVELS = (
     "Poor fit: the candidate lacks most of the job's must-have requirements, or the "
     "day-to-day work is a kind they have not done.",
@@ -814,6 +818,12 @@ DEEP_FIT_LEVELS = (
     "Excellent fit: the candidate meets nearly every requirement, has done this kind of work "
     "in the internship or projects, and the role is aimed at new graduates.",
 )
+# An in-school candidate's top level names students at the candidate's degree level too.
+DEEP_FIT_LEVELS_IN_SCHOOL = DEEP_FIT_LEVELS[:4] + (
+    "Excellent fit: the candidate meets nearly every requirement, has done this kind of work "
+    "in the internship or projects, and the role is aimed at students at the candidate's "
+    "degree level or at new graduates.",
+)
 
 DEEP_FIT_INSTRUCTIONS: dict[str, str] = {
     "question": ("How well does the candidate in `candidate` and `resume` fit the job in "
@@ -824,14 +834,27 @@ DEEP_FIT_INSTRUCTIONS: dict[str, str] = {
                 "job-title history are never gaps."),
     "ignore": "Company descriptions, benefits and application instructions.",
 }
+# The in-school candidate's rule, as score_jobs._STAGE2_STATUS words it for the LLM
+# path: graduation timing leaves the never-a-gap list and is a gap when the job needs
+# the degree finished before the candidate's date.
+DEEP_FIT_INSTRUCTIONS_IN_SCHOOL: dict[str, str] = dict(DEEP_FIT_INSTRUCTIONS, not_gaps=(
+    "Location, on-site, hybrid or remote terms, relocation, time zone, visa sponsorship and "
+    "work authorization are never gaps. Graduation timing is a gap only when the job needs "
+    "the degree finished before the candidate's graduation date (see `candidate`). For "
+    "analytical roles, career path, business background, degree field and job-title history "
+    "are never gaps."))
+IN_SCHOOL_STATUSES = ("undergrad", "grad")
 
 
-def stage2_questions(reqs: Sequence[Req]) -> dict[str, dict]:
+def stage2_questions(reqs: Sequence[Req], status: str = "finished") -> dict[str, dict]:
     """A met noul per requirement line, a must noul for each line the code gives
     no cue, and `deep_fit` (a Score on DEEP_FIT_LEVELS), asked in one request.
     `reqs` may be empty: `deep_fit` needs no requirement lines. The
     recommendation is no longer asked of Jev as a Choice; `compose_stage2`
-    reads it off the composed deep score (`recommend`)."""
+    reads it off the composed deep score (`recommend`). `status` is the
+    candidate's status code: "undergrad" and "grad" get the in-school
+    `deep_fit` wording (DEEP_FIT_INSTRUCTIONS_IN_SCHOOL, DEEP_FIT_LEVELS_IN_SCHOOL);
+    any other value gets the finished candidate's text, unchanged."""
     qs: dict[str, dict] = {}
     for i, req in enumerate(reqs):
         text = _cut(req.text, REQ_TEXT_CHARS)
@@ -848,10 +871,12 @@ def stage2_questions(reqs: Sequence[Req]) -> dict[str, dict]:
                                  f"Requirement: {text}"),
                 "criteria": dict(MUST_CRITERIA),
             }
+    in_school = status in IN_SCHOOL_STATUSES
     qs["deep_fit"] = {
         "type": "score",
-        "instructions": dict(DEEP_FIT_INSTRUCTIONS),
-        "criteria": list(DEEP_FIT_LEVELS),
+        "instructions": dict(DEEP_FIT_INSTRUCTIONS_IN_SCHOOL if in_school
+                             else DEEP_FIT_INSTRUCTIONS),
+        "criteria": list(DEEP_FIT_LEVELS_IN_SCHOOL if in_school else DEEP_FIT_LEVELS),
     }
     return qs
 
@@ -935,8 +960,10 @@ def stage2(judge: Any, job: Any, resume: str) -> dict | None:
     if not md.strip() or not str(resume or "").strip():
         return None
     reqs = requirement_lines(md)
-    questions = stage2_questions(reqs)
-    state = fitted_state(md, resume, questions, candidate_for(_job_profile(job)))
+    profile = _job_profile(job)
+    questions = stage2_questions(
+        reqs, _profile_status(profile if profile is not None else DEFAULT_PROFILE))
+    state = fitted_state(md, resume, questions, candidate_for(profile))
     if state is None:
         return None
     answers = _ask(judge, state, questions)

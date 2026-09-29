@@ -557,14 +557,28 @@ def _stage1_reason_texts():
     return reasons
 
 
+def _stage2_status_texts():
+    """The stage 2 questions for every status, and the constants they are built from."""
+    reqs = [Req("Python and SQL", True), Req("Tableau", None)]
+    texts = (_all_strings(jev_score.DEEP_FIT_LEVELS) + _all_strings(jev_score.DEEP_FIT_INSTRUCTIONS)
+             + _all_strings(jev_score.DEEP_FIT_LEVELS_IN_SCHOOL)
+             + _all_strings(jev_score.DEEP_FIT_INSTRUCTIONS_IN_SCHOOL))
+    for status in ("finished", "undergrad", "grad"):
+        texts += _all_strings(jev_score.stage2_questions(reqs, status=status))
+    return texts
+
+
 def test_stage_questions_pass_the_prompt_hygiene_census():
     import test_prompt_hygiene as hygiene
     variants = _candidate_variants()
     assert len(variants) == 3 * 2 * len(jev_score.CLEARANCE_LEVELS) * 2
     texts = (_all_strings(jev_score.CANDIDATE) + _all_strings(variants)
              + _all_strings(jev_score.stage1_questions())
-             + _all_strings(jev_score.FACTOR_TEXT) + _stage1_reason_texts())
+             + _all_strings(jev_score.FACTOR_TEXT) + _stage1_reason_texts()
+             + _stage2_status_texts())
     assert texts
+    assert any("students at the candidate's degree level" in t for t in _stage2_status_texts())
+    assert any("Graduation timing is a gap only when" in t for t in _stage2_status_texts())
     assert any("not_eligible" in q for q in jev_score.stage1_questions()["main_factor"]["criteria"])
     for text in texts:
         for label, pattern in hygiene.BANNED:
@@ -964,6 +978,9 @@ def test_stage2_reads_and_composes_without_must_answers_for_cued_lines():
 def test_stage2_questions_pass_the_prompt_hygiene_census():
     import test_prompt_hygiene as hygiene
     texts = _all_strings(jev_score.stage2_questions([Req("Python and SQL", True)]))
+    for status in ("undergrad", "grad"):
+        texts += _all_strings(jev_score.stage2_questions([Req("Python and SQL", True)],
+                                                         status=status))
     assert texts
     for text in texts:
         for label, pattern in hygiene.BANNED:

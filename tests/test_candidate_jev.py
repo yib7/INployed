@@ -459,3 +459,196 @@ def test_run_scoring_keeps_the_default_candidate_when_no_setting_is_changed(monk
     assert judge.calls
     for state, _questions in judge.calls:
         assert state["candidate"] == jev_score.CANDIDATE
+
+
+# --- fix round 1: stage 2 follows the candidate's status -----------------------------------
+
+FINISHED_LEVELS = (
+    "Poor fit: the candidate lacks most of the job's must-have requirements, or the "
+    "day-to-day work is a kind they have not done.",
+    "Weak fit: the candidate meets some must-have requirements; key tools, skills or "
+    "experience the job needs are missing.",
+    "Mixed fit: the candidate meets several core requirements and misses others; they could "
+    "do the job after some ramp-up.",
+    "Good fit: the candidate meets the core requirements; what is missing is nice-to-have or "
+    "a tool they could pick up quickly.",
+    "Excellent fit: the candidate meets nearly every requirement, has done this kind of work "
+    "in the internship or projects, and the role is aimed at new graduates.",
+)
+IN_SCHOOL_LEVEL_4 = (
+    "Excellent fit: the candidate meets nearly every requirement, has done this kind of work "
+    "in the internship or projects, and the role is aimed at students at the candidate's "
+    "degree level or at new graduates.")
+FINISHED_NOT_GAPS = (
+    "Location, on-site, hybrid or remote terms, relocation, time zone, visa sponsorship, work "
+    "authorization and graduation timing are never gaps. For analytical roles, career path, "
+    "business background, degree field and job-title history are never gaps.")
+IN_SCHOOL_NOT_GAPS = (
+    "Location, on-site, hybrid or remote terms, relocation, time zone, visa sponsorship and "
+    "work authorization are never gaps. Graduation timing is a gap only when the job needs "
+    "the degree finished before the candidate's graduation date (see `candidate`). For "
+    "analytical roles, career path, business background, degree field and job-title history "
+    "are never gaps.")
+DEEP_QUESTION = ("How well does the candidate in `candidate` and `resume` fit the job in "
+                 "`job`, judged on its stated requirements and day-to-day work?")
+DEEP_IGNORE = "Company descriptions, benefits and application instructions."
+IN_SCHOOL = ("undergrad", "grad")
+
+
+def _deep_fit(status=None):
+    """The deep_fit question `stage2_questions` builds for `status` (its default when None)."""
+    if status is None:
+        return jev_score.stage2_questions([])["deep_fit"]
+    return jev_score.stage2_questions([], status=status)["deep_fit"]
+
+
+def test_stage2_questions_default_to_the_finished_candidate_word_for_word():
+    """The default keeps the text the stage 2 deep-score tuning and its replay
+    cache were made with, byte for byte."""
+    for deep in (_deep_fit(), _deep_fit("finished")):
+        assert deep == {
+            "type": "score",
+            "instructions": {"question": DEEP_QUESTION, "not_gaps": FINISHED_NOT_GAPS,
+                             "ignore": DEEP_IGNORE},
+            "criteria": list(FINISHED_LEVELS),
+        }
+        assert list(deep["instructions"]) == ["question", "not_gaps", "ignore"]
+
+
+def test_the_finished_constants_are_the_ones_the_tuning_used():
+    assert jev_score.DEEP_FIT_LEVELS == FINISHED_LEVELS
+    assert jev_score.DEEP_FIT_INSTRUCTIONS == {
+        "question": DEEP_QUESTION, "not_gaps": FINISHED_NOT_GAPS, "ignore": DEEP_IGNORE}
+
+
+@pytest.mark.parametrize("status", IN_SCHOOL)
+def test_an_in_school_candidate_gets_graduation_timing_as_a_conditional_gap(status):
+    instructions = _deep_fit(status)["instructions"]
+    assert instructions["not_gaps"] == IN_SCHOOL_NOT_GAPS
+    assert "graduation timing are never gaps" not in instructions["not_gaps"]
+    assert instructions["question"] == DEEP_QUESTION
+    assert instructions["ignore"] == DEEP_IGNORE
+    assert list(instructions) == ["question", "not_gaps", "ignore"]
+
+
+@pytest.mark.parametrize("status", IN_SCHOOL)
+def test_an_in_school_candidate_gets_a_top_level_that_fits_a_student(status):
+    deep = _deep_fit(status)
+    assert deep["type"] == "score"
+    assert deep["criteria"] == list(FINISHED_LEVELS[:4]) + [IN_SCHOOL_LEVEL_4]
+    assert len(deep["criteria"]) == len(FINISHED_LEVELS) == 5
+
+
+@pytest.mark.parametrize("status", ["", "postdoc", "In school: undergraduate"])
+def test_a_status_that_is_not_a_code_reads_as_a_finished_candidate(status):
+    assert _deep_fit(status) == _deep_fit()
+
+
+def test_the_status_changes_only_the_deep_fit_question():
+    reqs = [jev_score.Req("Python and SQL", True), jev_score.Req("Tableau", None),
+            jev_score.Req("Spark is a plus", False)]
+    finished = jev_score.stage2_questions(reqs)
+    for status in IN_SCHOOL:
+        got = jev_score.stage2_questions(reqs, status=status)
+        assert list(got) == list(finished)
+        assert ({k: v for k, v in got.items() if k != "deep_fit"}
+                == {k: v for k, v in finished.items() if k != "deep_fit"})
+        assert got["deep_fit"] != finished["deep_fit"]
+
+
+def test_the_status_does_not_move_the_deep_score_map():
+    """Only the level wording changes: the score map is the one the tuning used."""
+    assert (jev_score.DEEP_BASE, jev_score.DEEP_SPAN) == (6.5, 3.5)
+    got = [jev_score.compose_stage2([], {"deep_fit": level})["deep_score"]
+           for level in (0, 0.25, 0.5, 0.75, 1.0)]
+    assert got == [7, 7, 8, 9, 10]
+
+
+def _stage2_deep(job):
+    judge = ScriptedJudge()
+    assert jev_score.stage2(judge, job, RESUME)
+    return judge.calls[0][1]["deep_fit"]
+
+
+@pytest.mark.parametrize("status", IN_SCHOOL)
+def test_stage2_asks_the_in_school_wording_for_an_in_school_profile(status):
+    deep = _stage2_deep({"md": JOB2_MD, "profile": _profile(status, GRAD)})
+    assert deep == _deep_fit(status)
+    assert deep["instructions"]["not_gaps"] == IN_SCHOOL_NOT_GAPS
+
+
+def test_stage2_asks_the_finished_wording_for_a_finished_or_absent_profile():
+    for job in ({"md": JOB2_MD, "profile": _profile("finished")}, {"md": JOB2_MD}, JOB2_MD,
+                {"md": JOB2_MD, "profile": {"status": "postdoc"}},
+                {"md": JOB2_MD, "profile": {"status": None}}):
+        assert _stage2_deep(job) == _deep_fit()
+
+
+def test_stage2_reads_the_status_the_way_the_candidate_block_does():
+    """A folded status ("  GRAD ") reaches the wording candidate_for's block implies."""
+    profile = {"status": "  GRAD ", "graduation": "May 2027", "clearance": "None",
+               "sponsorship": False}
+    assert jev_score.candidate_for(profile)["status"].startswith("In school: a graduate")
+    assert _stage2_deep({"md": JOB2_MD, "profile": profile}) == _deep_fit("grad")
+
+
+def test_stage2_wording_and_the_candidate_block_agree_for_every_status():
+    for status in STATUSES:
+        judge = ScriptedJudge()
+        assert jev_score.stage2(judge, {"md": JOB2_MD, "profile": _profile(status, GRAD)}, RESUME)
+        state, questions = judge.calls[0]
+        in_school = state["candidate"]["status"].startswith("In school")
+        assert in_school == (status in IN_SCHOOL)
+        assert (questions["deep_fit"]["criteria"][4] == IN_SCHOOL_LEVEL_4) == in_school
+        assert (questions["deep_fit"]["instructions"]["not_gaps"] == IN_SCHOOL_NOT_GAPS) == in_school
+
+
+def test_run_scoring_sends_stage_2_the_in_school_wording_for_an_in_school_profile(monkeypatch):
+    _patch_profile(monkeypatch, HELD_SECRET)             # an undergraduate
+    monkeypatch.setattr(sj, "JEV_WRITER", False)
+    judge = ScriptedJudge()
+    asyncio.run(sj.run_scoring(RecordingPool(), RESUME, _jobs_df("JOB-A"),
+                               jev_run=sj.JevRun(judge)))
+    deeps = [q["deep_fit"] for _s, q in judge.calls if "deep_fit" in q]
+    assert len(deeps) == 1
+    assert deeps[0] == _deep_fit("undergrad")
+
+
+def test_run_scoring_sends_stage_2_the_finished_wording_when_no_setting_is_changed(monkeypatch):
+    monkeypatch.setattr(sj, "JEV_WRITER", False)
+    judge = ScriptedJudge()
+    asyncio.run(sj.run_scoring(RecordingPool(), RESUME, _jobs_df("JOB-A"),
+                               jev_run=sj.JevRun(judge)))
+    deeps = [q["deep_fit"] for _s, q in judge.calls if "deep_fit" in q]
+    assert deeps and all(deep == _deep_fit() for deep in deeps)
+
+
+# --- fix round 1: the default profile copy and the calibration ---------------------------------
+
+def test_jev_score_default_profile_equals_the_score_jobs_defaults():
+    """`jev_score.DEFAULT_PROFILE` is a second copy of the score_jobs settings
+    defaults (jev_score never imports score_jobs). Resolved from the documented
+    defaults and a fixed clock, the two must match, so drift fails here."""
+    defaults = sj._SCORING_DEFAULTS
+    profile = sj.candidate_profile(
+        defaults["education_status"][1], defaults["graduation_month"][1],
+        defaults["clearance_level"][1], defaults["clearance_sponsorship"][1], today=TODAY)
+    assert profile.jev_profile() == jev_score.DEFAULT_PROFILE
+    assert jev_score.DEFAULT_PROFILE == {"status": "finished", "graduation": "May 2026",
+                                         "clearance": "None", "sponsorship": False}
+    assert jev_score.candidate_for(profile.jev_profile()) == jev_score.CANDIDATE
+
+
+def test_calibration_asks_about_the_default_candidate_whatever_the_settings(monkeypatch):
+    """A calibration job carries no profile, so its request is about the default
+    candidate; the code facts must read that candidate whatever the settings say."""
+    from test_jev_score_calibrate import calib
+    monkeypatch.setattr(sj, "CLEARANCE_LEVEL", "Secret")
+    monkeypatch.setattr(sj, "CLEARANCE_SPONSORSHIP", True)
+    assert sj.jev_facts(SECRET_JOB)["clearance"] is False      # the live settings hold a Secret
+    job = calib.Job(job_id="1", title="T", gemini=4, gemini_deep=None, gemini_rec="",
+                    source="formatted", text=SECRET_JOB + JOB_MD)
+    judge = ScriptedJudge({"fit": 4, "main_factor": "skills_fit"})
+    assert calib.run([job], judge, RESUME, lambda: "") == (1, "")
+    assert judge.calls[0][0]["candidate"] == jev_score.CANDIDATE
+    assert job.jev == jev_score.CLEARANCE_CAP                  # the default candidate holds none

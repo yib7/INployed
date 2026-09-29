@@ -9,7 +9,10 @@ out among the rest), and runs `jev_score.stage1` on each, plus `jev_score.stage2
 wherever Gemini ran stage 2 (no requirement-line minimum). The facts and the
 text are the ones `score_jobs.py` gives Jev: `score_jobs.jev_facts` and the
 markdown of the formatted description (the job summary when the retention
-prune blanked it).
+prune blanked it). The candidate is the default one (`jev_score.DEFAULT_PROFILE`:
+finished school, no clearance) whatever the user's settings say, so the code
+facts and the request text describe the same candidate and the replay cache
+keeps its keys.
 
 A row Jev itself scored is left out of the sample: by its reason's old
 "Skills fit " prefix, and by an `extracted_date` on or after 2026-09-28 (the
@@ -270,13 +273,16 @@ def build_judge(inner: Any, cap_usd: float, cache_path: Path):
 def run(jobs: list[Job], judge: Any, resume: str, stop) -> tuple[int, str]:
     """Jev's stage 1 on each job and its stage 2 where Gemini ran one.
     (jobs run, why the run stopped early or "")."""
+    # The jobs carry no profile, so their requests ask about the default candidate
+    # (jev_score.candidate_for(None)); the facts read that candidate too.
+    profile = score_jobs.candidate_profile(**jev_score.DEFAULT_PROFILE)
     done = 0
     for job in jobs:
         why = stop()
         if why:
             return done, why
-        got = jev_score.stage1(judge, {"md": job.text, "facts": score_jobs.jev_facts(job.text)},
-                               resume)
+        got = jev_score.stage1(
+            judge, {"md": job.text, "facts": score_jobs.jev_facts(job.text, profile)}, resume)
         if got is None:
             why = stop()
             if why:

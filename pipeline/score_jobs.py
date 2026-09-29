@@ -2570,8 +2570,10 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame, *,
     sem1 = asyncio.Semaphore(max(1, STAGE1_CONCURRENCY))
     jev_on = jev_run is not None and jev_run.on
     jsem = asyncio.Semaphore(max(1, JEV_CONCURRENCY))    # see sem1 on max(1, ...)
-    # One profile per run: both Jev stages and jev_facts read this object, so a
-    # setting edited mid-run cannot split a job's stages across two candidates.
+    # One profile per run: both Jev stages and jev_facts read this object. The
+    # settings are import-time constants, so the risk it removes is
+    # candidate_profile()'s clock: a month rollover between two calls could turn
+    # an in-school candidate into a finished one between a job's two stages.
     profile = candidate_profile() if jev_on else None
     jev_profile = profile.jev_profile() if profile is not None else None
     if not jev_on:

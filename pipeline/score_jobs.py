@@ -606,17 +606,33 @@ CLEARANCE_PATTERNS = [
     re.compile(r"\bability to obtain\b[^.\n]{0,30}\bclearance\b", re.I),
     re.compile(r"\bpolygraph\b", re.I),
 ]
+# A sponsorship that governs a clearance: "sponsor a Secret clearance", "sponsorship
+# for your clearance", "sponsor eligible candidates for a TS/SCI clearance", or
+# "clearance sponsorship". Visa, work-authorization and relocation sponsorship never
+# reach the word "clearance" through these shapes, so those lines say nothing about a
+# clearance.
+_SPONSOR_OF_CLEARANCE = (
+    r"\bsponsor\w*(?:(?:\s+[\w'-]+){0,3}?\s+for)?"
+    r"\s+(?:(?:an?|the|any|your|their|security|secret|top|public|trust|final"
+    r"|interim|ts/sci|ts|sci)[\s-]+)*clearances?")
+_CLEARANCE_SPONSORSHIP = r"\bclearances?[ \t]+sponsor\w*"
+_SPONSORS_CLEARANCE = "(?:" + _SPONSOR_OF_CLEARANCE + "|" + _CLEARANCE_SPONSORSHIP + ")"
 # Keeps postings whose only clearance/polygraph signal is negated ("no clearance
 # required", "no polygraph required") or merely describes cleared colleagues
 # ("clearance holders"). Precision bias: a suppressor can only ever KEEP a job.
-# The first alternative skips a sponsorship phrase: "no clearance sponsorship
-# available" and "we do not offer clearance sponsorship" say the employer will not
-# sponsor, so the clearance is still required. That keeps them out of the
-# suppressor, which changes the default profile for that one phrasing (they used to
-# pass every profile as "no clearance required").
+# The first alternative skips two phrasings that refuse to sponsor the clearance: a
+# negator followed by a sponsorship of that clearance ("we do not sponsor a
+# clearance"), and a clearance followed by "sponsorship" on the same line ("no
+# clearance sponsorship available"). The clearance is still required there, so they
+# stay out of the suppressor, which changes the default profile for those phrasings
+# (they used to pass every profile as "no clearance required"). Other sponsorship
+# wording between the negator and the clearance stays negated, as in "No
+# sponsorship or clearance required." and "We will not sponsor visas or require a
+# clearance."
 _CLEARANCE_NEG = re.compile(
-    r"\b(no|not|without|does not|do not|don'?t|doesn'?t)\b(?:(?!sponsor)[^.\n]){0,30}"
-    r"\bclearance\b(?!\s*sponsor)"
+    r"\b(no|not|without|does not|do not|don'?t|doesn'?t)\b"
+    r"(?:(?!" + _SPONSOR_OF_CLEARANCE + r")[^.\n]){0,30}"
+    r"\bclearance\b(?![ \t]+sponsor)"
     r"|\bclearance\b[^.\n]{0,30}\bnot\s+(required|needed)\b"
     r"|\b(no|not|without|does not|do not|don'?t|doesn'?t)\b[^.\n]{0,20}\bpolygraph\b"
     r"|\bpolygraph\b[^.\n]{0,20}\bnot\s+(required|needed)\b"
@@ -1373,20 +1389,30 @@ def is_junk_desc(text: Any) -> bool:
 # "International Data Analyst" and "Cooperative Systems Analyst" out. The co-op
 # separator may be a space, a hyphen or any dash (U+2010 to U+2015, which covers the
 # non-breaking hyphen and the en dash).
-INTERNSHIP_TITLE_RE = re.compile(
-    r"\b(?:interns?|internships?|co[\s\-\u2010-\u2015]?ops?)\b", re.I)
-# A title that names one of these roles runs the program or recruits for it
-# ("Internship Program Manager", "Intern Recruiter", "Director of Intern
-# Programs"). Those are full-time jobs, so is_internship_title() leaves them alone.
+_INTERNSHIP_TOKEN = r"\b(?:interns?|internships?|co[\s\-\u2010-\u2015]?ops?)\b"
+INTERNSHIP_TITLE_RE = re.compile(_INTERNSHIP_TOKEN, re.I)
+# A title that runs the program or recruits for it is a full-time job ("Internship
+# Program Manager", "Intern Recruiter", "Director of Intern Programs", "Manager,
+# Intern Experience"), so is_internship_title() leaves it alone. Three shapes count:
+# a role word after the intern token with at most two plain words between them; a
+# role word, "of" and the token; and a role word, a comma, the token and another word.
+# A role word before the token ("Product Manager Intern", "Recruiting Intern") or
+# apart from it, after a parenthesis, comma or dash ("Sales Co-op (Account
+# Manager)"), names the team the student joins, so those titles stay internships.
 _INTERNSHIP_PROGRAM_ROLE_RE = re.compile(
-    r"\b(?:manager|recruit(?:er|ers|ing)|coordinator|director)\b", re.I)
+    _INTERNSHIP_TOKEN + r"\s+(?:[a-z]+\s+){0,2}"
+    r"\b(?:manager|recruit(?:er|ers|ing)|coordinator|director|lead)\b"
+    r"|\b(?:manager|director|coordinator|head|lead)\s+of\s+(?:the\s+)?"
+    + _INTERNSHIP_TOKEN
+    + r"|\b(?:manager|director|coordinator|head|lead),\s+(?:the\s+)?"
+    + _INTERNSHIP_TOKEN + r"\s+[a-z]", re.I)
 
 
 def is_internship_title(title: Any) -> bool:
     """True when the job title names an internship or a co-op.
 
-    A title that also names a manager, recruiter, coordinator or director is a
-    full-time job that runs the program, so it is False.
+    A title that also names the person who runs the program or recruits for it
+    (see _INTERNSHIP_PROGRAM_ROLE_RE) is a full-time job, so it is False.
     """
     if not isinstance(title, str):
         return False
@@ -1419,25 +1445,39 @@ _CLEARANCE_RANK_PATTERNS = (
 )
 # Wording that says the clearance can be obtained, sponsored or is still in process.
 # "obtain" excludes "obtained" ("must have obtained"), which says the candidate
-# already holds it. "eligib" counts only as eligibility for a clearance or to obtain,
-# hold, get or receive one, so "eligible to work in the US" is not a sponsorship cue.
+# already holds it, while "will be obtained" says the employer gets it. "eligib"
+# counts only as eligibility for a clearance (one within a short window) or to obtain,
+# hold, get or receive one, so "eligible to work in the US" and "eligible for
+# employment" are no offer. "sponsor" counts only when it governs the clearance
+# (_SPONSORS_CLEARANCE), so a visa or work-authorization line is no offer either.
 _CLEARANCE_OBTAINABLE_WORDS = re.compile(
     r"obtain(?!ed)"
-    r"|eligib(?:le|ility)\s+(?:for|to\s+(?:obtain|hold|get|receive))\b"
-    r"|(?<!visa\s)(?<!visa-)sponsor|interim|willing(?:ness)? to (?:undergo|apply|get)"
+    r"|\b(?:will|would|can|shall)\s+be\s+obtained\b"
+    r"|eligib(?:le|ility)\s+(?:for\s+(?:(?:an?|the)\s+)?(?:[\w/-]+\s+){0,2}clearance"
+    r"|to\s+(?:obtain|hold|get|receive))\b"
+    r"|" + _SPONSORS_CLEARANCE + r"|interim|willing(?:ness)? to (?:undergo|apply|get)"
     r"|able to (?:get|be granted)|pending", re.I)
+# One character of the stretch a negator reaches over: it stops at a clause break (a
+# comma, colon or semicolon) or a conjunction, so "no visas, able to obtain a Secret
+# clearance" and "we do not sponsor visas but will sponsor a Secret clearance" keep
+# their offer.
+_NEGATOR_REACH = r"(?:(?!\b(?:but|and|however|though|although|while|yet)\b)[^.,;:\n])"
 # Wording that says the employer will not sponsor or obtain the clearance. It cancels
-# an obtainable cue in the same sentence: a negator before sponsor, obtain or interim,
-# a sponsorship that is not available, "obtained", and "interim not accepted". A visa
-# sponsorship line says nothing about the clearance, so "visa sponsor" is neither an
-# obtainable cue nor a refusal: "authorized to work in the US and able to obtain a
-# Secret clearance" stays obtainable. It only narrows what counts as obtainable, so
-# the default profile and the monotonicity of clearance_blocks are unchanged.
+# an obtainable cue in the same sentence: a negator shortly before a sponsorship of
+# the clearance, "obtain" or "interim"; a sponsorship of the clearance that is not
+# available, offered or provided; "have obtained" and the other already-held
+# wordings; and "interim not accepted". A visa or work-authorization line names no
+# clearance, so it is no refusal: "no visa sponsorship" beside "able to obtain a
+# Secret clearance" leaves the clearance obtainable. It only narrows what counts as
+# obtainable, so the default profile and the monotonicity of clearance_blocks are
+# unchanged.
 _CLEARANCE_REFUSAL = re.compile(
     r"\b(?:no|not|cannot|can['\u2019]?t|unable to|will not|won['\u2019]?t|does not|do not"
-    r"|don['\u2019]?t|doesn['\u2019]?t)\b(?:(?!visa)[^.\n]){0,25}\b(?:sponsor|obtain|interim)"
-    r"|(?<!visa\s)(?<!visa-)\bsponsor\w*[^.\n]{0,45}\b(?:not|unavailable|isn['\u2019]?t)\b"
-    r"|\bobtained\b"
+    r"|don['\u2019]?t|doesn['\u2019]?t)\b" + _NEGATOR_REACH + r"{0,25}\b(?:"
+    + _SPONSORS_CLEARANCE + r"|obtain|interim)"
+    r"|" + _SPONSORS_CLEARANCE + r"[^.,;:\n]{0,45}\b(?:not\s+(?:available|offered|provided)"
+    r"|unavailable|isn['\u2019]?t\s+available)\b"
+    r"|\b(?:have|has|had|previously|already)\s+obtained\b"
     r"|\binterim\b[^.\n]{0,20}\bnot\s+accepted\b", re.I)
 
 

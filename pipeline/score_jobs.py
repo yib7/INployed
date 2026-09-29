@@ -635,14 +635,18 @@ _AVAILABILITY_WORDS = r"(?:available|offered|provided|possible|supported|an\s+op
 # sponsorship or clearance required." and "We will not sponsor visas or require a
 # clearance." A negator that governs an availability word ("Sponsorship is not
 # available for a Secret clearance") refuses the sponsorship and leaves the
-# requirement standing, so it does not start this alternative either.
+# requirement standing, so it does not start this alternative either. The polygraph
+# alternative takes the same lookahead: "Relocation is not offered; polygraph
+# required." blocks the way its Secret clearance twin does.
 _CLEARANCE_NEG = re.compile(
     r"\b(no|not|without|does not|do not|don'?t|doesn'?t)\b"
     r"(?!\s+(?:\w+\s+){0,2}" + _AVAILABILITY_WORDS + r"\b)"
     r"(?:(?!" + _SPONSOR_OF_CLEARANCE + r")[^.\n]){0,30}"
     r"\bclearance\b(?![ \t]+sponsor)"
     r"|\bclearance\b[^.\n]{0,30}\bnot\s+(required|needed)\b"
-    r"|\b(no|not|without|does not|do not|don'?t|doesn'?t)\b[^.\n]{0,20}\bpolygraph\b"
+    r"|\b(no|not|without|does not|do not|don'?t|doesn'?t)\b"
+    r"(?!\s+(?:\w+\s+){0,2}" + _AVAILABILITY_WORDS + r"\b)"
+    r"[^.\n]{0,20}\bpolygraph\b"
     r"|\bpolygraph\b[^.\n]{0,20}\bnot\s+(required|needed)\b"
     r"|\bclearance\s+holders?\b",
     re.I,
@@ -1456,6 +1460,16 @@ def requires_clearance(text: Any) -> bool:
 
 # One mention is one sentence (or line) in which a CLEARANCE_PATTERNS pattern matches.
 _CLEARANCE_SENTENCE_SPLIT = re.compile(r"(?<=[.!?;])\s+|\n")
+# TypeScript written "TS" in a stack list: "JS/TS", "TS/JS", "React, TS", "TypeScript
+# (TS)". It is cut from a clearance sentence before the level is read, so the bare "TS"
+# rank below means Top Secret only where nothing marks it as a language ("TS
+# clearance", "active TS", "Secret/TS"). "TS/SCI" is untouched: rank 4 reads it first.
+_TS_LANGUAGE = r"(?:js|javascript|typescript|node(?:\.js)?|react|angular|vue|html|css)"
+_TS_JOINER = r"\s*(?:[/,&+]|\band\b|\bor\b)\s*"
+_TS_LANGUAGE_RE = re.compile(
+    r"\b" + _TS_LANGUAGE + _TS_JOINER + r"ts\b"
+    r"|\bts" + _TS_JOINER + _TS_LANGUAGE + r"\b"
+    r"|\btypescript\s*\(\s*ts\s*\)", re.I)
 # The level a sentence names, highest first: the first pattern that matches wins.
 # A polygraph reads as the top rank, the level that comes with the SCI.
 _CLEARANCE_RANK_PATTERNS = (
@@ -1480,12 +1494,15 @@ _CLEARANCE_RANK_PATTERNS = (
 # you" is often visa wording ("sponsor you with a visa", "sponsor you through
 # H-1B"), so that shape needs a modal, takes no negation between the modal and the
 # sponsor, and must end the clause (a punctuation mark, a parenthesis or a dash) or
-# lead into "or", "but", "if", "once", "after", "upon" or "when".
+# lead into "or", "but", "if", "once", "after", "upon" or "when", or into "to get", "to
+# obtain" or "to receive" with a clearance, "one" or "it" within five words ("to get a
+# work visa" is visa wording and stays out).
 _SPONSORED_FOR_ONE = r"\bsponsored\s+for\s+(?:one|it)\b"
 _SPONSOR_PERSON = (
     r"(?:\b(?:will|would|can|shall)|['\u2019]ll)\s+(?:(?!(?:not|never|no)\b)\w+\s+){0,2}"
     r"sponsor\s+(?:you|them|one|it|candidates|applicants|(?:new\s+)?hires)\b"
-    r"(?=\s*(?:$|[.,;:()!?\n\u2013\u2014-])|\s+(?:or|but|if|once|after|upon|when)\b)")
+    r"(?=\s*(?:$|[.,;:()!?\n\u2013\u2014-])|\s+(?:or|but|if|once|after|upon|when)\b"
+    r"|\s+to\s+(?:get|obtain|receive)\b(?:\s+[\w/'-]+){0,4}?\s+(?:clearances?|one|it)\b)")
 _CLEARANCE_OBTAINABLE_WORDS = re.compile(
     r"obtain(?!ed\b)\w*(?:[\s,/()]+[\w/'-]+){0,8}?[\s,/()]+(?:clearances?|one|it)\b"
     r"|\bobtainable\b"
@@ -1562,7 +1579,8 @@ def clearance_requirement(text: Any) -> list[tuple[int, bool]]:
     for sentence in _CLEARANCE_SENTENCE_SPLIT.split(text):
         if not any(p.search(sentence) for p in CLEARANCE_PATTERNS):
             continue
-        rank = next((r for r, p in _CLEARANCE_RANK_PATTERNS if p.search(sentence)), 0)
+        named = _TS_LANGUAGE_RE.sub(" ", sentence)
+        rank = next((r for r, p in _CLEARANCE_RANK_PATTERNS if p.search(named)), 0)
         mentions.append((rank, _clearance_obtainable(sentence)))
     return mentions or [(0, False)]
 

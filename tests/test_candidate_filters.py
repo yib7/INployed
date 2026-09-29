@@ -1159,3 +1159,154 @@ def test_jev_facts_advanced_degree_is_the_detector_verdict_under_the_default_pro
     for text in (f"{CLEAN_DESC} Master's degree required.", CLEAN_DESC,
                  f"{CLEAN_DESC} Master's degree preferred."):
         assert sj.jev_facts(text)["advanced_degree"] is sj.requires_advanced_degree(text), text
+
+
+# --- Final review: TypeScript is not Top Secret ------------------------------------
+
+TYPESCRIPT_WITH_SECRET = ("Must have an active Secret clearance and experience with JS/TS "
+                          "and React.")
+
+
+@pytest.mark.parametrize("text", [
+    "Experience with JS/TS and React.",
+    "Strong JS/TS skills and a TS/JS build background.",
+    "Frontend stack: React, TS, Node.",
+])
+def test_typescript_alone_is_no_clearance_requirement(text):
+    assert sj.requires_clearance(text) is False
+    assert sj.clearance_requirement(text) == []
+    assert sj.clearance_blocks(text, 0, True) is False
+
+
+@pytest.mark.parametrize("text", [
+    TYPESCRIPT_WITH_SECRET,
+    "Must have an active Secret clearance and experience with JavaScript, TS and React.",
+    "Active Secret clearance required, and the stack is TypeScript (TS), Node and React.",
+    "Active Secret clearance and experience with React/TS.",
+    "Active Secret clearance required and TS and JS experience.",
+])
+def test_typescript_beside_a_secret_requirement_ranks_it_secret(text):
+    assert sj.requires_clearance(text) is True
+    assert sj.clearance_requirement(text) == [(2, False)], text
+    assert sj.clearance_blocks(text, 2, False) is False      # a Secret holder qualifies
+    assert sj.clearance_blocks(text, 0, False) is True
+
+
+@pytest.mark.parametrize(("text", "rank"), [
+    ("TS clearance required.", 3),
+    ("Active TS clearance required.", 3),
+    ("Requires a TS-cleared engineer with a clearance.", 3),
+    ("Secret/TS clearance required.", 3),
+    ("Active Secret clearance and a TS clearance for the lead.", 3),
+    ("TS/SCI clearance required.", 4),
+    ("Must hold an active TS/SCI clearance and know JS/TS.", 4),
+])
+def test_ts_beside_a_clearance_word_still_reads_top_secret(text, rank):
+    assert sj.requires_clearance(text) is True
+    assert sj.clearance_requirement(text) == [(rank, False)], text
+    assert sj.clearance_blocks(text, 2, False) is True     # a Secret holder is short of it
+    assert sj.clearance_blocks(text, 4, False) is False
+
+
+def test_a_top_secret_holder_and_a_secret_holder_read_the_typescript_row_alike():
+    assert sj.clearance_blocks(TYPESCRIPT_WITH_SECRET, 3, False) is False
+    assert sj.clearance_blocks(TYPESCRIPT_WITH_SECRET, 2, False) is False
+    assert sj.clearance_blocks(TYPESCRIPT_WITH_SECRET, 1, False) is True
+
+
+# --- Final review: the polygraph negation needs the availability lookahead ---------
+
+@pytest.mark.parametrize("text", [
+    "Relocation is not offered; polygraph required.",
+    "Visa sponsorship is not available; polygraph required.",
+    "Relocation is not provided, polygraph required.",
+])
+def test_an_unavailable_perk_beside_a_polygraph_requirement_is_no_negation(text):
+    """The clearance alternative skips a negator that governs an availability word;
+    the polygraph alternative now does too, so the two agree."""
+    twin = text.replace("polygraph", "Secret clearance")
+    assert sj.requires_clearance(twin) is True
+    assert sj.requires_clearance(text) is True
+    assert sj.clearance_blocks(text) is True
+    assert sj.clearance_blocks(text, 4, False) is False    # a TS/SCI holder still qualifies
+
+
+@pytest.mark.parametrize("text", [
+    "No polygraph required.",
+    "A polygraph is not required for this role.",
+    "Relocation is not offered; no polygraph is required.",
+    "Visa sponsorship is not available. Polygraph not required.",
+    "We do not require a polygraph.",
+])
+def test_a_negated_polygraph_requirement_still_passes(text):
+    assert sj.requires_clearance(text) is False
+    assert sj.clearance_blocks(text) is False
+
+
+# --- Final review: "sponsor you to get a clearance" --------------------------------
+
+@pytest.mark.parametrize("text", [
+    "We will sponsor you to get a Secret clearance.",
+    "We'll sponsor you to get your Secret clearance.",
+    "We will sponsor you to obtain a Secret clearance.",
+    "We will sponsor you to receive a Secret clearance.",
+    "Must hold a Secret clearance or we will sponsor you to get one.",
+    "We would sponsor them to get a Secret clearance if needed.",
+])
+def test_a_sponsor_of_the_person_to_get_the_clearance_is_an_offer(text):
+    assert sj.clearance_requirement(text) == [(2, True)]
+    assert sj.clearance_blocks(text, 0, True) is False
+    assert sj.clearance_blocks(text, 0, False) is True
+    assert sj._clearance_obtainable(text) is True
+
+
+@pytest.mark.parametrize("text", [
+    "Active Secret clearance required and we will sponsor you to get a work visa.",
+    "Active Secret clearance required and we will sponsor you to get an H-1B.",
+    "Must hold a Secret clearance and we will not sponsor you to get one.",
+    "Active Secret clearance required. We will sponsor you to get a laptop.",
+])
+def test_a_sponsor_to_get_something_else_or_a_refusal_is_no_offer(text):
+    assert sj.clearance_requirement(text)[0][1] is False, text
+    assert sj.clearance_blocks(text, 0, True) is True
+
+
+# --- Final review: pins for the pieces the last round added without a row ---------
+
+def test_a_for_phrase_after_the_sponsored_clearance_carries_the_refusal():
+    """_FOR_PHRASE lets "for this role" sit between the sponsored clearance and the
+    refusing words; without it the sentence reads as an offer."""
+    for text in ("Secret clearance sponsorship for this role is not available.",
+                 "Secret clearance sponsorship for external candidates is not offered."):
+        assert sj.clearance_requirement(text) == [(2, False)], text
+        assert sj.clearance_blocks(text, 0, True) is True, text
+
+
+def test_a_for_phrase_stops_at_a_conjunction():
+    """The phrase takes plain words only, so an offer joined by a conjunction stays one."""
+    text = "Secret clearance sponsorship for this role and relocation is not available."
+    assert sj.clearance_blocks(text, 0, True) is False
+
+
+@pytest.mark.parametrize("text", [
+    "Sponsorship is not yet offered for a Secret clearance.",
+    "Sponsorship is not fully provided for a Secret clearance.",
+    "Sponsorship is not yet fully offered for a Secret clearance.",
+])
+def test_a_negator_with_up_to_two_words_before_an_availability_word_is_no_negation(text):
+    """The _CLEARANCE_NEG lookahead reaches two words past the negator."""
+    assert sj.requires_clearance(text) is True
+    assert sj.clearance_blocks(text) is True
+
+
+@pytest.mark.parametrize("adverb", ["currently", "presently", "generally", "typically",
+                                    "also", "now"])
+def test_each_availability_adverb_carries_the_refusal(adverb):
+    text = f"Sponsorship for a Secret clearance is {adverb} not available."
+    assert sj.clearance_requirement(text) == [(2, False)], text
+    assert sj.clearance_blocks(text, 0, True) is True
+
+
+def test_the_unavailable_word_carries_the_refusal_after_an_adverb():
+    text = "Sponsorship for a Secret clearance is currently unavailable."
+    assert sj.clearance_blocks(text, 0, True) is True

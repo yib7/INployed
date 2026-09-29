@@ -159,7 +159,11 @@ def _strip_trailing_signoff(body: str) -> str:
 # each section's text right under its title). A paragraph naming the vendored rules
 # goes wherever it sits too. The softer tells (a "Here is the revised body:"
 # lead-in, a "Let me know..." close) only count at either end of the reply, since a
-# real letter can say "Here's what drew me to Globex" in its middle.
+# real letter can say "Here's what drew me to Globex" in its middle. The close counts
+# only when it asks the requester what they want changed ("Let me know if you'd like
+# any changes"): a candidate's own closing ("feel free to reach out if you need
+# anything else from me", "let me know if there are any changes to the schedule")
+# names no want of the requester's and stays.
 _FENCE_OR_RULE_RE = re.compile(r"^\s*(?:```|~~~|([-*_])\1{2,}\s*$)")
 _SECTION_TITLE_RE = re.compile(r"^\s*(?:#{1,6}\s|\*\*|__)")
 _LIST_LINE_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
@@ -174,7 +178,8 @@ _NOTE_EDGE_RE = re.compile(
     r"(?:cover[- ]letter\s+)?(?:body|letter|draft)\b"
     r"|\bthe flagged\s+(?:phrases?|phrasing|wording|sentences?|words?|terms?|findings?)\b"
     r"|\bas-is\b"
-    r"|\b(?:let me know|feel free)\b.{0,80}\b(?:changes|edits|adjustments|tweaks|revisions|anything else)\b",
+    r"|\b(?:let me know|feel free)\b.{0,80}?\byou(?:['’]d| would)?\s+(?:like|want)\b"
+    r".{0,40}?\b(?:changes|edits|adjustments|tweaks|revisions)\b",
     re.I | re.S)
 # A short lead-in line of its own that ends on a colon ("Revised body:").
 _NOTE_LEAD_IN_RE = re.compile(r"^[^\n]{0,100}:\s*$")

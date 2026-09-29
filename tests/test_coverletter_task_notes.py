@@ -55,6 +55,32 @@ def test_a_trailing_note_is_dropped(note):
     assert coverletter.drop_task_notes(LETTER + "\n\n" + note) == LETTER
 
 
+@pytest.mark.parametrize("note", [
+    "Let me know if you want any edits to the tone.",
+    "Feel free to tell me if you'd like any tweaks.",
+    "Let me know if you would like any revisions or adjustments.",
+    "Let me know if you'd like me to adjust the tone or make any changes.",
+])
+def test_a_request_to_the_requester_about_edits_is_dropped_at_either_end(note):
+    assert coverletter.drop_task_notes(LETTER + "\n\n" + note) == LETTER
+    assert coverletter.drop_task_notes(note + "\n\n" + LETTER) == LETTER
+
+
+@pytest.mark.parametrize("closing", [
+    "I would welcome the chance to talk about the role. Please feel free to reach out if "
+    "you need anything else from me.",
+    "Thank you for your time. Feel free to contact me with any questions or if you need "
+    "anything else.",
+    "Let me know if there are any changes to the interview schedule.",
+    "Please let me know if you would like references or any other materials.",
+    "Feel free to call me with any adjustments to the start date in mind.",
+])
+def test_a_real_closing_paragraph_survives(closing):
+    """A candidate's own closing offers contact. Only a note that asks the requester
+    what they want changed in the letter is a note."""
+    assert coverletter.drop_task_notes(LETTER + "\n\n" + closing) == LETTER + "\n\n" + closing
+
+
 def test_a_skill_audit_report_keeps_only_the_letter():
     """The shape of the first leak, with made-up content: each report
     section's text sits in the same paragraph as its bold title."""

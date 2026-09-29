@@ -57,12 +57,13 @@ SECTION_HELP = {
                "free-key pool), and which model each tailoring stage runs. Jev's checks "
                "around the writing are switched in the Jev section."),
     "Dashboard": "How the dashboard surfaces and tracks jobs.",
-    # Cycle 21: the four scorer-read profile rows. Names both scripts because the
-    # VM copy of each is uploaded by hand, once (there is no automated code push).
+    # Cycle 21: the four scorer-read profile rows. Names score_jobs.py, the one script
+    # the VM reads them from, which is uploaded by hand once (no automated code push).
     "About you": ("What the scorer knows about you. It states your school status and "
                   "clearance in every scoring prompt and uses them to drop postings you "
                   "cannot apply to. If you use the cloud VM, push config to the VM after "
-                  "changing these, and upload the new score_jobs.py and jev_score.py once."),
+                  "changing these, and upload the new score_jobs.py once: the VM reads "
+                  "these rows only from that script."),
     "Scraper": "What job searches the discovery step runs (this drives its API spend).",
     # Rewritten in P8: the old blurb ("which models score jobs … changing the model
     # names can silently break scoring") described rows a fresh profile cannot see.
@@ -195,9 +196,9 @@ def _ordered_sections() -> list[tuple[str, list[settings.Field]]]:
     return ordered
 
 
-# The rows of the "About you" section. Their VM copy of score_jobs.py and jev_score.py
-# is uploaded by hand, so a Save that changes one of them says so (see
-# `_maybe_prompt_vm_push`).
+# The rows of the "About you" section. The VM reads them only from its copy of
+# score_jobs.py, which is uploaded by hand, so a Save that changes one of them says so
+# (see `_maybe_prompt_vm_push`).
 ABOUT_YOU_KEYS = frozenset(f.key for f in settings.SETTINGS_SCHEMA if f.section == "About you")
 
 
@@ -2022,12 +2023,13 @@ class SettingsForm(QtWidgets.QWidget):
         text = ("You changed settings the VM reads from its config copy. Push the "
                 "updated config to the VM now?")
         if changed_vm & ABOUT_YOU_KEYS:
-            # The VM reads these keys only from the new scripts, and it holds its
-            # own copy of each; the section blurb names both files too.
-            text += ("\n\nNote: score_jobs.py and jev_score.py themselves must be "
-                     "re-uploaded to the VM once (there is no automated code push); run:\n"
-                     "  gcloud compute scp pipeline/score_jobs.py pipeline/jev_score.py "
-                     "<user>@<vm>:~ --zone=<zone>")
+            # The VM reads these keys only from its copy of score_jobs.py. It has no
+            # local/jev.py or local/config.json, so jev_score.py is optional there;
+            # the section blurb names score_jobs.py too.
+            text += ("\n\nNote: score_jobs.py itself must be re-uploaded to the VM once "
+                     "(there is no automated code push), because the VM reads these "
+                     "settings only from it; run:\n"
+                     "  gcloud compute scp pipeline/score_jobs.py <user>@<vm>:~ --zone=<zone>")
         elif "drop_easy_apply" in changed_vm:
             text += ("\n\nNote: score_jobs.py itself must be re-uploaded to the VM once "
                      "(there is no automated code push); run:\n"

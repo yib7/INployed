@@ -269,7 +269,8 @@ def test_about_you_copy_is_the_documented_text():
     blurb = st.SECTION_HELP["About you"]
     assert blurb.startswith("What the scorer knows about you.")
     assert "push config to the VM" in blurb
-    assert "score_jobs.py and jev_score.py" in blurb
+    # The VM reads these rows only from score_jobs.py; jev_score.py is optional there.
+    assert "score_jobs.py" in blurb and "jev_score.py" not in blurb
 
 
 _BANNED = re.compile(
@@ -359,9 +360,9 @@ def test_an_about_you_change_prompts_the_vm_push(qtbot, tmp_path, monkeypatch):
     assert form.save() is True
     assert asked == ["Push config to VM?"]
     assert pushed == [True]
-    # The VM holds its own copy of both scripts and reads the new keys only from the
-    # new code, so the prompt says both files must be uploaded once.
-    assert "score_jobs.py" in texts[0] and "jev_score.py" in texts[0]
+    # The VM reads the new keys only from its copy of score_jobs.py (jev_score.py is
+    # optional there), so the prompt names that one file for the upload.
+    assert "score_jobs.py" in texts[0] and "jev_score.py" not in texts[0]
     assert "gcloud compute scp" in texts[0]
 
 
@@ -369,7 +370,7 @@ def test_an_about_you_change_prompts_the_vm_push(qtbot, tmp_path, monkeypatch):
                                  "clearance_sponsorship"])
 def test_each_about_you_change_puts_the_code_upload_note_in_the_vm_prompt(
         qtbot, tmp_path, monkeypatch, key):
-    """Any of the four keys needs the new score_jobs.py and jev_score.py on the VM."""
+    """Any of the four keys needs the new score_jobs.py on the VM."""
     form = SettingsForm(targets=_targets(tmp_path))
     qtbot.addWidget(form)
     form._vm_panel = type("Panel", (), {"push_config": lambda self, skip_confirm=False: None})()
@@ -388,7 +389,7 @@ def test_each_about_you_change_puts_the_code_upload_note_in_the_vm_prompt(
     form._setters[key](new)
     assert form.save() is True
     assert len(texts) == 1
-    assert "score_jobs.py" in texts[0] and "jev_score.py" in texts[0], key
+    assert "score_jobs.py" in texts[0] and "jev_score.py" not in texts[0], key
 
 
 def test_the_code_note_covers_exactly_the_four_about_you_keys():

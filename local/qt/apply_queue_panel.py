@@ -16,6 +16,12 @@ difficulty" runs `apply_assess.py` in its own console (hidden while the check
 is switched off, off with the reason while Jev cannot run or a browser holds
 the auto-apply profile).
 
+Several rows (cycle 22): the table takes a Ctrl/Shift-click selection. Check
+difficulty checks every selected job, several at once (`auto_apply_check_parallel`,
+read by the check's console), and Remove drops them all in one write after a
+confirm. Meanwhile the buttons that act on one job (Re-queue, Mark applied,
+Don't apply, and the details card's) are off with the tooltip "Select one job".
+
 Park and resume (cycle 19, SP7): a run that pauses on a question it cannot
 answer writes a request into `apply_pause.pause_dir()`; the 5 s poll reads the
 folder and shows the oldest request in the "Waiting for you" card at the top
@@ -52,6 +58,7 @@ from PySide6 import QtCore, QtWidgets
 import apply_assess
 import apply_pause
 import apply_queue
+import assess_pool
 import ats_accounts
 import errmsg
 import jev_switch
@@ -235,11 +242,26 @@ def _default_difficulty_hidden() -> bool:
     return jev_switch.switched_off("difficulty")
 
 
+def _default_check_parallel() -> int:
+    """Panel seam: how many difficulty checks run at once (the
+    `auto_apply_check_parallel` setting, clamped 1 to 10 the way
+    `apply_assess.py` reads it); the default when the settings do not read."""
+    try:
+        import settings
+        value = settings.load().get("auto_apply_check_parallel")
+    except Exception:  # noqa: BLE001 - a config hiccup only changes a note
+        value = None
+    return assess_pool.parallel_setting(value)
+
+
 def _default_profile_busy() -> bool:
     """Panel seam, read by Start and by Check difficulty: does a browser hold
     the auto-apply profile (Chrome's lock or the sentinel, `profile_lock`)?"""
     return apply_assess.profile_busy()
 
+
+# The tooltip on a single-job button while several rows are selected (cycle 22).
+SELECT_ONE = "Select one job"
 
 UPLOAD_HINT = "an upload: put the file in the job folder"
 FAILED_CELL = "check failed"
@@ -416,7 +438,18 @@ class _DetailsPanel(QtWidgets.QFrame):
         theme.set_type_role(self.artifacts_label, "mono")
         cv.addWidget(self.artifacts_label)
 
+        # Their own tips, back once a single row is selected (`set_single`).
+        self._own_tips = {b: b.toolTip() for b in (
+            self.open_record_btn, self.open_folder_btn, self.answer_now_btn)}
         self.set_entry(None)
+
+    def set_single(self, single: bool) -> None:
+        """The card's buttons act on one job: off, with SELECT_ONE as the
+        tooltip, while several rows are selected (the card still shows the
+        current row)."""
+        for b, tip in self._own_tips.items():
+            b.setEnabled(single)
+            b.setToolTip(tip if single else SELECT_ONE)
 
     # -- content --------------------------------------------------------------
 
@@ -517,6 +550,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                  difficulty_blocked: Callable[[], str] | None = None,
                  difficulty_hidden: Callable[[], bool] | None = None,
                  profile_busy: Callable[[], bool] | None = None,
+                 check_parallel: Callable[[], int] | None = None,
                  alert: Callable[[QtWidgets.QWidget], None] | None = None,
                  parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
@@ -544,6 +578,9 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self._difficulty_blocked = difficulty_blocked or (lambda: _default_difficulty_blocked())
         self._difficulty_hidden = difficulty_hidden or (lambda: _default_difficulty_hidden())
         self._profile_busy = profile_busy or (lambda: _default_profile_busy())
+        # How many checks run at once (cycle 22), for the note only: the
+        # check's console reads the setting itself.
+        self._check_parallel = check_parallel or (lambda: _default_check_parallel())
         self._gate_busy = False     # the profile's state when the gates were last read
         self._jobs: List[Dict[str, Any]] = []
         self._mtime_sig: tuple | None = None
@@ -685,7 +722,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self.table.setSelectionBehavior(
             QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(
-            QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
+            QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
         # The delegate paints the cells (status tint from TAG_ROLE, pills,
         # separators) — zebra/grid off so nothing repaints over its layers.
         self.table.setItemDelegate(JobRowDelegate(
@@ -755,20 +792,28 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             "Drop every ready_to_submit / submitted / needs_human / failed entry",
             tier="tertiary")
         self.remove_btn = button("Remove from queue", self._remove,
-                                 "Delete the selected entry from the queue",
+                                 "Delete the selected jobs from the queue; with more "
+                                 "than one selected, it asks first",
                                  tier="destructive")
         btns.addStretch(1)
         # The difficulty check (DF-4 to DF-6). The tip is kept for
         # refresh_difficulty_state, which shows a reason in its place.
         self._check_tip = (
-            "Score how hard the selected job (or, with none selected, every queued "
-            "job) is to auto-apply, 1 to 10, in a NEW terminal window. It opens each "
-            "posting in the auto-apply browser, follows its Apply button and reads "
-            "the first application page: it types nothing, signs in nowhere and "
-            "submits nothing. About 2 to 4 Jev requests per job.")
+            "Score how hard the selected jobs (or, with none selected, every queued "
+            "job) are to auto-apply, 1 to 10, in a NEW terminal window. Several jobs "
+            "are checked at once, each in its own browser window on a copy of the "
+            "auto-apply profile, up to the 'Difficulty checks at once' setting. Each "
+            "check opens the posting, follows its Apply button and reads the first "
+            "application page: it types nothing, signs in nowhere and submits "
+            "nothing. About 2 to 4 Jev requests per job.")
         self.check_difficulty_btn = button("Check difficulty", self._check_difficulty,
                                            self._check_tip, tier="tertiary")
         v.addLayout(btns)
+        # The buttons that act on one job (cycle 22): off, with SELECT_ONE as
+        # the tooltip, while several rows are selected. Their own tips are kept
+        # here to come back with one row.
+        self._single_job_tips = {b: b.toolTip() for b in (
+            self.requeue_btn, self.mark_applied_btn, self.dont_apply_btn)}
 
         self.status_label = QtWidgets.QLabel("")
         self.status_label.setProperty("muted", True)
@@ -884,12 +929,14 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self._mtime_sig = sig   # override _rearm_watcher's post-read snapshot
 
     def _fill_table(self) -> None:
-        selected = self._selected_job_id()
+        selected = set(self._selected_job_ids())
+        current = self._current_job_id()
         table = self.table
         table.blockSignals(True)
         try:
             table.setRowCount(len(self._jobs))
-            reselect = None
+            reselect: List[int] = []
+            current_row = None
             for r, e in enumerate(self._jobs):
                 arts = e.get("artifacts") or {}
                 missing = e.get("missing_answers") or []
@@ -920,12 +967,35 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                             difficulty.get("score")))
                         item.setToolTip(_difficulty_tip(difficulty))
                     table.setItem(r, c, item)
-                if selected and str(e.get("job_posting_id", "")) == selected:
-                    reselect = r
+                jid = str(e.get("job_posting_id", ""))
+                if jid in selected:
+                    reselect.append(r)
+                if current and jid == current:
+                    current_row = r
         finally:
             table.blockSignals(False)
-        if reselect is not None:
-            table.selectRow(reselect)
+        self._restore_selection(reselect, current_row, bool(selected))
+
+    def _restore_selection(self, rows: List[int], current_row: Optional[int],
+                           had_selection: bool) -> None:
+        """Select every row whose job was selected before the refresh (the rows
+        may have moved), keeping the current row on its job; a selection whose
+        jobs all left the queue clears."""
+        sm = self.table.selectionModel()
+        if sm is None or not had_selection:
+            return
+        model = self.table.model()
+        flags = QtCore.QItemSelectionModel.SelectionFlag
+        if current_row is not None:
+            sm.setCurrentIndex(model.index(current_row, 0), flags.NoUpdate)
+        if not rows:
+            self.table.clearSelection()
+            return
+        last = model.columnCount() - 1
+        selection = QtCore.QItemSelection()
+        for r in rows:
+            selection.select(model.index(r, 0), model.index(r, last))
+        sm.select(selection, flags.ClearAndSelect | flags.Rows)
 
     def rescale_columns(self, factor: float) -> None:
         """Re-scale the live column widths by `factor` after an interface-scale
@@ -1042,16 +1112,25 @@ class ApplyQueuePanel(QtWidgets.QWidget):
 
     # ---- selection / details --------------------------------------------------------
 
-    def _selected_job_id(self) -> str:
-        rows = self.table.selectionModel().selectedRows() \
-            if self.table.selectionModel() else []
-        if not rows:
-            return ""
-        item = self.table.item(rows[0].row(), 0)
+    def _row_job_id(self, row: int) -> str:
+        item = self.table.item(row, 0)
         return str(item.data(QtCore.Qt.ItemDataRole.UserRole) or "") if item else ""
 
-    def _selected_entry(self) -> Optional[Dict[str, Any]]:
-        jid = self._selected_job_id()
+    def _selected_rows(self) -> List[int]:
+        sm = self.table.selectionModel()
+        return sorted(i.row() for i in sm.selectedRows()) if sm else []
+
+    def _selected_job_ids(self) -> List[str]:
+        """Every selected job's id, in table order."""
+        return [jid for jid in (self._row_job_id(r) for r in self._selected_rows()) if jid]
+
+    def _selected_job_id(self) -> str:
+        """The selected job's id, "" unless exactly one row is selected (the
+        single-job actions have no one job to act on otherwise)."""
+        ids = self._selected_job_ids()
+        return ids[0] if len(ids) == 1 else ""
+
+    def _entry_for(self, jid: str) -> Optional[Dict[str, Any]]:
         if not jid:
             return None
         for e in self._jobs:
@@ -1059,8 +1138,25 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                 return e
         return None
 
+    def _selected_entry(self) -> Optional[Dict[str, Any]]:
+        return self._entry_for(self._selected_job_id())
+
+    def _current_job_id(self) -> str:
+        """The row the details pane shows: the current row while it is
+        selected, else the first selected row; "" with nothing selected."""
+        rows = self._selected_rows()
+        if not rows:
+            return ""
+        current = self.table.currentRow()
+        return self._row_job_id(current if current in rows else rows[0])
+
     def _update_details(self) -> None:
-        self.details.set_entry(self._selected_entry())
+        single = len(self._selected_rows()) <= 1
+        self.details.set_entry(self._entry_for(self._current_job_id()))
+        self.details.set_single(single)
+        for b, tip in self._single_job_tips.items():
+            b.setEnabled(single)
+            b.setToolTip(tip if single else SELECT_ONE)
         self.refresh_difficulty_state()
 
     # ---- actions (all mutations ride submit_write) -----------------------------------
@@ -1085,6 +1181,12 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             on_done=lambda _r: self.refresh(), on_error=self._write_failed)
 
     def _remove(self) -> None:
+        """Remove the selected job; several selected rows go in one write after
+        a confirm (`_confirm_remove`)."""
+        ids = self._selected_job_ids()
+        if len(ids) > 1:
+            self._remove_many(ids)
+            return
         jid = self._selected_job_id()
         if not jid:
             self._set_note("Select a row to remove.")
@@ -1093,6 +1195,26 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self._submit_write(lambda: apply_queue.remove(jid, path=qp),
                            on_done=lambda _r: self.refresh(),
                            on_error=self._write_failed)
+
+    def _remove_many(self, ids: List[str]) -> None:
+        if not self._confirm_remove(len(ids)):
+            return
+        qp = self._queue_file()
+
+        def done(removed: Any) -> None:
+            self.refresh()
+            self._set_note(f"Removed {removed} job(s) from the queue.")
+
+        self._submit_write(lambda: apply_queue.remove_many(ids, path=qp),
+                           on_done=done, on_error=self._write_failed)
+
+    def _confirm_remove(self, n: int) -> bool:
+        """Ask before removing several jobs; tests monkeypatch this."""
+        answer = QtWidgets.QMessageBox.question(
+            self, "Remove from queue",
+            f"Remove the {n} selected jobs from the auto-apply queue? Their job "
+            f"folders stay on disk.")
+        return answer == QtWidgets.QMessageBox.StandardButton.Yes
 
     def _mark_applied(self) -> None:
         e = self._selected_entry()
@@ -1189,21 +1311,41 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         answer = QtWidgets.QMessageBox.question(
             self, "Check difficulty",
             f"Check how hard each of the {n} queued job(s) is to auto-apply? A new "
-            f"terminal opens the auto-apply browser and reads each job's first "
-            f"application page: about 2 to 4 Jev requests per job.")
+            f"terminal reads each job's first application page in the auto-apply "
+            f"browser, {self._at_once_words(n)}: about 2 to 4 Jev requests per job.")
         return answer == QtWidgets.QMessageBox.StandardButton.Yes
 
+    def _parallel_now(self) -> int:
+        """The checks-at-once seam, read safely and clamped 1 to 10."""
+        try:
+            return assess_pool.parallel_setting(self._check_parallel())
+        except Exception:  # noqa: BLE001 - a config hiccup only changes a note
+            return assess_pool.PARALLEL_DEFAULT
+
+    def _at_once_words(self, n: int) -> str:
+        """How `n` jobs are checked: "up to K at once" (K never more than n),
+        or "one at a time"."""
+        k = min(self._parallel_now(), n)
+        return f"up to {k} at once" if k > 1 else "one at a time"
+
     def _check_difficulty(self) -> None:
-        """Check the selected job, or every queued job after a confirm. The
-        gate is read again first: a run may have taken the profile since."""
+        """Check the selected jobs (several run at once, up to the
+        `auto_apply_check_parallel` setting, which the check's console reads),
+        or every queued job after a confirm. The gate is read again first: a
+        run may have taken the profile since."""
         reason, busy = self.refresh_difficulty_state()
         if reason or busy:
             self._set_note(reason or apply_assess.PROFILE_BUSY)
             return
-        jid = self._selected_job_id()
-        if jid:
-            self._on_check_difficulty([jid])
+        ids = self._selected_job_ids()
+        if len(ids) == 1:
+            self._on_check_difficulty(ids)
             self._set_note("Checking the selected job's difficulty in a new terminal.")
+            return
+        if ids:
+            self._on_check_difficulty(ids)
+            self._set_note(f"Checking {len(ids)} selected jobs, "
+                           f"{self._at_once_words(len(ids))}, in a new terminal.")
             return
         queued = self._queued_count()
         if queued == 0:

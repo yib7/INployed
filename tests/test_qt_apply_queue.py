@@ -2007,3 +2007,201 @@ def test_answer_now_in_the_window_saves_the_prefilled_answer(qtbot, monkeypatch,
     monkeypatch.setattr(w.answers_tab, "add_answer", lambda prefill=None: False)
     assert w._answer_now(prefill) is False and calls == []
     assert w._answer_now(None) is False
+
+
+# --- cycle 22 SP3: a multi-row selection, the parallel check, Remove on several ---------
+
+
+def _multi(p, *jids):
+    """Select the rows of `jids` together, as a Ctrl-click would."""
+    sm = p.table.selectionModel()
+    sm.clearSelection()
+    flags = (QtCore.QItemSelectionModel.SelectionFlag.Select
+             | QtCore.QItemSelectionModel.SelectionFlag.Rows)
+    for jid in jids:
+        sm.select(p.table.model().index(_row_of(p, jid), 0), flags)
+
+
+def _three(tmp_path):
+    qfile = _qfile(tmp_path)
+    for jid in ("1", "2", "3"):
+        _checked(qfile, jid, difficulty=None)
+    return qfile
+
+
+def _single_job_buttons(p):
+    return (p.requeue_btn, p.mark_applied_btn, p.dont_apply_btn,
+            p.open_folder_btn, p.open_record_btn, p.details.answer_now_btn)
+
+
+def test_the_queue_table_takes_a_multi_row_selection(qtbot, tmp_path):
+    p = _dpanel(qtbot, _three(tmp_path))
+    assert p.table.selectionMode() == \
+        QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection
+    _multi(p, "3", "1")
+    assert p._selected_job_ids() == [p.table.item(r, 0).data(QtCore.Qt.ItemDataRole.UserRole)
+                                     for r in sorted((_row_of(p, "1"), _row_of(p, "3")))]
+    assert p._selected_job_id() == ""          # a single-job action has no one job
+    assert p._selected_entry() is None
+    _multi(p, "2")
+    assert p._selected_job_ids() == ["2"] and p._selected_job_id() == "2"
+
+
+def test_the_check_on_three_selected_jobs_passes_all_three_with_the_note(qtbot, tmp_path,
+                                                                         monkeypatch):
+    calls, asked = [], []
+    p = _dpanel(qtbot, _three(tmp_path), on_check_difficulty=calls.append,
+                check_parallel=lambda: 2)
+    monkeypatch.setattr(p, "_confirm_check", lambda n: asked.append(n) or True)
+    _multi(p, "1", "2", "3")
+    p.check_difficulty_btn.click()
+    assert len(calls) == 1 and sorted(calls[0]) == ["1", "2", "3"]
+    assert calls[0] == p._selected_job_ids()   # table order
+    assert asked == []                         # a chosen selection needs no confirm
+    assert p.status_label.text() == \
+        "Checking 3 selected jobs, up to 2 at once, in a new terminal."
+
+
+def test_the_checks_at_once_in_the_note_never_exceed_the_selection(qtbot, tmp_path):
+    calls = []
+    p = _dpanel(qtbot, _three(tmp_path), on_check_difficulty=calls.append,
+                check_parallel=lambda: 10)
+    _multi(p, "1", "3")
+    p.check_difficulty_btn.click()
+    assert p.status_label.text() == \
+        "Checking 2 selected jobs, up to 2 at once, in a new terminal."
+
+
+def test_the_note_says_one_at_a_time_when_the_setting_is_1(qtbot, tmp_path):
+    p = _dpanel(qtbot, _three(tmp_path), on_check_difficulty=lambda ids: None,
+                check_parallel=lambda: 1)
+    _multi(p, "1", "2", "3")
+    p.check_difficulty_btn.click()
+    assert p.status_label.text() == \
+        "Checking 3 selected jobs, one at a time, in a new terminal."
+
+
+def test_the_single_row_check_is_unchanged(qtbot, tmp_path):
+    calls = []
+    p = _dpanel(qtbot, _three(tmp_path), on_check_difficulty=calls.append,
+                check_parallel=lambda: 10)
+    p.table.selectRow(_row_of(p, "2"))
+    p.check_difficulty_btn.click()
+    assert calls == [["2"]]
+    assert p.status_label.text() == "Checking the selected job's difficulty in a new terminal."
+
+
+def test_single_job_buttons_are_off_with_select_one_job_on_a_multi_selection(qtbot, tmp_path):
+    p = _dpanel(qtbot, _three(tmp_path))
+    p.table.selectRow(_row_of(p, "1"))
+    tips = [b.toolTip() for b in _single_job_buttons(p)]
+    assert all(b.isEnabled() for b in _single_job_buttons(p))
+    assert "Select one job" not in tips
+
+    _multi(p, "1", "2")
+    for b in _single_job_buttons(p):
+        assert not b.isEnabled(), b.text()
+        assert b.toolTip() == "Select one job", b.text()
+    # the actions on every selected row stay on, and Clear finished is not a row action
+    assert p.check_difficulty_btn.isEnabled()
+    assert p.remove_btn.isEnabled() and p.clear_btn.isEnabled()
+
+    _multi(p, "2")
+    assert all(b.isEnabled() for b in _single_job_buttons(p))
+    assert [b.toolTip() for b in _single_job_buttons(p)] == tips
+
+
+def test_the_details_pane_shows_the_current_row_on_a_multi_selection(qtbot, tmp_path):
+    p = _dpanel(qtbot, _three(tmp_path))
+    p.table.selectRow(_row_of(p, "1"))
+    flags = (QtCore.QItemSelectionModel.SelectionFlag.Select
+             | QtCore.QItemSelectionModel.SelectionFlag.Rows)
+    p.table.selectionModel().setCurrentIndex(p.table.model().index(_row_of(p, "3"), 0), flags)
+    assert len(p._selected_job_ids()) == 2
+    assert "https://x/3" in p.details.toPlainText()
+    assert not p.open_folder_btn.isEnabled()
+
+
+def test_a_refresh_keeps_every_selected_job_selected(qtbot, tmp_path):
+    qfile = _three(tmp_path)
+    p = _dpanel(qtbot, qfile)
+    _multi(p, "1", "3")
+    p.refresh()
+    assert sorted(p._selected_job_ids()) == ["1", "3"]
+    # a write elsewhere that moves the rows keeps the same jobs selected
+    apply_queue.remove("2", path=qfile)
+    apply_queue.enqueue(apply_queue.new_entry("0", company="Zeta", title="T"), path=qfile)
+    p.refresh()
+    assert sorted(p._selected_job_ids()) == ["1", "3"]
+    assert not p.requeue_btn.isEnabled()       # still a multi-selection after the refresh
+
+
+def test_remove_on_several_rows_asks_then_removes_them_all_in_one_write(qtbot, tmp_path,
+                                                                        monkeypatch):
+    qfile = _three(tmp_path)
+    writes, asked = [], []
+
+    def submit(fn, on_done=None, on_error=None):
+        writes.append(fn)
+        aqp._run_inline(fn, on_done, on_error)
+
+    p = _dpanel(qtbot, qfile, submit_write=submit)
+    monkeypatch.setattr(p, "_confirm_remove", lambda n: asked.append(n) or True)
+    monkeypatch.setattr(aqp.apply_queue, "remove",
+                        lambda *a, **k: pytest.fail("one write, not one per job"))
+    _multi(p, "1", "3")
+    p.remove_btn.click()
+    assert asked == [2] and len(writes) == 1
+    assert [e["job_posting_id"] for e in apply_queue.load(qfile)["jobs"]] == ["2"]
+    assert p.table.rowCount() == 1
+    assert "Removed 2" in p.status_label.text()
+
+
+def test_a_cancelled_remove_removes_nothing(qtbot, tmp_path, monkeypatch):
+    qfile = _three(tmp_path)
+    writes = []
+    p = _dpanel(qtbot, qfile, submit_write=lambda fn, **k: writes.append(fn))
+    monkeypatch.setattr(p, "_confirm_remove", lambda n: False)
+    _multi(p, "1", "2", "3")
+    p.remove_btn.click()
+    assert writes == []
+    assert len(apply_queue.load(qfile)["jobs"]) == 3
+
+
+def test_remove_on_one_row_does_not_ask(qtbot, tmp_path, monkeypatch):
+    qfile = _three(tmp_path)
+    p = _dpanel(qtbot, qfile)
+    monkeypatch.setattr(p, "_confirm_remove",
+                        lambda n: pytest.fail("one row is removed as before"))
+    p.table.selectRow(_row_of(p, "2"))
+    p.remove_btn.click()
+    assert sorted(e["job_posting_id"] for e in apply_queue.load(qfile)["jobs"]) == ["1", "3"]
+
+
+def test_the_check_tip_names_the_selection_and_the_parallel_windows(qtbot, tmp_path):
+    p = _dpanel(qtbot, _qfile(tmp_path))
+    tip = p._check_tip
+    assert "selected jobs" in tip and "with none selected, every queued job" in tip
+    assert "own browser window" in tip and "Difficulty checks at once" in tip
+    assert "types nothing, signs in nowhere and submits nothing" in tip
+    assert "About 2 to 4 Jev requests per job." in tip
+    assert "—" not in tip
+
+
+@pytest.mark.parametrize("stored, expected", [(4, 4), (25, 10), (0, 1), ("lots", 10),
+                                              (None, 10)])
+def test_the_default_checks_at_once_reads_the_setting_clamped(monkeypatch, stored, expected):
+    import settings
+    monkeypatch.setattr(settings, "load", lambda *a, **k: (
+        {} if stored is None else {"auto_apply_check_parallel": stored}))
+    assert aqp._default_check_parallel() == expected
+
+
+def test_the_default_checks_at_once_survives_a_broken_settings_backend(monkeypatch):
+    import settings
+
+    def broken(*a, **k):
+        raise OSError("config.json unreadable")
+
+    monkeypatch.setattr(settings, "load", broken)
+    assert aqp._default_check_parallel() == 10

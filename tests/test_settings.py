@@ -846,6 +846,10 @@ SHOW_IF_GATES = {
     "RESUME_TAILOR_CLAUDE_MODEL_FLASH": ("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)),
     "RESUME_TAILOR_CLAUDE_MODEL_PRO": ("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)),
     "RESUME_TAILOR_CLAUDE_EFFORT": ("tailor_provider", ("claude",)),
+    # cycle 22: the cover letter's own model (per provider, tiers mode) and effort
+    "RESUME_TAILOR_MODEL_COVER": ("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
+    "RESUME_TAILOR_CLAUDE_MODEL_COVER": ("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)),
+    "RESUME_TAILOR_CLAUDE_EFFORT_COVER": ("tailor_provider", ("claude",)),
     "gemini_auth": ("tailor_provider", ("gemini",)),
     "RESUME_TAILOR_GEMINI_API_KEY": ("gemini_auth", ("api_key",)),
     # The ranked fallback lists and the per-model limits table: same gate as the
@@ -881,7 +885,7 @@ SHOW_IF_GATES = {
 def test_every_gate_is_declared_on_the_schema():
     gated = {f.key: f.show_if for f in settings.SETTINGS_SCHEMA if f.show_if is not None}
     assert gated == SHOW_IF_GATES
-    assert len(SHOW_IF_GATES) == 31
+    assert len(SHOW_IF_GATES) == 34
 
 
 def test_show_if_is_a_declarative_tuple_not_a_callable():
@@ -991,6 +995,7 @@ def test_visible_keys_at_the_shipped_defaults_hides_the_nine_inapplicable_fields
         "RESUME_TAILOR_CLAUDE_MODEL_MODE", "RESUME_TAILOR_CLAUDE_MODEL_ALL",
         "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "RESUME_TAILOR_CLAUDE_MODEL_FLASH",
         "RESUME_TAILOR_CLAUDE_MODEL_PRO", "RESUME_TAILOR_CLAUDE_EFFORT",
+        "RESUME_TAILOR_CLAUDE_MODEL_COVER", "RESUME_TAILOR_CLAUDE_EFFORT_COVER",
         "RESUME_TAILOR_MODEL_ALL", "RESUME_TAILOR_GEMINI_API_KEY",
         "tailor_fallback_models",          # belongs to 'simple' mode; default is tiers
     }
@@ -1033,6 +1038,9 @@ ADVANCED_KEYS = {
     "RESUME_TAILOR_CLAUDE_MODEL_PRO",
     # how long the Claude tailor thinks: 'low' is right unless you want slower drafts
     "RESUME_TAILOR_CLAUDE_EFFORT",
+    # cycle 22: the cover letter's own model and effort; blank / 'same' keep today's
+    "RESUME_TAILOR_MODEL_COVER", "RESUME_TAILOR_CLAUDE_MODEL_COVER",
+    "RESUME_TAILOR_CLAUDE_EFFORT_COVER",
     # VM plumbing, inert unless you run the cloud job-discovery VM
     "VM_GCLOUD_PATH", "VM_REMOTE_DIR", "local_task_offsets",
     # the ranked fallback chains and the per-model limits table: empty is right
@@ -1051,13 +1059,14 @@ def test_the_advanced_set_is_declared_on_the_schema():
     LIMITS fix made 22; dropping those four for one per-model table and adding
     the multi-model rows makes 25; SP6's repost-reuse window (cycle 15) makes
     26; cycle 19's three Jev area switches and the Auto-apply judge make 30;
-    cycle 20's SP2 writer switch makes 31; the Claude tailor's effort level makes 32.
+    cycle 20's SP2 writer switch makes 31; the Claude tailor's effort level makes 32;
+    cycle 22's cover-letter model (one per provider) and effort make 35.
     The enumeration names every key explicitly, so it is the authoritative
     half; see DECISIONS.md. Nothing in the UI hardcodes either number: the
     checkbox counts at runtime."""
     declared = {f.key for f in settings.SETTINGS_SCHEMA if f.advanced}
     assert declared == ADVANCED_KEYS
-    assert len(ADVANCED_KEYS) == 32
+    assert len(ADVANCED_KEYS) == 35
 
 
 def test_advanced_set_excludes_country_pdflatex_and_max_scored():
@@ -1131,6 +1140,8 @@ RESTART_KEYS = {
     # read live from os.environ — but os.environ is the stale startup snapshot
     "RESUME_TAILOR_GEMINI_API_KEY",     # llm.py, per call
     "RESUME_TAILOR_CLAUDE_EFFORT",      # config.claude_effort, per call
+    "RESUME_TAILOR_CLAUDE_EFFORT_COVER",  # config.claude_effort(cover tier), per call
+    "RESUME_TAILOR_MODEL_COVER", "RESUME_TAILOR_CLAUDE_MODEL_COVER",  # _cover_or, per call
     "GEMINI_API_KEYS",                  # keypool.KeyPool.from_env, per run
     "LINKEDIN_CHROME_ACCOUNT",          # chrome_launch.CHROME_ACCOUNT, at import
     # module constants inside a SUBPROCESS that inherits the stale snapshot
@@ -1145,7 +1156,7 @@ RESTART_KEYS = {
 def test_the_restart_set_is_declared_on_the_schema():
     declared = {f.key for f in settings.SETTINGS_SCHEMA if f.restart}
     assert declared == RESTART_KEYS
-    assert len(RESTART_KEYS) == 22
+    assert len(RESTART_KEYS) == 25
 
 
 def test_every_env_field_needs_a_restart_except_the_six_the_vm_tab_re_reads():
@@ -1488,12 +1499,12 @@ def test_the_auto_apply_judge_stays_in_auto_apply_under_advanced():
 JEV_SECTION_KEYS = ["jev_enabled", "TYPESAFE_API_KEY", "jev_scoring", "jev_tailor",
                     "jev_difficulty"]
 JEV_TAILOR_OPTIONS = ("tailor_best_of_n", "cover_letter_jev_check", "tailor_ats_meaning")
-# The six dropdowns that offer CLAUDE_MODELS: two scorer stages, the tailor's
-# one-model box and its three tiers.
+# The seven dropdowns that offer CLAUDE_MODELS: two scorer stages, the tailor's
+# one-model box, its three tiers and (cycle 22) its cover-letter model.
 CLAUDE_DROPDOWNS = {
     "stage1_model_claude", "stage2_model_claude", "RESUME_TAILOR_CLAUDE_MODEL_ALL",
     "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "RESUME_TAILOR_CLAUDE_MODEL_FLASH",
-    "RESUME_TAILOR_CLAUDE_MODEL_PRO",
+    "RESUME_TAILOR_CLAUDE_MODEL_PRO", "RESUME_TAILOR_CLAUDE_MODEL_COVER",
 }
 
 
@@ -1646,6 +1657,7 @@ CLAUDE_DEFAULTS = {
     "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE": "claude-haiku-4-5",
     "RESUME_TAILOR_CLAUDE_MODEL_FLASH": "claude-sonnet-5",
     "RESUME_TAILOR_CLAUDE_MODEL_PRO": "claude-opus-5-5",
+    "RESUME_TAILOR_CLAUDE_MODEL_COVER": "",   # blank: the usual deep/standard split
 }
 
 

@@ -105,6 +105,9 @@ for _leaked in (
     # Read live by config.claude_effort and claude_timeout_schedule, so a shell
     # export would change the effort and the time limit every tailor test sees.
     "RESUME_TAILOR_CLAUDE_EFFORT", "RESUME_TAILOR_CLAUDE_TIMEOUTS",
+    # The cover letter's own model and effort, read live the same way.
+    "RESUME_TAILOR_MODEL_COVER", "RESUME_TAILOR_CLAUDE_MODEL_COVER",
+    "RESUME_TAILOR_CLAUDE_EFFORT_COVER",
     # score_jobs' scoring config: env beats the file, and these decide the
     # module constants frozen at import (see _hermetic_repo_data).
     "SCORE_PROVIDER", "SCORE_STAGE1_MODEL", "SCORE_STAGE2_MODEL",

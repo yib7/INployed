@@ -182,7 +182,7 @@ def call(
         return _call_claude(
             system, user, config.claude_model_for(tier),
             json_out=json_out, temperature=temperature,
-            max_output_tokens=max_output_tokens, tools=tools,
+            max_output_tokens=max_output_tokens, tools=tools, tier=tier,
         )
     model = config.model_for(tier)
     return _call_gemini(
@@ -669,19 +669,21 @@ def _invoke_claude(
     json_out: bool,
     tools: Optional[list],
     timeout_s: float,
+    tier: Optional[str] = None,
 ):
     """One raw `claude -p` invocation with a bounded timeout. Returns a
     claude_cli.CLIResult. Split out so the retry/escalation logic in
     `_call_claude` is unit-testable without the real CLI.
 
-    Every call sends the configured effort (config.claude_effort(), 'low' by
-    default): at the CLI's own default a deep model can think past the whole
-    timeout schedule on the bullet-writing call."""
+    Every call sends the configured effort (config.claude_effort(tier), 'low' by
+    default; the cover letter's tier can name its own): at the CLI's own default
+    a deep model can think past the whole timeout schedule on the bullet-writing
+    call."""
     cc = _claude_cli()
     return cc.run_claude(
         system, user, model,
         json_mode=json_out, allow_websearch=bool(tools), timeout_s=timeout_s,
-        effort=config.claude_effort() or None,
+        effort=config.claude_effort(tier) or None,
     )
 
 
@@ -694,6 +696,7 @@ def _call_claude(
     temperature: float = 0.2,
     max_output_tokens: Optional[int] = None,
     tools: Optional[list] = None,
+    tier: Optional[str] = None,
 ) -> Any:
     """Run one Claude Code CLI generation, mirroring `_call_gemini`'s retry
     envelope: a per-call timeout that ESCALATES across attempts
@@ -714,7 +717,7 @@ def _call_claude(
             "or set the provider back to 'gemini' in Settings.",
             kind="config",
         )
-    schedule = config.claude_timeout_schedule()
+    schedule = config.claude_timeout_schedule(tier)
     last_err: Optional[Exception] = None
     timed_out = False
     rl_used = 0
@@ -724,7 +727,7 @@ def _call_claude(
         try:
             res = _invoke_claude(
                 system, user, model,
-                json_out=json_out, tools=tools, timeout_s=timeout_s,
+                json_out=json_out, tools=tools, timeout_s=timeout_s, tier=tier,
             )
             # The model that answered: after a VL-5 swap the CLI ran the fallback,
             # and booking it under the requested model would misstate the run.

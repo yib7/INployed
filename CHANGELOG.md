@@ -20,6 +20,12 @@ All notable changes to INployed are recorded here. The format follows
   outage, a closed window or a browser that will not start stops new jobs from starting, and
   Ctrl+C ends the windows. One job, or the setting at 1, checks on the real profile exactly as
   before.
+- **The cover letter can have its own model.** With the tailor's models on `tiers`, Settings →
+  Engine (under *Show advanced settings*) has **Claude model: cover letter** (or **Tailor model:
+  cover letter** on Gemini) and, on Claude, **Claude thinking effort: cover letter**. The model
+  writes the letter's draft and every pass that edits it; the effort sets how long Claude thinks
+  on those passes, with time limits to match. Left blank and on `same`, the letter is written
+  as before: the deep model drafts, the standard one edits, at the general effort.
 - **Résumé bullets on the Apply sheet copy with their dashes.** The sheet writes each résumé
   bullet as `- bullet` with a blank line before the next, and copying a selection from the Apply
   panel's sheet or its **Expand** window keeps the `- ` markers.

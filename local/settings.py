@@ -909,6 +909,15 @@ SETTINGS_SCHEMA: list[Field] = [
                "defaults to the same model as 'Tailor model: standard (selection)' to "
                "keep costs down; set it to gemini-3.1-pro-preview yourself "
                "for the strongest writing (slower / pricier)."),
+    # Blank is a real value here: config._cover_or reads it as "no model of its
+    # own", so the letter keeps the deep model for its draft and the standard one
+    # for its edits, exactly as before the row existed.
+    Field("RESUME_TAILOR_MODEL_COVER", "Tailor model: cover letter",
+          "editable_choice", "", "Engine", "env", choices=GEMINI_MODELS,
+          show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
+          help="Writes the cover letter: its draft and every pass that edits it. Leave "
+               "blank to keep the usual split (the deep model drafts, the standard one "
+               "edits)."),
     Field("RESUME_TAILOR_CLAUDE_MODEL_MODE", "Claude models: simple or per stage",
           "choice", "tiers", "Engine", "env", choices=MODEL_MODES,
           show_if=("tailor_provider", ("claude",)), restart=True,
@@ -937,6 +946,12 @@ SETTINGS_SCHEMA: list[Field] = [
           show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
           help="Claude provider only: writes the first draft of every bullet and the cover "
                "letter."),
+    Field("RESUME_TAILOR_CLAUDE_MODEL_COVER", "Claude model: cover letter",
+          "editable_choice", "", "Engine", "env", choices=CLAUDE_MODELS,
+          show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
+          help="Claude provider only: writes the cover letter, its draft and every pass "
+               "that edits it. Leave blank to keep the usual split (the deep model "
+               "drafts, the standard one edits)."),
     # resume_tailor/config.py's CLAUDE_EFFORTS plus 'default' (send no --effort);
     # claude_effort() reads this, and a value outside the set falls back to 'low'.
     Field("RESUME_TAILOR_CLAUDE_EFFORT", "Claude thinking effort",
@@ -948,6 +963,16 @@ SETTINGS_SCHEMA: list[Field] = [
                "Higher levels think longer, and each answer's time limit grows with the "
                "level so they have room to finish; a whole tailoring run takes longer at "
                "each step up. 'default' sends no level and lets the Claude CLI decide."),
+    # config.claude_effort(TIER_COVER*) reads this; 'same' (or anything outside
+    # the set) falls through to RESUME_TAILOR_CLAUDE_EFFORT above.
+    Field("RESUME_TAILOR_CLAUDE_EFFORT_COVER", "Claude thinking effort: cover letter",
+          "choice", "same", "Engine", "env",
+          choices=("same", "low", "medium", "high", "xhigh", "max", "default"),
+          show_if=("tailor_provider", ("claude",)), advanced=True, restart=True,
+          help="Claude provider only: how long Claude thinks while writing the cover "
+               "letter. 'same' uses 'Claude thinking effort'. A higher level writes a "
+               "more considered letter and takes longer; its time limit grows with the "
+               "level."),
 
     # --- VM (cloud scraper): NON-secret gcloud connection identifiers, in .env --
     # The VM tab pushes config/schedule/pause via `gcloud compute`. Auth is your

@@ -73,6 +73,18 @@ CONFIG_JSON = PKG_DIR.parent / "config.json"            # local/config.json
 TIER_FLASH_LITE = "flash_lite"
 TIER_FLASH = "flash"
 TIER_PRO = "pro"
+# The cover letter's own tiers: TIER_COVER drafts the letter, TIER_COVER_EDIT
+# runs its repair, humanizer and style-fix passes. Not in _TIER_ENV: in 'tiers'
+# mode both read one cover-letter model var and, left blank, resolve exactly as
+# before it existed (the draft on the deep tier, the edits on the standard one),
+# so an install that never sets it keeps today's letter. 'simple' mode sends them
+# to the one model like every other tier.
+TIER_COVER = "cover"
+TIER_COVER_EDIT = "cover_edit"
+_COVER_TIERS = {TIER_COVER: TIER_PRO, TIER_COVER_EDIT: TIER_FLASH}
+MODEL_COVER_ENV = "RESUME_TAILOR_MODEL_COVER"
+CLAUDE_MODEL_COVER_ENV = "RESUME_TAILOR_CLAUDE_MODEL_COVER"
+CLAUDE_EFFORT_COVER_ENV = "RESUME_TAILOR_CLAUDE_EFFORT_COVER"
 
 # Tier token -> (env var, default) for model_for()'s live lookup.
 _TIER_ENV = {
@@ -590,6 +602,18 @@ def _fallback_list(env: str, cfg_key: str) -> list[str]:
     return _model_names(val)
 
 
+def _cover_or(tier: str | None, env: str) -> tuple[str | None, str]:
+    """(tier to resolve, cover model id or ''). For a cover-letter tier: the id
+    named in `env` when set, else '' with the tier switched to the one that pass
+    used before the letter had its own model (_COVER_TIERS). Any other tier
+    passes through unchanged."""
+    if tier not in _COVER_TIERS:
+        return tier, ""
+    val = os.getenv(env, "")
+    val = val.strip() if isinstance(val, str) else ""
+    return (tier, val) if val else (_COVER_TIERS[tier], "")
+
+
 def gemini_fallback_models(tier: str | None = None) -> list[str]:
     """Extra models the pool may use after `tier`'s own model, ranked.
 
@@ -611,6 +635,12 @@ def gemini_fallback_models(tier: str | None = None) -> list[str]:
     if _model_mode(MODEL_MODE_ENV) == MODEL_MODE_SIMPLE and _one_model(
             MODEL_MODE_ENV, MODEL_ALL_ENV):
         return _fallback_list(FALLBACK_ALL_ENV, FALLBACK_ALL_KEY)
+    # A cover-letter pass on its own model falls back along the deep tier's chain
+    # (the quality class you picked it for); left blank, along the chain of the
+    # tier it resolves to.
+    if tier in _COVER_TIERS:
+        own = _cover_or(tier, MODEL_COVER_ENV)[1]
+        tier = TIER_PRO if own else _COVER_TIERS[tier]
     pair = _TIER_FALLBACK_ENV.get(tier or "")
     return _fallback_list(*pair) if pair else []
 
@@ -646,6 +676,9 @@ def claude_model_for(tier: str) -> str:
     one = _one_model(CLAUDE_MODEL_MODE_ENV, CLAUDE_MODEL_ALL_ENV)
     if one:
         return one
+    tier, cover = _cover_or(tier, CLAUDE_MODEL_COVER_ENV)
+    if cover:
+        return cover
     env, default = _CLAUDE_TIER_ENV.get(tier, (None, CLAUDE_MODEL_FLASH))
     return os.getenv(env, default) if env else default
 
@@ -663,7 +696,7 @@ def _parse_timeouts(raw: str, default: list[int]) -> list[int]:
     return vals if vals else default
 
 
-def claude_timeout_schedule() -> list[int]:
+def claude_timeout_schedule(tier: str | None = None) -> list[int]:
     """Escalating per-attempt Claude CLI timeouts for the configured effort
     (CLAUDE_TIMEOUTS_BY_EFFORT; [180, 300] at the default 'low', which covers
     the CLI's cold start and opus latency, where Gemini's 60s first slot would
@@ -671,7 +704,7 @@ def claude_timeout_schedule() -> list[int]:
     RESUME_TAILOR_CLAUDE_TIMEOUTS='180,300' overrides it at any effort; garbage
     falls back to the effort's schedule."""
     raw = os.getenv("RESUME_TAILOR_CLAUDE_TIMEOUTS", "")
-    return _parse_timeouts(raw, list(CLAUDE_TIMEOUTS_BY_EFFORT[claude_effort()]))
+    return _parse_timeouts(raw, list(CLAUDE_TIMEOUTS_BY_EFFORT[claude_effort(tier)]))
 
 
 # The `claude --effort` levels, and the one every tailoring call sends unless
@@ -698,12 +731,20 @@ CLAUDE_TIMEOUTS_BY_EFFORT = {
 }
 
 
-def claude_effort() -> str:
+def claude_effort(tier: str | None = None) -> str:
     """The `--effort` level for the tailor's Claude calls, read live.
 
     RESUME_TAILOR_CLAUDE_EFFORT='default' returns '' (no flag: the CLI decides).
     Blank or unknown values return CLAUDE_EFFORT_DEFAULT, the same way a garbage
-    timeout schedule falls back to its default."""
+    timeout schedule falls back to its default. For a cover-letter tier a level named in
+    RESUME_TAILOR_CLAUDE_EFFORT_COVER wins ('default' included); 'same', blank or
+    unknown there falls through to the general effort."""
+    if tier in _COVER_TIERS:
+        val = os.getenv(CLAUDE_EFFORT_COVER_ENV, "").strip().lower()
+        if val == "default":
+            return ""
+        if val in CLAUDE_EFFORTS:
+            return val
     val = os.getenv("RESUME_TAILOR_CLAUDE_EFFORT", "").strip().lower()
     if val == "default":
         return ""
@@ -730,6 +771,9 @@ def model_for(tier: str) -> str:
     one = _one_model(MODEL_MODE_ENV, MODEL_ALL_ENV)
     if one:
         return one
+    tier, cover = _cover_or(tier, MODEL_COVER_ENV)
+    if cover:
+        return cover
     env, default = _TIER_ENV.get(tier, (None, MODEL_FLASH))
     return os.getenv(env, default) if env else default
 

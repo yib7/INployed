@@ -348,7 +348,7 @@ def _invoke_claude_seq(excs, *, ok_text='{"ok": 1}', in_tok=11, out_tok=22,
     seen: list[int] = []
     pending = list(excs)
 
-    def _fake(system, user, model, *, json_out, tools, timeout_s):
+    def _fake(system, user, model, *, json_out, tools, timeout_s, tier=None):
         seen.append(timeout_s)
         if pending:
             raise pending.pop(0)
@@ -524,7 +524,7 @@ def test_call_claude_cli_too_old_fails_fast_with_no_retry(monkeypatch, claude_en
 def test_usage_names_the_model_that_ran_after_a_swap(monkeypatch, claude_env):
     """VL-5 fix round: a call claude_cli answered on the fallback is booked
     under the fallback, never under the model the tailor asked for."""
-    def fake(system, user, model, *, json_out, tools, timeout_s):
+    def fake(system, user, model, *, json_out, tools, timeout_s, tier=None):
         return claude_cli.CLIResult("ok", 1, 2, 0, 0, model="claude-opus-5")
 
     monkeypatch.setattr(llm, "_invoke_claude", fake)

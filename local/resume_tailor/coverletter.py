@@ -449,7 +449,7 @@ TODAY'S DATE: {date.today():%B %d, %Y}.
 EDUCATION: {_education_context()}
 
 Write the body now."""
-    body = _clean_reply(compose.call(system, user, config.TIER_PRO,
+    body = _clean_reply(compose.call(system, user, config.TIER_COVER,
                                      json_out=False, temperature=0.4))
     if not body:
         raise LLMError("the cover letter draft came back empty")
@@ -526,7 +526,7 @@ LETTER BODY TO REPAIR:
 
 Rewrite the body now with every unsupported item removed."""
     try:
-        fixed = _clean_reply(compose.call(system, user, config.TIER_FLASH,
+        fixed = _clean_reply(compose.call(system, user, config.TIER_COVER_EDIT,
                                           json_out=False, temperature=0.2))
     except Exception:  # noqa: BLE001 - repair is best-effort; the re-check decides
         return body
@@ -576,7 +576,7 @@ COVER-LETTER DRAFT TO EDIT:
 
 Return ONLY the revised body: no preamble, no sign-off."""
     try:
-        refined = _clean_reply(compose.call(system, user, config.TIER_FLASH,
+        refined = _clean_reply(compose.call(system, user, config.TIER_COVER_EDIT,
                                             json_out=False, temperature=0.3))
     except Exception:  # noqa: BLE001 - refine is advisory; the draft still stands
         return body
@@ -621,7 +621,7 @@ LETTER BODY TO REPAIR (findings: {", ".join(violations)}):
 
 Rewrite the body now, clearing every finding."""
         try:
-            fixed = _clean_reply(compose.call(system, user, config.TIER_FLASH,
+            fixed = _clean_reply(compose.call(system, user, config.TIER_COVER_EDIT,
                                               json_out=False, temperature=0.2))
             # Commit only strict improvement, so a bad repair can't make it worse.
             if fixed and len(_body_violations(fixed, bullets)) < len(violations):

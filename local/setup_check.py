@@ -184,8 +184,9 @@ def selected_claude_models(cfg: dict, stored: dict) -> list[tuple[str, str]]:
 
     The tailor's models count only when its provider is 'claude', resolved as
     config.claude_model_for does: 'simple' mode with a model named sends every
-    step to that one model, anything else uses the three per-tier models. The
-    scorer's two Claude stage models count only when its provider is 'claude'."""
+    step to that one model, anything else uses the per-tier models (the cover
+    letter's own, when one is named). The scorer's two Claude stage models count
+    only when its provider is 'claude'."""
     tailor_provider, scoring_provider = _providers(cfg, stored)
     out: list[tuple[str, str]] = []
     if tailor_provider == "claude":
@@ -196,7 +197,8 @@ def selected_claude_models(cfg: dict, stored: dict) -> list[tuple[str, str]]:
         else:
             for key in ("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE",
                         "RESUME_TAILOR_CLAUDE_MODEL_FLASH",
-                        "RESUME_TAILOR_CLAUDE_MODEL_PRO"):
+                        "RESUME_TAILOR_CLAUDE_MODEL_PRO",
+                        "RESUME_TAILOR_CLAUDE_MODEL_COVER"):
                 out.append((TAILOR_TAG, _setting(stored, key)))
     if scoring_provider == "claude":
         for key, env in (("stage1_model_claude", "SCORE_STAGE1_MODEL_CLAUDE"),

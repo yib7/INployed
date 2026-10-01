@@ -355,6 +355,14 @@ the VM keeps running unchanged.
 > To set your own limits, put them in `RESUME_TAILOR_CLAUDE_TIMEOUTS` in `.env` (for
 > example `600,1200`); that list wins at any level. Close and reopen the dashboard after
 > changing either.
+>
+> **The cover letter's own model.** With the models on `tiers`, *Show advanced settings*
+> also shows **Claude model: cover letter** (**Tailor model: cover letter** on Gemini) and
+> **Claude thinking effort: cover letter**. The model writes the letter's draft and every
+> pass that edits it, so `claude-opus-5-5` with the effort at `high` writes the whole letter
+> on Opus 5.5 at high effort while the résumé keeps its own models and effort. Blank and
+> `same` (the defaults) keep the usual split: the deep model drafts, the standard one edits,
+> at **Claude thinking effort**. Close and reopen the dashboard after changing them.
 
 #### One model for every step, or one per stage
 Settings → Résumé tailor, **Tailor models: simple or per stage** (and, on the Claude provider,

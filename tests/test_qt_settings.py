@@ -3093,7 +3093,8 @@ def test_the_review_c_blanks_still_open_on_their_defaults_beside_a_blank_locatio
 _BLANK_MEANS_SOMETHING = (
     "GEMINI_API_KEYS", "RESUME_TAILOR_GEMINI_API_KEY", "GOOGLE_CLOUD_PROJECT",
     "GOOGLE_CLOUD_LOCATION", "RESUME_TAILOR_OUTPUT", "LINKEDIN_CHROME_ACCOUNT",
-    "RESUME_TAILOR_MODEL_ALL", "RESUME_TAILOR_CLAUDE_MODEL_ALL", "VM_INSTANCE")
+    "RESUME_TAILOR_MODEL_ALL", "RESUME_TAILOR_CLAUDE_MODEL_ALL", "VM_INSTANCE",
+    "RESUME_TAILOR_MODEL_COVER", "RESUME_TAILOR_CLAUDE_MODEL_COVER")
 
 
 def test_every_field_whose_help_gives_a_blank_a_meaning_keeps_it_through_a_save(

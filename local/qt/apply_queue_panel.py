@@ -1339,13 +1339,17 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             return
         ids = self._selected_job_ids()
         if len(ids) == 1:
-            self._on_check_difficulty(ids)
-            self._set_note("Checking the selected job's difficulty in a new terminal.")
+            if self._launch_check(ids):
+                self._set_note("Checking the selected job's difficulty in a new terminal.")
             return
         if ids:
-            self._on_check_difficulty(ids)
-            self._set_note(f"Checking {len(ids)} selected jobs, "
-                           f"{self._at_once_words(len(ids))}, in a new terminal.")
+            # every queued job selected: `--all` keeps the command line short
+            # (Windows caps it near 32,767 characters, about 900 ids)
+            queued_ids = {str(e.get("job_posting_id") or "") for e in self._jobs
+                          if e.get("status") == "queued"}
+            if self._launch_check([] if set(ids) == queued_ids else ids):
+                self._set_note(f"Checking {len(ids)} selected jobs, "
+                               f"{self._at_once_words(len(ids))}, in a new terminal.")
             return
         queued = self._queued_count()
         if queued == 0:
@@ -1353,8 +1357,21 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             return
         if not self._confirm_check(queued):
             return
-        self._on_check_difficulty([])
-        self._set_note(f"Checking {queued} queued job(s) in a new terminal.")
+        if self._launch_check([]):
+            self._set_note(f"Checking {queued} queued job(s) in a new terminal.")
+
+    def _launch_check(self, ids: List[str]) -> bool:
+        """Start the check's console for `ids` (every queued job when empty);
+        False, with a note, when it will not start (a command line too long
+        for Windows among the reasons)."""
+        try:
+            self._on_check_difficulty(ids)
+        except OSError as e:
+            more = (" Select fewer jobs, or select none to check every queued job."
+                    if len(ids) > 1 else "")
+            self._set_note(f"The difficulty check did not start ({type(e).__name__}).{more}")
+            return False
+        return True
 
     def _missing_questions(self) -> List[Dict[str, Any]]:
         """The selected job's missing answers that name a question."""

@@ -2050,7 +2050,9 @@ def test_the_queue_table_takes_a_multi_row_selection(qtbot, tmp_path):
 def test_the_check_on_three_selected_jobs_passes_all_three_with_the_note(qtbot, tmp_path,
                                                                          monkeypatch):
     calls, asked = [], []
-    p = _dpanel(qtbot, _three(tmp_path), on_check_difficulty=calls.append,
+    qfile = _three(tmp_path)
+    _checked(qfile, "4", difficulty=None)      # queued, not selected: the ids are named
+    p = _dpanel(qtbot, qfile, on_check_difficulty=calls.append,
                 check_parallel=lambda: 2)
     monkeypatch.setattr(p, "_confirm_check", lambda n: asked.append(n) or True)
     _multi(p, "1", "2", "3")
@@ -2205,3 +2207,61 @@ def test_the_default_checks_at_once_survives_a_broken_settings_backend(monkeypat
 
     monkeypatch.setattr(settings, "load", broken)
     assert aqp._default_check_parallel() == 10
+
+
+# --- cycle 22 final review: a large selection, a spawn that fails ---------------------------
+
+
+def test_a_selection_of_every_queued_job_runs_as_all(qtbot, tmp_path):
+    calls = []
+    p = _dpanel(qtbot, _three(tmp_path), on_check_difficulty=calls.append,
+                check_parallel=lambda: 2)
+    _multi(p, "1", "2", "3")
+    p.check_difficulty_btn.click()
+    assert calls == [[]]                       # `--all`: the command line stays short
+    assert p.status_label.text() == \
+        "Checking 3 selected jobs, up to 2 at once, in a new terminal."
+
+
+def test_a_selection_of_some_queued_jobs_names_them(qtbot, tmp_path):
+    calls = []
+    p = _dpanel(qtbot, _three(tmp_path), on_check_difficulty=calls.append,
+                check_parallel=lambda: 2)
+    _multi(p, "1", "3")
+    p.check_difficulty_btn.click()
+    assert calls == [p._selected_job_ids()] and sorted(calls[0]) == ["1", "3"]
+
+
+def test_a_selection_with_a_parked_job_names_every_one(qtbot, tmp_path):
+    qfile = _three(tmp_path)
+    _checked(qfile, "4", difficulty=None)
+    apply_queue.finish("4", "needs_human", tab_note="review tab", path=qfile)
+    calls = []
+    p = _dpanel(qtbot, qfile, on_check_difficulty=calls.append, check_parallel=lambda: 2)
+    _multi(p, "1", "2", "3", "4")
+    p.check_difficulty_btn.click()
+    assert len(calls) == 1 and sorted(calls[0]) == ["1", "2", "3", "4"]
+
+
+@pytest.mark.parametrize("pick", [("1", "3"), ("2",)])
+def test_a_check_that_will_not_start_says_so(qtbot, tmp_path, pick):
+    def too_long(ids):
+        raise OSError(206, "The filename or extension is too long")
+    p = _dpanel(qtbot, _three(tmp_path), on_check_difficulty=too_long,
+                check_parallel=lambda: 2)
+    _multi(p, *pick)
+    p.check_difficulty_btn.click()             # no exception escapes the slot
+    note = p.status_label.text()
+    assert note.startswith("The difficulty check did not start (OSError).")
+    assert ("Select fewer jobs" in note) == (len(pick) > 1)
+
+
+def test_a_check_of_every_queued_job_that_will_not_start_says_so(qtbot, tmp_path,
+                                                                 monkeypatch):
+    def broken(ids):
+        raise OSError("powershell missing")
+    p = _dpanel(qtbot, _three(tmp_path), on_check_difficulty=broken)
+    monkeypatch.setattr(p, "_confirm_check", lambda n: True)
+    p.table.clearSelection()
+    p.check_difficulty_btn.click()
+    assert p.status_label.text().startswith("The difficulty check did not start (OSError).")

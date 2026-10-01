@@ -439,12 +439,16 @@ def launch_profile(pw, profile_dir: Path, *, headless: bool, log=None):
     opened here, the bundled one too, which leaves no Chrome lock. A taken
     sentinel, or a Chrome that fails while Chrome's own lock is held, raises
     `profile_lock.ProfileBusy` before the bundled build could open a
-    profile another browser holds."""
+    profile another browser holds.
+
+    On the real profile, with its sentinel held, the difficulty check's
+    leftover profile copies are swept first (`_sweep_check_copies`)."""
     log = log or logging.getLogger("apply_run")
     guard = profile_lock.hold(profile_dir)
     if guard is None:
         raise profile_lock.ProfileBusy(profile_lock.RUN_BUSY)
     try:
+        _sweep_check_copies(profile_dir, log)
         try:
             ctx = pw.chromium.launch_persistent_context(
                 str(profile_dir), channel=BROWSER_CHANNEL, headless=headless, viewport=VIEWPORT)
@@ -461,6 +465,22 @@ def launch_profile(pw, profile_dir: Path, *, headless: bool, log=None):
         raise
     _release_on_close(ctx, guard)
     return ctx
+
+
+def _sweep_check_copies(profile_dir: Path, log) -> None:
+    """The parallel difficulty check's profile copies hold the sign-in
+    cookies; one that outlived its run (a console closed with X, a browser
+    slow to let go) is deleted here, by a holder of the real profile's
+    sentinel, so a live check's copies are never touched. A copy of another
+    profile, or a slot itself, sweeps nothing. Never raises."""
+    try:
+        import assess_pool
+        if not assess_pool.is_real_profile(profile_dir):
+            return
+        for folder in assess_pool.sweep_slots(tries=1):
+            log.warning(assess_pool.LEFT_BEHIND.format(folder=folder))
+    except Exception as e:      # noqa: BLE001  (a sweep never stops a browser opening)
+        log.debug("the profile copies were not swept (%s)", type(e).__name__)
 
 
 def _release_on_close(ctx, guard) -> None:

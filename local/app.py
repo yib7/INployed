@@ -9,6 +9,7 @@ toolkit-agnostic modules; this file only wires the UI together.
 from __future__ import annotations
 
 import sys
+import threading
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -66,6 +67,22 @@ def build_app(argv: list[str] | None = None) -> QtWidgets.QApplication:
     return app
 
 
+def _sweep_profile_copies() -> threading.Thread:
+    """Delete the parallel difficulty check's leftover profile copies (they
+    hold the sign-in cookies) on a daemon thread, never on the UI thread.
+    `assess_pool.sweep_if_free` takes the real profile's sentinel for the
+    sweep, so a check, a run or a sign-in in progress keeps its own."""
+    def sweep() -> None:
+        try:
+            import assess_pool
+            assess_pool.sweep_if_free()
+        except Exception:  # noqa: BLE001 - a leftover waits for the next sweep
+            pass
+    t = threading.Thread(target=sweep, name="assess-copies-sweep", daemon=True)
+    t.start()
+    return t
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv if argv is None else argv)
     csv_paths = _with_local_runs([Path(a) for a in argv[1:] if not a.startswith("-")])
@@ -80,6 +97,7 @@ def main(argv: list[str] | None = None) -> int:
     win = None
     rc = 0
     try:
+        _sweep_profile_copies()
         win = MainWindow(csv_paths)
         win.showMaximized()
         win.start()  # load data AFTER the window paints, off the UI thread

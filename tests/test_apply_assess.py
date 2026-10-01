@@ -1259,13 +1259,6 @@ def test_a_worker_that_is_refused_still_ends_with_a_result_line(worker, capsys):
     assert got["job_id"] == "42"
 
 
-def test_a_worker_on_a_busy_profile_says_so_in_its_result(worker, capsys):
-    worker.monkeypatch.setattr(aa, "profile_busy", lambda profile=None: True)
-    assert aa.main(worker.argv()) == 2
-    got = worker.result(capsys)
-    assert got["outcome"] == "error" and got["why"] == aa.PROFILE_BUSY
-
-
 def test_a_worker_with_no_browser_says_so_in_its_result(worker, capsys):
     chromium = _FakeChromium(fail={"chrome", None})
     _fake_playwright(worker.monkeypatch, chromium)
@@ -1325,3 +1318,127 @@ def test_the_result_line_round_trips():
 def test_a_run_that_recorded_nothing_is_an_error_result():
     got = aa.worker_result({}, job_id="42")
     assert got["outcome"] == "error" and got["job_id"] == "42" and set(got) == RESULT_KEYS
+
+
+# === cycle 22 final review fixes =============================================================
+
+def test_a_worker_crash_is_a_failed_job_with_its_traceback_logged(worker, capsys, caplog):
+    import apply_queue
+
+    def locked(*a, **kw):
+        raise apply_queue.QueueLockTimeout("the queue lock is held")
+    worker.check(_scored)
+    worker.monkeypatch.setattr(apply_queue, "set_difficulty", locked)
+    with caplog.at_level("ERROR", logger="apply_assess"):
+        assert aa.main(worker.argv(), context=_FakeCtx()) == 1
+    got = worker.result(capsys)
+    assert got["outcome"] == "error" and got["why"] == "the worker failed (QueueLockTimeout)"
+    assert got["failed"] is True and "refusal" not in got
+    assert "Traceback" in caplog.text and "QueueLockTimeout" in caplog.text
+
+
+def test_a_worker_that_crashes_is_marked_failed(worker, capsys):
+    worker.monkeypatch.setattr(aa, "run", lambda *a, **kw: 1 / 0)
+    assert aa.main(worker.argv(), context=_FakeCtx()) == 1
+    got = worker.result(capsys)
+    assert got["failed"] is True and "refusal" not in got
+
+
+def test_a_refused_worker_marks_its_result_as_a_refusal(worker, capsys):
+    _write_switch(dict(ON, jev_difficulty=False, auto_apply_jev_mode="typesafe"))
+    assert aa.main(worker.argv(), context=_FakeCtx()) == 2
+    got = worker.result(capsys)
+    assert got["refusal"] is True and "failed" not in got
+
+
+def test_a_worker_with_no_browser_marks_a_refusal(worker, capsys):
+    chromium = _FakeChromium(fail={"chrome", None})
+    _fake_playwright(worker.monkeypatch, chromium)
+    assert aa.main(worker.argv()) == 1
+    assert worker.result(capsys)["refusal"] is True
+
+
+def test_a_worker_on_a_test_judge_marks_a_refusal(worker, capsys):
+    _write_switch(dict(ON, jev_enabled=False, auto_apply_jev_mode="fake"))
+    assert aa.main(worker.argv(), context=_FakeCtx()) == 2
+    assert worker.result(capsys)["refusal"] is True
+
+
+def test_a_worker_usage_error_marks_a_refusal(worker, capsys):
+    assert aa.main(["--worker", "42"], context=_FakeCtx()) == 2
+    assert worker.result(capsys)["refusal"] is True
+
+
+def test_a_job_gone_from_the_queue_is_no_refusal(worker, capsys):
+    code, got = worker.run(capsys, worker.argv(job="7"))
+    assert "refusal" not in got and "failed" not in got
+
+
+def test_a_scored_or_unread_result_carries_no_mark(worker, capsys):
+    worker.check(_scored)
+    code, got = worker.run(capsys)
+    assert set(got) == RESULT_KEYS
+
+
+def test_a_worker_waits_for_its_slot_to_free(worker, capsys):
+    worker.monkeypatch.setattr(aa, "SLOT_BUSY_POLL_S", 0)
+    answers = iter([True, True, False])
+    worker.monkeypatch.setattr(aa, "profile_busy", lambda profile=None: next(answers, False))
+    chromium = _FakeChromium()
+    _fake_playwright(worker.monkeypatch, chromium)
+    worker.check(_scored)
+    assert aa.main(worker.argv()) == 0
+    assert worker.result(capsys)["outcome"] == "scored"
+
+
+def test_a_worker_on_a_slot_still_busy_is_a_failed_job_not_a_refusal(worker, capsys):
+    worker.monkeypatch.setattr(aa, "SLOT_BUSY_WAIT_S", 0.05)
+    worker.monkeypatch.setattr(aa, "SLOT_BUSY_POLL_S", 0.01)
+    worker.monkeypatch.setattr(aa, "profile_busy", lambda profile=None: True)
+    assert aa.main(worker.argv()) == 1
+    got = worker.result(capsys)
+    assert got["outcome"] == "error" and got["why"] == aa.SLOT_BUSY
+    assert got["failed"] is True and "refusal" not in got
+    assert "auto-apply browser is open" not in aa.SLOT_BUSY
+
+
+def test_a_worker_whose_slot_is_taken_as_it_starts_is_a_failed_job(worker, capsys):
+    import profile_lock
+    from test_profile_lock import hold_sentinel
+    worker.monkeypatch.setattr(profile_lock, "HOLD_WAIT_S", 0)
+    worker.monkeypatch.setattr(aa, "profile_busy", lambda profile=None: False)
+    chromium = _FakeChromium()
+    _fake_playwright(worker.monkeypatch, chromium)
+    guard = hold_sentinel(worker.slot)
+    try:
+        assert aa.main(worker.argv()) == 1
+    finally:
+        guard.release()
+    got = worker.result(capsys)
+    assert got["why"] == aa.SLOT_BUSY and got["failed"] is True
+
+
+def test_the_one_job_check_sweeps_leftover_profile_copies(browser_cli):
+    import assess_pool
+    leftover = assess_pool.slot_dir(4)
+    (leftover / "Default" / "Network").mkdir(parents=True)
+    (leftover / "Default" / "Network" / "Cookies").write_text("old", encoding="utf-8")
+    chromium = _FakeChromium()
+    _fake_playwright(browser_cli, chromium)
+    browser_cli.setattr(aa, "run", lambda job_ids, **kw: 0)
+    assert aa.main(["42"]) == 0
+    assert not leftover.exists()
+
+
+def test_a_worker_never_sweeps_the_other_slots(worker, capsys):
+    import assess_pool
+    other = assess_pool.slot_dir(2)
+    other.mkdir(parents=True)
+    chromium = _FakeChromium()
+    _fake_playwright(worker.monkeypatch, chromium)
+    worker.check(_scored)
+    worker_slot = assess_pool.slot_dir(1)
+    worker_slot.mkdir(parents=True)
+    argv = ["--worker", "--profile", str(worker_slot), "--queue", str(worker.queue), "42"]
+    assert aa.main(argv) == 0
+    assert other.exists() and worker_slot.exists()

@@ -1057,30 +1057,48 @@ def _say(text: str) -> None:
 
 RESULT_PREFIX = "@@assess-result "
 OUTCOMES = ("scored", "unread", "outage", "closed", "error")
+# An error result may carry one mark for the coordinator: `refusal` (the
+# check refused to run at all: a gate, no browser; the pool stops) or
+# `failed` (the worker crashed, or its slot stayed busy, and noted nothing on
+# the queue; the pool notes it and goes on). Neither key is there otherwise.
+MARKS = ("refusal", "failed")
 WORKER_USAGE = "apply_assess: --worker takes exactly one job id and --profile, and no --all"
+SLOT_BUSY = "its profile copy was still open in the browser of the job before"
+SLOT_BUSY_WAIT_S = 5.0      # how long a worker waits for its slot's last browser to close
+SLOT_BUSY_POLL_S = 0.25
 
 
 def _note(report: dict | None, outcome: str, why: str, *, job_id: str = "", counted=None,
-          usd: float = 0.0, score: int | None = None, band: str = "") -> None:
+          usd: float = 0.0, score: int | None = None, band: str = "",
+          refusal: bool = False, failed: bool = False) -> None:
     """Record the last job's outcome for a worker (`run`'s `report`); a run
-    with no report records nothing."""
+    with no report records nothing. `refusal` and `failed` set the MARKS."""
     if report is None:
         return
     report.clear()
     report.update(job_id=job_id, outcome=outcome, score=score, band=band, why=why,
                   requests=int(getattr(counted, "requests", 0) or 0), usd=round(float(usd), 6))
+    if refusal:
+        report["refusal"] = True
+    if failed:
+        report["failed"] = True
 
 
 def worker_result(report: Mapping[str, Any], *, job_id: str = "") -> dict:
-    """The worker's result: the keys of `RESULT_PREFIX`'s JSON, whole. A run
-    that recorded nothing is an error, so the coordinator never has to guess."""
+    """The worker's result: the keys of `RESULT_PREFIX`'s JSON, whole, and a
+    mark (MARKS) when the report has one. A run that recorded nothing is an
+    error, so the coordinator never has to guess."""
     got = dict(report)
     if got.get("outcome") not in OUTCOMES:
         got = {"outcome": "error", "why": "the check ended with no result"}
-    return {"job_id": str(got.get("job_id") or job_id), "outcome": got["outcome"],
-            "score": got.get("score"), "band": str(got.get("band") or ""),
-            "why": str(got.get("why") or ""), "requests": int(got.get("requests") or 0),
-            "usd": float(got.get("usd") or 0.0)}
+    result = {"job_id": str(got.get("job_id") or job_id), "outcome": got["outcome"],
+              "score": got.get("score"), "band": str(got.get("band") or ""),
+              "why": str(got.get("why") or ""), "requests": int(got.get("requests") or 0),
+              "usd": float(got.get("usd") or 0.0)}
+    for mark in MARKS:
+        if got.get(mark):
+            result[mark] = True
+    return result
 
 
 def result_line(result: Mapping[str, Any]) -> str:
@@ -1140,7 +1158,7 @@ def run(job_ids: list[str], *, all_queued: bool = False, judge,
     except apply_answers.AnswerStoreError as e:
         text = (f"The Apply Answers file is damaged ({e.path}): {e.reason}. Open the "
                 f"dashboard's Apply Answers tab to restore the backup.")
-        _note(report, "error", text)
+        _note(report, "error", text, refusal=True)
         _say(text)
         return 2
     entries = list(apply_queue.load(queue_path).get("jobs") or [])
@@ -1210,10 +1228,29 @@ def run(job_ids: list[str], *, all_queued: bool = False, judge,
 
 
 def _refuse(report: dict | None, text: str, code: int, *, job_id: str = "") -> int:
-    """Print `text` on stderr, record it as the worker's error, return `code`."""
+    """Print `text` on stderr, record it as the worker's error marked as a
+    refusal (the pool stops), return `code`."""
     print(text, file=sys.stderr)
-    _note(report, "error", text, job_id=job_id)
+    _note(report, "error", text, job_id=job_id, refusal=True)
     return code
+
+
+def _slot_busy(report: dict, *, job_id: str = "") -> int:
+    """A worker's slot still held by the browser of the job before it: this
+    job's own failure (marked `failed`, the pool notes it and goes on), exit 1."""
+    print(f"apply_assess: job {job_id}: {SLOT_BUSY}", file=sys.stderr)
+    _note(report, "error", SLOT_BUSY, job_id=job_id, failed=True)
+    return 1
+
+
+def _slot_frees(profile: Path) -> bool:
+    """Wait up to SLOT_BUSY_WAIT_S for a slot's browser to let go of it."""
+    deadline = time.monotonic() + SLOT_BUSY_WAIT_S
+    while profile_busy(profile):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(SLOT_BUSY_POLL_S)
+    return True
 
 
 def main(argv: list[str] | None = None, *, context=None) -> int:
@@ -1262,9 +1299,11 @@ def main(argv: list[str] | None = None, *, context=None) -> int:
             code = _refuse(report, WORKER_USAGE, 2, job_id=job_id)
         else:
             code = _main(args, ap, context, report)
-    except Exception as e:      # noqa: BLE001  (the coordinator reads the line, not a traceback)
+    except Exception as e:      # noqa: BLE001  (the coordinator reads the line; the log keeps the frames)
         code = 1
-        _note(report, "error", f"the worker failed ({type(e).__name__})", job_id=job_id)
+        logging.getLogger("apply_assess").exception("job %s: the worker failed", job_id)
+        _note(report, "error", f"the worker failed ({type(e).__name__})", job_id=job_id,
+              failed=True)
     _say(result_line(worker_result(report, job_id=job_id)))
     return code
 
@@ -1286,7 +1325,8 @@ def _pool(args, settings: Mapping[str, Any], profile: Path, queue: Path | None,
     if len(chosen) < 2:
         return None
     return assess_pool.run_pool(chosen, unknown=unknown, parallel=parallel, profile=profile,
-                                queue_path=queue, headless=bool(args.headless), log=log)
+                                queue_path=queue, headless=bool(args.headless),
+                                verbose=bool(args.verbose), log=log)
 
 
 def _main(args, ap, context, report: dict | None) -> int:
@@ -1312,7 +1352,10 @@ def _main(args, ap, context, report: dict | None) -> int:
         return _refuse(report, refused, 2, job_id=job_id)
     profile = Path(args.profile) if args.profile else default_profile_dir()
     if context is None and profile_busy(profile):
-        return _refuse(report, PROFILE_BUSY, 2, job_id=job_id)
+        if report is None:
+            return _refuse(report, PROFILE_BUSY, 2, job_id=job_id)
+        if not _slot_frees(profile):        # the slot's last browser still closing
+            return _slot_busy(report, job_id=job_id)
     try:
         judge = jev.Guarded(jev.get(mode), logger=log)
     except (jev.JevUnavailable, ValueError) as e:
@@ -1336,6 +1379,8 @@ def _main(args, ap, context, report: dict | None) -> int:
                 pw, profile, headless=bool(settings.get("auto_apply_headless")) or args.headless,
                 log=log)
         except profile_lock.ProfileBusy:
+            if report is not None:
+                return _slot_busy(report, job_id=job_id)
             return _refuse(report, PROFILE_BUSY, 2, job_id=job_id)  # opened after the read
         except Exception as e:      # noqa: BLE001  (Chrome and the bundled build both failed)
             return _refuse(report, NO_BROWSER.format(why=type(e).__name__), 1, job_id=job_id)

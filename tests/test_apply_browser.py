@@ -250,3 +250,52 @@ def test_login_refuses_in_a_sentence_while_another_browser_holds_the_profile(tmp
         guard.release()
     assert chromium.calls == []
     assert capsys.readouterr().err.strip() == profile_lock.RUN_BUSY
+
+
+# --- cycle 22 final review: every browser on the real profile sweeps the check's copies -----
+
+def _leftover(name="slot-3"):
+    import assess_pool
+    folder = assess_pool.slot_root() / name
+    (folder / "Default" / "Network").mkdir(parents=True)
+    (folder / "Default" / "Network" / "Cookies").write_text("old", encoding="utf-8")
+    return folder
+
+
+def test_launch_profile_on_the_real_profile_sweeps_leftover_copies(tmp_path, monkeypatch):
+    import profile_lock
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    folder = _leftover()
+    swept_while_held = []
+    import assess_pool
+    real = assess_pool.sweep_slots
+
+    def watching(*a, **kw):
+        swept_while_held.append(profile_lock.sentinel_held(profile_lock.default_profile_dir()))
+        return real(*a, **kw)
+    monkeypatch.setattr(assess_pool, "sweep_slots", watching)
+    chromium = _Chromium()
+    apply_run.launch_profile(_PW(chromium), profile_lock.default_profile_dir(), headless=True)
+    assert not folder.exists()
+    assert swept_while_held == [True]          # never without the real profile's sentinel
+
+
+def test_launch_profile_on_another_profile_never_sweeps(tmp_path, monkeypatch):
+    import assess_pool
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    folder = _leftover()
+    apply_run.launch_profile(_PW(_Chromium()), assess_pool.slot_dir(1), headless=True)
+    apply_run.launch_profile(_PW(_Chromium()), tmp_path / "profile", headless=True)
+    assert folder.exists()
+
+
+def test_launch_profile_names_a_copy_it_could_not_delete(tmp_path, monkeypatch, caplog):
+    import assess_pool
+    import profile_lock
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    folder = _leftover()
+    monkeypatch.setattr(assess_pool, "sweep_slots", lambda *a, **kw: [folder])
+    with caplog.at_level("WARNING"):
+        apply_run.launch_profile(_PW(_Chromium()), profile_lock.default_profile_dir(),
+                                 headless=True)
+    assert assess_pool.LEFT_BEHIND.format(folder=folder) in caplog.text

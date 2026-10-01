@@ -226,11 +226,12 @@ import profile_lock  # noqa: E402
 COMPANIES = ["Fabrikam", "Contoso", "Northwind", "Litware", "Tailspin", "Adatum", "Proseware"]
 
 
-def _result(jid, outcome="scored", *, score=2, band="Queue it", why="", requests=1, usd=0.01):
+def _result(jid, outcome="scored", *, score=2, band="Queue it", why="", requests=1, usd=0.01,
+            **marks):
     return aa.result_line(aa.worker_result({
         "job_id": jid, "outcome": outcome, "score": score if outcome == "scored" else None,
         "band": band if outcome == "scored" else "", "why": why, "requests": requests,
-        "usd": usd}))
+        "usd": usd, **marks}))
 
 
 class FakeProc:
@@ -266,8 +267,9 @@ class FakeSpawner:
         self.live = self.most = 0
         self.slots_busy: set = set()
         self.overlap = False
+        self.verbose: list = []
 
-    def __call__(self, job_id, slot, *, queue_path=None, headless=False):
+    def __call__(self, job_id, slot, *, queue_path=None, headless=False, verbose=False):
         def act(proc):
             with self.lock:
                 self.live += 1
@@ -284,6 +286,7 @@ class FakeSpawner:
         proc = FakeProc(act)
         with self.lock:
             self.calls.append((job_id, Path(slot), queue_path, headless))
+            self.verbose.append(verbose)
             self.procs.append(proc)
         return proc
 
@@ -451,7 +454,7 @@ def test_no_browser_starting_stops_the_pool_and_says_so_once(pool, capsys):
     def behave(jid, proc):
         all_started.wait()              # the three running workers all meet it
         proc.returncode = 1
-        return _result(jid, "error", why=why, requests=0, usd=0.0), ""
+        return _result(jid, "error", why=why, requests=0, usd=0.0, refusal=True), why + "\n"
     spawner = FakeSpawner(behave)
     assert pool.run(spawner, parallel=3) == 1
     assert len(spawner.calls) == 3                          # 4 to 7 never started
@@ -862,3 +865,218 @@ def test_the_pool_is_gated_like_today(main_env, monkeypatch, capsys):
 def test_the_parallel_default_is_in_the_auto_apply_defaults():
     import apply_run
     assert apply_run.DEFAULT_SETTINGS["auto_apply_check_parallel"] == 10
+
+
+# === cycle 22 final review fixes =============================================================
+
+# --- I1: the copies are deleted however the run ends ---------------------------------------
+
+def _stubborn_after_run(monkeypatch, fails):
+    """rmtree refuses slot-1 for its first `fails` tries once the workers are
+    done (every try when None), as a browser still closing keeps a file open."""
+    real = ap.shutil.rmtree
+    state = {"done": False, "fails": 0}
+
+    def rmtree(path, *a, **kw):
+        if state["done"] and Path(path).name == "slot-1" and (
+                fails is None or state["fails"] < fails):
+            state["fails"] += 1
+            raise PermissionError("a browser still has it open")
+        return real(path, *a, **kw)
+    monkeypatch.setattr(ap.shutil, "rmtree", rmtree)
+    monkeypatch.setattr(ap, "SWEEP_WAIT_S", 0)
+    return state
+
+
+def test_the_final_sweep_waits_for_a_browser_still_closing(pool, capsys, monkeypatch):
+    monkeypatch.setattr(ap, "FINAL_SWEEP_S", 5.0)
+    monkeypatch.setattr(ap, "FINAL_SWEEP_POLL_S", 0.0)
+    state = _stubborn_after_run(monkeypatch, fails=8)
+
+    def behave(jid, proc):
+        state["done"] = True
+        return _result(jid), ""
+    assert pool.run(FakeSpawner(behave), parallel=1, ids={"1"}) == 0
+    assert state["fails"] == 8
+    assert list(pool.root.iterdir()) == []
+
+
+def test_the_final_sweep_after_ctrl_c_waits_too(pool, capsys, monkeypatch):
+    import _thread
+    monkeypatch.setattr(ap, "FINAL_SWEEP_S", 5.0)
+    monkeypatch.setattr(ap, "FINAL_SWEEP_POLL_S", 0.0)
+    state = _stubborn_after_run(monkeypatch, fails=8)
+
+    def behave(jid, proc):
+        state["done"] = True
+        _thread.interrupt_main()
+        proc.ended.wait(5)
+        return "", "KeyboardInterrupt\n"
+    assert pool.run(FakeSpawner(behave), parallel=1, ids={"1"}) == 1
+    assert list(pool.root.iterdir()) == []
+
+
+def test_a_copy_that_will_not_delete_is_named_with_when_it_goes(pool, capsys, monkeypatch):
+    monkeypatch.setattr(ap, "FINAL_SWEEP_S", 0.05)
+    monkeypatch.setattr(ap, "FINAL_SWEEP_POLL_S", 0.01)
+    state = _stubborn_after_run(monkeypatch, fails=None)
+
+    def behave(jid, proc):
+        state["done"] = True
+        return _result(jid), ""
+    assert pool.run(FakeSpawner(behave), parallel=1, ids={"1"}) == 0
+    assert _out(capsys)[-1] == ap.LEFT_BEHIND.format(folder=pool.root / "slot-1")
+    assert (pool.root / "slot-1").exists()
+    assert profile_lock.sentinel_held(pool.profile) is False
+
+
+def test_the_left_behind_line_says_where_and_when_it_goes():
+    line = ap.LEFT_BEHIND.format(folder=Path("C:/x/slot-1"))
+    assert str(Path("C:/x/slot-1")) in line and "deleted" in line
+    assert "\u2014" not in line
+
+
+def test_sweep_if_free_deletes_leftovers_while_no_browser_holds_the_profile(tmp_path,
+                                                                           monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(profile_lock, "HOLD_WAIT_S", 0)
+    slots = _slots(ap.slot_root(), 2)
+    assert ap.sweep_if_free() == []
+    assert not any(s.exists() for s in slots)
+    assert profile_lock.sentinel_held(profile_lock.default_profile_dir()) is False
+
+
+def test_sweep_if_free_never_touches_the_slots_of_a_live_check(tmp_path, monkeypatch):
+    from test_profile_lock import hold_sentinel
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(profile_lock, "HOLD_WAIT_S", 0)
+    slots = _slots(ap.slot_root(), 2)
+    guard = hold_sentinel(profile_lock.default_profile_dir())
+    try:
+        assert ap.sweep_if_free() is None
+    finally:
+        guard.release()
+    assert all(s.exists() for s in slots)
+
+
+def test_sweep_if_free_with_nothing_left_takes_no_hold(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(profile_lock, "hold", lambda *a, **kw: pytest.fail("held"))
+    assert ap.sweep_if_free() == []
+
+
+def test_the_real_profile_is_told_apart_from_a_slot(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    assert ap.is_real_profile(profile_lock.default_profile_dir())
+    assert not ap.is_real_profile(ap.slot_dir(1))
+    assert not ap.is_real_profile(tmp_path / "elsewhere")
+
+
+# --- M1: a worker crash is that job's line; a refusal is marked ---------------------------
+
+def test_a_worker_crash_is_its_jobs_line_and_the_pool_goes_on(pool, capsys):
+    why = "the worker failed (QueueLockTimeout)"
+
+    def behave(jid, proc):
+        if jid == "1":
+            proc.returncode = 1
+            return _result(jid, "error", why=why, requests=2, usd=0.02, failed=True), ""
+        return _result(jid), ""
+    spawner = FakeSpawner(behave)
+    assert pool.run(spawner, parallel=1, ids={"1", "2", "3"}) == 0
+    assert sorted(c[0] for c in spawner.calls) == ["1", "2", "3"]
+    lines = _out(capsys)
+    assert lines[1] == (f"[1/3] Fabrikam / Analyst: not checked ({why}). "
+                        f"Jev so far: 2 request(s), $0.0200")
+    assert sum("/10, Queue it." in x for x in lines) == 2
+    assert pool.entries({"1"})[0]["difficulty"]["last_failed_why"] == why
+
+
+def test_an_error_with_a_bad_exit_and_no_mark_is_no_refusal(pool, capsys):
+    def behave(jid, proc):
+        if jid == "1":
+            proc.returncode = 2
+            return _result(jid, "error", why="something new", requests=0, usd=0.0), ""
+        return _result(jid), ""
+    spawner = FakeSpawner(behave)
+    assert pool.run(spawner, parallel=1, ids={"1", "2"}) == 0
+    assert len(spawner.calls) == 2
+
+
+def test_the_carve_out_literals_are_gone():
+    import inspect
+    source = inspect.getsource(ap)
+    assert not hasattr(ap._Pool, "_refusal")    # a refusal is the worker's own mark
+    assert '"no job to check"' not in source
+    assert 'is not in the queue",' not in source
+
+
+# --- M2: a worker's warnings reach the console; --verbose reaches the workers ------------
+
+_WORKER_LOG = (
+    "2026-10-01 10:00:00,100 apply_assess INFO job 1: walking\n"
+    "2026-10-01 10:00:01,200 apply_assess WARNING job 1: the Apply button did not answer\n"
+    "2026-10-01 10:00:02,300 apply_assess ERROR job 1: TimeoutError at goto; traceback "
+    "(the message left out):\n"
+    "  apply_assess.py:420 in _arrive\n"
+    "  apply_run.py:88 in goto\n"
+    "2026-10-01 10:00:03,400 asyncio DEBUG closing\n"
+    "2026-10-01 10:00:03,500 apply_assess INFO job 1: done\n")
+
+
+def test_a_job_not_scored_shows_its_workers_warnings_and_frames(pool, capsys):
+    def behave(jid, proc):
+        return _result(jid, "unread", why="the posting did not load", requests=0,
+                       usd=0.0), _WORKER_LOG
+    assert pool.run(FakeSpawner(behave), parallel=1, ids={"1"}) == 0
+    err = capsys.readouterr().err.splitlines()
+    assert err == [
+        "2026-10-01 10:00:01,200 apply_assess WARNING job 1: the Apply button did not answer",
+        "2026-10-01 10:00:02,300 apply_assess ERROR job 1: TimeoutError at goto; traceback "
+        "(the message left out):",
+        "  apply_assess.py:420 in _arrive",
+        "  apply_run.py:88 in goto",
+    ]
+
+
+def test_a_scored_job_keeps_its_workers_log_quiet(pool, capsys):
+    assert pool.run(FakeSpawner(lambda jid, proc: (_result(jid), _WORKER_LOG)), parallel=1,
+                    ids={"1"}) == 0
+    assert capsys.readouterr().err == ""
+
+
+def test_a_stopped_worker_shows_its_traceback(pool, capsys):
+    tb = ("Traceback (most recent call last):\n"
+          "  File \"apply_assess.py\", line 9, in <module>\n"
+          "ModuleNotFoundError: No module named 'playwright'\n")
+    assert pool.run(FakeSpawner(lambda jid, proc: ("", tb)), parallel=1, ids={"1"}) == 0
+    captured = capsys.readouterr()
+    assert captured.err.splitlines() == tb.splitlines()
+    assert "the worker stopped: ModuleNotFoundError" in captured.out
+
+
+def test_the_worker_log_filter():
+    assert ap.worker_log(_WORKER_LOG) == _WORKER_LOG.splitlines()[1:5]
+    assert ap.worker_log("") == []
+    assert ap.worker_log("plain line\n", drop="plain line") == []
+
+
+def test_verbose_reaches_every_worker(pool, capsys):
+    spawner = FakeSpawner()
+    assert pool.run(spawner, parallel=2, ids={"1", "2"}, verbose=True) == 0
+    assert spawner.verbose == [True, True]
+    quiet = FakeSpawner()
+    assert pool.run(quiet, parallel=2, ids={"1", "2"}) == 0
+    assert quiet.verbose == [False, False]
+
+
+def test_the_worker_command_line_carries_verbose(tmp_path):
+    argv = ap.worker_argv("42", tmp_path / "slot-1", verbose=True)
+    assert argv[-2:] == ["--verbose", "42"]
+
+
+def test_main_passes_verbose_to_the_pool(main_env):
+    assert aa.main(main_env.argv("--verbose", "1", "2")) == 0
+    assert main_env.calls["pool"][0][1]["verbose"] is True
+    assert aa.main(main_env.argv("1", "2")) == 0
+    assert main_env.calls["pool"][1][1]["verbose"] is False

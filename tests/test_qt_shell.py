@@ -286,3 +286,52 @@ def test_rendering_a_job_while_expanded_does_not_re_enter_the_resize(qtbot,
     win.preview.desc_toggle.setChecked(False)
     _flush()
     assert win.splitter.sizes() == before
+
+
+# ---- cycle 22: the dashboard sweeps the difficulty check's leftover profile copies ----
+
+def test_the_startup_sweep_runs_off_the_ui_thread(monkeypatch):
+    import threading
+
+    import assess_pool
+    seen = []
+    monkeypatch.setattr(assess_pool, "sweep_if_free",
+                        lambda *a, **kw: seen.append(threading.current_thread()) or [])
+    t = qt_app._sweep_profile_copies()
+    t.join(5)
+    assert t.daemon and seen and seen[0] is not threading.main_thread()
+
+
+def test_the_startup_sweep_never_raises(monkeypatch):
+    import assess_pool
+
+    def broken(*a, **kw):
+        raise OSError("disk gone")
+    monkeypatch.setattr(assess_pool, "sweep_if_free", broken)
+    qt_app._sweep_profile_copies().join(5)       # no exception reaches the dashboard
+
+
+def test_main_starts_the_sweep_once_it_holds_the_ui_lock(monkeypatch):
+    calls = []
+    monkeypatch.setattr(qt_app._UILock, "acquire", lambda self: True)
+    monkeypatch.setattr(qt_app._UILock, "release", lambda self: None)
+    monkeypatch.setattr(qt_app, "_sweep_profile_copies", lambda: calls.append("swept"))
+
+    class _Stop(Exception):
+        pass
+
+    def no_window(*a, **kw):
+        raise _Stop
+    monkeypatch.setattr(qt_app, "MainWindow", no_window)
+    try:
+        qt_app.main([])
+    except _Stop:
+        pass
+    assert calls == ["swept"]
+
+
+def test_a_second_instance_never_sweeps(monkeypatch):
+    monkeypatch.setattr(qt_app._UILock, "acquire", lambda self: False)
+    monkeypatch.setattr(qt_app, "_sweep_profile_copies",
+                        lambda: (_ for _ in ()).throw(AssertionError("swept")))
+    assert qt_app.main([]) == 0

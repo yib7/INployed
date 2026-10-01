@@ -837,6 +837,24 @@ def test_remove_deletes_and_unknown_raises(tmp_path):
         apply_queue.remove("1", path=q)
 
 
+def test_remove_many_drops_every_named_job_in_one_write(tmp_path, monkeypatch):
+    """Cycle 22: the Auto-apply tab's Remove on a multi-row selection. One
+    locked write for all of them; an id gone since the panel read the queue is
+    skipped, and the count says how many went."""
+    q = _q(tmp_path)
+    for jid in ("a", "b", "c", "d"):
+        apply_queue.enqueue(_entry(jid), path=q)
+    writes = []
+    real_save = apply_queue._save
+    monkeypatch.setattr(apply_queue, "_save",
+                        lambda data, path=None: writes.append(1) or real_save(data, path))
+    assert apply_queue.remove_many(["a", "c", "gone"], path=q) == 2
+    assert len(writes) == 1
+    assert [j["job_posting_id"] for j in apply_queue.load(q)["jobs"]] == ["b", "d"]
+    assert apply_queue.remove_many(["gone"], path=q) == 0
+    assert len(writes) == 1                      # nothing to drop, nothing written
+
+
 def test_clear_finished_removes_only_terminal(tmp_path):
     q = _q(tmp_path)
     for jid in ("a", "b", "c"):

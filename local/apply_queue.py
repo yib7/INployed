@@ -44,7 +44,7 @@ import warnings
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
@@ -676,6 +676,21 @@ def remove(job_id: str, path: Optional[Path] = None) -> None:
         e = _find(data, job_id)
         data["jobs"].remove(e)
         _save(data, path)
+
+
+def remove_many(job_ids: Iterable[str], path: Optional[Path] = None) -> int:
+    """Drop every named job in one locked write (the Auto-apply tab's Remove on
+    several rows); an id no longer in the queue is skipped. Returns how many
+    were removed."""
+    drop = {str(j) for j in job_ids}
+    with locked(path):
+        data = load(path, quarantine=True)   # under locked(): may rename aside
+        keep = [e for e in data["jobs"] if str(e.get("job_posting_id")) not in drop]
+        removed = len(data["jobs"]) - len(keep)
+        if removed:
+            data["jobs"] = keep
+            _save(data, path)
+        return removed
 
 
 def clear_finished(path: Optional[Path] = None) -> int:

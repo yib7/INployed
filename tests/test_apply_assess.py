@@ -1116,3 +1116,212 @@ def test_a_noisy_judge_never_clicks_an_account_link_in_the_posting(context, tmp_
     assert {a.kind for a in rec.actions} <= _READ_ONLY, rec.actions
     assert [a.text.strip() for a in rec.actions] in ([], ["Apply now"]), rec.actions
     assert got is None or 1 <= got["score"] <= 10
+
+
+# === cycle 22 SP1: the worker's result line =================================================
+
+RESULT_KEYS = {"job_id", "outcome", "score", "band", "why", "requests", "usd"}
+
+
+@pytest.fixture
+def worker(browser_cli, tmp_path):
+    """`main --worker` on a fake slot profile with a queued job 42; the walk is
+    replaced by `worker.check` (no browser, no Jev request)."""
+    import apply_queue
+    from resume_tailor import apply_answers
+    browser_cli.setattr(apply_answers, "load", lambda *a, **kw: [])
+    queue = tmp_path / "queue.json"
+    apply_queue.enqueue(apply_queue.new_entry("42", company="Fabrikam", title="Analyst",
+                                              apply_url="https://jobs.lever.co/fabrikam/1/apply"),
+                        path=queue)
+    slot = tmp_path / "slot-1"
+    slot.mkdir()
+
+    class _Worker:
+        monkeypatch = browser_cli
+
+        def argv(self, *extra, job="42"):
+            return ["--worker", "--profile", str(slot), "--queue", str(queue), *extra, job]
+
+        def check(self, fn):
+            browser_cli.setattr(aa, "check_job", fn)
+
+        def result(self, capsys):
+            out = capsys.readouterr().out.strip().splitlines()
+            assert out[-1].startswith(aa.RESULT_PREFIX), out
+            return json.loads(out[-1][len(aa.RESULT_PREFIX):])
+
+        def run(self, capsys, argv=None):
+            """(exit code, the result line) with an injected context: no browser."""
+            code = aa.main(argv or self.argv(), context=_FakeCtx())
+            return code, self.result(capsys)
+    w = _Worker()
+    w.queue, w.slot = queue, slot
+    return w
+
+
+def _scored(entry, *, context, judge, answers, settings, entries, log=None):
+    judge.requests += 2                         # the two requests this walk made
+    return {**aa.score(system="lever"), "system": "lever", "questions": []}, ""
+
+
+def test_a_worker_ends_with_its_result_line_for_a_scored_job(worker, capsys):
+    import apply_queue
+    worker.check(_scored)
+    code, got = worker.run(capsys)
+    assert code == 0
+    assert set(got) == RESULT_KEYS
+    assert got["job_id"] == "42" and got["outcome"] == "scored"
+    assert got["score"] == 2 and got["band"] == "Queue it"
+    assert got["why"] == "" and got["requests"] == 2 and got["usd"] == 0
+    stored = apply_queue.load(worker.queue)["jobs"][0]["difficulty"]
+    assert stored["score"] == 2                 # the worker stored it on the queue itself
+
+
+def test_the_result_line_comes_after_the_progress_line(worker, capsys):
+    worker.check(_scored)
+    aa.main(worker.argv(), context=_FakeCtx())
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert lines[0].startswith("[1/1] Fabrikam / Analyst: 2/10, Queue it. ")
+    assert len(lines) == 2 and lines[1].startswith(aa.RESULT_PREFIX)
+
+
+def test_a_worker_reports_a_page_it_could_not_read_as_unread(worker, capsys):
+    import apply_queue
+    worker.check(lambda entry, **kw: (None, "the page did not load"))
+    code, got = worker.run(capsys)
+    assert code == 0 and got["outcome"] == "unread" and got["why"] == "the page did not load"
+    assert got["score"] is None and got["band"] == ""
+    noted = apply_queue.load(worker.queue)["jobs"][0]["difficulty"]
+    assert noted["last_failed_why"] == "the page did not load"
+
+
+def test_a_worker_reports_jev_down_as_an_outage(worker, capsys):
+    def down(entry, **kw):
+        raise jev.JudgeOutage("ConnectError")
+    worker.check(down)
+    code, got = worker.run(capsys)
+    assert code == 1 and got["outcome"] == "outage" and got["why"] == "Jev is down (ConnectError)"
+
+
+def test_a_worker_reports_a_closed_window(worker, capsys):
+    def closed(entry, **kw):
+        raise RuntimeError("Target page, context or browser has been closed")
+    worker.check(closed)
+    code, got = worker.run(capsys)
+    assert code == 1 and got["outcome"] == "closed"
+    assert got["why"] == "the browser window was closed"
+
+
+def test_a_worker_reports_any_other_failure_as_an_error(worker, capsys):
+    def broke(entry, **kw):
+        raise ValueError("a detail the line must not carry")
+    worker.check(broke)
+    code, got = worker.run(capsys)
+    assert code == 0 and got["outcome"] == "error" and got["why"].startswith("ValueError at ")
+    assert "a detail" not in json.dumps(got)
+
+
+def test_a_worker_reports_a_job_that_left_the_queue(worker, capsys):
+    import apply_queue
+
+    def removed(entry, **kw):
+        apply_queue.remove("42", path=worker.queue)
+        return _scored(entry, **kw)
+    worker.check(removed)
+    code, got = worker.run(capsys)
+    assert got["outcome"] == "error" and got["why"] == "left the queue while it was checked"
+
+
+def test_a_worker_reports_an_unknown_job(worker, capsys):
+    code, got = worker.run(capsys, worker.argv(job="7"))
+    assert code == 2 and got["outcome"] == "error" and got["job_id"] == "7"
+    assert got["why"] == "job 7 is not in the queue"
+
+
+def test_a_worker_counts_what_the_walk_spent(worker, capsys):
+    def billed(entry, **kw):
+        jev.count_usage(1_000_000)
+        return _scored(entry, **kw)
+    worker.monkeypatch.setattr(jev, "_TOTAL", dict(jev._TOTAL))
+    worker.check(billed)
+    code, got = worker.run(capsys)
+    assert got["outcome"] == "scored" and got["usd"] > 0 and got["requests"] == 2
+
+
+def test_a_worker_that_is_refused_still_ends_with_a_result_line(worker, capsys):
+    _write_switch(dict(ON, jev_difficulty=False, auto_apply_jev_mode="typesafe"))
+    assert aa.main(worker.argv(), context=_FakeCtx()) == 2
+    captured = capsys.readouterr()
+    assert jev_switch.DIFFICULTY_OFF in captured.err
+    got = json.loads(captured.out.strip().splitlines()[-1][len(aa.RESULT_PREFIX):])
+    assert got["outcome"] == "error" and got["why"] == jev_switch.DIFFICULTY_OFF
+    assert got["job_id"] == "42"
+
+
+def test_a_worker_on_a_busy_profile_says_so_in_its_result(worker, capsys):
+    worker.monkeypatch.setattr(aa, "profile_busy", lambda profile=None: True)
+    assert aa.main(worker.argv()) == 2
+    got = worker.result(capsys)
+    assert got["outcome"] == "error" and got["why"] == aa.PROFILE_BUSY
+
+
+def test_a_worker_with_no_browser_says_so_in_its_result(worker, capsys):
+    chromium = _FakeChromium(fail={"chrome", None})
+    _fake_playwright(worker.monkeypatch, chromium)
+    assert aa.main(worker.argv()) == 1
+    got = worker.result(capsys)
+    assert got["outcome"] == "error" and got["why"] == aa.NO_BROWSER.format(why="RuntimeError")
+    assert [c[0] for c in chromium.calls] == [str(worker.slot)] * 2
+
+
+def test_a_worker_opens_its_slot_profile_not_the_real_one(worker, capsys):
+    chromium = _FakeChromium()
+    _fake_playwright(worker.monkeypatch, chromium)
+    worker.check(_scored)
+    assert aa.main(worker.argv()) == 0
+    assert [c[0] for c in chromium.calls] == [str(worker.slot)]
+    assert worker.result(capsys)["outcome"] == "scored"
+
+
+def test_a_worker_that_crashes_still_ends_with_a_result_line(worker, capsys):
+    worker.monkeypatch.setattr(aa, "run", lambda *a, **kw: 1 / 0)
+    assert aa.main(worker.argv(), context=_FakeCtx()) == 1
+    got = worker.result(capsys)
+    assert got["outcome"] == "error" and got["why"] == "the worker failed (ZeroDivisionError)"
+
+
+@pytest.mark.parametrize("extra", [["--all", "42"], ["7", "8"], []])
+def test_a_worker_needs_exactly_one_job(worker, capsys, extra):
+    argv = ["--worker", "--profile", str(worker.slot), "--queue", str(worker.queue), *extra]
+    assert aa.main(argv, context=_FakeCtx()) == 2
+    got = worker.result(capsys)
+    assert got["outcome"] == "error" and got["why"] == aa.WORKER_USAGE
+
+
+def test_a_worker_needs_a_profile(worker, capsys):
+    assert aa.main(["--worker", "42"], context=_FakeCtx()) == 2
+    assert worker.result(capsys)["why"] == aa.WORKER_USAGE
+
+
+def test_without_worker_the_output_has_no_result_line(worker, capsys):
+    worker.check(_scored)
+    assert aa.main(["--queue", str(worker.queue), "42"], context=_FakeCtx()) == 0
+    out = capsys.readouterr().out
+    assert aa.RESULT_PREFIX not in out and out.strip().splitlines()[0].startswith("[1/1] ")
+
+
+def test_the_result_line_round_trips():
+    got = aa.worker_result({"job_id": "9", "outcome": "scored", "score": 5, "band": "May need",
+                            "why": "", "requests": 3, "usd": 0.0123})
+    line = aa.result_line(got)
+    assert line.startswith("@@assess-result {") and "\n" not in line
+    assert aa.parse_result_line("log line\n" + line + "\n") == got
+    assert aa.parse_result_line("no result here\n") is None
+    assert aa.parse_result_line(aa.RESULT_PREFIX + "{not json") is None
+    assert aa.parse_result_line(aa.RESULT_PREFIX + '{"outcome": "weird"}') is None
+
+
+def test_a_run_that_recorded_nothing_is_an_error_result():
+    got = aa.worker_result({}, job_id="42")
+    assert got["outcome"] == "error" and got["job_id"] == "42" and set(got) == RESULT_KEYS

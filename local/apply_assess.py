@@ -1053,6 +1053,58 @@ def _say(text: str) -> None:
         print(text.encode(enc, "replace").decode(enc), flush=True)
 
 
+# --- the worker's result line (cycle 22) ---------------------------------------------------
+
+RESULT_PREFIX = "@@assess-result "
+OUTCOMES = ("scored", "unread", "outage", "closed", "error")
+WORKER_USAGE = "apply_assess: --worker takes exactly one job id and --profile, and no --all"
+
+
+def _note(report: dict | None, outcome: str, why: str, *, job_id: str = "", counted=None,
+          usd: float = 0.0, score: int | None = None, band: str = "") -> None:
+    """Record the last job's outcome for a worker (`run`'s `report`); a run
+    with no report records nothing."""
+    if report is None:
+        return
+    report.clear()
+    report.update(job_id=job_id, outcome=outcome, score=score, band=band, why=why,
+                  requests=int(getattr(counted, "requests", 0) or 0), usd=round(float(usd), 6))
+
+
+def worker_result(report: Mapping[str, Any], *, job_id: str = "") -> dict:
+    """The worker's result: the keys of `RESULT_PREFIX`'s JSON, whole. A run
+    that recorded nothing is an error, so the coordinator never has to guess."""
+    got = dict(report)
+    if got.get("outcome") not in OUTCOMES:
+        got = {"outcome": "error", "why": "the check ended with no result"}
+    return {"job_id": str(got.get("job_id") or job_id), "outcome": got["outcome"],
+            "score": got.get("score"), "band": str(got.get("band") or ""),
+            "why": str(got.get("why") or ""), "requests": int(got.get("requests") or 0),
+            "usd": float(got.get("usd") or 0.0)}
+
+
+def result_line(result: Mapping[str, Any]) -> str:
+    """The worker's last stdout line for `result` (`worker_result`)."""
+    return RESULT_PREFIX + json.dumps(dict(result), separators=(",", ":"))
+
+
+def parse_result_line(text: str) -> dict | None:
+    """The result a worker's output ends with: the last `RESULT_PREFIX` line,
+    when it holds a JSON object with a known outcome; None otherwise."""
+    for line in reversed(str(text or "").splitlines()):
+        line = line.strip()
+        if not line.startswith(RESULT_PREFIX):
+            continue
+        try:
+            got = json.loads(line[len(RESULT_PREFIX):])
+        except ValueError:
+            return None
+        if isinstance(got, dict) and got.get("outcome") in OUTCOMES:
+            return got
+        return None
+    return None
+
+
 def select_jobs(entries: list[Mapping[str, Any]], job_ids: list[str], *,
                 all_queued: bool) -> tuple[list[Mapping[str, Any]], list[str]]:
     """(the entries to check, the ids that are not in the queue). `all_queued`
@@ -1072,11 +1124,13 @@ def select_jobs(entries: list[Mapping[str, Any]], job_ids: list[str], *,
 
 def run(job_ids: list[str], *, all_queued: bool = False, judge,
         settings: Mapping[str, Any], context=None, queue_path: Path | None = None,
-        log: logging.Logger | None = None) -> int:
+        log: logging.Logger | None = None, report: dict | None = None) -> int:
     """Check each job and store its difficulty on its queue entry, printing
     one line per job with the running Jev total. `context` is the browser
     context (the persistent profile's; tests inject one). Exit 0, 1 when the
-    judge went down or the window closed, 2 when nothing could be checked."""
+    judge went down or the window closed, 2 when nothing could be checked.
+    `report`, when given, is filled with the last job's outcome for a worker
+    (`worker_result`); the printed lines do not change."""
     import apply_run
     import jev
     from resume_tailor import apply_answers
@@ -1084,16 +1138,21 @@ def run(job_ids: list[str], *, all_queued: bool = False, judge,
     try:
         answers = apply_answers.load()
     except apply_answers.AnswerStoreError as e:
-        _say(f"The Apply Answers file is damaged ({e.path}): {e.reason}. Open the dashboard's "
-             f"Apply Answers tab to restore the backup.")
+        text = (f"The Apply Answers file is damaged ({e.path}): {e.reason}. Open the "
+                f"dashboard's Apply Answers tab to restore the backup.")
+        _note(report, "error", text)
+        _say(text)
         return 2
     entries = list(apply_queue.load(queue_path).get("jobs") or [])
     chosen, unknown = select_jobs(entries, job_ids, all_queued=all_queued)
     for jid in unknown:
         _say(f"apply_assess: job {jid} is not in the queue")
+        _note(report, "error", f"job {jid} is not in the queue", job_id=str(jid))
     if not chosen:
         _say("apply_assess: no job to check" + ("" if unknown or not all_queued
                                                   else " (nothing is queued)"))
+        if not unknown:
+            _note(report, "error", "no job to check")
         return 0 if all_queued and not unknown else 2
     counted = _Counting(judge)
     usd0 = jev.usage()["usd"]
@@ -1102,24 +1161,33 @@ def run(job_ids: list[str], *, all_queued: bool = False, judge,
         jid = str(entry.get("job_posting_id") or "")
         name = f"{entry.get('company') or '?'} / {entry.get('title') or '?'}"
         usd_before = jev.usage()["usd"]
+        unread = False
         try:
             result, why = check_job(entry, context=context, judge=counted, answers=answers,
                                     settings=settings, entries=entries, log=log)
         except jev.JudgeOutage as e:
+            _note(report, "outage", f"Jev is down ({e})", job_id=jid, counted=counted,
+                  usd=jev.usage()["usd"] - usd0)
             _say(f"[{i}/{len(chosen)}] {name}: Jev is down ({e}); the check stops here")
             return 1
         except Exception as e:      # noqa: BLE001  (one line; the frames go to the log)
             if apply_run._closed_error(e):
+                _note(report, "closed", "the browser window was closed", job_id=jid,
+                      counted=counted, usd=jev.usage()["usd"] - usd0)
                 _say(f"[{i}/{len(chosen)}] {name}: the browser window was closed; the check "
                      f"stops here")
                 return 1
             result, why = None, f"{type(e).__name__} at {apply_run.error_step(e)}"
             log.error("job %s: %s; traceback (the message left out):\n  %s", jid, why,
                       "\n  ".join(apply_run.error_frames(e)))
+        else:
+            unread = result is None
         spent = jev.usage()["usd"] - usd_before
         total = jev.usage()["usd"] - usd0
         running = f"Jev so far: {counted.requests} request(s), ${total:.4f}"
         if result is None:
+            _note(report, "unread" if unread else "error", why, job_id=jid, counted=counted,
+                  usd=total)
             _say(f"[{i}/{len(chosen)}] {name}: not checked ({why}). {running}")
             try:
                 # the earlier result stays; the panel shows the failure beside it
@@ -1131,9 +1199,20 @@ def run(job_ids: list[str], *, all_queued: bool = False, judge,
         try:
             apply_queue.set_difficulty(jid, result, path=queue_path)
         except apply_queue.UnknownJobError:
+            _note(report, "error", "left the queue while it was checked", job_id=jid,
+                  counted=counted, usd=total)
             _say(f"[{i}/{len(chosen)}] {name}: left the queue while it was checked. {running}")
             continue
+        _note(report, "scored", "", job_id=jid, counted=counted, usd=total,
+              score=result["score"], band=result["band"])
         _say(f"[{i}/{len(chosen)}] {name}: {result['score']}/10, {result['band']}. {running}")
+    return code
+
+
+def _refuse(report: dict | None, text: str, code: int, *, job_id: str = "") -> int:
+    """Print `text` on stderr, record it as the worker's error, return `code`."""
+    print(text, file=sys.stderr)
+    _note(report, "error", text, job_id=job_id)
     return code
 
 
@@ -1147,10 +1226,12 @@ def main(argv: list[str] | None = None, *, context=None) -> int:
     (`apply_run.launch_profile`): Google Chrome, or the bundled Chromium when
     Chrome will not start. The sentinel `launch_profile` takes covers either
     one and stays held while the check runs, so a drain started meanwhile
-    refuses."""
+    refuses.
+
+    `--worker --profile <dir> <id>` is one job of a parallel check
+    (`assess_pool`): the same path on that profile, and whatever happens its
+    last stdout line is `RESULT_PREFIX` and the outcome as JSON."""
     import argparse
-    import apply_run
-    import jev
     ap = argparse.ArgumentParser(prog="apply_assess",
                                  description="Score how hard each queued job is to auto-apply.")
     ap.add_argument("job_ids", nargs="*", help="queue job ids")
@@ -1158,8 +1239,32 @@ def main(argv: list[str] | None = None, *, context=None) -> int:
     ap.add_argument("--headless", action="store_true", help="no browser window")
     ap.add_argument("--queue", default=None, help="queue file")
     ap.add_argument("--profile", default=None, help="browser profile dir")
+    ap.add_argument("--worker", action="store_true",
+                    help="check one job on --profile and end with a result line "
+                         "(the parallel check's child)")
     ap.add_argument("--verbose", action="store_true", help="DEBUG logging")
     args = ap.parse_args(argv)
+    if not args.worker:
+        return _main(args, ap, context, None)
+    report: dict = {}
+    job_id = str(args.job_ids[0]) if args.job_ids else ""
+    try:
+        if args.all_queued or len(args.job_ids) != 1 or not args.profile:
+            code = _refuse(report, WORKER_USAGE, 2, job_id=job_id)
+        else:
+            code = _main(args, ap, context, report)
+    except Exception as e:      # noqa: BLE001  (the coordinator reads the line, not a traceback)
+        code = 1
+        _note(report, "error", f"the worker failed ({type(e).__name__})", job_id=job_id)
+    _say(result_line(worker_result(report, job_id=job_id)))
+    return code
+
+
+def _main(args, ap, context, report: dict | None) -> int:
+    """`main` after the arguments; `report` is the worker's, None otherwise."""
+    import apply_run
+    import jev
+    job_id = str(args.job_ids[0]) if args.job_ids else ""
     if not args.all_queued and not args.job_ids:
         ap.print_usage(sys.stderr)
         print("apply_assess: name job ids or pass --all", file=sys.stderr)
@@ -1171,25 +1276,23 @@ def main(argv: list[str] | None = None, *, context=None) -> int:
     mode = jev_switch.apply_mode()
     early = mode_gate(mode)
     if early:
-        print(early, file=sys.stderr)
-        return 2
+        return _refuse(report, early, 2, job_id=job_id)
     apply_run._load_env()
     refused = refusal(mode=mode)
     if refused:
-        print(refused, file=sys.stderr)
-        return 2
+        return _refuse(report, refused, 2, job_id=job_id)
     profile = Path(args.profile) if args.profile else default_profile_dir()
     if context is None and profile_busy(profile):
-        print(PROFILE_BUSY, file=sys.stderr)
-        return 2
+        return _refuse(report, PROFILE_BUSY, 2, job_id=job_id)
     try:
         judge = jev.Guarded(jev.get(mode), logger=log)
     except (jev.JevUnavailable, ValueError) as e:
-        print(f"apply_assess: {e}", file=sys.stderr)
-        return 2
+        return _refuse(report, f"apply_assess: {e}", 2, job_id=job_id)
     queue = Path(args.queue) if args.queue else None
     common = dict(all_queued=args.all_queued, judge=judge,
                   settings=settings, queue_path=queue, log=log)
+    if report is not None:
+        common["report"] = report
     if context is not None:
         return run(list(args.job_ids), context=context, **common)
     from playwright.sync_api import sync_playwright
@@ -1200,11 +1303,9 @@ def main(argv: list[str] | None = None, *, context=None) -> int:
                 pw, profile, headless=bool(settings.get("auto_apply_headless")) or args.headless,
                 log=log)
         except profile_lock.ProfileBusy:
-            print(PROFILE_BUSY, file=sys.stderr)        # a browser opened it after the read
-            return 2
+            return _refuse(report, PROFILE_BUSY, 2, job_id=job_id)  # opened after the read
         except Exception as e:      # noqa: BLE001  (Chrome and the bundled build both failed)
-            print(NO_BROWSER.format(why=type(e).__name__), file=sys.stderr)
-            return 1
+            return _refuse(report, NO_BROWSER.format(why=type(e).__name__), 1, job_id=job_id)
         try:
             return run(list(args.job_ids), context=ctx, **common)
         finally:

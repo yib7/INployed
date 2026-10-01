@@ -226,6 +226,7 @@ class _Pool:
         self.usd = 0.0
         self.stopped = False        # Jev down or a window closed: no new job starts
         self.cancelled = False      # Ctrl+C: the live workers are ended, nothing is noted
+        self.refused = False        # a worker refused (no browser started): said once, stop
         self.threads: list[threading.Thread] = []
 
     # --- the slots' threads -------------------------------------------------------------
@@ -296,7 +297,33 @@ class _Pool:
         if got is None:
             self._failed(entry, stopped_why(err, getattr(proc, "returncode", None)))
             return
+        if self._refusal(jid, got, getattr(proc, "returncode", None)):
+            self._refused(got)
+            return
         self._report(entry, got)
+
+    @staticmethod
+    def _refusal(jid: str, got: Mapping[str, Any], returncode: Any) -> bool:
+        """Did the worker refuse to check (no browser started, a gate), not
+        fail on its job? `apply_assess.run` exits 0 for a job's own errors,
+        so an error result with a non-zero exit is a refusal, except run()'s
+        two per-job ones: the job gone from the queue, or the drain on it."""
+        if got.get("outcome") != "error" or not returncode:
+            return False
+        return str(got.get("why") or "") not in (f"job {jid} is not in the queue",
+                                                 "no job to check")
+
+    def _refused(self, got: Mapping[str, Any]) -> None:
+        """A worker's refusal stops the pool: no new job starts, and its
+        sentence is printed once, however many running workers meet it."""
+        import apply_assess
+        with self.lock:
+            first = not self.refused
+            self.refused = self.stopped = True
+            self.requests += int(got.get("requests") or 0)
+            self.usd += float(got.get("usd") or 0.0)
+            if first and not self.cancelled:
+                apply_assess._say(str(got.get("why") or "the check was refused"))
 
     # --- the lines ----------------------------------------------------------------------
 
@@ -361,8 +388,9 @@ def run_pool(chosen: list[Mapping[str, Any]], *, parallel: int, profile: Path,
     the slot root unless given) are swept before and after. `spawn` starts one
     worker (`spawn_worker` unless given; tests pass a fake).
 
-    Exit 0 when every job ran, 1 when Jev went down, a window was closed,
-    Ctrl+C was pressed or the profile could not be copied, 2 when it refuses
+    Exit 0 when every job ran, 1 when Jev went down, a window was closed, a
+    worker refused (no browser started), Ctrl+C was pressed or the profile
+    could not be copied, 2 when it refuses
     (the profile in use, the Apply Answers file damaged)."""
     import apply_assess
     import profile_lock

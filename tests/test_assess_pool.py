@@ -441,6 +441,42 @@ def test_a_closed_window_stops_the_pool(pool, capsys):
                                "check stops here")
 
 
+def test_no_browser_starting_stops_the_pool_and_says_so_once(pool, capsys):
+    """Fix round 1: a worker that refuses (its result an error, its exit not 0)
+    stops the pool as the one-job check stops: exit 1, the sentence once with
+    no not-checked wrapper, no job after the running ones, nothing noted."""
+    why = aa.NO_BROWSER.format(why="RuntimeError")
+    all_started = threading.Barrier(3, timeout=5)
+
+    def behave(jid, proc):
+        all_started.wait()              # the three running workers all meet it
+        proc.returncode = 1
+        return _result(jid, "error", why=why, requests=0, usd=0.0), ""
+    spawner = FakeSpawner(behave)
+    assert pool.run(spawner, parallel=3) == 1
+    assert len(spawner.calls) == 3                          # 4 to 7 never started
+    assert _out(capsys) == [
+        "Checking 7 jobs, up to 3 at once, each in its own browser window.", why]
+    assert not any((e.get("difficulty") or {}).get("last_failed_why") for e in pool.entries())
+    assert list(pool.root.iterdir()) == []
+
+
+@pytest.mark.parametrize("why", ["job {jid} is not in the queue", "no job to check"])
+def test_a_job_gone_from_the_queue_is_no_refusal(pool, capsys, why):
+    """run()'s own exit 2 for one job (removed, or the drain took it) is that
+    job's line; the pool goes on."""
+    def behave(jid, proc):
+        if jid == "1":
+            proc.returncode = 2
+            return _result(jid, "error", why=why.format(jid=jid), requests=0, usd=0.0), ""
+        return _result(jid), ""
+    spawner = FakeSpawner(behave)
+    assert pool.run(spawner, parallel=2, ids={"1", "2", "3"}) == 0
+    assert len(spawner.calls) == 3
+    assert any(f"Fabrikam / Analyst: not checked ({why.format(jid='1')}). " in x
+               for x in _out(capsys))
+
+
 def test_a_worker_with_no_result_line_is_noted_as_stopped(pool, capsys):
     def behave(jid, proc):
         if jid == "1":

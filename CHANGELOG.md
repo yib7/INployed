@@ -12,11 +12,17 @@ All notable changes to INployed are recorded here. The format follows
   (Ctrl-click or Shift-click) and **Check difficulty** opens one browser window per job, up to
   the new **Difficulty checks at once** setting (Settings → Auto-apply, 1 to 10, default 10;
   `apply_assess.py --parallel N` overrides it for a run). Each window runs on a temporary copy
-  of the signed-in auto-apply profile in `assess_profiles` under `%LOCALAPPDATA%\linkedin_watcher`,
-  deleted when the run ends and swept again at the start of the next one. The terminal prints a
-  line per job as it finishes, with the running Jev total. A Jev outage, a closed window or a
-  browser that will not start stops new jobs from starting, and Ctrl+C ends the windows. One job,
-  or the setting at 1, checks on the real profile exactly as before.
+  of the signed-in auto-apply profile in `assess_profiles` under `%LOCALAPPDATA%\linkedin_watcher`.
+  The copies are deleted when the run ends; one that outlives its run (a terminal closed with X)
+  is deleted the next time the auto-apply browser opens or the dashboard starts, and the terminal
+  names any copy it could not delete. The terminal prints a line per job as it finishes, with the
+  running Jev total, and a job that fails on its own shows why and lets the next one start. A Jev
+  outage, a closed window or a browser that will not start stops new jobs from starting, and
+  Ctrl+C ends the windows. One job, or the setting at 1, checks on the real profile exactly as
+  before.
+- **Résumé bullets on the Apply sheet copy with their dashes.** The sheet writes each résumé
+  bullet as `- bullet` with a blank line before the next, and copying a selection from the Apply
+  panel's sheet or its **Expand** window keeps the `- ` markers.
 - **Select several jobs in the Auto-apply queue.** **Remove** removes every selected row after
   one confirmation. **Re-queue**, **Mark applied**, **Don't apply** and the details pane's
   **Open folder**, **Open record** and **Answer now** are greyed out with "Select one job" while

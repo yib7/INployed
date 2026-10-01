@@ -773,7 +773,9 @@ exactly with no extra AI call. To apply:
    that field in) above the résumé / cover-letter paths, and the apply sheet **rendered as
    formatted markdown** (the **Copy apply sheet** button still copies the raw markdown
    source). An **Expand** button opens the sheet in a large, resizable window for easier
-   reading. Closing the panel brings the detail card back; **"I applied to this job"**
+   reading. On the sheet each résumé bullet is its own `- bullet` line with a blank line
+   before the next, and copying a selection from the panel or the **Expand** window keeps
+   the `- ` markers. Closing the panel brings the detail card back; **"I applied to this job"**
    confirms, adds the job to your Tracker as *applied*, and closes the panel (the
    right-click → *Set status → applied* still works too).
 3. **In Claude** (the Claude desktop app or this CLI) **with the Claude-in-Chrome
@@ -1315,16 +1317,21 @@ greyed out with the reason while Jev cannot run or another browser holds the aut
 profile. From a terminal: `python local/apply_assess.py` with job ids, or `--all` for every
 queued job (add `--parallel N`, 1 to 10, to set how many run at once for that run).
 
-**Several jobs at once.** With two or more jobs selected, the check opens one browser window
-per job, up to the **Difficulty checks at once** setting (Settings →
+**Several jobs at once.** With two or more jobs selected, or none (every queued job), the
+check opens one browser window per job, up to the **Difficulty checks at once** setting (Settings →
 Auto-apply, 1 to 10, default 10; it shows only while the difficulty check is on). When a
 window's job is done, the next job takes its place. Each window runs on its own temporary
 copy of the auto-apply profile, so it is already signed in, and your real profile is held
-for the whole run. The copies hold your session cookies, so they are deleted when the run
-ends and again at the start of the next one, even after a crash. The terminal prints one line
+for the whole run. The copies hold your session cookies. They are deleted when the run ends,
+after a wait of up to about 12 seconds for a window still closing. A copy that outlives its
+run (you closed the terminal with X, or a window would not let go of it) is deleted the next
+time the auto-apply browser opens (a check, a run or the sign-in) or the dashboard starts,
+and the terminal names any copy it could not delete. The terminal prints one line
 per job as it finishes, with the running total of Jev requests and cost. A run stops
 starting new jobs when Jev is down, when you close one of the windows, or when a browser
-cannot start; the windows still open finish, and the terminal says why. Ctrl+C in the
+cannot start; the windows still open finish, and the terminal says why. A job whose window
+fails on its own (its check crashed, or its copy was still in use) gets its "not checked"
+line with the reason and the warnings behind it, and the next job starts. Ctrl+C in the
 terminal closes the windows and deletes the copies. A stopped job keeps its earlier result.
 One job selected, or the setting at 1, checks one job at a time on the real profile as before.
 

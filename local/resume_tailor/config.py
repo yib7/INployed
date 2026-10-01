@@ -240,13 +240,13 @@ def fill_underfull_enabled() -> bool:
 
 
 def lead_overview_enabled() -> bool:
-    """Whether the project-overview-first reorder runs (compose.lead_with_overview): float
-    each project's overview/intro bullet ("what is this project at a glance") to the front so
-    detail bullets don't lead. select() orders bullets by JD-relevance, which can bury the
-    overview; this pass picks the lead via a cheap model call with a deterministic file-order
-    fallback (the master authors the overview atom first), so flow is always enforced. It only
-    REORDERS existing bullets -- never invents. Defaults ON. Precedence: RESUME_TAILOR_LEAD_OVERVIEW
-    env > config.json 'lead_overview' > True."""
+    """Whether the overview-first rule runs (compose.lead_with_overview): every entry's
+    overview bullet, the FIRST atom under it in master_experience.yaml, prints first, and the
+    rest follow in relevance order. select() orders bullets by JD-relevance, which can bury
+    the overview or leave it out; this pass is deterministic, so it holds on every job. It
+    only reorders or keeps the user's own atoms -- never invents. Defaults ON; off leaves
+    select()'s relevance order. Precedence: RESUME_TAILOR_LEAD_OVERVIEW env > config.json
+    'lead_overview' > True."""
     env = os.getenv("RESUME_TAILOR_LEAD_OVERVIEW")
     if env is not None and str(env).strip():
         return str(env).strip().lower() not in ("0", "false", "no", "off")

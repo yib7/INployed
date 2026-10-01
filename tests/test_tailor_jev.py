@@ -5,7 +5,8 @@ with byte-identical prompts. `test_jev_off_prompts_match_the_recording` pins tha
 the prompts of the stages the Jev steps sit beside and the order and tier of every
 call a golden run makes were recorded from the engine before the Jev wiring landed,
 into `tests/fixtures/tailor_jev_off_prompts.json`. Part 4a recorded `select`, the
-`lead_with_overview` ordering call and `compress_skills`' fallback call; part 4b
+`lead_with_overview` ordering call (since retired: the lead is now a rule) and
+`compress_skills`' fallback call; part 4b
 added the stages its checks gate (both `reverb` calls, every AI-writing sweep call
 and a `reground` re-ask), recorded at its base before the engine changed, and part
 4c added the rephrase call that best-of-N (TL-7) gates, recorded the same way.
@@ -13,7 +14,7 @@ A prompt change made on purpose re-records the file (set TAILOR_JEV_OFF_PROMPTS_
 for one run) and shows the diff in review; a change nobody meant fails here.
 
 The rest covers each Jev step where its answer lands (the shortlist and the skills
-in `select`, the lead in `lead_with_overview`, the new verb for a repeated opener in
+in `select`, the new verb for a repeated opener in
 `dedupe_leading_verbs`) and whole runs with Jev on, with Jev
 down from the start and with an outage mid-run. The faithfulness check (TL-4) has its
 own module, `test_tailor_faithfulness.py`, and so does the sweep gate (TL-5),
@@ -54,7 +55,7 @@ RECORD_ENV = "TAILOR_JEV_OFF_PROMPTS_RECORD"
 # trims or gates when Jev is on. A stage the golden run calls more than once is
 # recorded once per call, in call order: its first call under the stage's name and
 # each later one as "<stage> #<n>", so the recording 4a made stays as it was.
-PINNED_STAGES = ("select", "lead_with_overview", "rephrase", "reverb", "aiwriting_sweep")
+PINNED_STAGES = ("select", "rephrase", "reverb", "aiwriting_sweep")
 # The tailor's three Jev options (TL-7 to TL-9). Each needs a judge, so with Jev off
 # the recording holds whichever way they are set.
 JEV_OPTION_ENVS = ("RESUME_TAILOR_BEST_OF_N", "RESUME_TAILOR_COVER_LETTER_JEV_CHECK",
@@ -205,12 +206,12 @@ def test_jev_off_prompts_match_the_recording(pinned_engine, stub_template_head,
 
 
 def test_the_recording_covers_every_gated_stage():
-    """Every stage 4a, 4b and 4c gate has its prompt in the recording: select, the
-    lead call and the rephrase once, reverb twice, the sweep once per item, and the
+    """Every stage 4a, 4b and 4c gate has its prompt in the recording: select and
+    the rephrase once, reverb twice, the sweep once per item, and the
     reground re-ask."""
     want = json.loads(PROMPTS.read_text(encoding="utf-8"))
     assert list(want["prompts"]) == [
-        "select", "lead_with_overview", "rephrase", "reverb", "reverb #2", "aiwriting_sweep",
+        "select", "rephrase", "reverb", "reverb #2", "aiwriting_sweep",
         "aiwriting_sweep #2", "aiwriting_sweep #3", "aiwriting_sweep #4", "reground",
         "skills_fallback"]
     assert "REJECTED BULLETS" in "\n".join(want["prompts"]["reground"]["user"])
@@ -231,20 +232,6 @@ class _Recording:
     def judge(self, state, questions):
         self.requests.append((state, questions))
         return self.inner.judge(state, questions)
-
-
-class _Pick:
-    """Answers every choice with option `choice` at `confidence`."""
-
-    def __init__(self, choice, confidence):
-        self.choice = choice
-        self.confidence = confidence
-
-    def judge(self, state, questions):
-        return {qid: jev.Answer(kind="choice", choice=self.choice,
-                                probabilities={n: float(n == self.choice) for n in q["criteria"]},
-                                confidence=self.confidence)
-                for qid, q in questions.items()}
 
 
 class _Failing:
@@ -484,74 +471,6 @@ def test_a_line_keeps_its_count_and_width(wide_master, monkeypatch):
     assert lines["Languages"] == "SQL"
 
 
-# ── TL-3: the lead bullet ────────────────────────────────────────────────────
-def _p1_sel():
-    """P1 as select left it: p1_2 first, though p1_1 is the earlier authored atom."""
-    return {"experience": [], "leadership": [],
-            "projects": [{"name": "P1", "groups": [["p1_2"], ["p1_1"]]}]}
-
-
-def _ordering_calls(monkeypatch):
-    """Counts the ordering calls. `lead_with_overview` swallows any error its model
-    pass raises, so a raising guard would pass unseen. Each call answers bullet 1,
-    which differs from P1's file order, so a call that ran shows in the result too."""
-    calls = []
-
-    def fake_call(system, user, tier, **kw):
-        calls.append(system)
-        return {"projects": [{"project": "P1", "lead": 1}]}
-
-    monkeypatch.setattr(compose, "call", fake_call)
-    return calls
-
-
-@pytest.mark.parametrize("confidence", [0.9, 0.5])
-def test_a_sure_jev_pick_leads_and_the_ordering_call_is_skipped(wide_master, monkeypatch,
-                                                                confidence):
-    calls = _ordering_calls(monkeypatch)
-    sel = _p1_sel()
-    compose.lead_with_overview(_JD, "Analyst", sel, judge=_Pick("1", confidence))
-    assert calls == [], "the ordering call ran with Jev's answer in hand"
-    assert sel["projects"][0]["groups"] == [["p1_2"], ["p1_1"]]
-
-
-def test_an_unsure_jev_pick_keeps_file_order(wide_master, monkeypatch):
-    calls = _ordering_calls(monkeypatch)
-    sel = _p1_sel()
-    compose.lead_with_overview(_JD, "Analyst", sel, judge=_Pick("1", 0.4))
-    assert calls == [], "the ordering call ran with Jev's answer in hand"
-    assert sel["projects"][0]["groups"] == [["p1_1"], ["p1_2"]]
-
-
-def test_a_failing_judge_leaves_the_ordering_call_as_it_was(wide_master, monkeypatch):
-    prompts = []
-
-    def fake_call(system, user, tier, **kw):
-        prompts.append((system, user, tier, kw))
-        return {"projects": [{"project": "P1", "lead": 1}]}
-
-    monkeypatch.setattr(compose, "call", fake_call)
-    off, failed = _p1_sel(), _p1_sel()
-    compose.lead_with_overview(_JD, "Analyst", off)
-    compose.lead_with_overview(_JD, "Analyst", failed, judge=_Failing())
-    assert len(prompts) == 2 and prompts[0] == prompts[1]
-    assert failed == off
-    assert failed["projects"][0]["groups"] == [["p1_2"], ["p1_1"]]
-
-
-def test_with_no_project_to_order_the_lead_line_says_so(wide_master, monkeypatch):
-    calls = _ordering_calls(monkeypatch)
-    rec = _Recording(jev.FakeJev())
-    jev_assist.reset_usage()
-    sel = {"experience": [], "leadership": [],
-           "projects": [{"name": "P1", "groups": [["p1_1"]]}]}
-    compose.lead_with_overview(_JD, "Analyst", sel, judge=rec)
-    assert rec.requests == [] and calls == []
-    assert sel["projects"][0]["groups"] == [["p1_1"]]
-    assert jev_assist.usage_line(jev_assist.STEP_LEAD) == (
-        "jev lead: 0 requests, 0 tokens (estimated), $0.000000; nothing to ask")
-
-
 # ── TL-6: the verb dedupe ────────────────────────────────────────────────────
 _PALETTE = {"Build": ["Built", "Designed", "Engineered"],
             "Analyze": ["Analyzed", "Modeled", "Quantified"],
@@ -717,10 +636,9 @@ def _report(tmp_path):
 
 def test_a_golden_run_with_jev_on_makes_fewer_llm_calls(pinned_engine, stub_template_head,
                                                         tmp_path, monkeypatch):
-    """Jev answers the lead, so the ordering call goes; the bullets, the grounding
-    gate and the page are the golden's. The skills lines come from Jev and the pools,
-    with no fallback call: every system prompt is kept before the stub answers, and
-    none is the ordering call's or the fallback call's.
+    """The bullets, the grounding gate and the page are the golden's. The skills
+    lines come from Jev and the pools, with no fallback call: every system prompt is
+    kept before the stub answers, and none is the fallback call's.
 
     Jev also picks the new verb for both Trailhead bullets that repeat the verbatim
     block's "Built" (TL-6), so both `reverb` calls go. FakeJev finds no option's words
@@ -750,19 +668,18 @@ def test_a_golden_run_with_jev_on_makes_fewer_llm_calls(pinned_engine, stub_temp
     monkeypatch.setattr(verify, "enforce_grounded", _recording_gate)
     captured = _run_tailor(monkeypatch, tmp_path)
     assert len(systems) == len(pinned_engine)
-    assert not any("PURE ORDERING" in s for s in systems), "the ordering call ran"
     assert not any("EXACTLY FOUR fixed lines" in s for s in systems), "the fallback ran"
     assert not any("OPENS WITH A DIFFERENT action verb" in s for s in systems), "reverb ran"
     assert not any("You clean AI-writing tells" in s for s in systems), "the sweep ran"
     assert pinned_engine == [s for s in golden._GOLDEN_STAGES
-                             if s not in ("lead_with_overview", "reverb", "aiwriting_sweep")]
-    assert len(pinned_engine) == len(golden._GOLDEN_STAGES) - 7
+                             if s not in ("reverb", "aiwriting_sweep")]
+    assert len(pinned_engine) == len(golden._GOLDEN_STAGES) - 6
     assert captured["bullets"] == golden._GOLDEN_BULLETS
     assert gate == [True, False, False, False, False]
     assert captured["skill_lines"] == _JEV_SKILL_LINES
     assert areas == ["tailor"], "one judge per run, handed to every step"
-    # skills, shortlist, lead; two per repeated opener (TL-6); sweep; faithfulness
-    assert len(rec.requests) == 3 + 2 * 2 + 4 + 7
+    # skills, shortlist; two per repeated opener (TL-6); sweep; faithfulness
+    assert len(rec.requests) == 2 + 2 * 2 + 4 + 7
     verbs = [state["bullet"] for state, questions in rec.requests if "verb" in questions]
     assert verbs == [
         "Built Trailhead, a hiking route planner that ranks trails for a given weather window.",
@@ -774,8 +691,8 @@ def test_a_golden_run_with_jev_on_makes_fewer_llm_calls(pinned_engine, stub_temp
     assert faith == ["Globex Analytics", "Trailhead", "Ledgerly", "Robotics Club",
                      "Trailhead", "Trailhead", "Globex Analytics"]
     report = _report(tmp_path)
-    assert "warnings (0)" in report and "jev (6)" in report
-    for step in ("skills", "shortlist", "lead"):
+    assert "warnings (0)" in report and "jev (5)" in report
+    for step in ("skills", "shortlist"):
         assert f"  jev {step}: 1 request, " in report
     assert "  jev verb: 4 requests, " in report
     assert "  jev sweep gate: 4 requests, " in report
@@ -843,19 +760,18 @@ def test_jev_down_from_the_start_makes_exactly_the_jev_off_calls(
     assert got == json.loads(PROMPTS.read_text(encoding="utf-8"))
     assert down.calls == len(jev.RETRY_DELAYS_S) + 1
     report = _report(tmp_path)
-    for step in ("skills", "shortlist", "lead", "verb", "sweep gate"):
+    for step in ("skills", "shortlist", "verb", "sweep gate"):
         assert (f"  jev {step}: 0 requests, 0 tokens (estimated), $0.000000; fell back to "
                 "the LLM path (JudgeOutage ServiceDown 503)") in report
-    assert report.count("fell back to the LLM path (JudgeOutage ServiceDown 503)") == 5
+    assert report.count("fell back to the LLM path (JudgeOutage ServiceDown 503)") == 4
     assert report.count("fell back to the deterministic gate alone "
                         "(JudgeOutage ServiceDown 503)") == 1
 
 
 def test_an_outage_mid_run_moves_the_rest_of_the_run_to_the_llm_path(
         pinned_engine, stub_template_head, tmp_path, monkeypatch):
-    """Jev answers the skills and then goes down: the shortlist and the lead fall
-    back to today's path (the whole catalog, the ordering call), and the run ends
-    with the golden's bullets."""
+    """Jev answers the skills and then goes down: the shortlist falls back to
+    today's path (the whole catalog), and the run ends with the golden's bullets."""
     stages: list = []
     calls: list = []
     golden._install_stub(monkeypatch, _recording(stages, calls))
@@ -869,7 +785,7 @@ def test_an_outage_mid_run_moves_the_rest_of_the_run_to_the_llm_path(
     assert _catalog_ids(select_user) == list(assets.atoms_by_id())
     report = _report(tmp_path)
     assert "  jev skills: 1 request, " in report
-    for step in ("shortlist", "lead", "verb", "sweep gate"):
+    for step in ("shortlist", "verb", "sweep gate"):
         assert (f"  jev {step}: 0 requests, 0 tokens (estimated), $0.000000; fell back to "
                 "the LLM path (JudgeOutage ServiceDown 503)") in report
     assert ("  jev faithfulness: 0 requests, 0 tokens (estimated), $0.000000; fell back "
@@ -917,9 +833,9 @@ def test_the_usage_lines_reach_the_status_log(pinned_engine, stub_template_head,
     _run_tailor(monkeypatch, tmp_path, on_status=statuses.append)
     jev_lines = [s for s in statuses if s.startswith("jev ")]
     assert jev_lines == [jev_assist.usage_line(step) for step in (
-        jev_assist.STEP_SKILLS, jev_assist.STEP_SHORTLIST, jev_assist.STEP_LEAD,
+        jev_assist.STEP_SKILLS, jev_assist.STEP_SHORTLIST,
         jev_assist.STEP_VERB, jev_assist.STEP_SWEEP_GATE, jev_assist.STEP_FAITHFULNESS)]
-    assert [s.split(":")[0] for s in jev_lines] == ["jev skills", "jev shortlist", "jev lead",
+    assert [s.split(":")[0] for s in jev_lines] == ["jev skills", "jev shortlist",
                                                    "jev verb", "jev sweep gate",
                                                    "jev faithfulness"]
     report = _report(tmp_path)
@@ -934,7 +850,7 @@ def test_each_run_counts_its_own_jev_requests(pinned_engine, stub_template_head,
     _run_tailor(monkeypatch, tmp_path)
     _run_tailor(monkeypatch, tmp_path)
     report = _report(tmp_path)
-    for step in ("skills", "shortlist", "lead"):
+    for step in ("skills", "shortlist"):
         assert f"  jev {step}: 1 request, " in report
     assert "  jev verb: 4 requests, " in report
     assert "  jev sweep gate: 4 requests, " in report

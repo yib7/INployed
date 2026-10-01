@@ -39,7 +39,7 @@ when a seed runs past 1,200 characters or the block is shaped wrong; either way 
 still generates, with the seed capped or skipped.
 
 Generation draws on a background excerpt of the selected entries' own atoms (capped at
-30,000 characters, enough for a whole master; a longer history loses its longest
+80,000 characters, enough for a whole master; a longer history loses its longest
 entries' last notes first, every entry stays listed, and `tailor_report.txt` carries an
 advisory) plus the seed, then a second pass rewrites the draft for rhythm: varied
 sentence and paragraph lengths, and any sentence that reads like a bullet with a subject
@@ -359,7 +359,7 @@ the VM keeps running unchanged.
 #### One model for every step, or one per stage
 Settings → Résumé tailor, **Tailor models: simple or per stage** (and, on the Claude provider,
 **Claude models: simple or per stage**). Tailoring runs in stages, and by default each one
-gets its own model: a cheap one for the small calls (entry briefs, the overview lead, verb
+gets its own model: a cheap one for the small calls (entry briefs, verb
 swaps), a standard one that selects your atoms and runs every bullet cleanup pass, and a deep
 one that writes the first draft and the cover letter. That saves money, but it means three
 dropdowns and three decisions before you have a working setup.
@@ -1306,18 +1306,13 @@ Apply** job always scores 10, **Do it yourself** ("Easy Apply: the run leaves Ea
 jobs to you"), and so do a closed posting, a dead page and a payment page.
 
 Hover over a score to see its reasons and the exact questions your answers cannot fill. A
-result older than 7 days shows its age beside the score.
-
-- **Pre-answer** opens **Add answer** on the **Apply Answers** tab with one of those
-  questions filled in.
-- **Check again with my answers** scores the selected job again from the page it saved,
-  with the answers you have now (after **Pre-answer**, say). It opens no browser and costs a
-  Jev request or two.
+result older than 7 days shows its age beside the score. After you save an answer on the
+**Apply Answers** tab, run **Check difficulty** on the job again to see the new score.
 
 **Check difficulty** is hidden while **Jev difficulty check** is off in Settings → Jev, and
 greyed out with the reason while Jev cannot run or another browser holds the auto-apply
 profile. From a terminal: `python local/apply_assess.py` with job ids, or `--all` for every
-queued job (`--recheck` for the no-browser rescore).
+queued job.
 
 **One browser at a time.** A run, **Sign in to sites** and the difficulty check all use the
 same browser profile, so only one of them can have it open. While one does, the others

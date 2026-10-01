@@ -9,14 +9,6 @@
    }
   },
   {
-   "stage": "lead_with_overview",
-   "tier": "flash_lite",
-   "kw": {
-    "json_out": true,
-    "temperature": 0.0
-   }
-  },
-  {
    "stage": "block_briefs",
    "tier": "flash_lite",
    "kw": {
@@ -165,48 +157,6 @@
     "=== BEGIN UNTRUSTED JOB DESCRIPTION ===",
     "Data Engineer, Analytics Platform. You will own the ETL that lands raw events in Postgres, model the marts our analysts query, and keep the nightly batch honest. Day to day you will write Python, review dbt models, and partner with product on Experimentation. Docker experience helps; ETL ownership is the core of the role.",
     "=== END UNTRUSTED JOB DESCRIPTION ==="
-   ]
-  },
-  "lead_with_overview": {
-   "system": [
-    "You order resume bullets for narrative flow. For each project you are given its selected bullets, numbered. Pick the ONE bullet that best introduces the project: the high-level overview a reader needs ('what is this project at a glance') BEFORE the detail bullets make sense. Return its number. This is PURE ORDERING: you write no prose, you invent nothing, you only choose which EXISTING bullet should lead.",
-    "ABSOLUTE RULE: select and re-phrase; invention is forbidden. You may ONLY restate facts that are present in the provided atom(s). Never add a metric, number, tool, technology, company, or claim that is not literally in the atom. Copy every number/metric VERBATIM. Never upgrade the verb beyond the atom's stated ownership (if the atom says 'contributed to' or 'helped', do NOT write 'led' or 'owned'). Inflation here surfaces in the interview and costs the offer, so it is the worst possible failure. When unsure, say less."
-   ],
-   "user": [
-    "TARGET JOB: Data Engineer",
-    "",
-    "PROJECTS (each with its selected bullets, numbered):",
-    "[",
-    " {",
-    "  \"project\": \"Trailhead\",",
-    "  \"bullets\": [",
-    "   {",
-    "    \"n\": 1,",
-    "    \"summary\": \"Trained a gradient boosting model on 8,400 logged hikes to predict trail difficulty\"",
-    "   },",
-    "   {",
-    "    \"n\": 2,",
-    "    \"summary\": \"Trailhead is a hiking route planner that ranks trails for a given weather window\"",
-    "   }",
-    "  ]",
-    " },",
-    " {",
-    "  \"project\": \"Ledgerly\",",
-    "  \"bullets\": [",
-    "   {",
-    "    \"n\": 1,",
-    "    \"summary\": \"Parsed 30,000 CSV transactions with pandas and normalized merchant names\"",
-    "   },",
-    "   {",
-    "    \"n\": 2,",
-    "    \"summary\": \"Ledgerly is a personal budgeting tool that classifies bank transactions\"",
-    "   }",
-    "  ]",
-    " }",
-    "]",
-    "",
-    "For each project, return the NUMBER of the bullet that should LEAD (its overview / intro).",
-    "Return ONLY JSON: {\"projects\": [{\"project\": \"<name>\", \"lead\": <number>}, ...]}"
    ]
   },
   "rephrase": {

@@ -5,11 +5,10 @@ application page: a base by application system plus fixed steps, rounded half
 up and clamped to 1-10, with Easy Apply, a closed or dead posting and a payment
 page at 10 at once. DF-1 and DF-2: the gate, the profile and the walk to the
 first application page on the local test pages, where the only click is an
-Apply entry. DF-5: the cached page and "Check again with my answers" with no
-browser. DF-6: the running Jev total.
+Apply entry. DF-6: the running Jev total.
 
 Hermetic: FakeJev and NoisyJev, local pages and routed hosts in an offline
-browser context, stores and the page cache in tmp_path. No network.
+browser context, stores in tmp_path. No network.
 """
 from __future__ import annotations
 
@@ -256,34 +255,7 @@ def test_a_singleton_lock_of_a_gone_process_is_free(tmp_path):
     assert aa.profile_busy(tmp_path / "profile") is False
 
 
-# --- DF-5: the cached page -------------------------------------------------------------------
-
-@pytest.fixture
-def appdata(monkeypatch, tmp_path):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
-    return tmp_path / "appdata"
-
-
-def test_the_page_is_cached_per_job_under_linkedin_watcher(appdata):
-    page = {"job_id": "42", "url": "https://jobs.lever.co/x", "stop": "", "digest": None}
-    path = aa.save_page(page)
-    assert path == appdata / "linkedin_watcher" / "apply_assess" / "42.json"
-    assert aa.load_page("42") == page
-    assert aa.load_page("43") is None
-
-
-def test_an_odd_job_id_gets_a_safe_file_name(appdata):
-    one, two = aa.cache_path("a/b"), aa.cache_path("a:b")
-    assert one.parent == two.parent == appdata / "linkedin_watcher" / "apply_assess"
-    assert one != two
-    assert "/" not in one.name and ":" not in two.name
-
-
-def test_a_cached_page_for_another_job_is_no_page(appdata):
-    aa.save_page({"job_id": "42", "digest": None})
-    aa.cache_path("42").rename(aa.cache_path("7"))
-    assert aa.load_page("7") is None
-
+# --- DF-4: what the queue table shows -----------------------------------------------------
 
 def test_the_age_shows_past_seven_days():
     now = datetime(2026, 9, 27, 12, 0)
@@ -327,20 +299,13 @@ def test_past_runs_count_the_other_jobs_the_drain_ran_on_the_system():
     assert aa.past_runs(entries, "", "42") == (0, 0)
 
 
-def test_a_stop_page_is_scored_again_with_no_browser(appdata):
-    aa.save_page({"job_id": "42", "url": "https://x.example", "system": "", "stop": "closed",
-                  "notes": [], "checked_at": "2026-09-01T10:00:00", "digest": None})
-    got, why = aa.recheck_job({"job_posting_id": "42"}, judge=_NoJudge(), answers=[],
-                              settings={}, entries=[])
-    assert why == ""
+def test_a_stop_page_is_ten_with_no_judge():
+    page = {"job_id": "42", "url": "https://x.example", "system": "", "stop": "closed",
+            "notes": [], "checked_at": "2026-09-01T10:00:00", "digest": None}
+    got = aa.assess_page(page, {"job_posting_id": "42"}, judge=_NoJudge(), answers=[],
+                         settings={}, entries=[])
     assert got["score"] == 10 and got["reasons"] == [aa.STOP_REASONS["closed"]]
     assert got["checked_at"] == "2026-09-01T10:00:00"
-
-
-def test_a_recheck_with_no_saved_page_says_so(appdata):
-    got, why = aa.recheck_job({"job_posting_id": "42"}, judge=_NoJudge(), answers=[],
-                              settings={}, entries=[])
-    assert got is None and why == aa.NO_SAVED_PAGE
 
 
 class _NoJudge:
@@ -611,10 +576,9 @@ def test_a_page_that_does_not_load_gives_no_result(context, tmp_path):
     context.route(f"{CAREERS}/**", lambda route: route.abort())
     got, why, rec, _ = _check(context, tmp_path, f"{CAREERS}/apply")
     assert got is None and why.startswith("the posting did not load")
-    assert not aa.cache_path("42").exists()
 
 
-def test_check_again_with_my_answers_reads_the_saved_page(context, flow_server, tmp_path):
+def test_a_saved_answer_takes_its_question_off_the_score(context, flow_server, tmp_path):
     got, why, rec, entry = _check(context, tmp_path,
                                   f"{flow_server.base}/forms/essay_required.html",
                                   generate=False)
@@ -627,12 +591,10 @@ def test_check_again_with_my_answers_reads_the_saved_page(context, flow_server, 
                            "answer": "A dashboard for the county food bank.",
                            "question": apply_facts.saved_question(q["label"], q["help"]),
                            "note": "", "confirmed": True, "status": "active"}]
-    context.close()             # no browser from here on
-    again, why = aa.recheck_job(entry, judge=jev.FakeJev(), answers=answers,
-                                settings={"auto_apply_generate": False}, entries=[entry])
+    again, why = aa.check_job(entry, context=context, judge=jev.FakeJev(), answers=answers,
+                              settings={"auto_apply_generate": False}, entries=[entry])
     assert why == ""
     assert again["questions"] == [] and again["score"] == aa.UNKNOWN_BASE
-    assert again["checked_at"] == got["checked_at"]
 
 
 @pytest.mark.parametrize("seed", (1, 2, 3))
@@ -929,14 +891,6 @@ def test_a_failed_check_is_recorded_and_the_earlier_result_kept(context, tmp_pat
     assert datetime.fromisoformat(got["last_failed_at"]) >= \
         datetime.fromisoformat(earlier["checked_at"])
     assert "not checked (the posting did not load" in capsys.readouterr().out
-
-
-def test_a_recheck_with_no_saved_page_is_recorded(walk_env):
-    import apply_queue
-    apply_queue.enqueue(apply_queue.new_entry("42", company="Fabrikam", title="Analyst"))
-    assert aa.run(["42"], recheck=True, judge=_NoJudge(), settings={}) == 0
-    got = apply_queue.load()["jobs"][0]["difficulty"]
-    assert got["last_failed_why"] == aa.NO_SAVED_PAGE and "score" not in got
 
 
 def test_the_failure_line_names_its_age():

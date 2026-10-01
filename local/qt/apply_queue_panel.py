@@ -14,9 +14,7 @@ job's 1-10 score as a pill coloured by its band, with the reasons and the exact
 questions in its tooltip and the age of a result older than a week. "Check
 difficulty" runs `apply_assess.py` in its own console (hidden while the check
 is switched off, off with the reason while Jev cannot run or a browser holds
-the auto-apply profile), "Check again with my answers" screens the saved page
-again with no browser, and "Pre-answer" opens Add answer prefilled with one of
-the questions.
+the auto-apply profile).
 
 Park and resume (cycle 19, SP7): a run that pauses on a question it cannot
 answer writes a request into `apply_pause.pause_dir()`; the 5 s poll reads the
@@ -135,21 +133,19 @@ def _spawn_console(argv: list[str]) -> None:
     subprocess.Popen(argv, creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
 
 
-def _assess_command(root: Path, job_ids: list[str], *, recheck: bool) -> str:
+def _assess_command(root: Path, job_ids: list[str]) -> str:
     """The PowerShell line that runs the difficulty check from `root`: the
-    named jobs, or every queued job (`--all`) when none is named; `recheck`
-    screens the saved pages again. Each id is a single-quoted literal, the
-    root as in `_console_command`."""
+    named jobs, or every queued job (`--all`) when none is named. Each id is
+    a single-quoted literal, the root as in `_console_command`."""
     literal = str(root).replace("'", "''")
-    args = ["--recheck"] if recheck else []
-    args += ["'" + str(jid).replace("'", "''") + "'" for jid in job_ids] or ["--all"]
+    args = ["'" + str(jid).replace("'", "''") + "'" for jid in job_ids] or ["--all"]
     return (f"Set-Location -LiteralPath '{literal}'; python local/apply_assess.py "
             + " ".join(args))
 
 
-def _spawn_check(job_ids: list[str], recheck: bool) -> None:
+def _spawn_check(job_ids: list[str]) -> None:
     """Default on_check_difficulty: `apply_assess.py` in a new console."""
-    _spawn_console(_console_argv(_assess_command(REPO_ROOT, job_ids, recheck=recheck)))
+    _spawn_console(_console_argv(_assess_command(REPO_ROOT, job_ids)))
 
 
 def _spawn_kickoff() -> None:
@@ -294,13 +290,6 @@ def _difficulty_tip(d: Dict[str, Any]) -> str:
             lines.append(f"&nbsp;&bull;&nbsp;{esc(str(q.get('label') or ''))}"
                          + (f" ({esc(shown)})" if shown else ""))
     return "<qt>" + "<br>".join(lines) + "</qt>"
-
-
-def _prefill(q: Dict[str, Any]) -> Dict[str, Any]:
-    """Add answer's prefill (PR-9) for one of the check's questions."""
-    return {"question": str(q.get("label") or ""), "help": str(q.get("help") or ""),
-            "type": str(q.get("type") or ""),
-            "options": [str(o) for o in q.get("options") or []]}
 
 
 def _missing_prefill(m: Dict[str, Any]) -> Dict[str, Any]:
@@ -524,8 +513,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                  on_mark_seen: Callable[[Dict[str, Any]], None] | None = None,
                  on_answer_now: Callable[[Optional[Dict[str, Any]]], Any] | None = None,
                  jev_blocked: Callable[[], str] | None = None,
-                 on_check_difficulty: Callable[[List[str], bool], None] | None = None,
-                 on_pre_answer: Callable[[Dict[str, Any]], None] | None = None,
+                 on_check_difficulty: Callable[[List[str]], None] | None = None,
                  difficulty_blocked: Callable[[], str] | None = None,
                  difficulty_hidden: Callable[[], bool] | None = None,
                  profile_busy: Callable[[], bool] | None = None,
@@ -550,11 +538,9 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self._pauses_seen: set[str] = set()
         # Late-bound like password_exists: why a run cannot start ("" when it can).
         self._jev_blocked = jev_blocked or (lambda: _default_jev_blocked())
-        # The difficulty check (DF-4 to DF-6): its console (job ids, recheck),
-        # Add answer prefilled (the main window opens the Apply Answers tab),
-        # and its gates, late-bound like the others.
+        # The difficulty check (DF-4 to DF-6): its console (job ids) and its
+        # gates, late-bound like the others.
         self._on_check_difficulty = on_check_difficulty or _spawn_check
-        self._on_pre_answer = on_pre_answer or (lambda _p: None)
         self._difficulty_blocked = difficulty_blocked or (lambda: _default_difficulty_blocked())
         self._difficulty_hidden = difficulty_hidden or (lambda: _default_difficulty_hidden())
         self._profile_busy = profile_busy or (lambda: _default_profile_busy())
@@ -772,27 +758,16 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                                  "Delete the selected entry from the queue",
                                  tier="destructive")
         btns.addStretch(1)
-        # The difficulty check (DF-4 to DF-6). The tips are kept for
-        # refresh_difficulty_state, which shows a reason in their place.
+        # The difficulty check (DF-4 to DF-6). The tip is kept for
+        # refresh_difficulty_state, which shows a reason in its place.
         self._check_tip = (
             "Score how hard the selected job (or, with none selected, every queued "
             "job) is to auto-apply, 1 to 10, in a NEW terminal window. It opens each "
             "posting in the auto-apply browser, follows its Apply button and reads "
             "the first application page: it types nothing, signs in nowhere and "
             "submits nothing. About 2 to 4 Jev requests per job.")
-        self._recheck_tip = (
-            "Score the selected job again from its saved page with the answers you "
-            "have now (after Pre-answer, say). No browser; a Jev request or two.")
-        self._pre_answer_tip = (
-            "Save an answer to one of the questions the check found your answers "
-            "cannot fill: opens Add answer on the Apply Answers tab with the "
-            "question filled in.")
         self.check_difficulty_btn = button("Check difficulty", self._check_difficulty,
                                            self._check_tip, tier="tertiary")
-        self.recheck_btn = button("Check again with my answers", self._recheck_difficulty,
-                                  self._recheck_tip, tier="tertiary")
-        self.pre_answer_btn = button("Pre-answer", self._pre_answer, self._pre_answer_tip,
-                                     tier="tertiary")
         v.addLayout(btns)
 
         self.status_label = QtWidgets.QLabel("")
@@ -1053,25 +1028,16 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         return hidden, reason, busy
 
     def refresh_difficulty_state(self) -> tuple[str, bool]:
-        """The difficulty buttons (DF-6): Check difficulty and Check again
-        hide while the check is switched off; while Jev cannot run they are
-        off with the check's reason as their tooltip, and Check difficulty is
-        off while a browser holds the auto-apply profile too (Check again
-        opens no browser). Check again wants a selected job the check has
-        read, Pre-answer one with questions. Read with the Jev gate
-        (`refresh_jev_state`) and on each selection. Returns (the reason,
-        busy)."""
+        """The Check difficulty button (DF-6): hidden while the check is
+        switched off; off with the check's reason as its tooltip while Jev
+        cannot run or a browser holds the auto-apply profile. Read with the
+        Jev gate (`refresh_jev_state`) and on each selection. Returns (the
+        reason, busy)."""
         hidden, reason, busy = self._difficulty_gate()
         self.check_difficulty_btn.setVisible(not hidden)
-        self.recheck_btn.setVisible(not hidden)
         self.check_difficulty_btn.setEnabled(not reason and not busy)
         self.check_difficulty_btn.setToolTip(
             reason or (apply_assess.PROFILE_BUSY if busy else self._check_tip))
-        d = (self._selected_entry() or {}).get("difficulty") or {}
-        checked = isinstance(d, dict) and bool(d.get("score"))
-        self.recheck_btn.setEnabled(not reason and checked)
-        self.recheck_btn.setToolTip(reason or self._recheck_tip)
-        self.pre_answer_btn.setEnabled(bool(self._questions()))
         return reason, busy
 
     # ---- selection / details --------------------------------------------------------
@@ -1218,16 +1184,6 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         box.exec()
         return box.clickedButton() is start_btn
 
-    def _questions(self) -> List[Dict[str, Any]]:
-        """The selected job's questions the check found unanswered that an
-        answer can fill: an upload wants a file in the job folder, so it is
-        left out of Pre-answer (its tooltip line says so)."""
-        d = (self._selected_entry() or {}).get("difficulty") or {}
-        if not isinstance(d, dict):
-            return []
-        return [q for q in d.get("questions") or []
-                if isinstance(q, dict) and q.get("label") and q.get("type") != "file"]
-
     def _confirm_check(self, n: int) -> bool:
         """Ask before checking every queued job; tests monkeypatch this."""
         answer = QtWidgets.QMessageBox.question(
@@ -1246,7 +1202,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             return
         jid = self._selected_job_id()
         if jid:
-            self._on_check_difficulty([jid], False)
+            self._on_check_difficulty([jid])
             self._set_note("Checking the selected job's difficulty in a new terminal.")
             return
         queued = self._queued_count()
@@ -1255,40 +1211,8 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             return
         if not self._confirm_check(queued):
             return
-        self._on_check_difficulty([], False)
+        self._on_check_difficulty([])
         self._set_note(f"Checking {queued} queued job(s) in a new terminal.")
-
-    def _recheck_difficulty(self) -> None:
-        """Screen the selected job's saved page again (no browser)."""
-        reason, _busy = self.refresh_difficulty_state()
-        jid = self._selected_job_id()
-        if reason or not jid:
-            self._set_note(reason or "Select a job the check has read.")
-            return
-        self._on_check_difficulty([jid], True)
-        self._set_note("Checking the selected job again with your answers in a new terminal.")
-
-    def _pre_answer_menu(self) -> QtWidgets.QMenu:
-        """One entry per question of the selected job, each opening Add
-        answer prefilled with it."""
-        menu = QtWidgets.QMenu(self)
-        for q in self._questions():
-            action = menu.addAction(str(q.get("label") or ""))
-            action.triggered.connect(lambda _c=False, q=q: self._on_pre_answer(_prefill(q)))
-        return menu
-
-    def _pre_answer(self) -> None:
-        """Add answer prefilled with the selected job's question, or a menu
-        of them when there are several."""
-        questions = self._questions()
-        if not questions:
-            self._set_note("The selected job has no question to pre-answer.")
-            return
-        if len(questions) == 1:
-            self._on_pre_answer(_prefill(questions[0]))
-            return
-        menu = self._pre_answer_menu()
-        menu.exec(self.pre_answer_btn.mapToGlobal(self.pre_answer_btn.rect().bottomLeft()))
 
     def _missing_questions(self) -> List[Dict[str, Any]]:
         """The selected job's missing answers that name a question."""

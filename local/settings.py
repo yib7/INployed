@@ -829,8 +829,8 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("tailor_fallback_flash_lite", "Fallbacks: fast (briefs)", "list", [],
           "Engine", "config", advanced=True,
           show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
-          help="Extra models for the FAST tier only (the per-entry briefs, the overview "
-               "lead and verb swaps), one per line, best first. List other '-lite' "
+          help="Extra models for the FAST tier only (the per-entry briefs and verb "
+               "swaps), one per line, best first. List other '-lite' "
                "models here: they allow ~500 free requests/day per key. Listing a full "
                "Flash model instead spends the 20/day budget the standard and deep tiers "
                "need. Used only in 'pool'."),
@@ -882,8 +882,8 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("RESUME_TAILOR_MODEL_FLASH_LITE", "Tailor model: fast (briefs)",
           "editable_choice", "gemini-3.5-flash-lite", "Engine", "env", choices=GEMINI_MODELS,
           show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
-          help="Cheapest model, for the small calls: the per-entry briefs, the overview "
-               "lead and verb swaps."),
+          help="Cheapest model, for the small calls: the per-entry briefs and verb "
+               "swaps."),
     Field("RESUME_TAILOR_MODEL_FLASH", "Tailor model: standard (selection)",
           "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
           show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
@@ -913,8 +913,8 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "Claude model: fast (briefs)",
           "editable_choice", "claude-haiku-4-5", "Engine", "env", choices=CLAUDE_MODELS,
           show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
-          help="Claude provider only: the small calls (per-entry briefs, the overview lead, "
-               "verb swaps)."),
+          help="Claude provider only: the small calls (per-entry briefs, verb "
+               "swaps)."),
     Field("RESUME_TAILOR_CLAUDE_MODEL_FLASH", "Claude model: standard (selection)",
           "editable_choice", "claude-sonnet-5", "Engine", "env", choices=CLAUDE_MODELS,
           show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)), advanced=True, restart=True,

@@ -48,8 +48,8 @@ Four tests, each catching a different kind of drift:
   pins which one runs without a fallback.
 * ``test_render_uses_the_real_template_preamble`` — the tests above stub
   ``assets.template_head()`` to a short sentinel so the golden ``.tex`` literal stays
-  reviewable (the real preamble is 123 lines of candidate-independent LaTeX that no phase
-  of this cycle touches). This test puts the real preamble back and proves ``render``
+  reviewable (the real preamble is 180-odd lines of candidate-independent LaTeX that no
+  phase of this cycle touches). This test puts the real preamble back and proves ``render``
   still emits ``preamble + body`` verbatim, so nothing hides behind the sentinel.
 
 Hermetic by construction, and it must stay that way:
@@ -247,7 +247,6 @@ _STUB_HEAD = "%%GOLDEN TEMPLATE PREAMBLE%%\n\\begin{document}\n\n"
 # One fixed payload per stage, dispatched on the stage's own system prompt. Each
 # payload is shaped to exercise a branch the refactor could break:
 #   select            — an over-long block/project so _enforce_fixed_counts really trims
-#   lead_with_overview— a pick for Trailhead, SILENCE for Ledgerly (file-order fallback)
 #   rephrase          — one over-length bullet (trim), one underfull (fill), one buzzword
 #                       and one em dash (style gate), and two openers colliding with the
 #                       verbatim block's "Built" (dedupe)
@@ -277,10 +276,6 @@ _SELECT = {
     "methods": ["ETL", "Data Modeling", "A/B Testing", "Feature Engineering"],
     "rationale": "Leads with the ETL and dbt evidence the posting centers on.",
 }
-
-# Trailhead's overview is bullet 2; Ledgerly is deliberately absent so the deterministic
-# file-order fallback (earliest-authored atom leads) is exercised alongside the model pick.
-_LEAD = {"projects": [{"project": "Trailhead", "lead": 2}]}
 
 _BRIEFS = {"briefs": [
     {"block": "Globex Analytics", "brief": "Warehouse reliability, newest work first."},
@@ -391,9 +386,6 @@ def _make_stub(stages):
         if "PURE SELECTION" in system:
             stages.append("select")
             return _SELECT
-        if "PURE ORDERING" in system:
-            stages.append("lead_with_overview")
-            return _LEAD
         if "You frame resume blocks for cohesion" in system:
             stages.append("block_briefs")
             return _BRIEFS
@@ -514,7 +506,7 @@ def _run_bullet_pipeline():
     sel = compose.select(jd, job_title, company)
     verbatim = compose.inject_verbatim(sel)
     if config.lead_overview_enabled():
-        compose.lead_with_overview(jd, job_title, sel)
+        compose.lead_with_overview(sel)
     briefs = compose.block_briefs(jd, job_title, sel)
     bullets = rt_run._resolve_bullets(jd, job_title, sel, lambda _m: None, briefs=briefs)
     verify.enforce_grounded(sel, bullets)
@@ -561,7 +553,6 @@ def _run_bullet_pipeline():
 # what came out. Read the module docstring before touching any of it.
 _GOLDEN_STAGES = [
     "select",
-    "lead_with_overview",
     "block_briefs",
     "rephrase",
     "reverb",
@@ -615,6 +606,12 @@ _GOLDEN_SKILL_LINES = [
     {"label": "Methods", "items": "ETL, Experimentation, Data Modeling, Feature Engineering"},
 ]
 
+# 2026-09-22 layout re-pin (spacing only; bullets, skills and stages unchanged):
+#   after the contact line   \vspace{-10pt}  -> \vspace{-12.5pt}
+#   after Education          \vspace{-10pt}  -> \vspace{-10.5pt}
+#   after Projects           \vspace{-10pt}  -> (removed)
+#   skills itemize           [leftmargin=0.15in, label={}]
+#                         -> [leftmargin=\resumeEntryIndent, labelwidth=0pt, labelsep=0pt, label={}]
 _GOLDEN_TEX = r"""%%GOLDEN TEMPLATE PREAMBLE%%
 \begin{document}
 
@@ -624,7 +621,7 @@ _GOLDEN_TEX = r"""%%GOLDEN TEMPLATE PREAMBLE%%
 \textbf{\Huge \scshape Alex Rivera} \\ \vspace{1pt}
 \small{Austin, TX} $|$ \small{555-0142} $|$ \small{alex@example.com} $|$ \small{\href{https://linkedin.com/in/alexrivera}{linkedin.com/in/alexrivera}}
 \end{center}
-\vspace{-10pt}
+\vspace{-12.5pt}
 
 %-----------EDUCATION-----------
 \section{Education}
@@ -635,7 +632,7 @@ _GOLDEN_TEX = r"""%%GOLDEN TEMPLATE PREAMBLE%%
 \item \small{\textbf{GPA:} 3.8/4.0 $|$ \textbf{Awards \& Honors:} Dean's List}
 \resumeSubHeadingListEnd
 
-\vspace{-10pt}
+\vspace{-10.5pt}
 
 
 %-----------EXPERIENCE-----------
@@ -675,8 +672,6 @@ _GOLDEN_TEX = r"""%%GOLDEN TEMPLATE PREAMBLE%%
 \resumeItemListEnd
 \resumeSubHeadingListEnd
 
-\vspace{-10pt}
-
 %-----------Leadership Experience-----------
 \section{Leadership Experience}
 \resumeSubHeadingListStart
@@ -690,7 +685,7 @@ _GOLDEN_TEX = r"""%%GOLDEN TEMPLATE PREAMBLE%%
 
 %-----------Technical SKILLS-----------
 \section{Technical Skills}
-\begin{itemize}[leftmargin=0.15in, label={}]
+\begin{itemize}[leftmargin=\resumeEntryIndent, labelwidth=0pt, labelsep=0pt, label={}]
 \item \small{
 \textbf{Languages}{: } Python, SQL, R, Java \\
 \textbf{Frameworks}{: } FastAPI, Flask, Django \\

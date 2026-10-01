@@ -1461,10 +1461,10 @@ def test_a_result_older_than_seven_days_shows_its_age(qtbot, tmp_path):
 def test_the_check_is_hidden_while_its_switch_is_off(qtbot, tmp_path):
     hidden = [True]
     p = _dpanel(qtbot, _qfile(tmp_path), difficulty_hidden=lambda: hidden[0])
-    assert p.check_difficulty_btn.isHidden() and p.recheck_btn.isHidden()
+    assert p.check_difficulty_btn.isHidden()
     hidden[0] = False
     p.refresh_jev_state()
-    assert not p.check_difficulty_btn.isHidden() and not p.recheck_btn.isHidden()
+    assert not p.check_difficulty_btn.isHidden()
 
 
 def test_the_check_is_off_with_the_reason_while_jev_cannot_run(qtbot, tmp_path):
@@ -1494,11 +1494,10 @@ def test_the_check_runs_the_selected_job(qtbot, tmp_path):
     _checked(qfile, "1", difficulty=None)
     _checked(qfile, "2", difficulty=None)
     calls = []
-    p = _dpanel(qtbot, qfile,
-                on_check_difficulty=lambda ids, recheck: calls.append((ids, recheck)))
+    p = _dpanel(qtbot, qfile, on_check_difficulty=calls.append)
     p.table.selectRow(_row_of(p, "2"))
     p.check_difficulty_btn.click()
-    assert calls == [(["2"], False)]
+    assert calls == [["2"]]
 
 
 def test_the_check_with_no_selection_asks_before_checking_every_queued_job(qtbot, tmp_path,
@@ -1507,8 +1506,7 @@ def test_the_check_with_no_selection_asks_before_checking_every_queued_job(qtbot
     _checked(qfile, "1", difficulty=None)
     _checked(qfile, "2", difficulty=None)
     calls, asked = [], []
-    p = _dpanel(qtbot, qfile,
-                on_check_difficulty=lambda ids, recheck: calls.append((ids, recheck)))
+    p = _dpanel(qtbot, qfile, on_check_difficulty=calls.append)
     answer = [False]
     monkeypatch.setattr(p, "_confirm_check", lambda n: asked.append(n) or answer[0])
     p.table.clearSelection()
@@ -1516,7 +1514,7 @@ def test_the_check_with_no_selection_asks_before_checking_every_queued_job(qtbot
     assert asked == [2] and calls == []
     answer[0] = True
     p.check_difficulty_btn.click()
-    assert calls == [([], False)]
+    assert calls == [[]]
 
 
 def test_the_check_reads_the_gate_again_at_the_click(qtbot, tmp_path):
@@ -1524,85 +1522,32 @@ def test_the_check_reads_the_gate_again_at_the_click(qtbot, tmp_path):
     _checked(qfile, "1", difficulty=None)
     busy, calls = [False], []
     p = _dpanel(qtbot, qfile, profile_busy=lambda: busy[0],
-                on_check_difficulty=lambda ids, recheck: calls.append(ids))
+                on_check_difficulty=calls.append)
     p.table.selectRow(0)
     busy[0] = True                              # a drain started since the last refresh
     p._check_difficulty()
     assert calls == [] and p.status_label.text() == aqp.apply_assess.PROFILE_BUSY
 
 
-def test_check_again_needs_a_checked_job_and_skips_the_profile(qtbot, tmp_path):
-    qfile = _qfile(tmp_path)
-    _checked(qfile, "1")
-    _checked(qfile, "2", difficulty=None)
-    calls = []
-    p = _dpanel(qtbot, qfile, profile_busy=lambda: True,
-                on_check_difficulty=lambda ids, recheck: calls.append((ids, recheck)))
-    p.table.selectRow(_row_of(p, "2"))
-    assert not p.recheck_btn.isEnabled()
-    p.table.selectRow(_row_of(p, "1"))
-    assert p.recheck_btn.isEnabled()            # no browser: a held profile is no bar
-    p.recheck_btn.click()
-    assert calls == [(["1"], True)]
-
-
-def test_check_again_is_off_with_the_reason_while_jev_cannot_run(qtbot, tmp_path):
-    qfile = _qfile(tmp_path)
-    _checked(qfile, "1")
-    p = _dpanel(qtbot, qfile, difficulty_blocked=lambda: "Jev is off")
-    p.table.selectRow(0)
-    assert not p.recheck_btn.isEnabled() and p.recheck_btn.toolTip() == "Jev is off"
-
-
-def test_pre_answer_opens_add_answer_prefilled(qtbot, tmp_path):
-    qfile = _qfile(tmp_path)
-    _checked(qfile, "1", difficulty=_difficulty(5, questions=[_QUESTION]))
-    _checked(qfile, "2", difficulty=_difficulty(2))
-    opened = []
-    p = _dpanel(qtbot, qfile, on_pre_answer=opened.append)
-    p.table.selectRow(_row_of(p, "2"))
-    assert not p.pre_answer_btn.isEnabled()
-    p.table.selectRow(_row_of(p, "1"))
-    assert p.pre_answer_btn.isEnabled()
-    p.pre_answer_btn.click()
-    assert opened == [{"question": _QUESTION["label"], "help": "One line is plenty",
-                       "type": "text", "options": []}]
-
-
-def test_pre_answer_with_several_questions_offers_each(qtbot, tmp_path):
-    qfile = _qfile(tmp_path)
-    _checked(qfile, "1", difficulty=_difficulty(6, questions=[_QUESTION, _CHOICE]))
-    opened = []
-    p = _dpanel(qtbot, qfile, on_pre_answer=opened.append)
-    p.table.selectRow(0)
-    menu = p._pre_answer_menu()
-    assert [a.text() for a in menu.actions()] == [_QUESTION["label"], "Preferred office"]
-    menu.actions()[1].trigger()
-    assert opened == [{"question": "Preferred office", "help": "", "type": "choice",
-                       "options": ["Austin", "Remote"]}]
-
-
 def test_the_check_command_runs_apply_assess_in_the_repo():
     root = Path("C:/Users/o'brien/[repo]")
     literal = str(root).replace("'", "''")
-    assert aqp._assess_command(root, ["1", "2"], recheck=False) == (
+    assert aqp._assess_command(root, ["1", "2"]) == (
         f"Set-Location -LiteralPath '{literal}'; python local/apply_assess.py '1' '2'")
-    assert aqp._assess_command(root, [], recheck=False).endswith(
+    assert aqp._assess_command(root, []).endswith(
         "python local/apply_assess.py --all")
-    assert aqp._assess_command(root, ["1"], recheck=True).endswith(
-        "python local/apply_assess.py --recheck '1'")
-    assert aqp._assess_command(root, ["it's"], recheck=False).endswith("'it''s'")
+    assert aqp._assess_command(root, ["it's"]).endswith("'it''s'")
 
 
 def test_the_default_check_spawns_its_own_console(monkeypatch):
     import base64
     spawned = []
     monkeypatch.setattr(aqp, "_spawn_console", spawned.append)
-    aqp._spawn_check(["7"], True)
+    aqp._spawn_check(["7"])
     [argv] = spawned
     assert argv[:3] == ["powershell", "-NoExit", "-EncodedCommand"]
     assert base64.b64decode(argv[3]).decode("utf-16-le") == \
-        aqp._assess_command(aqp.REPO_ROOT, ["7"], recheck=True)
+        aqp._assess_command(aqp.REPO_ROOT, ["7"])
 
 
 def test_the_default_gate_is_the_checks_own(monkeypatch):
@@ -1622,19 +1567,6 @@ def test_the_default_hiding_follows_the_switches():
     assert aqp._default_difficulty_hidden() is True
     path.write_text('{"jev_enabled": true, "jev_difficulty": true}', encoding="utf-8")
     assert aqp._default_difficulty_hidden() is False
-
-
-def test_pre_answer_in_the_window_opens_add_answer_on_the_answers_tab(qtbot, monkeypatch,
-                                                                      tmp_path):
-    w = _win(qtbot, monkeypatch, tmp_path)
-    opened = []
-    monkeypatch.setattr(w.answers_tab, "add_answer",
-                        lambda prefill=None: opened.append(prefill))
-    prefill = {"question": "Preferred office", "help": "", "type": "choice",
-               "options": ["Austin", "Remote"]}
-    w.apply_queue_panel._on_pre_answer(prefill)
-    assert w.tabs.tabText(w.tabs.currentIndex()) == "Apply Answers"
-    assert opened == [prefill]
 
 
 # --- SP6 fix round 1 ----------------------------------------------------------------------
@@ -1720,27 +1652,15 @@ _UPLOAD = {"label": "Portfolio (PDF)", "help": "", "options": [], "required": Tr
            "type": "file"}
 
 
-def test_a_required_upload_shows_in_the_tooltip_and_stays_out_of_pre_answer(qtbot, tmp_path):
+def test_a_required_upload_shows_in_the_tooltip(qtbot, tmp_path):
     qfile = _qfile(tmp_path)
     _checked(qfile, "1", difficulty=_difficulty(
         6, questions=[_UPLOAD, _QUESTION],
         reasons=["Application system: Lever (base 2)",
                  "2 required questions your answers cannot fill (+3)"]))
-    opened = []
-    p = _dpanel(qtbot, qfile, on_pre_answer=opened.append)
+    p = _dpanel(qtbot, qfile)
     tip = p.table.item(0, aqp.COLUMNS.index("Difficulty")).toolTip()
     assert "Portfolio (PDF) (an upload: put the file in the job folder)" in tip
-    p.table.selectRow(0)
-    p.pre_answer_btn.click()                    # one answerable question: no menu
-    assert opened == [aqp._prefill(_QUESTION)]
-
-
-def test_only_an_upload_leaves_pre_answer_off(qtbot, tmp_path):
-    qfile = _qfile(tmp_path)
-    _checked(qfile, "1", difficulty=_difficulty(4, questions=[_UPLOAD]))
-    p = _dpanel(qtbot, qfile)
-    p.table.selectRow(0)
-    assert not p.pre_answer_btn.isEnabled()
 
 
 def test_a_failed_check_shows_in_the_tooltip_over_the_earlier_result(qtbot, tmp_path):

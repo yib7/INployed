@@ -9,12 +9,9 @@ the page; the counting and the arithmetic stay here, with the constants below.
 from __future__ import annotations
 
 import dataclasses
-import hashlib
 import json
 import logging
 import math
-import os
-import re
 import sys
 import time
 from dataclasses import dataclass, field
@@ -156,21 +153,18 @@ def score(*, system: str = "", unanswered: int = 0, essays: int = 0,
     return {"score": value, "band": band_for(value), "reasons": reasons}
 
 
-# --- DF-1 and DF-5: the gate, the profile, the cache ------------------------------------
+# --- DF-1: the gate and the profile --------------------------------------------------------
 
 ENTRY_HOPS_MAX = 4          # Apply entry clicks per job: LinkedIn's, two job boards', the posting's
 PAGES_MAX = ENTRY_HOPS_MAX + 2
 STALE_DAYS = 7              # a result older than this shows its age
-CACHE_FOLDER = "apply_assess"
 PROFILE_BUSY = profile_lock.BUSY_LEAD + " Check difficulty once that window closes."
 NO_BROWSER = ("The browser did not start ({why}): Google Chrome and the bundled Chromium both "
               "failed to open the auto-apply profile, so the difficulty check stops here.")
-NO_SAVED_PAGE = "no saved page for this job; run Check difficulty first"
 ACCOUNT_NOTE = "An account step comes first: its questions show once you sign in"
 CHECK_NOTE = "A bot check comes first: its questions show once it clears"
 MAILTO_NOTE = "The Apply opens an email to {address}"
 SSO_NOTE = "Its only way on signs in with {sites}; the run signs in with no other site"
-_UNSAFE = re.compile(r"[^A-Za-z0-9_.-]")
 
 
 def account_worded(text: str) -> bool:
@@ -209,10 +203,6 @@ def refusal(*, config: Mapping[str, Any] | None = None, env: Mapping[str, str] |
         config=config, env=env, mode=resolved, saved_key=saved_key)
 
 
-def _appdata() -> Path:
-    return Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
-
-
 def default_profile_dir() -> Path:
     """The drain's persistent browser profile (`profile_lock.default_profile_dir`),
     read here without importing the runner, so the dashboard stays light."""
@@ -225,41 +215,6 @@ def profile_busy(profile_dir: Path | None = None) -> bool:
     `apply_run.launch_profile` opens takes (`profile_lock.busy`); a missing
     profile is free."""
     return profile_lock.busy(profile_dir)
-
-
-def cache_dir() -> Path:
-    """Where the check keeps each job's page (DF-5)."""
-    return _appdata() / "linkedin_watcher" / CACHE_FOLDER
-
-
-def cache_path(job_id: str) -> Path:
-    """The cached page's file for `job_id`: its id in safe characters, with a
-    short hash of the id when any character was replaced."""
-    raw = str(job_id)
-    safe = _UNSAFE.sub("_", raw) or "_"
-    if safe != raw:
-        safe += "-" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8]
-    return cache_dir() / f"{safe}.json"
-
-
-def save_page(page: Mapping[str, Any]) -> Path:
-    """Write one job's page record (`job_id`, `url`, `system`, `state`,
-    `captcha`, `account_wall`, `stop`, `notes`, `checked_at`, `digest`)."""
-    from jsonutil import atomic_write_json
-    path = cache_path(str(page["job_id"]))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_json(path, dict(page))
-    return path
-
-
-def load_page(job_id: str) -> dict | None:
-    """The cached page for `job_id`, or None when there is none (or it holds
-    another job's page)."""
-    from jsonutil import read_json_dict
-    page = read_json_dict(cache_path(job_id))
-    if not page or str(page.get("job_id")) != str(job_id):
-        return None
-    return page
 
 
 # --- DF-4: what the queue table shows -----------------------------------------------------
@@ -1012,7 +967,7 @@ def tally(digest, plan, *, generate: bool) -> Tally:
 
 
 def page_record(walk: Walk, job_id: str) -> dict:
-    """The page the cache keeps for a job (DF-5)."""
+    """What the walk read on a job's page, as `assess_page` scores it."""
     return {"job_id": str(job_id), "url": walk.url, "system": walk.system,
             "state": walk.state, "captcha": walk.captcha, "account_wall": walk.account_wall,
             "stop": walk.stop, "notes": list(walk.notes),
@@ -1022,7 +977,7 @@ def page_record(walk: Walk, job_id: str) -> dict:
 
 def assess_page(page: Mapping[str, Any], entry: Mapping[str, Any], *, judge, answers: list[dict],
                 settings: Mapping[str, Any], entries: list[Mapping[str, Any]]) -> dict:
-    """The difficulty for a read page (fresh or cached): the stop's 10, or
+    """The difficulty for a read page: the stop's 10, or
     the score over the screening of its form (`apply_screening.screen_page`
     with the catalog of the confirmed answers) and the past runs on its
     system. Returns the queue entry's `difficulty` without `jev_usd`."""
@@ -1065,28 +1020,14 @@ def check_job(entry: Mapping[str, Any], *, context, judge, answers: list[dict],
               log: logging.Logger | None = None) -> tuple[dict | None, str]:
     """(the difficulty, "") for one queued job, read in `context` (the
     persistent profile's browser context), or (None, why) when no page could
-    be read. The page is cached for "Check again with my answers"."""
+    be read."""
     log = log or logging.getLogger("apply_assess")
     job_id = str(entry.get("job_posting_id") or "")
     walk = _Walker(context, entry, judge, log).run()
     if walk.unread:
         return None, walk.unread
-    page = page_record(walk, job_id)
-    save_page(page)
-    return assess_page(page, entry, judge=judge, answers=answers, settings=settings,
-                       entries=entries), ""
-
-
-def recheck_job(entry: Mapping[str, Any], *, judge, answers: list[dict],
-                settings: Mapping[str, Any],
-                entries: list[Mapping[str, Any]]) -> tuple[dict | None, str]:
-    """"Check again with my answers" (DF-5): the cached page screened again
-    with the answers as they are now; no browser."""
-    page = load_page(str(entry.get("job_posting_id") or ""))
-    if page is None:
-        return None, NO_SAVED_PAGE
-    return assess_page(page, entry, judge=judge, answers=answers, settings=settings,
-                       entries=entries), ""
+    return assess_page(page_record(walk, job_id), entry, judge=judge, answers=answers,
+                       settings=settings, entries=entries), ""
 
 
 # --- DF-1 and DF-6: the console ------------------------------------------------------------
@@ -1129,14 +1070,13 @@ def select_jobs(entries: list[Mapping[str, Any]], job_ids: list[str], *,
     return chosen, unknown
 
 
-def run(job_ids: list[str], *, all_queued: bool = False, recheck: bool = False, judge,
+def run(job_ids: list[str], *, all_queued: bool = False, judge,
         settings: Mapping[str, Any], context=None, queue_path: Path | None = None,
         log: logging.Logger | None = None) -> int:
     """Check each job and store its difficulty on its queue entry, printing
     one line per job with the running Jev total. `context` is the browser
-    context (the persistent profile's; tests inject one); `recheck` screens
-    the cached pages again with no browser. Exit 0, 1 when the judge went
-    down or the window closed, 2 when nothing could be checked."""
+    context (the persistent profile's; tests inject one). Exit 0, 1 when the
+    judge went down or the window closed, 2 when nothing could be checked."""
     import apply_run
     import jev
     from resume_tailor import apply_answers
@@ -1163,12 +1103,8 @@ def run(job_ids: list[str], *, all_queued: bool = False, recheck: bool = False, 
         name = f"{entry.get('company') or '?'} / {entry.get('title') or '?'}"
         usd_before = jev.usage()["usd"]
         try:
-            if recheck:
-                result, why = recheck_job(entry, judge=counted, answers=answers,
-                                          settings=settings, entries=entries)
-            else:
-                result, why = check_job(entry, context=context, judge=counted, answers=answers,
-                                        settings=settings, entries=entries, log=log)
+            result, why = check_job(entry, context=context, judge=counted, answers=answers,
+                                    settings=settings, entries=entries, log=log)
         except jev.JudgeOutage as e:
             _say(f"[{i}/{len(chosen)}] {name}: Jev is down ({e}); the check stops here")
             return 1
@@ -1202,7 +1138,7 @@ def run(job_ids: list[str], *, all_queued: bool = False, recheck: bool = False, 
 
 
 def main(argv: list[str] | None = None, *, context=None) -> int:
-    """`python local/apply_assess.py [--all | <id> ...] [--recheck]`. Exit 0,
+    """`python local/apply_assess.py [--all | <id> ...]`. Exit 0,
     1 on an error the check could not go past (no browser starting among
     them), 2 when it refuses (Jev off, a test judge or an unknown one, the
     profile in use, nothing to check).
@@ -1219,8 +1155,6 @@ def main(argv: list[str] | None = None, *, context=None) -> int:
                                  description="Score how hard each queued job is to auto-apply.")
     ap.add_argument("job_ids", nargs="*", help="queue job ids")
     ap.add_argument("--all", action="store_true", dest="all_queued", help="every queued job")
-    ap.add_argument("--recheck", action="store_true",
-                    help="screen the saved pages again with your answers; no browser")
     ap.add_argument("--headless", action="store_true", help="no browser window")
     ap.add_argument("--queue", default=None, help="queue file")
     ap.add_argument("--profile", default=None, help="browser profile dir")
@@ -1245,7 +1179,7 @@ def main(argv: list[str] | None = None, *, context=None) -> int:
         print(refused, file=sys.stderr)
         return 2
     profile = Path(args.profile) if args.profile else default_profile_dir()
-    if not args.recheck and context is None and profile_busy(profile):
+    if context is None and profile_busy(profile):
         print(PROFILE_BUSY, file=sys.stderr)
         return 2
     try:
@@ -1254,9 +1188,9 @@ def main(argv: list[str] | None = None, *, context=None) -> int:
         print(f"apply_assess: {e}", file=sys.stderr)
         return 2
     queue = Path(args.queue) if args.queue else None
-    common = dict(all_queued=args.all_queued, recheck=args.recheck, judge=judge,
+    common = dict(all_queued=args.all_queued, judge=judge,
                   settings=settings, queue_path=queue, log=log)
-    if args.recheck or context is not None:
+    if context is not None:
         return run(list(args.job_ids), context=context, **common)
     from playwright.sync_api import sync_playwright
     with sync_playwright() as pw:

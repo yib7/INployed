@@ -47,7 +47,7 @@ _URL_SPECIALS = {"%": r"\%", "#": r"\#"}
 #
 # `&` is deliberately NOT here. render.py passes the finished \href as argument #2
 # of \resumeProjectHeadingInline, and that macro drops #2 inside a tabular* row
-# right before the column separator (resume_template.tex:94). TeX reads a raw `&`
+# right before the column separator (resume_template.tex:147). TeX reads a raw `&`
 # there as an alignment tab, so a repo URL carrying one fails the build with
 # "Extra alignment tab has been changed to \cr". Percent-encoding it costs nothing
 # and resolves identically.

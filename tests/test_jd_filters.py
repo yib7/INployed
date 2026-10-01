@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
 
 from score_jobs import requires_clearance  # noqa: E402
 from score_jobs import requires_advanced_degree  # noqa: E402
+from score_jobs import is_junk_title  # noqa: E402
 
 
 @pytest.mark.parametrize(
@@ -87,6 +88,37 @@ def test_requires_clearance(text, expected):
 )
 def test_requires_advanced_degree(text, expected):
     assert requires_advanced_degree(text) is expected
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        # --- negatives: bare "architect" titles are a normal early/mid-career
+        # AWS-style title, not inherently senior -----------------------------
+        ("Solutions Architect", False),
+        ("Architect", False),
+        ("Cloud Architect", False),
+        ("Enterprise Architect", False),
+        # --- positives: still caught via the OTHER seniority words, same as
+        # before this title was ever added to the junk list ------------------
+        ("Senior Solutions Architect", True),
+        ("Sr. Solutions Architect", True),
+        ("Staff Architect", True),
+        ("Principal Architect", True),
+        ("Chief Architect", True),
+        ("Solutions Architect II", True),          # roman numeral pattern
+        ("Solutions Architect III", True),
+        # --- unrelated senior titles: unaffected ----------------------------
+        ("Senior Software Engineer", True),
+        ("Engineering Manager", True),
+        ("Software Engineer", False),
+        # --- non-string input ------------------------------------------------
+        (None, False),
+        (float("nan"), False),
+    ],
+)
+def test_is_junk_title(title, expected):
+    assert is_junk_title(title) is expected
 
 
 import pandas as pd  # noqa: E402

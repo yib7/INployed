@@ -552,7 +552,7 @@ def append_run_stats(stats: dict) -> None:
         print(f"Could not append run stats ({e}) -- continuing")
 
 JUNK_TITLE_PATTERNS = [
-    re.compile(r"\b(senior|sr\.?|staff|principal|lead|manager|director|head of|vp|vice president|chief|architect)\b", re.I),
+    re.compile(r"\b(senior|sr\.?|staff|principal|lead|manager|director|head of|vp|vice president|chief)\b", re.I),
     re.compile(r"\b(iii|iv|level\s*[3-9])\b", re.I),
     re.compile(r"\bii\b", re.I),
 ]

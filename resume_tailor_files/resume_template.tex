@@ -69,7 +69,7 @@
 
 % Sections formatting
 \titleformat{\section}{
-\vspace{-5pt}\scshape\raggedright\large
+\vspace{-7pt}\scshape\raggedright\Large
 }{}{0em}{}[\color{black}\titlerule \vspace{-5pt}]
 
 % Ensure that generate pdf is machine readable/ATS parsable
@@ -81,12 +81,28 @@
 \newcommand{\resumeHeaderSize}{\fontsize{10.5pt}{11.5pt}\selectfont}
 \newcommand{\resumeBulletSize}{\fontsize{10pt}{11pt}\selectfont}
 
+% --- LAYOUT CONTROL (tweak these, not the macros below) ---
+% Entry indent: how far entry headers (job title, school, project name) sit in
+% from the left margin. The bullets under them move with it.
+\newlength{\resumeEntryIndent}
+\setlength{\resumeEntryIndent}{0.1in}
+% Bullet indent: how far bullets sit in from their own entry header.
+\newlength{\resumeBulletIndent}
+\setlength{\resumeBulletIndent}{0.15in}
+% Header gap: vertical space between an entry header and its first bullet.
+% More negative = tighter, closer to 0pt = looser.
+\newcommand{\resumeHeaderGap}{-3pt}
+
 % --- BULLET POINTS (all sections) ---
 \newcommand{\resumeItem}[1]{
 \item\resumeBulletSize{
 {#1\vspace{-.75pt}}
 }
 }
+
+% All header tables use \linewidth (the width left after indenting), not
+% \textwidth (the full page width). With \textwidth, any indent pushes the
+% right-hand dates past the margin.
 
 % --- EDUCATION header (two rows: school+location / degree) ---
 % #1 = school (bold); #2 = the ", <location>" suffix in plain weight, or empty;
@@ -98,7 +114,7 @@
 % below (render._education), where "GPA: 3.7/4.0" is the form parsers match.
 \newcommand{\resumeSubheading}[4]{
 \vspace{-2pt}\item
-\begin{tabular*}{\textwidth}[t]{l@{\extracolsep{\fill}}r}
+\begin{tabular*}{\linewidth}[t]{l@{\extracolsep{\fill}}r}
 \resumeHeaderSize\textbf{#1}#2 & \resumeHeaderSize#3 \\
 \resumeHeaderSize\textit{#4} & \\
 \end{tabular*}\vspace{-14pt}
@@ -107,17 +123,17 @@
 % --- WORK EXPERIENCE header (one line: title|company left, location|dates right) ---
 \newcommand{\resumeSubheadingOneLine}[4]{
 \vspace{-2pt}\item
-\begin{tabular*}{\textwidth}[t]{l@{\extracolsep{\fill}}r}
+\begin{tabular*}{\linewidth}[t]{l@{\extracolsep{\fill}}r}
 \resumeHeaderSize\textbf{#1} $|$ \textit{#2} $|$ #3 & \resumeHeaderSize #4 \\
-\end{tabular*}\vspace{-7pt}
+\end{tabular*}\vspace{\resumeHeaderGap}
 }
 
 % --- LEADERSHIP header (one row: name left, dates right) ---
 \newcommand{\resumeProjectHeading}[2]{
 \vspace{-2pt}\item
-\begin{tabular*}{\textwidth}[t]{l@{\extracolsep{\fill}}r}
+\begin{tabular*}{\linewidth}[t]{l@{\extracolsep{\fill}}r}
 \resumeHeaderSize#1 & \resumeHeaderSize#2 \\
-\end{tabular*}\vspace{-7pt}
+\end{tabular*}\vspace{\resumeHeaderGap}
 }
 
 % --- PROJECTS header (one line: bold name | link, all left-aligned) ---
@@ -127,18 +143,26 @@
 % \href target, so a bare "Link" reaches it as a dead word.
 \newcommand{\resumeProjectHeadingInline}[2]{
 \vspace{-2pt}\item
-\begin{tabular*}{\textwidth}[t]{l@{\extracolsep{\fill}}r}
+\begin{tabular*}{\linewidth}[t]{l@{\extracolsep{\fill}}r}
 \resumeHeaderSize\textbf{#1}#2 & \\
-\end{tabular*}\vspace{-7pt}
+\end{tabular*}\vspace{\resumeHeaderGap}
 }
 
 \renewcommand\labelitemii{$\vcenter{\hbox{\tiny$\bullet$}}$}
 
 % --- LIST WRAPPERS ---
-\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0in, label={}]}
+% labelwidth=0pt and labelsep=0pt stop the empty label from reserving space,
+% which is what left a gap when leftmargin was changed. topsep=0pt stops the
+% bullet list from adding its own space under a header, so \resumeHeaderGap
+% alone controls that gap.
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=\resumeEntryIndent, labelwidth=0pt, labelsep=0pt, label={}]}
 \newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
-\newcommand{\resumeItemListStart}{\begin{itemize}[leftmargin=0.15in, itemsep=4pt, parsep=0pt]}
-\newcommand{\resumeItemListEnd}{\end{itemize}\vspace{-5pt}}
+% The bullet list sets its own label spacing: without it, it inherits the
+% zero labelsep above and the dot touches the text. labelindent=0pt with
+% align=left puts the dot directly under the entry header's first letter,
+% and the text starts \resumeBulletIndent in from there.
+\newcommand{\resumeItemListStart}{\begin{itemize}[leftmargin=\resumeBulletIndent, labelindent=0pt, labelwidth=\resumeBulletIndent, labelsep=0pt, align=left, itemsep=4pt, parsep=0pt, topsep=0pt]}
+\newcommand{\resumeItemListEnd}{\end{itemize}\vspace{-2pt}}
 
 
 

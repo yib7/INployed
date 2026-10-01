@@ -13,8 +13,8 @@ unconfirmed answers, and those rows carry the theme's warning highlight.
 "Add answer" opens `AddAnswerDialog`, whose OK stays disabled while the
 candidate is a question the run fills from a built-in (`builtin_answering`)
 or another custom answer's question, or fails `validate`; `add_answer(prefill)`
-opens it prefilled with a form's question (PR-9), for the Auto-apply tab's
-Pre-answer and a parked question's Answer now. Save runs the same
+opens it prefilled with a form's question (PR-9), for a parked question's
+Answer now on the Auto-apply tab. Save runs the same
 checks (blocking on problems) and shows `warnings` after a clean write. A
 damaged store shows its error, keeps its file as it is (no defaults drawn or
 saved over it), and offers "Restore backup" only when a good `.bak` sits next to it; the restore
@@ -229,8 +229,7 @@ class AddAnswerDialog(QtWidgets.QDialog):
     shows under the fields. A narrower question the run hands to a custom
     answer (another country, a city, a visa type) is accepted.
 
-    `prefill` (PR-9: the difficulty check's Pre-answer and a parked question's
-    Answer now) holds a form's question: "question" (its label), "help",
+    `prefill` (PR-9: a parked question's Answer now) holds a form's question: "question" (its label), "help",
     "type" and "options". The question box gets `apply_facts.saved_question`
     (the label plus its help, so the run's own-question gate matches the same
     field next time) and the type its widget's (`apply_facts.answer_type` when

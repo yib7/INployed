@@ -793,80 +793,73 @@ def test_fill_underfull_enabled_config_off(synthetic_master, monkeypatch):
     assert config.fill_underfull_enabled() is False
 
 
-# --- lead-with-overview: project bullets lead with the "what is this" overview --------
-# select() orders a project's bullet GROUPS purely by JD-relevance, so a project's
-# overview ("what is this project at a glance") can land on bullet 2 or 3 behind detail
-# bullets — the reader hits the tech history before learning what the thing IS.
-# lead_with_overview() floats the intro bullet to the front (a cheap model pass picks it;
-# a deterministic file-order fallback — the master authors the overview atom first —
-# guarantees flow even with no/failed model call). Projects only; pure reorder, no invent.
+# --- lead-with-overview: every entry leads with its overview bullet -----------------
+# select() orders an entry's bullet GROUPS by JD-relevance, so its overview ("what is
+# this at a glance") can land on bullet 2 or 3, or miss the page, and the reader hits
+# the detail before learning what the thing IS. The overview is the FIRST atom under
+# the entry in the master; lead_with_overview() always prints it first, deterministically
+# (no model pick), in experience, projects and leadership. It never invents.
 
-def test_lead_with_overview_floats_model_pick_to_front(synthetic_master, monkeypatch):
+def _no_call(*a, **k):
+    raise AssertionError("lead_with_overview is deterministic: no model call")
+
+
+def test_overview_atom_is_the_first_atom_in_the_master(synthetic_master):
+    assert compose.overview_atom("projects", "ProjTwo") == "p2a"
+    assert compose.overview_atom("experience", "Big Co") == "bigco_a"
+    assert compose.overview_atom("projects", "Nope") is None
+
+
+def test_lead_with_overview_floats_the_overview_group_and_keeps_the_rest_ranked(
+        synthetic_master, monkeypatch):
+    monkeypatch.setattr(compose, "call", _no_call)
     sel = {"experience": [], "leadership": [],
-           "projects": [{"name": "ProjTwo", "groups": [["p2a"], ["p2b"], ["p2c"]]}]}
-    # The model designates bullet 3 (p2c) as the overview/intro.
-    monkeypatch.setattr(compose, "call",
-                        lambda *a, **k: {"projects": [{"project": "ProjTwo", "lead": 3}]})
-    compose.lead_with_overview("a real job description " * 5, "Engineer", sel)
-    assert sel["projects"][0]["groups"] == [["p2c"], ["p2a"], ["p2b"]]   # rest keep order
-
-
-def test_lead_with_overview_falls_back_to_file_order_on_failure(synthetic_master, monkeypatch):
-    # Model call fails -> deterministic fallback floats the group holding the earliest
-    # AUTHORED atom (p2a, file-order index 0) to the front, leaving the rest in place.
-    def boom(*a, **k):
-        raise RuntimeError("model down")
-
-    monkeypatch.setattr(compose, "call", boom)
-    sel = {"experience": [], "leadership": [],
-           "projects": [{"name": "ProjTwo", "groups": [["p2c"], ["p2a"], ["p2b"]]}]}
-    compose.lead_with_overview("jd", "Engineer", sel)
+           "projects": [{"name": "ProjTwo", "groups": [["p2c"], ["p2b"], ["p2a"]]}]}
+    compose.lead_with_overview(sel)
     assert sel["projects"][0]["groups"] == [["p2a"], ["p2c"], ["p2b"]]
 
 
-def test_lead_with_overview_invalid_pick_uses_file_order(synthetic_master, monkeypatch):
-    # An out-of-range pick is ignored and the file-order fallback applies.
-    monkeypatch.setattr(compose, "call",
-                        lambda *a, **k: {"projects": [{"project": "ProjTwo", "lead": 99}]})
+def test_lead_with_overview_floats_a_fused_overview_group(synthetic_master):
     sel = {"experience": [], "leadership": [],
-           "projects": [{"name": "ProjTwo", "groups": [["p2c"], ["p2a"]]}]}
-    compose.lead_with_overview("jd", "Engineer", sel)
+           "projects": [{"name": "ProjTwo", "groups": [["p2c"], ["p2b", "p2a"]]}]}
+    compose.lead_with_overview(sel)
+    assert sel["projects"][0]["groups"] == [["p2b", "p2a"], ["p2c"]]
+
+
+def test_lead_with_overview_adds_an_unselected_overview_in_place_of_the_last_group(
+        synthetic_master):
+    # A 2026-09-29 run: select left a project's overview atom out entirely. It
+    # takes the least relevant slot, so the entry keeps its bullet count.
+    sel = {"experience": [], "leadership": [],
+           "projects": [{"name": "ProjTwo", "groups": [["p2c"], ["p2d", "p2b"]]}]}
+    compose.lead_with_overview(sel)
     assert sel["projects"][0]["groups"] == [["p2a"], ["p2c"]]
 
 
-def test_lead_with_overview_single_bullet_project_makes_no_call(synthetic_master, monkeypatch):
-    def boom(*a, **k):
-        raise AssertionError("no LLM call when there is nothing to reorder")
-
-    monkeypatch.setattr(compose, "call", boom)
+def test_lead_with_overview_single_bullet_entry_is_its_overview(synthetic_master):
     sel = {"experience": [], "leadership": [],
-           "projects": [{"name": "ProjOne", "groups": [["p1"]]}]}
-    compose.lead_with_overview("jd", "Engineer", sel)
-    assert sel["projects"][0]["groups"] == [["p1"]]
+           "projects": [{"name": "ProjTwo", "groups": [["p2c"]]}]}
+    compose.lead_with_overview(sel)
+    assert sel["projects"][0]["groups"] == [["p2a"]]
 
 
-def test_lead_with_overview_skips_verbatim_project(synthetic_master, monkeypatch):
-    def boom(*a, **k):
-        raise AssertionError("a verbatim project's order is the user's — never reorder it")
-
-    monkeypatch.setattr(compose, "call", boom)
+def test_lead_with_overview_skips_verbatim_project(synthetic_master):
     groups = [["__verbatim__/ProjTwo/0"], ["__verbatim__/ProjTwo/1"]]
     sel = {"experience": [], "leadership": [],
            "projects": [{"name": "ProjTwo", "groups": [g[:] for g in groups]}]}
-    compose.lead_with_overview("jd", "Engineer", sel)
+    compose.lead_with_overview(sel)
     assert sel["projects"][0]["groups"] == groups
 
 
-def test_lead_with_overview_leaves_experience_and_leadership(synthetic_master, monkeypatch):
-    # Only projects are reordered; experience/leadership keep their template/relevance order
-    # even when a project triggers the model call.
-    monkeypatch.setattr(compose, "call",
-                        lambda *a, **k: {"projects": [{"project": "ProjTwo", "lead": 1}]})
-    sel = {"experience": [{"name": "Big Co", "groups": [["bigco_a"], ["bigco_b"]]}],
-           "leadership": [{"name": "Club A", "groups": [["la_a"], ["la_b"]]}],
-           "projects": [{"name": "ProjTwo", "groups": [["p2a"], ["p2b"]]}]}
-    compose.lead_with_overview("jd", "Engineer", sel)
-    assert sel["experience"][0]["groups"] == [["bigco_a"], ["bigco_b"]]
+def test_lead_with_overview_covers_experience_and_leadership(synthetic_master):
+    # A 2026-09-29 run: an experience entry printed its validation bullet before the
+    # bullet that introduces the model, because experience kept select()'s relevance
+    # order.
+    sel = {"experience": [{"name": "Side Gig", "groups": [["gig_c"], ["gig_b"], ["gig_a"]]}],
+           "leadership": [{"name": "Club A", "groups": [["la_b"], ["la_a"]]}],
+           "projects": []}
+    compose.lead_with_overview(sel)
+    assert sel["experience"][0]["groups"] == [["gig_a"], ["gig_c"], ["gig_b"]]
     assert sel["leadership"][0]["groups"] == [["la_a"], ["la_b"]]
 
 

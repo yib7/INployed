@@ -96,7 +96,7 @@ def load_master() -> Dict[str, Any]:
 # the page. Both are bounded here, once, so neither prompt can grow with the
 # master file: a seed is a voice sample, and the background is an excerpt.
 LETTER_SEED_CAP = 1200
-LETTER_BACKGROUND_CAP = 30_000   # matches chat.MASTER_CHAR_CAP: a whole master fits
+LETTER_BACKGROUND_CAP = 80_000   # matches chat.MASTER_CHAR_CAP: a whole master fits
 
 # Appended when a flattened excerpt was cut, so the model knows it is reading a
 # part of the record. chat.py carries the same marker for its own excerpts.

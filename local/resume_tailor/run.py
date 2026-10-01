@@ -1420,7 +1420,7 @@ def tailor(
 
     When Jev is on for the tailor (`jev_switch.client("tailor")`), one judge serves
     the whole run: it rates the skills and the atoms before `select` (TL-1, TL-2),
-    picks each project's lead bullet (TL-3), picks the new verb for each repeated
+    picks the new verb for each repeated
     opener (TL-6), reads each bullet for the banned-pattern tells that gate the
     AI-writing sweep's calls (TL-5), and checks each bullet the rephrase and every
     later rewrite wrote against its atoms (TL-4, `_check_faithfulness`). Three
@@ -1469,14 +1469,12 @@ def tailor(
     # Per-block "don't tailor": swap selected verbatim blocks to the user's exact
     # bullets BEFORE rephrase, so the LLM never sees (or rewrites) them.
     verbatim = compose.inject_verbatim(sel)
-    # Float each project's overview bullet ("what is this project") to the front so detail
-    # bullets don't lead. Runs BEFORE briefs/rephrase, so the cohesion framing and the
-    # per-position line budgets build on the corrected order. Projects only; never invents.
+    # Every entry leads with its overview bullet (the first atom under it in the master),
+    # then the rest in relevance order. Runs BEFORE briefs/rephrase, so the cohesion
+    # framing and the per-position line budgets build on the final order. Never invents.
     if config.lead_overview_enabled():
         report.stage("lead overview")
-        compose.lead_with_overview(jd, job_title, sel, judge=judge)
-        if judge is not None:
-            report.jev_step(jev_assist.STEP_LEAD)
+        compose.lead_with_overview(sel)
     # One cheap batched call: a cohesion brief per (non-verbatim) block so its bullets
     # read as one story instead of glued-together atoms.
     log("framing each block for cohesion…")

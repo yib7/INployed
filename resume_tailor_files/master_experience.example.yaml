@@ -13,6 +13,15 @@
 #   - Quantify everything you can (%, $, counts, time saved). Numbers win.
 #   - `angles` are free-form tags (e.g. llm, backend, data-pipeline) that help
 #     the selector match an atom to a job description's keywords.
+#   - THE FIRST ATOM UNDER EACH ENTRY IS ITS OVERVIEW. Every job, project and
+#     leadership entry prints that atom as its FIRST bullet on every résumé; the
+#     rest follow ranked by relevance to the job. If the overview was not picked
+#     for a job, it takes the place of the entry's least relevant bullet, so the
+#     bullet count stays the same (and a one-bullet entry prints only its
+#     overview). So write the first atom as the "what is this, at a glance"
+#     bullet: what you built or did and why it matters, and let the atoms after
+#     it carry the detail. Reorder the atoms to change which one leads. (Turn the
+#     rule off with `"lead_overview": false` in local/config.json.)
 # ============================================================
 
 # ============================================================
@@ -76,6 +85,7 @@ experience:
       stack: "Python, PostgreSQL, AWS"
       duration: "10-week summer internship"
     achievements:
+      # FIRST atom = the overview: it always prints as this job's first bullet.
       - id: pipeline_speedup
         what: "rebuilt the nightly data-ingestion pipeline"
         how: "replaced sequential REST calls with a batched, async fetcher"
@@ -100,6 +110,7 @@ projects:
     repo: "github.com/janedoe/exampleapp"
     live_url: "https://exampleapp.example.com"
     achievements:
+      # FIRST atom = the overview ("what is this project"): always the first bullet.
       - id: core_feature
         what: "built a web app that turns plain English into runnable queries"
         how: "LLM drafts the query, a validator checks it, results stream back"

@@ -6,6 +6,8 @@ to 3 lines unnoticed. measure.line_count models the real render (per-char advanc
 + greedy word wrap against the calibrated body-column capacity). The two REAL bullets
 below are ground truth: in the actual compiled PDF the first renders on 2 lines and the
 second (shorter in chars, but with wide words) on 3 — calibrated/validated against it.
+Both were re-verified against a compile of the current template (the 2026-09-22 layout
+pass narrowed the bullet column by 0.1in).
 """
 import importlib
 import os
@@ -22,13 +24,17 @@ sys.path.insert(0, str(REPO / "local"))
 from resume_tailor import assets, compose, config, measure  # noqa: E402
 from resume_tailor import run as rt_run  # noqa: E402
 
-# Verbatim from a real compiled resume (Reducto tailor); known printed line counts.
+# From a real compiled resume (Reducto tailor), each trimmed by a word or two when the
+# 2026-09-22 layout pass narrowed the bullet column ("from leaking" -> "spilling";
+# "utilizing" -> "using"); the printed line counts were re-read off a compile of the
+# current template. Width alone does not decide it: THREE_LINE is also the narrower
+# of the two in total glyph width, and wraps to 3 because "cross-encoder" is pushed down.
 TWO_LINE = ("Systematized a resumable pipeline to ingest and index 34,060 wiki articles into "
             "289,196 chunks via the MediaWiki API, designing a multi-tag game-membership schema "
-            "with boolean metadata flags in ChromaDB to prevent character data from leaking "
+            "with boolean metadata flags in ChromaDB to prevent character data spilling "
             "across filters.")
 THREE_LINE = ("Synthesized a hybrid retriever fusing ChromaDB vector search with SQLite FTS5 BM25 "
-              "via Reciprocal Rank Fusion and cross-encoder reranking, utilizing a 40-question "
+              "via Reciprocal Rank Fusion and cross-encoder reranking, using a 40-question "
               "evaluation harness to resolve retrieval failures and eliminate cross-game metadata "
               "leakage.")
 
@@ -57,7 +63,7 @@ def test_line_count_matches_real_two_line_bullet():
 
 
 def test_line_count_matches_real_three_line_bullet():
-    # The char heuristic counted this as 2 (254 chars < 2*130); the real render is 3.
+    # The char heuristic counted this as 2 (250 chars < 2*130); the real render is 3.
     assert measure.line_count(THREE_LINE) == 3
     # And it is SHORTER in characters than the 2-line bullet — proving char count lies.
     assert len(THREE_LINE) < len(TWO_LINE)
@@ -115,10 +121,10 @@ def test_strip_dangling_keeps_unit_bearing_trailing_number():
 
 
 def test_trim_to_caps_uses_width_not_char_count(monkeypatch):
-    # A project bullet with a wide-word overflow that the old char cap (254 < 2*130) missed.
+    # A project bullet with a wide-word overflow that the old char cap (250 < 2*130) missed.
     monkeypatch.setattr(config, "_config_json", lambda: {})   # no project_layout -> default 2 lines
     sel = {"experience": [], "leadership": [],
-           "projects": [{"name": "XenoRAG", "groups": [["a1"]]}]}
+           "projects": [{"name": "ProjOne", "groups": [["a1"]]}]}
     gk = compose._gkey(["a1"])
     bullets = {gk: THREE_LINE}
     rt_run._trim_to_caps(sel, bullets)
@@ -193,10 +199,11 @@ def test_text_width_bold_is_wider_than_regular():
     assert measure.text_width("Developer Tools", bold=True) > measure.text_width("Developer Tools")
 
 
-def test_skill_line_capacity_defaults_to_body_column():
-    # Skills share the body text column AND font size (validated against the real PDF),
-    # so by default the one-line capacity is identical.
-    assert measure.SKILL_LINE_CAPACITY == measure.BODY_LINE_CAPACITY
+def test_skill_line_capacity_is_the_wider_skills_column():
+    # Skills share the bullets' font size but sit 0.15in further left (the entry indent,
+    # not entry + bullet indent), so their calibrated column is wider by a fixed amount.
+    assert measure.SKILL_LINE_CAPACITY == 53650
+    assert measure.SKILL_LINE_CAPACITY == measure.BODY_LINE_CAPACITY + measure._SKILL_COLUMN_EXTRA
 
 
 def test_real_skill_line_fits_one_line():
@@ -431,7 +438,8 @@ _FILL_ENV = ("RESUME_TAILOR_FULL_LINE_FILL", "RESUME_TAILOR_LAST_LINE_FILL",
              "RESUME_TAILOR_UNDERFULL_FILL",
              "RESUME_TAILOR_BODY_LINE_CAPACITY", "RESUME_TAILOR_SKILL_LINE_CAPACITY")
 _FILL_DEFAULTS = (0.90, 0.75, 0.50)
-_CAPACITY_DEFAULT = 53464
+_CAPACITY_DEFAULT = 52741
+_SKILL_CAPACITY_DEFAULT = 53650
 
 
 @pytest.fixture()
@@ -502,7 +510,7 @@ def test_underfull_env_override_reaches_the_trigger(reload_measure):
 def test_capacity_env_override_is_honoured(reload_measure):
     m = reload_measure(RESUME_TAILOR_BODY_LINE_CAPACITY="40000")
     assert m.BODY_LINE_CAPACITY == 40000
-    assert m.SKILL_LINE_CAPACITY == 40000     # defaults to the body column
+    assert m.SKILL_LINE_CAPACITY == 40909     # follows the body column, 909 wider
 
 
 def test_skill_capacity_can_differ_from_the_body_column(reload_measure):
@@ -516,7 +524,7 @@ def test_capacity_defaults_on_garbage_instead_of_failing_the_import(reload_measu
     m = reload_measure(RESUME_TAILOR_BODY_LINE_CAPACITY=bad,
                        RESUME_TAILOR_SKILL_LINE_CAPACITY=bad)
     assert m.BODY_LINE_CAPACITY == _CAPACITY_DEFAULT
-    assert m.SKILL_LINE_CAPACITY == _CAPACITY_DEFAULT
+    assert m.SKILL_LINE_CAPACITY == _SKILL_CAPACITY_DEFAULT
 
 
 @pytest.mark.parametrize("bad", ["0", "-1", "-53464"])

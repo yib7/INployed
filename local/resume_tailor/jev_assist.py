@@ -10,8 +10,8 @@ code to compose. The LLM still writes every bullet.
                         compress_skills cuts it to the line's count and width.
   atom_relevance  TL-2  one noul per atom's `what`, batched to fit: the
                         probabilities select() shortlists its catalog by.
-  lead_group      TL-3  one choice per project over its numbered bullet groups: the
-                        overview bullet lead_with_overview moves to the front.
+  (TL-3, the lead-bullet pick, is retired: lead_with_overview puts each entry's
+                        first master atom first by rule, so there is nothing to ask.)
   faithfulness    TL-4  one request per résumé entry, three questions per bullet
                         against the atoms it was written from: `supported` (a
                         choice), `inflates` and `adds_claim` (nouls). A bullet is
@@ -83,7 +83,6 @@ log = logging.getLogger(__name__)
 # The steps a run reports, one usage line each.
 STEP_SKILLS = "skills"
 STEP_SHORTLIST = "shortlist"
-STEP_LEAD = "lead"
 STEP_VERB = "verb"
 STEP_SWEEP_GATE = "sweep gate"
 STEP_FAITHFULNESS = "faithfulness"
@@ -102,9 +101,6 @@ _DEFAULT: Any = object()
 # How much of the job description a request's state carries. A noul reads the whole
 # state, and a long posting ends in benefits and legal text.
 JD_CHARS = 12_000
-
-# TL-3: a lead Jev picks with a confidence under this keeps file order.
-LEAD_MIN_CONFIDENCE = 0.5
 
 # TL-6: a verb Jev picks with a confidence under this keeps the LLM `reverb` call.
 VERB_MIN_CONFIDENCE = 0.5
@@ -150,8 +146,6 @@ KEYWORD_MEANING_MIN = 0.5
 # `{i}` is the item's index there.
 SKILL_QUESTION = "Does `job` ask for `skills[{i}]` or a direct equivalent?"
 ATOM_QUESTION = "Does `atoms[{i}]` show experience `job` asks for?"
-LEAD_QUESTION = ("Which bullet describes `projects[{i}]` as a whole, saying what the "
-                 "project is?")
 FOCUS_QUESTION = "Which focus fits the work `job` describes?"
 # TL-6, asked of a bullet whose opening verb another bullet already uses.
 PICK_VERB_QUESTION = "Which verb best names the action in `bullet`?"
@@ -464,38 +458,6 @@ def atom_relevance(jd: str, job_title: str, *, judge: Any = _DEFAULT
                                    whats, ATOM_QUESTION)
         return dict(zip(ids, probs))
     return _run_step(STEP_SHORTLIST, judge, ask)
-
-
-def lead_group(projects: Sequence[Mapping[str, Any]], *, judge: Any = _DEFAULT
-               ) -> Optional[Dict[str, Tuple[int, float]]]:
-    """TL-3: which of each project's bullets describes the whole project.
-
-    `projects` is [{"project": name, "bullets": [summary, ...]}], the bullets in
-    their selected order. One choice per project over its numbered bullets ("Which
-    bullet describes `projects[k]` as a whole, saying what the project is?"), every
-    project in one request. Returns {name: (bullet number counting from 1,
-    confidence)}; the caller keeps file order under LEAD_MIN_CONFIDENCE. A project
-    with one bullet has nothing to choose and is left out. None when Jev is off or
-    fails, or no project has two bullets."""
-    def ask(j: Any) -> Dict[str, Tuple[int, float]]:
-        asked = [p for p in projects if len(p.get("bullets") or []) >= 2]
-        if not asked:
-            raise _NothingToAsk
-        state = {"projects": [str(p["project"]) for p in asked]}
-        questions = {
-            f"project_{k}": {
-                "type": "choice", "instructions": LEAD_QUESTION.format(i=k),
-                "criteria": {str(n): str(text) for n, text in enumerate(p["bullets"], start=1)}}
-            for k, p in enumerate(asked)}
-        answers = _send(STEP_LEAD, j, state, questions)
-        out: Dict[str, Tuple[int, float]] = {}
-        for k, p in enumerate(asked):
-            qid = f"project_{k}"
-            choice, conf = _choice_pick(answers.get(qid), list(questions[qid]["criteria"]),
-                                        f"{STEP_LEAD} {qid}")
-            out[str(p["project"])] = (int(choice), conf)
-        return out
-    return _run_step(STEP_LEAD, judge, ask)
 
 
 def _finding(supported: str, confidence: float, inflates: float, adds_claim: float) -> str:

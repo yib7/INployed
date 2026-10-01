@@ -44,12 +44,14 @@ log = logging.getLogger(__name__)
 # ── the cost ceiling ─────────────────────────────────────────────────────────
 # Chosen against what one turn actually costs: the system prompt is re-sent every
 # turn, and the master digest rides alongside the sheet on every turn now, so
-# (JD + sheet + master) is the per-turn floor: 4,000 + 12,000 + 30,000 = 46,000
-# characters, roughly 11.5k tokens. That runs a few cents per turn on the flash
-# tier, small enough that a long session cannot quietly run away.
+# (JD + sheet + master) is the per-turn floor: 4,000 + 12,000 + 80,000 = 96,000
+# characters at most, roughly 24k tokens. That runs a few cents per turn on the
+# flash tier, small enough that a long session cannot quietly run away. The
+# master cap is a ceiling a real master stays under, not a squeeze: at 30,000 a
+# 47,000-character digest lost its last projects, leadership and skills.
 JD_CHAR_CAP = 4000          # same excerpt the cover letter reasons from
 APPLY_MD_CHAR_CAP = 12000   # a real tailored apply.md runs ~4-8k; this is headroom, not a squeeze
-MASTER_CHAR_CAP = 30_000    # the full digest, sent alongside the sheet on every turn
+MASTER_CHAR_CAP = 80_000    # the full digest, sent alongside the sheet on every turn
 HISTORY_TURN_CAP = 8        # the last 8 exchanges: enough to follow a thread
 HISTORY_CHAR_CAP = 6000     # ...and a hard character ceiling under that, for long answers
 

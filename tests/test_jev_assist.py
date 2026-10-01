@@ -77,9 +77,6 @@ _WHATS = ["Wrote SQL reports on warehouse sales data",
           "Orbit is a satellite pass predictor for radio operators",
           "Pantry is a meal planner that tracks fridge contents",
           "Led weekly training sessions for 20 members"]
-_PROJECTS = [{"project": "Orbit",
-              "bullets": ["Served pass times through a Flask API with Redis caching",
-                          "Orbit is a satellite pass predictor for radio operators"]}]
 
 
 @pytest.fixture()
@@ -173,10 +170,6 @@ def _atoms(judge):
     return jev_assist.atom_relevance(_JD, _TITLE, judge=judge)
 
 
-def _lead(judge):
-    return jev_assist.lead_group(_PROJECTS, judge=judge)
-
-
 # TL-4's entries: each bullet with the atoms it was written from, as the run hands
 # them over (the atoms as `compose._atom_payload` gives them).
 _CHESS = {"entry": "Chess Club", "bullets": [
@@ -252,7 +245,7 @@ def _meaning(judge):
 
 
 _HELPERS = [pytest.param(_skills, id="skills_pick"), pytest.param(_atoms, id="atom_relevance"),
-            pytest.param(_lead, id="lead_group"), pytest.param(_faith, id="faithfulness"),
+            pytest.param(_faith, id="faithfulness"),
             pytest.param(_verb, id="pick_verb"), pytest.param(_sweep, id="sweep_flags"),
             pytest.param(_best, id="best_variant"),
             pytest.param(_letter, id="letter_unsupported"),
@@ -275,14 +268,13 @@ def test_every_helper_is_none_and_asks_nothing_when_jev_is_off(master, monkeypat
     monkeypatch.setattr(jev_switch, "client", client)
     assert jev_assist.skills_pick(_JD, _TITLE) is None
     assert jev_assist.atom_relevance(_JD, _TITLE) is None
-    assert jev_assist.lead_group(_PROJECTS) is None
     assert jev_assist.faithfulness([_CHESS]) is None
     assert jev_assist.pick_verb(_VERB_BULLET, _VERB_PALETTE, "built", _VERB_TAKEN) is None
     assert jev_assist.sweep_flags([_plain(_CHESS)]) is None
     assert jev_assist.best_variant(_JD, _TITLE, _DRAFTS) is None
     assert jev_assist.letter_unsupported(_SENTENCES, _SOURCES) is None
     assert jev_assist.keyword_meaning(_KEYWORDS, _RESUME) is None
-    assert areas == ["tailor"] * 9
+    assert areas == ["tailor"] * 8
 
 
 def test_the_suite_default_client_is_off(master):
@@ -337,7 +329,6 @@ _GATE_ALONE = "the deterministic gate alone"
 @pytest.mark.parametrize("helper,step,fallback", [
     pytest.param(_skills, jev_assist.STEP_SKILLS, _LLM_PATH, id="skills_pick"),
     pytest.param(_atoms, jev_assist.STEP_SHORTLIST, _LLM_PATH, id="atom_relevance"),
-    pytest.param(_lead, jev_assist.STEP_LEAD, _LLM_PATH, id="lead_group"),
     # TL-4 has no LLM path to fall back to: without it the grounding gate runs alone.
     pytest.param(_faith, jev_assist.STEP_FAITHFULNESS, _GATE_ALONE, id="faithfulness"),
     pytest.param(_verb, jev_assist.STEP_VERB, _LLM_PATH, id="pick_verb"),
@@ -392,7 +383,6 @@ def test_once_the_breaker_opens_every_later_helper_returns_none(master):
     tries = down.calls
     assert tries == len(jev.RETRY_DELAYS_S) + 1
     assert jev_assist.atom_relevance(_JD, _TITLE, judge=judge) is None
-    assert jev_assist.lead_group(_PROJECTS, judge=judge) is None
     assert jev_assist.faithfulness([_CHESS], judge=judge) is None
     assert _verb(judge) is None
     assert jev_assist.sweep_flags([_plain(_CHESS)], judge=judge) is None
@@ -400,7 +390,7 @@ def test_once_the_breaker_opens_every_later_helper_returns_none(master):
     assert jev_assist.letter_unsupported(_SENTENCES, _SOURCES, judge=judge) is None
     assert jev_assist.keyword_meaning(_KEYWORDS, _RESUME, judge=judge) is None
     assert down.calls == tries
-    for step in (jev_assist.STEP_SKILLS, jev_assist.STEP_SHORTLIST, jev_assist.STEP_LEAD,
+    for step in (jev_assist.STEP_SKILLS, jev_assist.STEP_SHORTLIST,
                  jev_assist.STEP_VERB, jev_assist.STEP_SWEEP_GATE, jev_assist.STEP_BEST_OF,
                  jev_assist.STEP_LETTER, jev_assist.STEP_ATS_MEANING):
         assert "fell back to the LLM path (JudgeOutage _Busy 503)" in jev_assist.usage_line(step)
@@ -421,15 +411,15 @@ def test_usage_line_names_requests_tokens_and_usd(master):
 
 
 def test_a_step_that_never_ran_reads_as_zero(master):
-    assert jev_assist.usage_line(jev_assist.STEP_LEAD) == (
-        "jev lead: 0 requests, 0 tokens (estimated), $0.000000")
+    assert jev_assist.usage_line(jev_assist.STEP_VERB) == (
+        "jev verb: 0 requests, 0 tokens (estimated), $0.000000")
 
 
 def test_nothing_to_ask_is_none_and_says_so(master):
     judge = Failing()
-    assert jev_assist.lead_group([], judge=judge) is None
+    assert jev_assist.faithfulness([], judge=judge) is None
     assert judge.calls == 0
-    assert jev_assist.usage_line(jev_assist.STEP_LEAD).endswith("; nothing to ask")
+    assert jev_assist.usage_line(jev_assist.STEP_FAITHFULNESS).endswith("; nothing to ask")
 
 
 def test_a_step_asked_again_keeps_its_first_failure(master):
@@ -581,34 +571,6 @@ def test_atom_relevance_maps_each_probability_to_its_atom(master):
                    "pa_overview": 0.8, "cc_lead": 0.1}
 
 
-# ── TL-3 lead_group ──────────────────────────────────────────────────────────
-def test_lead_group_is_one_choice_per_project_over_its_numbered_bullets(master):
-    rec = Recording(jev.FakeJev())
-    got = jev_assist.lead_group(_PROJECTS, judge=rec)
-    (state, questions), = rec.requests
-    assert state == {"projects": ["Orbit"]}
-    (q,) = questions.values()
-    assert q["type"] == "choice"
-    assert q["instructions"] == (
-        "Which bullet describes `projects[0]` as a whole, saying what the project is?")
-    assert q["criteria"] == {"1": _PROJECTS[0]["bullets"][0], "2": _PROJECTS[0]["bullets"][1]}
-    # The fake reads words: the bullet that names the project wins, at confidence 1.0.
-    assert got == {"Orbit": (2, 1.0)}
-
-
-def test_lead_group_hands_back_the_confidence(master):
-    judge = Scripted(choice="1", confidence=0.4)
-    assert jev_assist.lead_group(_PROJECTS, judge=judge) == {"Orbit": (1, 0.4)}
-
-
-def test_lead_group_asks_every_project_in_one_request(master):
-    projects = _PROJECTS + [{"project": "Pantry", "bullets": ["one detail", "Pantry is a planner"]}]
-    rec = Recording(jev.FakeJev())
-    got = jev_assist.lead_group(projects, judge=rec)
-    assert len(rec.requests) == 1
-    assert got == {"Orbit": (2, 1.0), "Pantry": (2, 1.0)}
-
-
 # ── TL-4 faithfulness ────────────────────────────────────────────────────────
 def test_faithfulness_is_one_request_per_entry_with_three_questions_a_bullet(master):
     rec = Recording(jev.FakeJev())
@@ -740,11 +702,9 @@ def test_every_choice_step_names_a_missing_confidence(master, caplog):
     # Stage 1 reads a missing confidence as unsure, so stage 2 asks the verb's own
     # category, Build.
     assert _verb(_NoConfidence("Designed", category="Analyze")) == ("Designed", 0.0)
-    assert jev_assist.lead_group(_PROJECTS, judge=_NoConfidence("1")) == {"Orbit": (1, 0.0)}
     assert _confidence_warnings(caplog) == [
         "jev_assist: jev verb category answered 'Analyze' with no confidence; it reads as 0.0",
-        "jev_assist: jev verb verb answered 'Designed' with no confidence; it reads as 0.0",
-        "jev_assist: jev lead project_0 answered '1' with no confidence; it reads as 0.0"]
+        "jev_assist: jev verb verb answered 'Designed' with no confidence; it reads as 0.0"]
 
 
 def test_the_thresholds_are_the_specs():
@@ -1224,7 +1184,7 @@ def test_every_judge_question_is_free_of_the_banned_phrasing():
     finds none of its `_STYLE_BANS` shapes in them, and they carry no em dash
     (U+2014) and no clause that opens with a comma and "never". TL-4's findings
     count too: they ride in the reground prompt."""
-    texts = [jev_assist.SKILL_QUESTION, jev_assist.ATOM_QUESTION, jev_assist.LEAD_QUESTION,
+    texts = [jev_assist.SKILL_QUESTION, jev_assist.ATOM_QUESTION,
              jev_assist.FOCUS_QUESTION, *jev_assist.SKILL_FOCUS.values(),
              jev_assist.SUPPORTED_QUESTION, *jev_assist.SUPPORTED_OPTIONS.values(),
              jev_assist.INFLATES_QUESTION, jev_assist.ADDS_CLAIM_QUESTION,

@@ -4,6 +4,25 @@ All notable changes to INployed are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims for
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A long master reaches the cover letter and Ask AI whole again.** Both read the master
+  under a 30,000-character cap, and a master with detailed project notes outgrew it: every
+  tailored letter warned that its background was truncated, and the Ask AI chat was cut
+  mid-note, so it never saw the last projects, the leadership entries or the skills list,
+  with no warning at all. Both caps are now 80,000 characters.
+
+### Removed
+
+- **Check again with my answers** and **Pre-answer** are gone from the Auto-apply tab, along
+  with `apply_assess.py --recheck` and the page cache under
+  `%LOCALAPPDATA%\linkedin_watcher\apply_assess\` that only the recheck read. To see a new
+  answer lower a job's score, run **Check difficulty** on it again. The Difficulty tooltip
+  still lists the questions your answers cannot fill, and a paused run's **Waiting for you**
+  card and a parked job's **Answer now** still save answers for later runs.
+
 ## [1.16.0] - 2026-09-28
 
 Jev's job scorer now mirrors the LLM scorer: the same two stages, the same rubric, on Jev's
@@ -228,6 +247,22 @@ Claude skill becomes the manual fallback.
   and the batch-cap help now say when the run submits; the older "never submitted" promise
   described the Claude path and is gone.
 - **`auto_apply_batch_cap`** also caps how many jobs one drain works through.
+- **The résumé layout is easier to scan.** Entry headers sit 0.1in in from the margin and
+  their bullets 0.15in further, both set once in the template (`\resumeEntryIndent`,
+  `\resumeBulletIndent`, `\resumeHeaderGap`); section titles are a size larger; the header
+  tables use `\linewidth` so an indent never pushes the dates past the margin; and the
+  pull-up after Projects is gone, so every section break is the same height. The narrower
+  bullet column moved the width model: `BODY_LINE_CAPACITY` 53464 -> 52741 and
+  `SKILL_LINE_CAPACITY` 53464 -> 53650 (the skills block sits at the entry indent, so it
+  got wider), both recalibrated against about 3,500 bullets and 300 skills rows compiled with
+  the new template.
+- **Every résumé entry leads with its overview bullet.** The first atom under each job,
+  project and leadership entry in `master_experience.yaml` now always prints first, and the
+  rest follow ranked by relevance. When selection leaves the overview out for a job, it takes
+  the place of the entry's least relevant bullet, so the count holds. Before, only projects
+  were reordered, and only among the bullets selection picked, so a Business Analyst run
+  opened an experience entry and a project with a detail bullet. The rule is
+  deterministic: the model ordering call and Jev's lead pick (TL-3) are gone.
 
 ## [1.13.0] - 2026-09-20
 

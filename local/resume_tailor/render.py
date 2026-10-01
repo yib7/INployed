@@ -52,7 +52,7 @@ def _header(basics: dict) -> str:
         + "\\begin{center}\n"
         f"\\textbf{{\\Huge \\scshape {name}}} \\\\ \\vspace{{1pt}}\n"
         f"{contact}\n"
-        "\\end{center}\n\\vspace{-10pt}\n\n"
+        "\\end{center}\n\\vspace{-12.5pt}\n\n"
     )
 
 
@@ -134,7 +134,7 @@ def _education(edu: List[dict]) -> str:
         rows.append(row)
     return ("%-----------EDUCATION-----------\n\\section{Education}\n"
             "\\resumeSubHeadingListStart\n" + "\n".join(rows)
-            + "\n\\resumeSubHeadingListEnd\n\n\\vspace{-10pt}\n\n\n")
+            + "\n\\resumeSubHeadingListEnd\n\n\\vspace{-10.5pt}\n\n\n")
 
 
 def _block_meta(section: str) -> Dict[str, dict]:
@@ -230,9 +230,11 @@ def _projects(sel: dict, bullets: Dict[str, str]) -> str:
         )
     if not out:
         return ""
+    # No pull-up after the list: the gap before the next section matches the one
+    # Work Experience leaves before Projects.
     return ("%-----------PROJECTS-----------\n\\section{Projects}\n"
             "\\resumeSubHeadingListStart\n\n" + "\n".join(out)
-            + "\\resumeSubHeadingListEnd\n\n\\vspace{-10pt}\n\n")
+            + "\\resumeSubHeadingListEnd\n\n")
 
 
 def _leadership(sel: dict, bullets: Dict[str, str]) -> str:
@@ -262,8 +264,11 @@ def _skills(skill_lines: List[Dict[str, str]]) -> str:
         f"\\textbf{{{to_latex(ln['label'])}}}{{: }} {to_latex(ln['items'])}"
         for ln in skill_lines
     )
+    # The skills block sits at the template's entry indent, level with the entry
+    # headers above it (measure.SKILL_LINE_CAPACITY is calibrated to that width).
     return ("%-----------Technical SKILLS-----------\n\\section{Technical Skills}\n"
-            "\\begin{itemize}[leftmargin=0.15in, label={}]\n\\item \\small{\n"
+            "\\begin{itemize}[leftmargin=\\resumeEntryIndent, labelwidth=0pt, labelsep=0pt, label={}]\n"
+            "\\item \\small{\n"
             + rows + " \\\\\n}\n\\end{itemize}\n")
 
 

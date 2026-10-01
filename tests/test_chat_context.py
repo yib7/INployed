@@ -339,13 +339,15 @@ def test_apply_sheet_excerpt_is_capped(tmp_path):
     assert chat.TRUNCATED_MARKER in body     # the model is told it is seeing an excerpt
 
 
-def test_master_char_cap_is_thirty_thousand():
-    assert chat.MASTER_CHAR_CAP == 30_000
+def test_master_char_cap_is_eighty_thousand():
+    """30,000 cut a real 47,000-character digest mid-atom and left INployed,
+    leadership and the skills list out of every chat (2026-09-29)."""
+    assert chat.MASTER_CHAR_CAP == 80_000
 
 
 def test_master_fallback_is_capped(monkeypatch):
     big = dict(MASTER, projects=[{"name": "Big", "achievements": [
-        {"id": f"p{i}", "what": "z" * 400} for i in range(100)]}])
+        {"id": f"p{i}", "what": "z" * 400} for i in range(250)]}])
     monkeypatch.setattr(chat.assets, "load_master", lambda: big)
     ctx = chat.build_context(None, JOB)
     body = _between(ctx, chat.MASTER_BEGIN, chat.MASTER_END)

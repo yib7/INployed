@@ -8,9 +8,17 @@ character's advance width (standard Times-Roman metrics, in 1/1000 em — close 
 template's Latin Modern serif after the column is calibrated) summed per word, greedily
 wrapped against the body text-column's capacity, exactly as LaTeX breaks lines.
 
-The capacity was calibrated against a real compiled PDF: from the true line breaks of 14
-bullets the feasible window was [53410, 53518) units; the midpoint reproduces every
-bullet's real line count. It is env-overridable for a customized template font/geometry.
+The capacity was first calibrated against a real compiled PDF: from the true line breaks of
+14 bullets the feasible window was [53410, 53518) units, and 53464 reproduced every
+bullet's real line count. The template's 2026-09-22 layout pass moved the columns (bullets
+now start at \\resumeEntryIndent + \\resumeBulletIndent = 0.25in instead of 0.15in, the
+skills block at 0.1in), so both capacities were recalibrated the same way at scale:
+~3,500 bullet prefixes of real atom text and 300 skills rows, compiled with the template,
+each printed line count read back off the PDF. BODY_LINE_CAPACITY is 53464 minus the 0.1in
+the bullet column lost (723 units at 10pt); across those bullets it never predicts fewer
+lines than print (0 misses that way, 43 the conservative way), the same profile 53464 had
+against the old layout (1 and 49). Both are env-overridable for a customized template
+font/geometry.
 """
 from __future__ import annotations
 
@@ -68,10 +76,14 @@ def _env_int(name: str, default: int, lo: int = 1) -> int:
 
 
 # Body text-column capacity in the same 1/1000-em units (calibrated; see module docstring).
-BODY_LINE_CAPACITY = _env_int("RESUME_TAILOR_BODY_LINE_CAPACITY", 53464)
-# A skills line shares the body text column AND font size (verified against the real PDF:
-# both 9.96pt at the same x indent), so its one-line capacity is identical by default.
-SKILL_LINE_CAPACITY = _env_int("RESUME_TAILOR_SKILL_LINE_CAPACITY", BODY_LINE_CAPACITY)
+BODY_LINE_CAPACITY = _env_int("RESUME_TAILOR_BODY_LINE_CAPACITY", 52741)
+# A skills line has the bullets' font size (both 9.96pt in the real PDF) but a WIDER column:
+# the skills block sits at the entry indent (0.1in), the bullets 0.15in further in. Its
+# calibrated capacity is 53650 (0 rows predicted to fit that wrap, 3 of 300 the other way),
+# so it follows a body override at that same distance.
+_SKILL_COLUMN_EXTRA = 909
+SKILL_LINE_CAPACITY = _env_int("RESUME_TAILOR_SKILL_LINE_CAPACITY",
+                               BODY_LINE_CAPACITY + _SKILL_COLUMN_EXTRA)
 
 
 def text_width(s: str, bold: bool = False) -> int:
@@ -139,8 +151,9 @@ _WRAP_WASTE = 0.06         # fraction of a line greedy wrap loses at each break
 def char_budget(target_lines: int, capacity: int | None = None) -> int:
     """The largest character count we can ask the model for and still expect the bullet to
     render within `target_lines` printed lines. Deliberately at or below the MINIMUM real
-    capacity measured for that line count (126 / 245 / 364 at the calibrated default, against
-    real minima of 127 / 250 / 377), because a bullet that overshoots gets cut by the
+    capacity measured for that line count (126 / 245 / 364 at the original 53464 column,
+    against real minima there of 127 / 250 / 377; 124 / 242 / 359 at the current 52741),
+    because a bullet that overshoots gets cut by the
     deterministic trim — a cap that is a few characters short costs nothing by comparison.
     See the block comment above for why this is not `target_lines * chars_per_line`."""
     cap = BODY_LINE_CAPACITY if capacity is None else capacity

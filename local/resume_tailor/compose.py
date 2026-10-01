@@ -235,108 +235,47 @@ def _blocks_in_order(sel: Dict[str, Any]) -> List[Tuple[str, List[str]]]:
     return [(name, by_block[name]) for name in order]
 
 
-def _overview_group_index(name: str, groups: List[List[str]]) -> int:
-    """Deterministic fallback: the index of the group holding the project's earliest-
-    AUTHORED atom (master file order). The master lists each project's overview/headline
-    atom first, so this floats the natural intro bullet to the front when the model pass
-    is unavailable. Verbatim/unknown ids sort last so a real atom always wins."""
-    order = {aid: i for i, aid in enumerate(_block_atoms("projects", name))}
-    sentinel = len(order) + 1
-    best_idx, best_rank = 0, sentinel + 1
-    for idx, g in enumerate(groups):
-        rank = min((order.get(a, sentinel) for a in g), default=sentinel)
-        if rank < best_rank:
-            best_idx, best_rank = idx, rank
-    return best_idx
+def overview_atom(section: str, name: str) -> Optional[str]:
+    """The entry's overview atom: the FIRST atom listed under it in the master yaml.
+    That position is the contract (see the master's house rules): whatever the user
+    writes first under an entry is the "what is this at a glance" bullet, and
+    `lead_with_overview` always prints it first. None for an entry with no atoms."""
+    atoms = _block_atoms(section, name)
+    return atoms[0] if atoms else None
 
 
-def lead_with_overview(jd: str, job_title: str, sel: Dict[str, Any], *,
-                       judge: Any = None) -> None:
-    """Reorder each PROJECT's bullet GROUPS so the bullet that introduces the project — its
-    high-level "what is this project at a glance" overview — LEADS, instead of a detail bullet
-    that select() placed first by JD-relevance. A reader should learn what a project IS before
-    the implementation bullets make sense.
+def lead_with_overview(sel: Dict[str, Any]) -> None:
+    """Make every entry's overview bullet its FIRST bullet, then leave the rest in the
+    relevance order select() gave them. A reader should learn what a job or project IS
+    before the detail bullets make sense.
 
-    A cheap batched model pass picks the lead from each project's OWN selected bullets (it only
-    chooses which existing bullet should lead — it writes no prose and invents nothing). When the
-    call fails or returns nothing usable for a project, a deterministic file-order fallback floats
-    the project's earliest-authored atom's group to the front, so flow is ALWAYS enforced.
+    The overview is `overview_atom` (the first atom under the entry in the master), so
+    the rule is deterministic: no model pick, and no job can rank it off the page.
+      - Selected (alone or fused into a group): that group moves to the front.
+      - Not selected: it takes the place of the entry's LAST group (the least relevant
+        one) and moves to the front, so the entry keeps its bullet count and its
+        per-position line budgets. The dropped atoms go back to the unused pool, where
+        the underfull fill may still draw on them.
 
-    With `judge` (TL-3: `run.tailor()` passes the run's Jev judge), Jev picks each lead with
-    a choice over the project's numbered bullets (`jev_assist.lead_group`) and the model
-    pass is skipped; a pick under `jev_assist.LEAD_MIN_CONFIDENCE` keeps the file-order
-    fallback. When Jev is off or its request fails, the model pass runs as it always has.
-
-    Mutates `sel` in place. Projects only (experience/leadership keep their template/relevance
-    order). Verbatim projects (the user's exact bullets, in the user's order) and single-bullet
-    projects are left untouched. Runs BEFORE briefs/rephrase so cohesion framing and the
-    per-position line budgets build on the corrected order. Advisory: never fatal."""
-    candidates: List[Dict[str, Any]] = []
-    payload: List[Dict[str, Any]] = []
-    for entry in sel.get("projects", []) or []:
-        groups = entry.get("groups", []) or []
-        if len(groups) < 2:
-            continue
-        if any(is_verbatim_gkey(_gkey(g)) for g in groups):
-            continue
-        candidates.append(entry)
-        bullets = [
-            {"n": n, "summary": " | ".join(
-                str(_atom_payload(a).get("what", "")) for a in g)[:300]}
-            for n, g in enumerate(groups, start=1)
-        ]
-        payload.append({"project": entry["name"], "bullets": bullets})
-    # Asked before the early return, so a run with no project to order still gets a
-    # usage line that says so ("nothing to ask").
-    jev_leads = jev_assist.lead_group(
-        [{"project": p["project"], "bullets": [b["summary"] for b in p["bullets"]]}
-         for p in payload], judge=judge)
-    if not candidates:
-        return
-
-    picks: Dict[str, int] = {}
-    if jev_leads is not None:
-        # TL-3: Jev's pick leads when it is confident; the rest keep file order below.
-        picks = {name: n for name, (n, conf) in jev_leads.items()
-                 if conf >= jev_assist.LEAD_MIN_CONFIDENCE}
-    else:
-        system = (
-            "You order resume bullets for narrative flow. For each project you are given its "
-            "selected bullets, numbered. Pick the ONE bullet that best introduces the project: "
-            "the high-level overview a reader needs ('what is this project at a glance') BEFORE the "
-            "detail bullets make sense. Return its number. This is PURE ORDERING: you write no "
-            "prose, you invent nothing, you only choose which EXISTING bullet should lead.\n" + _PRINCIPLE
-        )
-        user = f"""TARGET JOB: {job_title}
-
-PROJECTS (each with its selected bullets, numbered):
-{json.dumps(payload, ensure_ascii=False, indent=1)}
-
-For each project, return the NUMBER of the bullet that should LEAD (its overview / intro).
-Return ONLY JSON: {{"projects": [{{"project": "<name>", "lead": <number>}}, ...]}}"""
-        try:
-            out = as_dict(call(system, user, config.TIER_FLASH_LITE, json_out=True,
-                               temperature=0.0), "projects")
-            for p in out.get("projects", []) or []:
-                if not isinstance(p, dict):
-                    continue
-                lead = p.get("lead")
-                if isinstance(lead, int) and not isinstance(lead, bool):
-                    picks[p.get("project")] = lead
-        except Exception as exc:  # noqa: BLE001 - ordering is advisory; fall back to file order
-            log.warning("lead_with_overview: LLM ordering failed, falling back to "
-                        "file order: %s", exc)
-            picks = {}
-
-    for entry in candidates:
-        groups = entry["groups"]
-        lead = picks.get(entry["name"])
-        if isinstance(lead, int) and 1 <= lead <= len(groups):
-            j = lead - 1
-        else:
-            j = _overview_group_index(entry["name"], groups)
-        if j > 0:
-            groups.insert(0, groups.pop(j))
+    Runs on experience, projects and leadership alike. Verbatim entries (the user's
+    exact bullets, in the user's order) are left untouched. Mutates `sel` in place.
+    Runs BEFORE briefs/rephrase so cohesion framing and the per-position line budgets
+    build on the final order. It only reorders or keeps the user's own atoms: it
+    writes nothing and invents nothing."""
+    for sec in ("experience", "projects", "leadership"):
+        for entry in sel.get(sec, []) or []:
+            groups = entry.get("groups", []) or []
+            if not groups or any(is_verbatim_gkey(_gkey(g)) for g in groups):
+                continue
+            ov = overview_atom(sec, entry.get("name", ""))
+            if ov is None:
+                continue
+            j = next((i for i, g in enumerate(groups) if ov in g), None)
+            if j is None:
+                groups[-1] = [ov]
+                j = len(groups) - 1
+            if j > 0:
+                groups.insert(0, groups.pop(j))
 
 
 def block_briefs(jd: str, job_title: str, sel: Dict[str, Any]) -> Dict[str, str]:

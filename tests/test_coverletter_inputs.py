@@ -140,7 +140,7 @@ def test_flatten_entries_is_bounded_with_the_truncation_marker():
                                             for j in range(4)]}
                           for i in range(200)]}
     out = assets.flatten_entries(big)
-    assert len(out) <= assets.LETTER_BACKGROUND_CAP == 30_000
+    assert len(out) <= assets.LETTER_BACKGROUND_CAP == 80_000
     assert out.endswith(assets.TRUNCATED_MARKER)
     # the cut lands on a line boundary, so no atom line is sent half-finished
     body = out[:-len(assets.TRUNCATED_MARKER)]
@@ -426,23 +426,23 @@ def test_letter_atom_ids_follow_the_bullets_that_made_the_page():
 
 
 def test_letter_inputs_warn_when_the_background_is_truncated(monkeypatch):
-    """The cap is 30,000; hitting it is said out loud (log + advisory) with the
+    """The cap is 80,000; hitting it is said out loud (log + advisory) with the
     count of achievement notes that never reached the prompt (entries are all
     kept, so the count is atoms)."""
     big = {"experience": [{"org": f"Org {i}", "title": "T", "dates": "2020",
                            "achievements": [{"id": f"x{i}{j}", "what": "w" * 200}
                                             for j in range(5)]}
-                          for i in range(60)]}
+                          for i in range(150)]}
     monkeypatch.setattr(run_mod.assets, "load_master", lambda: big)
     logs, warns = [], []
     background, seed = run_mod._letter_inputs(None, {}, logs.append, warn=warns.append)
     assert background.endswith(assets.TRUNCATED_MARKER) and seed == ""
     assert warns == logs and len(logs) == 1
     kept = sum(1 for ln in background.splitlines() if ln.startswith("    - "))
-    assert logs[0] == (f"cover letter background truncated at 30,000 characters "
-                       f"({300 - kept} of 300 achievement notes left out, every entry kept)")
-    assert 0 < kept < 300
-    assert sum(1 for ln in background.splitlines() if ln.startswith("- Org ")) == 60
+    assert logs[0] == (f"cover letter background truncated at 80,000 characters "
+                       f"({750 - kept} of 750 achievement notes left out, every entry kept)")
+    assert 0 < kept < 750
+    assert sum(1 for ln in background.splitlines() if ln.startswith("- Org ")) == 150
     # a master that fits says nothing
     logs.clear()
     monkeypatch.setattr(run_mod.assets, "load_master", lambda: MASTER)

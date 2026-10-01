@@ -1180,7 +1180,7 @@ def test_load_save_show_advanced_roundtrip(tmp_path, monkeypatch):
 
 SPIN_KEYS = ("min_score", "repost_window_days", "stale_after_hours", "limit_per_input",
              "max_scored_per_run", "rescore_cap", "auto_apply_batch_cap",
-             "auto_apply_pause_minutes")
+             "auto_apply_check_parallel", "auto_apply_pause_minutes")
 
 
 def test_every_non_slider_int_renders_as_a_spin_box(qtbot, tmp_path):
@@ -2810,6 +2810,20 @@ def test_the_jev_switches_hide_and_show_what_they_gate(qtbot, tmp_path):
     form._widgets["jev_tailor"].setChecked(False)
     assert not any(_rows_visible(form, k) for k in _JEV_TAILOR_OPTIONS)
     assert all(_rows_visible(form, k) for k in ("jev_scoring", "jev_difficulty"))
+
+
+def test_difficulty_checks_at_once_follows_the_checks_own_switch(qtbot, tmp_path):
+    """Cycle 22: "Difficulty checks at once" sits in Auto-apply in plain sight
+    and hides with the check it sizes, through either Jev switch."""
+    form = _form(tmp_path, show_advanced=True)          # jev_difficulty is advanced
+    qtbot.addWidget(form)
+    assert _rows_visible(form, "auto_apply_check_parallel")
+    form._widgets["jev_difficulty"].setChecked(False)
+    assert not _rows_visible(form, "auto_apply_check_parallel")
+    form._widgets["jev_difficulty"].setChecked(True)
+    assert _rows_visible(form, "auto_apply_check_parallel")
+    form._widgets["jev_enabled"].setChecked(False)
+    assert not _rows_visible(form, "auto_apply_check_parallel")
 
 
 def test_a_bool_gate_is_phrased_as_a_switch_to_turn_on(qtbot, tmp_path):

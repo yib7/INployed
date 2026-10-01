@@ -872,13 +872,16 @@ SHOW_IF_GATES = {
     "tailor_best_of_n": ("jev_tailor", ("True",)),
     "cover_letter_jev_check": ("jev_tailor", ("True",)),
     "tailor_ats_meaning": ("jev_tailor", ("True",)),
+    # cycle 22: how many difficulty checks run at once shows only while the
+    # check itself does (its switch, and through it the Jev master switch).
+    "auto_apply_check_parallel": ("jev_difficulty", ("True",)),
 }
 
 
 def test_every_gate_is_declared_on_the_schema():
     gated = {f.key: f.show_if for f in settings.SETTINGS_SCHEMA if f.show_if is not None}
     assert gated == SHOW_IF_GATES
-    assert len(SHOW_IF_GATES) == 30
+    assert len(SHOW_IF_GATES) == 31
 
 
 def test_show_if_is_a_declarative_tuple_not_a_callable():
@@ -1517,6 +1520,8 @@ def test_the_jev_section_holds_the_master_switch_the_key_and_three_area_switches
         assert f.advanced is True, key
         assert f.show_if == ("jev_enabled", ("True",)), key
     assert by_key["jev_tailor"].choices == ("True", "False")     # it gates the options
+    # ...and the check's own switch gates "Difficulty checks at once" (cycle 22)
+    assert by_key["jev_difficulty"].choices == ("True", "False")
 
 
 def test_the_jev_switch_keys_are_the_ones_jev_switch_reads():
@@ -1577,6 +1582,29 @@ def test_auto_apply_pause_minutes_is_a_config_int_from_0_to_60(tmp_path):
     assert settings.validate({"auto_apply_pause_minutes": 60}) == {}
     assert "auto_apply_pause_minutes" in settings.validate({"auto_apply_pause_minutes": 61})
     assert "auto_apply_pause_minutes" in settings.validate({"auto_apply_pause_minutes": -1})
+
+
+def test_auto_apply_check_parallel_is_a_config_int_from_1_to_10(tmp_path):
+    """Cycle 22: how many difficulty checks run at once, each in its own
+    browser window on a temporary copy of the auto-apply profile. The drain's
+    defaults carry the same 10 (`apply_run.DEFAULT_SETTINGS`)."""
+    import apply_run
+    f = {f.key: f for f in settings.SETTINGS_SCHEMA}["auto_apply_check_parallel"]
+    assert (f.type, f.default, f.section, f.target) == ("int", 10, "Auto-apply", "config")
+    assert (f.min, f.max) == (1, 10)
+    assert f.label == "Difficulty checks at once"
+    assert f.advanced is False
+    assert f.show_if == ("jev_difficulty", ("True",))
+    assert "own browser window" in f.help and "temporary copy" in f.help
+    assert "less memory" in f.help
+    assert apply_run.DEFAULT_SETTINGS["auto_apply_check_parallel"] == f.default
+    keys = [x.key for x in settings.SETTINGS_SCHEMA]
+    assert keys.index("auto_apply_check_parallel") == keys.index("auto_apply_batch_cap") + 1
+    assert settings.load(_targets(tmp_path))["auto_apply_check_parallel"] == 10
+    assert settings.validate({"auto_apply_check_parallel": 1}) == {}
+    assert settings.validate({"auto_apply_check_parallel": 10}) == {}
+    assert "auto_apply_check_parallel" in settings.validate({"auto_apply_check_parallel": 11})
+    assert "auto_apply_check_parallel" in settings.validate({"auto_apply_check_parallel": 0})
 
 
 def test_the_jev_tailor_options_default_off_and_show_only_while_jev_tailors():

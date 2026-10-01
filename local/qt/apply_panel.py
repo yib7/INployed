@@ -13,9 +13,53 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Dict
 
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 import osopen
+
+
+class SheetViewer(QtWidgets.QTextBrowser):
+    """The rendered apply sheet: a read-only markdown viewer that copies as text.
+
+    A rendered list copies with no `- ` markers, so pasted bullets run together.
+    Here a copy is built block by block: a block inside a list gets a `- ` prefix,
+    and blocks are separated by a blank line. Only the selected part of the first
+    and last block is taken. The `- ` goes on only when the selection reaches back
+    to the start of the block; a selection that starts mid-bullet is a quote of
+    the words, so it gets no marker. Links are not followed.
+    """
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setOpenLinks(False)
+        self.setOpenExternalLinks(False)
+
+    def selected_text(self) -> str:
+        """The selection as plain text with `- ` bullets and blank-line breaks."""
+        sel = self.textCursor()
+        start, end = sel.selectionStart(), sel.selectionEnd()
+        doc = self.document()
+        parts = []
+        block = doc.findBlock(start)
+        while block.isValid() and block.position() < end:
+            lo = max(start, block.position())
+            hi = min(end, block.position() + block.length() - 1)
+            if hi > lo:
+                cur = QtGui.QTextCursor(doc)
+                cur.setPosition(lo)
+                cur.setPosition(hi, QtGui.QTextCursor.MoveMode.KeepAnchor)
+                piece = cur.selectedText().replace("\u2028", "\n").replace("\u00a0", " ")
+                if piece.strip():
+                    if lo == block.position() and block.textList() is not None:
+                        piece = "- " + piece
+                    parts.append(piece)
+            block = block.next()
+        return "\n\n".join(parts)
+
+    def createMimeDataFromSelection(self) -> QtCore.QMimeData:
+        mime = QtCore.QMimeData()
+        mime.setText(self.selected_text())
+        return mime
 
 
 class ApplyPanel(QtWidgets.QWidget):
@@ -102,12 +146,10 @@ class ApplyPanel(QtWidgets.QWidget):
         sheet_row.addWidget(self._expand_btn)
         v.addLayout(sheet_row)
         # Rendered markdown viewer (nice to read). The clipboard still gets the raw
-        # markdown source via copy_sheet() — see self._raw_md. Read-only by default;
-        # don't follow links (this is a static preview, not a browser).
-        self._sheet = QtWidgets.QTextBrowser()
+        # markdown source via copy_sheet() — see self._raw_md. Selecting text and copying
+        # it gives `- ` bullets spaced by blank lines (SheetViewer). Read-only; no links.
+        self._sheet = SheetViewer()
         self._sheet.setAccessibleName("Apply sheet")
-        self._sheet.setOpenLinks(False)
-        self._sheet.setOpenExternalLinks(False)
         v.addWidget(self._sheet, 1)
 
         copy = QtWidgets.QPushButton("Copy apply sheet")
@@ -203,9 +245,7 @@ class ApplyPanel(QtWidgets.QWidget):
         dlg.setWindowTitle(self._title.text() or "Apply sheet")
         dlg.resize(720, 800)
         lay = QtWidgets.QVBoxLayout(dlg)
-        viewer = QtWidgets.QTextBrowser()
-        viewer.setOpenLinks(False)
-        viewer.setOpenExternalLinks(False)
+        viewer = SheetViewer()
         viewer.setMarkdown(self._raw_md)
         lay.addWidget(viewer, 1)
         bar = QtWidgets.QHBoxLayout()

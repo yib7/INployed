@@ -340,6 +340,33 @@ def test_parse_resume_bullets_roundtrip_from_build_markdown():
     ]
 
 
+def test_entry_block_spaces_bullets_with_a_blank_line():
+    # Copying the rendered sheet keeps one "- " line per bullet only when the
+    # bullets are separated; the block writes `- a`, blank, `- b`.
+    block = apply_data._entry_block("**Acme** - Intern", ["a", "b"], note="*link*")
+    assert block == "**Acme** - Intern\n*link*\n\n- a\n\n- b\n\n"
+    assert apply_data._entry_block("**X**", ["only"]) == "**X**\n\n- only\n\n"
+
+
+def test_built_sheet_spaces_resume_bullets_but_keeps_skills_tight():
+    md = apply_data.build_markdown(
+        _master_with_honors([]), _JOB, [], sel=_SEL, bullets=_BULLETS, skill_lines=_SKILLS)
+    assert "- Built the ingestion pipeline fast.\n\n- Cut cloud spend 40%.\n" in md
+    skills = md.split("## Technical skills\n", 1)[1].split("\n\n", 1)[0].splitlines()
+    assert skills and all(row.startswith("- ") for row in skills)
+
+
+def test_parse_resume_bullets_reads_old_tight_and_new_spaced_sheets():
+    tight = ("## Work experience\n\n**Acme**\n\n- one\n- two\n\n"
+             "## Projects\n\n**P**\n\n- three\n\n")
+    spaced = ("## Work experience\n\n**Acme**\n\n- one\n\n- two\n\n"
+              "## Projects\n\n**P**\n\n- three\n\n")
+    assert apply_data.parse_resume_bullets(tight) == ["one", "two", "three"]
+    assert apply_data.parse_resume_bullets(spaced) == ["one", "two", "three"]
+    assert apply_data.parse_resume_bullets(spaced.replace("\n", "\r\n")) == [
+        "one", "two", "three"]
+
+
 def test_parse_resume_bullets_excludes_skills_education_and_answers():
     md = apply_data.build_markdown(
         _master_with_honors(["Dean's List"]), _JOB,

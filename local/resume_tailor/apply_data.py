@@ -231,8 +231,15 @@ def _entry_header(primary: str, extras: List[Any]) -> str:
 
 
 def _entry_block(header: str, items: List[str], note: str = "") -> str:
+    """One résumé entry: header, optional note, then the bullets.
+
+    Bullets are separated by a blank line (`- a`, blank, `- b`). Markdown reads
+    that as the same list, and a copy of the rendered sheet keeps one `- ` line
+    per bullet instead of running them together. `parse_resume_bullets` skips
+    blank lines, so sheets written without them still parse.
+    """
     lines = header + ("\n" + note if note else "")
-    body = "\n".join(f"- {b}" for b in items)
+    body = "\n\n".join(f"- {b}" for b in items)
     return f"{lines}\n\n{body}\n\n"
 
 

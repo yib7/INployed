@@ -717,6 +717,71 @@ def test_apply_sheet_pop_out_shows_sheet_and_copies(qtbot):
     assert QtWidgets.QApplication.clipboard().text() == raw        # copy keeps raw md
 
 
+_SHEET_MD = "**Acme** - Intern\n\n- first bullet\n\n- second bullet\n\nclosing line\n"
+
+
+def _copied(viewer, start, end):
+    """What a copy of document offsets [start, end) puts on the clipboard."""
+    from PySide6 import QtGui
+    cur = QtGui.QTextCursor(viewer.document())
+    cur.setPosition(start)
+    cur.setPosition(end, QtGui.QTextCursor.MoveMode.KeepAnchor)
+    viewer.setTextCursor(cur)
+    return viewer.createMimeDataFromSelection().text()
+
+
+def test_sheet_copy_keeps_dash_bullets_spaced_by_blank_lines(qtbot):
+    # A header and two bullets copy as "Header", blank, "- a", blank, "- b".
+    from qt.apply_panel import ApplyPanel
+    p = ApplyPanel()
+    qtbot.addWidget(p)
+    p.show_application({"apply_md": _SHEET_MD})
+    doc = p._sheet.document()
+    last = doc.findBlock(doc.toPlainText().index("second bullet"))
+    got = _copied(p._sheet, 0, last.position() + last.length() - 1)
+    assert got == "Acme - Intern\n\n- first bullet\n\n- second bullet"
+    assert p.current_sheet() == _SHEET_MD   # "Copy apply sheet" still copies the raw source
+
+
+def test_sheet_copy_marks_a_bullet_only_when_selected_from_its_start(qtbot):
+    from qt.apply_panel import ApplyPanel
+    p = ApplyPanel()
+    qtbot.addWidget(p)
+    p.show_application({"apply_md": _SHEET_MD})
+    text = p._sheet.document().toPlainText()
+    whole = text.index("first bullet")
+    # from the start of the bullet: marked, and cut at the selection's end
+    assert _copied(p._sheet, whole, whole + 5) == "- first"
+    # from the middle of the bullet: just the words
+    assert _copied(p._sheet, whole + 6, whole + 12) == "bullet"
+    # a plain paragraph never gets a marker
+    para = text.index("closing line")
+    assert _copied(p._sheet, para, para + 7) == "closing"
+
+
+def test_sheet_copy_of_nothing_is_empty(qtbot):
+    from qt.apply_panel import ApplyPanel
+    p = ApplyPanel()
+    qtbot.addWidget(p)
+    p.show_application({"apply_md": _SHEET_MD})
+    assert p._sheet.createMimeDataFromSelection().text() == ""
+
+
+def test_expand_reader_copies_bullets_the_same_way(qtbot):
+    from qt.apply_panel import ApplyPanel, SheetViewer
+    p = ApplyPanel()
+    qtbot.addWidget(p)
+    p.show_application({"apply_md": _SHEET_MD})
+    p._pop_out()
+    viewer = p._popout.findChild(SheetViewer)
+    assert viewer is not None and not viewer.openLinks()
+    doc = viewer.document()
+    first = doc.findBlock(doc.toPlainText().index("first bullet"))
+    second = doc.findBlock(doc.toPlainText().index("second bullet"))
+    got = _copied(viewer, first.position(), second.position() + second.length() - 1)
+    assert got == "- first bullet\n\n- second bullet"
+
+
 def test_apply_panel_shows_linkedin_and_hides_blank_github(qtbot):
     from qt.apply_panel import ApplyPanel
     p = ApplyPanel()

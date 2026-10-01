@@ -905,7 +905,8 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("RESUME_TAILOR_MODEL_PRO", "Tailor model: deep (writing)",
           "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
           show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
-          help="Writes the first draft of every bullet and the cover letter. Deliberately "
+          help="Writes the first draft of every bullet, and the cover letter unless "
+               "'Tailor model: cover letter' names a model. Deliberately "
                "defaults to the same model as 'Tailor model: standard (selection)' to "
                "keep costs down; set it to gemini-3.1-pro-preview yourself "
                "for the strongest writing (slower / pricier)."),
@@ -944,8 +945,8 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("RESUME_TAILOR_CLAUDE_MODEL_PRO", "Claude model: deep (writing)",
           "editable_choice", "claude-opus-5-5", "Engine", "env", choices=CLAUDE_MODELS,
           show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
-          help="Claude provider only: writes the first draft of every bullet and the cover "
-               "letter."),
+          help="Claude provider only: writes the first draft of every bullet, and the "
+               "cover letter unless 'Claude model: cover letter' names a model."),
     Field("RESUME_TAILOR_CLAUDE_MODEL_COVER", "Claude model: cover letter",
           "editable_choice", "", "Engine", "env", choices=CLAUDE_MODELS,
           show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
@@ -972,7 +973,7 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Claude provider only: how long Claude thinks while writing the cover "
                "letter. 'same' uses 'Claude thinking effort'. A higher level writes a "
                "more considered letter and takes longer; its time limit grows with the "
-               "level."),
+               "level. It applies in 'simple' mode too."),
 
     # --- VM (cloud scraper): NON-secret gcloud connection identifiers, in .env --
     # The VM tab pushes config/schedule/pause via `gcloud compute`. Auth is your

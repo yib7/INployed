@@ -156,3 +156,55 @@ def test_refine_body_edits_on_the_cover_edit_tier(monkeypatch):
                         lambda system, user, tier, **k: tiers.append(tier) or "polished")
     coverletter.refine_body("Engineer", "Acme", "rough draft", BULLETS)
     assert tiers == [config.TIER_COVER_EDIT]
+
+
+def test_both_letter_repairs_edit_on_the_cover_edit_tier(monkeypatch):
+    tiers = []
+    monkeypatch.setattr(compose, "call",
+                        lambda system, user, tier, **k: tiers.append(tier) or "Fixed")
+    coverletter._repair_ungrounded_body("Engineer", "Acme", "Body", BULLETS,
+                                        ["Zork"], "professional")
+    monkeypatch.setattr(coverletter, "_body_violations",
+                        lambda body, bullets: ["bullet echo"] if body == "Body" else [])
+    coverletter.enforce_body_style("Engineer", "Acme", "Body", BULLETS)
+    assert tiers == [config.TIER_COVER_EDIT, config.TIER_COVER_EDIT]
+
+
+# -- edges ---------------------------------------------------------------------
+def test_simple_mode_cover_tiers_share_the_one_chain(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_MODEL_MODE", "simple")
+    monkeypatch.setenv("RESUME_TAILOR_MODEL_ALL", "gemini-3.5-flash")
+    monkeypatch.setenv("RESUME_TAILOR_FALLBACK_MODELS", "one-chain")
+    monkeypatch.setenv("RESUME_TAILOR_FALLBACK_PRO", "deep-a")
+    monkeypatch.setenv("RESUME_TAILOR_MODEL_COVER", "gemini-3.1-pro-preview")
+    assert config.gemini_fallback_models(config.TIER_COVER) == ["one-chain"]
+    assert config.gemini_fallback_models(config.TIER_COVER_EDIT) == ["one-chain"]
+
+
+def test_explicit_timeouts_beat_the_cover_effort_schedule(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_CLAUDE_EFFORT_COVER", "max")
+    monkeypatch.setenv("RESUME_TAILOR_CLAUDE_TIMEOUTS", "60,120")
+    assert config.claude_timeout_schedule(config.TIER_COVER) == [60, 120]
+
+
+def test_a_named_cover_effort_beats_a_general_default(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_CLAUDE_EFFORT", "default")
+    monkeypatch.setenv("RESUME_TAILOR_CLAUDE_EFFORT_COVER", "high")
+    assert config.claude_effort(config.TIER_COVER) == "high"
+    assert config.claude_effort(config.TIER_PRO) == ""
+
+
+@pytest.mark.parametrize("cover, expected", [
+    ("", ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5-5"]),
+    ("claude-opus-5-5-x", ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5-5",
+                           "claude-opus-5-5-x"]),
+])
+def test_check_setup_lists_a_named_cover_model_and_skips_a_blank_one(monkeypatch, cover,
+                                                                      expected):
+    import setup_check
+    monkeypatch.delenv("SCORE_PROVIDER", raising=False)
+    monkeypatch.setenv("RESUME_TAILOR_PROVIDER", "claude")
+    stored = {"RESUME_TAILOR_CLAUDE_MODEL_COVER": cover}
+    got = [m for tag, m in setup_check.selected_claude_models({}, stored)
+           if tag == setup_check.TAILOR_TAG]
+    assert got == expected

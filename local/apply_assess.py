@@ -1228,6 +1228,12 @@ def main(argv: list[str] | None = None, *, context=None) -> int:
     one and stays held while the check runs, so a drain started meanwhile
     refuses.
 
+    Two or more jobs with more than one check at once (`--parallel N`, else
+    the `auto_apply_check_parallel` setting, 1 to 10) run in parallel
+    (`assess_pool.run_pool`): each job in its own browser window on a copy
+    of the profile, the real profile held for the whole run. One job, or one
+    check at once, is the path above.
+
     `--worker --profile <dir> <id>` is one job of a parallel check
     (`assess_pool`): the same path on that profile, and whatever happens its
     last stdout line is `RESULT_PREFIX` and the outcome as JSON."""
@@ -1242,6 +1248,9 @@ def main(argv: list[str] | None = None, *, context=None) -> int:
     ap.add_argument("--worker", action="store_true",
                     help="check one job on --profile and end with a result line "
                          "(the parallel check's child)")
+    ap.add_argument("--parallel", type=int, default=None,
+                    help="checks at once, 1 to 10, each in its own browser window "
+                         "(the auto_apply_check_parallel setting unless given)")
     ap.add_argument("--verbose", action="store_true", help="DEBUG logging")
     args = ap.parse_args(argv)
     if not args.worker:
@@ -1258,6 +1267,26 @@ def main(argv: list[str] | None = None, *, context=None) -> int:
         _note(report, "error", f"the worker failed ({type(e).__name__})", job_id=job_id)
     _say(result_line(worker_result(report, job_id=job_id)))
     return code
+
+
+def _pool(args, settings: Mapping[str, Any], profile: Path, queue: Path | None,
+          log: logging.Logger) -> int | None:
+    """The parallel check (`assess_pool.run_pool`) for two or more jobs with
+    more than one check at once (`--parallel`, else the
+    `auto_apply_check_parallel` setting), its exit code; None for one job or
+    one check at once, which is today's path."""
+    import assess_pool
+    flag = args.parallel if args.parallel is not None else settings.get(
+        "auto_apply_check_parallel")
+    parallel = assess_pool.parallel_setting(flag)
+    if parallel < 2:
+        return None
+    entries = list(apply_queue.load(queue).get("jobs") or [])
+    chosen, unknown = select_jobs(entries, list(args.job_ids), all_queued=args.all_queued)
+    if len(chosen) < 2:
+        return None
+    return assess_pool.run_pool(chosen, unknown=unknown, parallel=parallel, profile=profile,
+                                queue_path=queue, headless=bool(args.headless), log=log)
 
 
 def _main(args, ap, context, report: dict | None) -> int:
@@ -1295,6 +1324,10 @@ def _main(args, ap, context, report: dict | None) -> int:
         common["report"] = report
     if context is not None:
         return run(list(args.job_ids), context=context, **common)
+    if report is None:
+        pooled = _pool(args, settings, profile, queue, log)
+        if pooled is not None:
+            return pooled
     from playwright.sync_api import sync_playwright
     with sync_playwright() as pw:
         profile.mkdir(parents=True, exist_ok=True)

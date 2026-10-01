@@ -1281,11 +1281,12 @@ parks, and you answer it on a run with the window shown.
 
 #### How hard is each application? (the difficulty check)
 Before you queue a batch, the difficulty check tells you which jobs the run is likely to
-finish and which ones you are better off doing yourself. Select a job on the **Auto-apply**
-tab (or none, for every queued job) and click **Check difficulty**. A new terminal window
-opens the posting in the auto-apply browser, follows its Apply button and reads the first
-application page. It types nothing, signs in nowhere and submits nothing; the Apply button
-is the only thing it clicks. It costs about 2 to 4 Jev requests per job.
+finish and which ones you are better off doing yourself. Select one or more jobs on the
+**Auto-apply** tab (Ctrl-click or Shift-click for several; select none for every queued job)
+and click **Check difficulty**. A new terminal window opens each posting in the auto-apply
+browser, follows its Apply button and reads the first application page. It types nothing,
+signs in nowhere and submits nothing; the Apply button is the only thing it clicks. It costs
+about 2 to 4 Jev requests per job.
 
 Each job gets a score from 1 (easy) to 10 (hard), shown in the tab's **Difficulty** column
 as "N/10":
@@ -1312,9 +1313,32 @@ result older than 7 days shows its age beside the score. After you save an answe
 **Check difficulty** is hidden while **Jev difficulty check** is off in Settings → Jev, and
 greyed out with the reason while Jev cannot run or another browser holds the auto-apply
 profile. From a terminal: `python local/apply_assess.py` with job ids, or `--all` for every
-queued job.
+queued job (add `--parallel N`, 1 to 10, to set how many run at once for that run).
 
-**One browser at a time.** A run, **Sign in to sites** and the difficulty check all use the
-same browser profile, so only one of them can have it open. While one does, the others
+**Several jobs at once.** With two or more jobs selected, the check opens one browser window
+per job, up to the **Difficulty checks at once** setting (Settings →
+Auto-apply, 1 to 10, default 10; it shows only while the difficulty check is on). When a
+window's job is done, the next job takes its place. Each window runs on its own temporary
+copy of the auto-apply profile, so it is already signed in, and your real profile is held
+for the whole run. The copies hold your session cookies, so they are deleted when the run
+ends and again at the start of the next one, even after a crash. The terminal prints one line
+per job as it finishes, with the running total of Jev requests and cost. A run stops
+starting new jobs when Jev is down, when you close one of the windows, or when a browser
+cannot start; the windows still open finish, and the terminal says why. Ctrl+C in the
+terminal closes the windows and deletes the copies. A stopped job keeps its earlier result.
+One job selected, or the setting at 1, checks one job at a time on the real profile as before.
+
+**Memory.** Each window is a full Chrome, so ten windows use several gigabytes. On a smaller
+machine, lower **Difficulty checks at once**.
+
+**With several rows selected,** **Check difficulty** checks all of them ("Checking N selected
+jobs, up to K at once, in a new terminal."), and **Remove** asks first, then removes them in
+one step. **Re-queue**, **Mark applied**, **Don't apply** and the details pane's **Open
+folder**, **Open record** and **Answer now** are greyed out ("Select one job"), because each
+acts on a single job.
+
+**One check or run at a time.** A run, **Sign in to sites** and the difficulty check all use
+the same browser profile, so only one of them can have it open (a check of several jobs
+holds the profile for its whole run, though its windows use the copies). While one does, the others
 refuse to start and say "The auto-apply browser is open: a run, a sign-in or a difficulty
 check holds its profile." Close that window, or wait for it to finish.

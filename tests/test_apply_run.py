@@ -3529,6 +3529,9 @@ def test_one_gives_the_job_back_when_a_check_takes_the_profile_after_the_read(
         def __init__(self, **kw):
             pass
 
+        def announce_park_mode(self):
+            pass
+
         def load_answers(self):
             return []
 

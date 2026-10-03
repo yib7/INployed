@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Data Analyst - Contoso</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 10px 0; }
+  label { display: block; }
+</style>
+</head>
+<body>
+<!-- A one-page application with an optional Social Security number box (which
+     auto-apply never fills) and a date of birth box the page fills itself, as
+     a person would during a pause: the trace's screenshots mask both. -->
+<h1>Data Analyst</h1>
+<p>Contoso, Austin, TX</p>
+<form id="application" onsubmit="return false">
+  <div class="field"><label for="first_name">First name *</label><input id="first_name" name="first_name" type="text" required></div>
+  <div class="field"><label for="last_name">Last name *</label><input id="last_name" name="last_name" type="text" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+  <div class="field"><label for="ssn">Social Security number</label><input id="ssn" name="ssn" type="text"></div>
+  <div class="field"><label for="birth">Date of birth</label><input id="birth" name="birth" type="text" value="01/01/1990"></div>
+  <button type="submit" id="btn-submit">Submit application</button>
+</form>
+</body>
+</html>

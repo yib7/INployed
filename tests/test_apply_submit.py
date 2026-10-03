@@ -1248,6 +1248,13 @@ def test_an_unopened_emailed_link_before_the_answers_asks_for_the_link(monkeypat
     assert not job._maybe_sent()
 
 
+def _final_checks_clean(monkeypatch, job):
+    """The page double answers the gate's live checks a final-worded advance
+    runs first (`_JobRun._final_step_checks`): a valid form, no CAPTCHA."""
+    monkeypatch.setattr(job, "_form_live", lambda b: {"invalid": [], "required_empty": []})
+    monkeypatch.setattr(job, "_human_check_showing", lambda **kw: False)
+
+
 @pytest.mark.parametrize("text, submit, filled, marked", [
     ("Confirm", True, True, True), ("Complete", True, True, True),
     ("Continue", True, True, False), ("Confirm", False, True, False),
@@ -1262,6 +1269,7 @@ def test_a_final_worded_advance_in_submit_mode_is_a_possible_send(monkeypatch, t
     # send (an address screen's "Confirm", final review A R2-M2)
     job, digest, plan = _code_job(text, "advance", submit=submit)
     job.form_filled = filled
+    _final_checks_clean(monkeypatch, job)
     seen: list[bool] = []
 
     def click(digest, n, role, rec, **kw):
@@ -1277,6 +1285,7 @@ def test_a_final_worded_advance_in_submit_mode_is_a_possible_send(monkeypatch, t
 def test_a_final_worded_advance_that_never_landed_is_no_possible_send(monkeypatch):
     job, digest, plan = _code_job("Confirm", "advance")
     job.form_filled = True
+    _final_checks_clean(monkeypatch, job)
     monkeypatch.setattr(job, "_click", lambda *a, **kw: apply_fill.ClickResult(False, False))
     monkeypatch.setattr(job, "_form_state", lambda *a: {})
     monkeypatch.setattr(job, "_button_identity", lambda *a: None)
@@ -1300,6 +1309,7 @@ def test_a_final_worded_advance_the_live_check_stopped_is_no_possible_send(monke
     # mark set before the click stayed while the park said nothing was clicked
     job, digest, plan = _code_job("Confirm", "advance")
     job.form_filled = True
+    _final_checks_clean(monkeypatch, job)
     monkeypatch.setattr(job, "_click", _live_refused(job))
     monkeypatch.setattr(job, "_form_state", lambda *a: {})
     monkeypatch.setattr(job, "_button_identity", lambda *a: None)
@@ -1332,6 +1342,7 @@ def test_a_retry_the_live_check_stopped_keeps_the_possible_send_and_says_the_fir
     # changed nothing; the mark stays (fail safe) and the words say so
     job, digest, plan = _code_job("Confirm", "advance")
     job.form_filled = True
+    _final_checks_clean(monkeypatch, job)
     clicks = iter([apply_fill.ClickResult(True, False),
                    apply_fill.ClickResult(False, False, refused="it reads 'Submit' now")])
     monkeypatch.setattr(apply_run.apply_fill, "click", lambda *a, **kw: next(clicks))
@@ -2739,3 +2750,76 @@ def test_a_send_during_the_wait_is_named_as_one(context, tmp_path, reset):
     assert out.status == "needs_human", out
     assert "a request left during the" in out.reason, out
     assert "after the submit click" not in out.reason and "after the click" not in out.reason, out
+
+
+# --- a final-worded advance in submit mode runs the gate's live checks first ---------
+
+@pytest.mark.parametrize("live, captcha, words", [
+    ({"invalid": [{"label": "Email", "reason": "typeMismatch"}], "required_empty": []}, False,
+     "the form reports an invalid field: Email"),
+    ({"invalid": [], "required_empty": [{"label": "Signature", "kind": "canvas"}]}, False,
+     "required field without an answer: Signature"),
+    ({"unreadable": "the form's validity could not be read before Confirm (TypeError)"}, False,
+     "the form's validity could not be read"),
+    ({"invalid": [], "required_empty": []}, True, "a CAPTCHA checkbox on the page is unticked")],
+    ids=["invalid", "required_empty", "unreadable", "captcha"])
+def test_a_final_worded_advance_parks_on_the_gates_live_checks_before_any_click(
+        monkeypatch, live, captcha, words):
+    job, digest, plan = _code_job("Confirm", "advance")
+    job.form_filled = True
+    job._gate_repairs = apply_run.REPAIR_ROUNDS      # no repair left: the check decides
+    clicks: list = []
+    monkeypatch.setattr(job, "_form_live", lambda b: live)
+    monkeypatch.setattr(job, "_human_check_showing", lambda **kw: captcha)
+    monkeypatch.setattr(job, "_click", lambda *a, **kw: clicks.append(a))
+    monkeypatch.setattr(job, "_form_state", lambda *a: {})
+    monkeypatch.setattr(job, "_button_identity", lambda *a: None)
+    with pytest.raises(apply_run._Parked) as p:
+        job._advance(digest, plan, [], {"clicked": []}, 0, 0.9)
+    assert p.value.status == "needs_human"
+    assert p.value.reason.startswith(words), p.value.reason
+    assert "before the Confirm step" in p.value.reason
+    assert clicks == [] and not job._maybe_sent()
+
+
+def test_a_gate_read_that_raises_fails_the_gate(monkeypatch):
+    job, digest, plan = _code_job("Submit application", "submit")
+    job.form_filled = True
+
+    def _boom(*a, **kw):
+        raise TypeError("page double")
+    monkeypatch.setattr(apply_run.apply_form, "validity_report", _boom)
+    live = job._gate_read(digest, plan)
+    assert live["unreadable"].startswith("the form's validity could not be read")
+    ok, why = apply_run.can_submit(plan, [], {"auto_apply_submit": True}, live)
+    assert not ok and why == live["unreadable"]
+
+
+def test_a_refused_form_read_after_the_captcha_wait_parks_as_not_sent(monkeypatch):
+    """The page moved on while the run waited for the person's CAPTCHA tick,
+    and its read finds the form's own refusal with nothing sent (`_Refused`):
+    the job parks with that refusal's own reason, never a crash."""
+    job, digest, plan = _code_job("Submit application", "submit")
+    job._filled_any = True
+    _final_checks_clean(monkeypatch, job)
+
+    class _Watch:
+        def __init__(self, *a):
+            pass
+        start = stop = lambda self: None
+        any = lambda self: False    # noqa: E731
+        first = lambda self: ""     # noqa: E731
+    monkeypatch.setattr(apply_run, "SendWatch", _Watch)
+    monkeypatch.setattr(job, "_human_check_showing", lambda **kw: True)
+    monkeypatch.setattr(job, "_wait_for_human_check", lambda *a, **kw: None)
+    monkeypatch.setattr(job, "_moved_during_wait", lambda *a: True)
+    park = apply_run._Parked("needs_human", "the form refused the submit as typed")
+
+    def _refused(**kw):
+        assert kw.get("during_wait")
+        raise apply_run._Refused([{"text": "Enter a valid date"}], park)
+    monkeypatch.setattr(job, "_after_submit", _refused)
+    monkeypatch.setattr(job, "_click", Mock(side_effect=AssertionError("clicked")))
+    with pytest.raises(apply_run._Parked) as p:
+        job._submit_gate(digest, plan, [], {"clicked": [], "filled": []})
+    assert p.value is park

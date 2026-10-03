@@ -789,7 +789,7 @@ def test_a_sign_ups_password_rules_are_read_and_met(_browser, flow_server, tmp_p
     r = _run(h.flow("password_rules"), tmp_path, _browser, flow_server)
     assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
     rules = [e for e in _events(r, "decision") if e["what"] == "password_rules"]
-    assert len(rules) == 1 and rules[0]["unmet"] == [], rules
+    assert len(rules) == 1 and rules[0]["unmet"] == 0, rules
     assert rules[0]["rules"] == ["digit", "lower", "max_length", "min_length", "special", "upper"]
 
 
@@ -802,7 +802,8 @@ def test_a_stored_password_that_misses_a_rule_parks_before_anything_is_typed(
     r = _run(f, tmp_path, _browser, flow_server)
     assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
     assert r.reason.startswith("the master password does not meet the password rules on "
-                               "127.0.0.1: it needs at least 12 characters (the site asks: Your "
+                               "127.0.0.1: it misses 1 of the rules the site states (the site "
+                               "asks: Your "
                                "password must be 12 to 64 characters long"), r.reason
     assert not any(a.secret for a in r.actions)
     assert not any(a.kind == "click" for a in r.actions)
@@ -1220,7 +1221,8 @@ def test_an_application_form_that_makes_the_account_checks_the_password_rules_fi
     f = _form_account("form_account_rules", rules="Your password must be at least 30 characters.",
                       status="needs_human",
                       reason=r"^the master password does not meet the password rules on "
-                             r"careers\.fabrikam\.example: it needs at least 30 characters")
+                             r"careers\.fabrikam\.example: it misses 1 of the rules the site "
+                             r"states")
     r = _run(f, tmp_path, _browser, flow_server)
     assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
     assert not any(a.secret for a in r.actions)
@@ -1333,10 +1335,12 @@ def test_a_screen_that_would_take_the_password_never_parks_on_a_misread_rule(
 def test_a_count_of_classes_the_password_misses_still_parks(tmp_path, monkeypatch):
     monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: "onlylowercase-")
     run = _job_run(tmp_path, "127.0.0.1")
-    with pytest.raises(apply_run._Parked, match=r"it needs at least 3 of: an uppercase letter, "
-                                                r"a lowercase letter, a digit, a special "
-                                                r"character \(the site asks"):
-        run._check_password_rules(_rules_digest(_OVER_READ[0][0]), "127.0.0.1")
+    digest = _rules_digest(_OVER_READ[0][0])
+    assert ats_accounts.unmet_rules(apply_run.password_rules(digest)[0]) == [
+        "at least 3 of: an uppercase letter, a lowercase letter, a digit, a special character"]
+    with pytest.raises(apply_run._Parked, match=r"it misses 1 of the rules the site states "
+                                                r"\(the site asks"):
+        run._check_password_rules(digest, "127.0.0.1")
 
 
 # N1 (SP7 review round 2): a prohibition, a choice and another field's hint,
@@ -1403,9 +1407,12 @@ def test_a_screen_whose_rule_the_password_meets_as_meant_never_parks(
 def test_a_choice_of_classes_the_password_holds_none_of_still_parks(tmp_path, monkeypatch):
     monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: "onlylowercaseletters")
     run = _job_run(tmp_path, "127.0.0.1")
-    with pytest.raises(apply_run._Parked, match=r"it needs at least 1 of: a digit, a special "
-                                                r"character \(the site asks"):
-        run._check_password_rules(_rules_digest(_READ_AS_MEANT[4][0]), "127.0.0.1")
+    digest = _rules_digest(_READ_AS_MEANT[4][0])
+    assert ats_accounts.unmet_rules(apply_run.password_rules(digest)[0]) == [
+        "at least 1 of: a digit, a special character"]
+    with pytest.raises(apply_run._Parked, match=r"it misses 1 of the rules the site states "
+                                                r"\(the site asks"):
+        run._check_password_rules(digest, "127.0.0.1")
 
 
 # R3-M3 (SP7 review round 3): the pre-check blocks only on a rule it reads
@@ -1478,7 +1485,9 @@ def test_a_certain_rule_beside_advice_or_a_count_still_parks(tmp_path, monkeypat
                                                              password, needs):
     monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: password)
     run = _job_run(tmp_path, "127.0.0.1")
-    with pytest.raises(apply_run._Parked, match=rf"it needs {needs} \(the site asks"):
+    assert ats_accounts.unmet_rules(apply_run.password_rules(_rules_digest(text))[0]) == [needs]
+    with pytest.raises(apply_run._Parked, match=r"it misses 1 of the rules the site states "
+                                                r"\(the site asks"):
         run._check_password_rules(_rules_digest(text), "127.0.0.1")
 
 
@@ -1601,7 +1610,7 @@ def test_the_create_account_button_is_the_one_that_makes_an_account(browser_page
     run = _job_run(tmp_path, "127.0.0.1")
     run.page = browser_page
     digest = apply_form.extract(browser_page)
-    assert run.accounts._signup_button(browser_page, digest, "127.0.0.1") is True
+    assert run.accounts._signup_button(browser_page, digest) is True
     assert browser_page.evaluate("document.body.dataset.took") == "create"
 
 

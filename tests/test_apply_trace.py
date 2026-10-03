@@ -249,6 +249,19 @@ def test_write_record_without_a_trace_keeps_the_record_it_replaces(tmp_path):
         encoding="utf-8")
 
 
+
+def test_a_traced_record_whose_attempt_copy_was_never_written_is_kept(tmp_path):
+    entry = apply_queue.new_entry("7", company="Acme", title="Engineer",
+                                  apply_url="https://jobs.example.com/7")
+    # the attempt folder was never made, so the record's copy into it failed
+    apply_run.write_record(tmp_path, entry, "failed", "first", [], {}, "",
+                           trace_dir="apply_trace/attempt-1", attempt=1)
+    assert not (tmp_path / "apply_trace" / "attempt-1" / "apply_record.md").exists()
+    apply_run.write_record(tmp_path, entry, "needs_human", "second", [], {}, "")
+    kept = list((tmp_path / "apply_trace").glob("earlier-*.md"))
+    assert len(kept) == 1 and "- Reason: first" in kept[0].read_text(encoding="utf-8")
+    assert not list(tmp_path.glob("*.tmp"))
+
 # --- DIAG-03: park reasons that carry their evidence --------------------------------------------
 
 class _ReadAs(jev.FakeJev):

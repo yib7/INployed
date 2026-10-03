@@ -32,7 +32,8 @@ def test_direct_password_fill_is_private(browser_page, kr, caplog):
         assert ats_accounts.fill_password(browser_page, "#password") is True
     assert browser_page.locator("#password").input_value() == SECRET
     assert SECRET not in caplog.text
-    assert "chars hidden" in caplog.text
+    assert "password filled (hidden)" in caplog.text
+    assert not any(str(len(SECRET)) in r.getMessage() for r in caplog.records)  # no length
 
 
 def test_direct_password_truncated_by_the_field_reports_failure(browser_page, kr, caplog):
@@ -43,6 +44,21 @@ def test_direct_password_truncated_by_the_field_reports_failure(browser_page, kr
         assert ats_accounts.fill_password(browser_page, "#password") is False
     assert SECRET not in caplog.text
     assert "password filled" not in caplog.text
+    assert not any(str(len(SECRET)) in r.getMessage() for r in caplog.records)
+    # nothing of the password stays in the box the site may still post
+    assert browser_page.locator("#password").input_value() == ""
+
+
+@pytest.mark.parametrize("rules, unmet", [
+    ({"min_length": "30 characters"}, ["at least 30 characters"]),
+    ({"max_length": 16.0}, ["at most 16 characters"]),
+    ({"min_length": "eight"}, []), ({"min_length": None, "max_length": ""}, []),
+    ({"upper": True, "lower": True, "digit": True, "special": True,
+      "classes_needed": "3 of the following"}, []),
+])
+def test_unmet_rules_takes_a_rule_number_in_any_shape(kr, rules, unmet):
+    kr.set_password(ats_accounts.SERVICE, "master", SECRET)
+    assert ats_accounts.unmet_rules(rules) == unmet
 
 
 def test_direct_password_failure_hides_playwright_error(browser_page, kr, caplog, monkeypatch):

@@ -1816,3 +1816,46 @@ def test_a_reason_with_a_bar_or_a_line_break_stays_in_its_cell(tmp_path):
     row = apply_run.drain_table([o]).splitlines()[2]
     assert row == "| 1 | x | needs_human | 0 | a \\| b c | - |", row
     assert apply_run.drain_report_dir([o], tmp_path / "q" / "queue.json") == tmp_path / "q"
+
+
+@pytest.mark.parametrize("step", ["login", "fill"])
+@pytest.mark.parametrize("error, parks", [
+    (lambda: jev.SpendCapReached("the spend cap is reached"), False),
+    (lambda: jev.RequestRejected("a choice with 300 options"), True)],
+    ids=["spend_cap", "rejected"])
+def test_a_judge_that_cannot_run_inside_the_account_step_is_never_a_login_wall(
+        step, error, parks, monkeypatch):
+    """A judge that cannot run (`jev.JevUnavailable`: the spend cap, a replay
+    miss) reaches the run as itself; a request the judge refuses whatever
+    the moment (`jev.RequestRejected`) parks with its own reason. Neither is
+    noted as the account step's own error and read as a login wall."""
+    import apply_run
+    from apply_form import Field, FormDigest
+
+    def _raise(*a, **k):
+        raise error()
+    monkeypatch.setattr(apply_run.ats_accounts, "has_password", lambda: True)
+    monkeypatch.setattr(apply_run, "account_forms", lambda page, digest: [])
+    monkeypatch.setattr(apply_run.apply_form, "frames", lambda page: [])
+    run = _account_run(_map=_raise)
+    accounts = apply_run._Accounts(run)
+    digest = FormDigest(url_host="jobs.example.com", title="Sign in", text="Sign in", fields=[
+        Field(n=0, locator=(0, "#email"), label="Email", type="email", required=True),
+        Field(n=1, locator=(0, "#password"), label="Password", type="other", required=True,
+              autocomplete="current-password", secret=True)])
+    if step == "login":
+        monkeypatch.setattr(apply_run._Accounts, "_signup_link", _raise)
+        blank = FormDigest(url_host="jobs.example.com", title="Sign in", text="Sign in")
+        call = lambda: accounts.login(object(), blank, "jobs.example.com")  # noqa: E731
+    else:
+        call = lambda: accounts._fill(object(), digest, "jobs.example.com",  # noqa: E731
+                                      "jane@example.com", False)
+    if parks:
+        with pytest.raises(apply_run._Parked) as p:
+            call()
+        assert p.value.reason.startswith("the judge refused to read the account screen "
+                                         "(RequestRejected"), p.value.reason
+    else:
+        with pytest.raises(jev.SpendCapReached):
+            call()
+        assert run.errors == [] and accounts.last_error == ""

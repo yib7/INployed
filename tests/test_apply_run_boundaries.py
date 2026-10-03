@@ -117,6 +117,7 @@ def test_same_tab_linkedin_transition_admits_one_ats_host(monkeypatch):
         return None, "navigation", 5
 
     monkeypatch.setattr(apply_run, "click_entry", _same_tab)
+    monkeypatch.setattr(apply_run.apply_form, "live_text", lambda loc: {"text": "Apply"})
     monkeypatch.setattr(apply_run.apply_fill, "settle", lambda *a: None)
     monkeypatch.setattr(apply_run.apply_queue, "update", lambda *a, **kw: None)
 
@@ -414,3 +415,100 @@ def test_headless_a_whole_page_check_gets_a_moment_to_clear_itself(monkeypatch):
     job.r.sleep = naps.append
     job._wait_for_human_check("captcha or bot check on the page", before=("u", "Just a moment..."))
     assert len(naps) == 2
+
+
+def test_a_queue_write_that_fails_while_recording_the_ats_never_ends_the_job(monkeypatch):
+    job = _job()
+    calls = []
+
+    def _locked(*a, **kw):
+        calls.append(kw.get("ats"))
+        raise TimeoutError("the queue lock is held")
+    monkeypatch.setattr(apply_run.apply_queue, "update", _locked)
+    job._admit_ats_transition("https://careers-gtsx.icims.com/jobs/1605/login", job.page.url)
+    assert len(calls) == 2                     # once, then once more after the wait
+    assert job.entry["ats"]["system"] == "icims"
+    assert "careers-gtsx.icims.com" in job.allowed
+
+
+def test_a_challenge_that_closed_before_the_wait_is_done(monkeypatch):
+    job = _human_check_job(monkeypatch, [480, 0])
+    job.page.evaluate = lambda *a, **k: "the same page"
+    naps = []
+    job.r.sleep = naps.append
+    assert job._human_check_showing()
+    job._wait_for_human_check("a CAPTCHA challenge is showing")
+    assert naps == [] and job.last_sig is None
+
+
+def test_a_destination_that_parks_is_the_tab_the_job_keeps(monkeypatch):
+    job = _job()
+    monkeypatch.setattr(apply_run.apply_fill, "settle", lambda *a: None)
+    monkeypatch.setattr(apply_run.apply_queue, "update", lambda *a, **kw: None)
+    job._follow_popup(Mock(url="https://careers.example/apply"))
+    source = job.page
+    tab = Mock(url="https://unrelated.example/collect", is_closed=lambda: False)
+    with pytest.raises(apply_run._Parked, match="allowed"):
+        job._follow_popup(tab)
+    assert job.page is tab and job._parked_tab() is tab
+    assert source is not tab
+
+
+def test_every_hop_of_a_redirect_chain_is_watched(monkeypatch):
+    job = _job()
+    monkeypatch.setattr(apply_run.apply_fill, "settle", lambda *a: None)
+    monkeypatch.setattr(apply_run.apply_queue, "update", lambda *a, **kw: None)
+    tabs = [Mock(url=f"https://careers.example/hop{i}") for i in range(4)]
+    hops = iter(tabs[1:])
+    monkeypatch.setattr(job, "_await_destination",
+                        lambda page: (next(hops, page), {}))
+    watched = []
+    monkeypatch.setattr(job, "_watch", watched.append)
+    job._follow_popup(tabs[0], source_url=job.page.url)
+    assert job.page is tabs[3]
+    assert [id(t) for t in watched] == [id(t) for t in tabs]
+
+
+@pytest.mark.parametrize("flag", ["_final_advance", "_code_may_send", "_link_may_send",
+                                  "_pause_sent", None])
+def test_a_dropped_load_after_a_step_that_may_have_sent_is_never_loaded_again(monkeypatch, flag):
+    job = _job()
+    job.page = Mock(url="chrome-error://chromewebdata/")
+    monkeypatch.setattr(job, "_held_load", lambda page: (
+        "https://www.linkedin.com/jobs/2", "GET", "net::ERR_CONNECTION_RESET"))
+    monkeypatch.setattr(apply_run, "_error_page_up", lambda *a: None)
+    if flag:
+        setattr(job, flag, True)
+    with pytest.raises(apply_run._Parked) as p:
+        job._recover_error_page(job.page)
+    if flag:
+        assert p.value.reason.startswith(apply_run.CHECK_SENT_REASON), p.value.reason
+        job.page.goto.assert_not_called()
+    else:
+        assert "again after one retry" in p.value.reason
+        job.page.goto.assert_called_once()
+
+
+def test_an_apply_entry_whose_text_cannot_be_read_is_never_clicked(monkeypatch):
+    job = _job()
+    rec = {"clicked": []}
+    job.pages.append(rec)
+    clicked = []
+    monkeypatch.setattr(apply_run, "click_entry", lambda *a, **k: clicked.append(a))
+    monkeypatch.setattr(apply_run.apply_form, "live_text", lambda loc: {})
+    with pytest.raises(apply_run._NotClicked, match="could not be read"):
+        job._click_entry(rec, object(), "Apply", how="linkedin_handler")
+    assert clicked == [] and rec["clicked"] == []
+
+
+def test_a_queue_write_that_fails_while_noting_a_missing_answer_never_ends_the_job(monkeypatch):
+    job = _job()
+    calls = []
+
+    def _locked(*a, **kw):
+        calls.append(a)
+        raise TimeoutError("the queue lock is held")
+    monkeypatch.setattr(apply_run.apply_queue, "add_missing", _locked)
+    job._add_missing("Years of experience", "required")
+    assert len(calls) == 2
+    assert job.missing[0]["question"] == "Years of experience"

@@ -1713,6 +1713,7 @@ def test_the_late_tab_watch_ends_before_the_continues_tab_is_followed(context, t
     tab = context.new_page()
     seen = {}
     monkeypatch.setattr(apply_run, "click_entry", lambda page, loc, **kw: (None, "navigation", 5))
+    monkeypatch.setattr(apply_run.apply_form, "live_text", lambda loc: {"text": "Apply"})
     monkeypatch.setattr(run, "_await_destination", lambda page: (tab, {"settled_ms": 0}))
 
     def _follow(popup, *, source_url=None):

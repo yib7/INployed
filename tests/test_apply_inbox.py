@@ -170,6 +170,74 @@ def test_open_message_waits_for_the_clicked_rows_body(browser_page, fixtures_ser
     assert "STALE-CODE-1357" not in body
 
 
+_NEW_MAIL_JS = """() => {
+  const row = document.createElement('div');
+  row.setAttribute('role', 'option');
+  row.onclick = () => { location.href = 'order_message.html'; };
+  row.innerHTML = '<span data-testid="sender">deals@shopfront.example</span>' +
+    '<span data-testid="subject">A new order</span>' +
+    '<span data-testid="preview">Order 48213 again.</span>';
+  const list = document.querySelector('[role="listbox"]');
+  list.insertBefore(row, list.firstElementChild);
+}"""
+
+
+def test_open_message_opens_the_listed_message_after_new_mail_arrived(browser_page,
+                                                                       fixtures_server):
+    """New mail between the list read and the click shifts every row down:
+    the message the judge chose opens, never the row now at its old place."""
+    inbox = _inbox()
+    rows = inbox.list_messages(browser_page, fixtures_server + "/inbox/outlook_list.html")
+    greenhouse = rows[4]
+    assert greenhouse.sender == "no-reply@greenhouse.io"
+    browser_page.evaluate(_NEW_MAIL_JS)
+
+    body = inbox.open_message(browser_page, greenhouse)
+
+    assert "MKPZ3QRA" in body
+
+
+def test_open_message_refuses_a_message_that_left_the_list(browser_page, fixtures_server):
+    """A listed message that is gone by the click (moved, deleted) is
+    never stood in for by the row now at its place."""
+    inbox = _inbox()
+    rows = inbox.list_messages(browser_page, fixtures_server + "/inbox/outlook_list.html")
+    browser_page.evaluate("""() => document.querySelectorAll('[role="option"]')[4].remove()""")
+
+    with pytest.raises(inbox.MessageMoved):
+        inbox.open_message(browser_page, rows[4])
+    assert browser_page.url.endswith("/inbox/outlook_list.html")    # nothing was clicked
+
+
+def test_a_poll_whose_message_moved_reads_nothing(browser_page, fixtures_server, monkeypatch):
+    """The poll that lost its message hands back no code (never the code
+    of the mail now at its place); the next poll lists the inbox again."""
+    inbox = _inbox()
+    real = inbox.list_messages
+
+    def _then_new_mail(tab, url, *a, **kw):
+        listed = real(tab, url, *a, **kw)
+        # the chosen message leaves; another site's code mail takes its place
+        tab.evaluate("""() => {
+          const old = document.querySelectorAll('[role="option"]')[4];
+          const row = document.createElement('div');
+          row.setAttribute('role', 'option');
+          row.onclick = () => { location.href = 'ashby_message.html'; };
+          row.innerHTML = '<span data-testid="sender">no-reply@ashbyhq.com</span>' +
+            '<span data-testid="subject">Your security code</span>' +
+            '<span data-testid="preview">Your code is inside.</span>';
+          old.replaceWith(row);
+        }""")
+        return listed
+    monkeypatch.setattr(inbox, "list_messages", _then_new_mail)
+    browser_page.goto(fixtures_server + "/forms/code_gate.html")
+    errors: list = []
+    code = inbox.fetch_code(browser_page, "greenhouse.io",
+                            fixtures_server + "/inbox/outlook_list.html", jev=jev.FakeJev(),
+                            polls=1, sleep=lambda s: None, errors=errors)
+    assert code is None and errors == []
+
+
 def test_fetch_code_hands_the_ats_and_company_to_the_from_site_question(browser_page,
                                                                           fixtures_server):
     """The site is the form's host; the mail comes from the ATS. Both names
@@ -340,6 +408,18 @@ def test_parse_when_reads_a_rows_time(text, expected):
     now = datetime(2026, 9, 24, 23, 0)      # a Thursday
     got = _inbox().parse_when(text, now)
     assert (got.timetuple()[:5] if got else None) == expected
+
+
+def test_a_rows_age_is_read_against_the_clock_it_is_given():
+    """A row's time is read against the `now` handed in, so a row that says
+    only a weekday or a clock time is placed by that clock."""
+    from datetime import datetime
+    inbox = _inbox()
+    now = datetime(2026, 9, 24, 23, 0)      # a Thursday
+    since = datetime(2026, 9, 24, 9, 0)
+    row = inbox.Message(0, "Greenhouse", "Your security code", "", "#m0", when="8:15 AM")
+    assert inbox._stale(row, since, now=now)
+    assert not inbox._stale(row, datetime(2026, 9, 24, 8, 0), now=now)
 
 
 def test_a_rows_time_with_a_zone_is_read_in_local_time():

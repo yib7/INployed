@@ -58,6 +58,11 @@ _LINKS_JS = """els => els.flatMap(e => Array.from(e.querySelectorAll('a[href]'))
    a.href]))"""
 
 
+class MessageMoved(Exception):
+    """The listed message is no longer in the inbox list when it is opened
+    (moved, deleted): no other row stands in for it."""
+
+
 @dataclass
 class Message:
     n: int
@@ -150,17 +155,19 @@ def _when(text: str, now: datetime) -> tuple[datetime | None, bool]:
 
 
 def parse_when(text: str, now: datetime | None = None) -> datetime | None:
-    """The time a row's words name (`_when`), or None."""
+    """The time a row's words name (`_when`), read against `now` (the
+    clock when None), or None."""
     return _when(text, now or datetime.now())[0]
 
 
-def _stale(message: Message, since: datetime | None) -> bool:
+def _stale(message: Message, since: datetime | None, now: datetime | None = None) -> bool:
     """A message from before `since` (the job's start, ACC-07): its day
     before `since`'s day, or with a clock time, its minute before `since`'s
-    minute. A row whose time cannot be read is not stale."""
+    minute. The row's words are read against `now` (the clock when None).
+    A row whose time cannot be read is not stale."""
     if since is None:
         return False
-    when, has_clock = _when(message.when, datetime.now())
+    when, has_clock = _when(message.when, now or datetime.now())
     if when is None:
         return False
     if not has_clock:
@@ -181,6 +188,23 @@ def provider_for(inbox_url: str) -> str | None:
         if any(host == h or host.endswith("." + h) for h in hosts):
             return name
     return None
+
+
+def _row_text(row, selectors: dict, key: str) -> str:
+    """The text of a row's `key` part ("sender", "subject", "preview"), ""
+    when the row has none."""
+    matches = row.locator(selectors[key])
+    count = matches.count()
+    if not count:
+        return ""
+    if key == "sender":
+        # Gmail keeps the address in an `email` attribute on a span inside
+        # the cell, and the cell itself matches first.
+        for j in range(min(count, SENDER_SCAN)):
+            address = matches.nth(j).get_attribute("email")
+            if address:
+                return address
+    return matches.first.inner_text()
 
 
 def list_messages(page, inbox_url: str, limit: int = 15) -> list[Message]:
@@ -213,20 +237,6 @@ def list_messages(page, inbox_url: str, limit: int = 15) -> list[Message]:
             if not row.is_visible():
                 continue
 
-            def text(key):
-                matches = row.locator(selectors[key])
-                count = matches.count()
-                if not count:
-                    return ""
-                if key == "sender":
-                    # Gmail keeps the address in an `email` attribute on a span
-                    # inside the cell, and the cell itself matches first.
-                    for j in range(min(count, SENDER_SCAN)):
-                        address = matches.nth(j).get_attribute("email")
-                        if address:
-                            return address
-                return matches.first.inner_text()
-
             def when():
                 # the full date a provider keeps in the time's title first
                 matches = row.locator(selectors["time"])
@@ -239,23 +249,50 @@ def list_messages(page, inbox_url: str, limit: int = 15) -> list[Message]:
                         return value.strip()
                 return first.inner_text().strip()
 
-            subject = text("subject")
-            sender = text("sender")
+            subject = _row_text(row, selectors, "subject")
+            sender = _row_text(row, selectors, "sender")
             # a row with no subject and no sender is a foreign widget; a row
             # that names a sender is mail even when the subject hook drifted
             if not subject.strip() and not sender.strip():
                 continue
             messages.append(Message(len(messages), sender, subject,
-                                    text("preview") or row.inner_text(),
+                                    _row_text(row, selectors, "preview") or row.inner_text(),
                                     f'{selectors["row"]} >> nth={i}', when()))
         if messages:
             return messages
     return []
 
 
+def _listed_row(page, msg: Message):
+    """The row of `msg` as the inbox shows it now: its listed place when the
+    row there still names its sender and subject, else the first visible row
+    that does (new mail shifted the list). Raises `MessageMoved` when no row
+    does. A locator of no known row shape is used as it is."""
+    row_selector, _, nth = msg.open_locator.rpartition(" >> nth=")
+    selectors = next((s for s in SELECTORS.values() if s["row"] == row_selector), None)
+    if selectors is None or not nth.isdigit():
+        return page.locator(msg.open_locator)
+    rows = page.locator(row_selector)
+
+    def same(row) -> bool:
+        return (_row_text(row, selectors, "sender") == msg.sender
+                and _row_text(row, selectors, "subject") == msg.subject)
+    count = rows.count()
+    if int(nth) < count and same(rows.nth(int(nth))):
+        return rows.nth(int(nth))
+    for i in range(count):
+        row = rows.nth(i)
+        if row.is_visible() and same(row):
+            return row
+    raise MessageMoved
+
+
 def open_message(page, msg: Message) -> str:
-    """Open a row and read its rendered message body."""
-    row = page.locator(msg.open_locator)
+    """Open `msg`'s row and read its rendered message body. The row is found
+    again by its sender and subject (`_listed_row`), so mail that arrived
+    after the list was read never opens in its place; `MessageMoved` when
+    the message left the list."""
+    row = _listed_row(page, msg)
     was_selected = row.get_attribute("aria-selected") == "true"
     was_selected = was_selected or row.get_attribute("aria-current") not in (None, "false")
     previous = page.locator(BODY_SELECTOR).filter(visible=True).all_inner_texts()
@@ -354,7 +391,10 @@ def _poll(tab, inbox_url: str, site: str, *, jev, ats: str, company: str,
                        since=since)
     if not message:
         return None
-    body = open_message(tab, message)
+    try:
+        body = open_message(tab, message)
+    except MessageMoved:
+        return None         # the next poll lists the inbox again
     picks = [c for c in candidates(body, message.subject) if code_hash(c) not in used]
     if not picks:
         return None
@@ -410,7 +450,10 @@ def _poll_link(tab, inbox_url: str, site: str, *, jev, ats: str, company: str,
                        since=since)
     if not message:
         return None
-    body = open_message(tab, message)
+    try:
+        body = open_message(tab, message)
+    except MessageMoved:
+        return None         # the next poll lists the inbox again
     links = verification_links(message_links(tab), allowed, refused)
     if len(links) <= 1:
         return links[0][1] if links else None

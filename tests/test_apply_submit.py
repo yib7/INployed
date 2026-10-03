@@ -531,7 +531,7 @@ def test_a_dispatched_click_whose_navigation_timed_out_has_landed(browser_page, 
     r = apply_fill.click(browser_page, d, n, timeout_s=1)
     assert r.clicked and r.late == "TimeoutError", r
     # the slow_post flow (tests/test_apply_matrix.py, every seed) runs the
-    # whole job: one post, the confirmation read 8 s after the click
+    # whole job: one post, the confirmation read SLOW_POST_S after the click
 
 
 def test_a_send_then_ready_to_submit_breaks_the_invariants():

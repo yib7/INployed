@@ -36,9 +36,9 @@ Parts (the matrix test, `scripts/apply_matrix.py` and later phases use them):
   tick, pick, upload or gate on a `*.linkedin.com` page; no click on an Easy
   Apply control (its text or aria-label); the master password nowhere in the
   record, the trace, the queue or the logs; nothing typed, ticked or picked
-  in a read-only box or a honeypot (SP5). A flow that must end before any
-  page opens (`Flow.opens_no_page`) is checked for that too. Cycle 19 SP7
-  (park and resume): a person's answer to a pause goes only into its own
+  in a read-only box or a honeypot. A flow that must end before any
+  page opens (`Flow.opens_no_page`) is checked for that too. Park and
+  resume: a person's answer to a pause goes only into its own
   field, on the page the run paused on, and code never types into a
   sensitive field (a date of birth, an SSN).
 - `PauseSpec` / `PauseResponder`: a pause flow's answer (`Flow.pause`), given
@@ -89,7 +89,7 @@ NOISY_SEEDS = tuple(range(1, 21))         # the script's seeds; the suite runs t
 SUITE_SEEDS = NOISY_SEEDS[:3]
 # The share of (flow, noisy seed) runs that reach their expected end, pinned
 # under what the matrix measures, with room for a few timing misses.
-SUCCESS_FLOOR = 0.97                      # SP5: 204 of 205 suite runs (0.995); the misses
+SUCCESS_FLOOR = 0.97                      # measured: 204 of 205 suite runs (0.995); the misses
                                           # left are a mapping dropped on both looks and a
                                           # consent tick with one look under its floor
 # Under the fake judge every flow reaches its end but the known failing ones
@@ -102,7 +102,7 @@ _PDF = (b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
 # The runner tests' synthetic sheet (`apply_data.build_markdown` over their
 # synthetic master and `bank()`), with the sheet's delimiters filled in at run
 # time. Its Standard answers and Address are what the store renders, so the
-# runner's refresh before each job (FL-2) leaves it as it is.
+# runner's refresh before each job leaves it as it is.
 _SHEET = """# Apply sheet: Analytics Engineer @ Fabrikam
 Generated 2026-09-23.
 
@@ -302,8 +302,8 @@ FAST_TIMING = {
     ("apply_run", "LINKEDIN_POLL_MS"): 100,
     ("apply_run", "LINKEDIN_EASY_RECHECK_S"): 1.0,
     ("apply_run", "CONSENT_WAIT_S"): 1.5,
-    # the post-submit read: the slow_post flow's answer comes 8 s after its
-    # click, inside the click's own waits and this one
+    # the post-submit read: the slow_post flow's answer comes SLOW_POST_S after
+    # its click, inside the click's own waits and this one
     ("apply_run", "POST_SUBMIT_WAIT_S"): 10.0,
     ("apply_run", "POST_SUBMIT_POLL_S"): 0.2,
     ("apply_run", "POST_SUBMIT_QUIET_S"): 0.3,
@@ -339,7 +339,9 @@ CONFIRMATION_HTML = (
     "team will review it and reach out if there is a match.</p></body></html>")
 
 
-SLOW_POST_S = 6.0                   # the slow_post flow's answer: past the 5 s action timeout
+# the slow_post flow's answer: past apply_fill.ACTION_TIMEOUT_MS (5 s), so the click
+# times out with the post in flight; no shorter while that timeout stands
+SLOW_POST_S = 6.0
 
 
 def _page(name: str) -> Callable[[], str]:
@@ -351,7 +353,7 @@ class FixtureHTTPServer(http.server.ThreadingHTTPServer):
     opens one connection per request; under the matrix's `--jobs 8` load the
     accept loop falls behind, and the socketserver default backlog of 5 made
     Windows refuse the sixth pending connect, which left the tab on Chrome's
-    own error page ("left the allowed sites: chromewebdata", SP8a)."""
+    own error page ("left the allowed sites: chromewebdata")."""
     request_queue_size = 128
     daemon_threads = True
 
@@ -402,7 +404,7 @@ class FlowServer:
             "server_validation": (0.0, _page("server_validation_errors.html")),
             "postback_emptied.html": (0.0, _page("postback_emptied_answer.html")),
             "success_flash.html": (0.0, _page("success_flash_answer.html")),
-            # final review A-C1: the post answered with no redirect by a page
+            # the post answered with no redirect by a page
             # that says a link to confirm the application was emailed
             "link_after_submit": (0.0, _page("link_sent.html"))}
         self.rejects: set[str] = {"server_validation"}      # posts answered with a refusal
@@ -486,7 +488,7 @@ def linkedin_job_routes(page: str = "linkedin_posting.html", target: str = "ashb
 
 _linkedin_routes = linkedin_job_routes()
 
-# SP4: an ad tracker and a job board between LinkedIn's Apply and the form
+# An ad tracker and a job board between LinkedIn's Apply and the form
 _TRACKER_URL = "https://click.appcast.io/t/4438751519"
 _BOARD_URL = "https://www.dice.com/job-detail/4438751519"
 
@@ -507,9 +509,9 @@ def board_chain_routes(base: str, boards: tuple[str, ...] = ("www.dice.com",
     """LinkedIn's Apply to a chain of job boards (`boards`, each a copy of
     `aggregator.html`), each board's company link to the next board and the
     last one's to the company's form (`lever_single.html`). `plain_apply`:
-    the last board's only off-site control reads "Apply now" (review M7).
+    the last board's only off-site control reads "Apply now".
     `loop`: the last board's company link goes back to the first board, and
-    no board links to the company (review R2-M3)."""
+    no board links to the company."""
     page = (FIXTURES_DIR / "forms" / "aggregator.html").read_text(encoding="utf-8")
     targets = [f"https://{b}/job-detail/4438751519" for b in boards[1:]]
     targets.append(f"https://{boards[0]}/job-detail/4438751519" if loop
@@ -546,8 +548,8 @@ def _no_routes(base: str) -> dict[str, str]:
 
 def read_as(out: dict, state: str, conf: float, probabilities: dict | None = None, *,
             nouls: str = "coherent") -> dict:
-    """A test judge's scripted reading of a page as `state` at `conf` (SP4:
-    the page read is a Choice and Nouls). `nouls`: "coherent" reads the
+    """A test judge's scripted reading of a page as `state` at `conf` (the
+    page read is a Choice and Nouls). `nouls`: "coherent" reads the
     Nouls with it (`state`'s yes, every other kind's no), as a judge that
     took the page for `state` would; "neutral" sets them to 0.5 (no word
     either way); "keep" leaves the wrapped judge's. Only the answers the
@@ -566,8 +568,8 @@ def read_as(out: dict, state: str, conf: float, probabilities: dict | None = Non
 
 
 class LinkedInReadAsOther:
-    """A judge that reads every LinkedIn page as `other` at 0.30 (the GTS
-    park of 2026-09-22) and passes the rest to the judge it wraps."""
+    """A judge that reads every LinkedIn page as `other` at 0.30 (as a real
+    run once read one, and parked) and passes the rest to the judge it wraps."""
 
     def __init__(self, inner: Any):
         self.inner = inner
@@ -596,8 +598,7 @@ class ModalReadAsForm:
     """A judge that reads Workday's start dialog (a page with an "Apply
     Manually" button) as an application form at 0.90, its Nouls with it (a
     form's details yes, a posting's no), and "Apply Manually" as the advance
-    at 0.90 (the audit's INV-01 shape), and passes the rest to the judge it
-    wraps."""
+    at 0.90, and passes the rest to the judge it wraps."""
 
     def __init__(self, inner: Any):
         self.inner = inner
@@ -627,7 +628,7 @@ class CommitmentUnderFloor:
     """A judge that reads a background-check box as a consent under
     `CONSENT_MIN_CONF` on every look: 0.84 of the inner judge's confidence
     (under NoisyJev, 0.63 to 0.84). The commitment floor then decides, and
-    the run must park on the box, never tick it (SP5 review round 3, M4)."""
+    the run must park on the box, never tick it."""
 
     def __init__(self, inner: Any):
         self.inner = inner
@@ -692,8 +693,8 @@ class OptionalLeftBlank:
 
 class PauseLeftBlank:
     """A judge that maps the boxes labelled as in `LABELS` to `leave_blank`
-    at 0.95 (no fact on the sheet answers them), as a real judge reads them
-    (SP7 fix round 1): pause_disabled.html's optional referral code, so its
+    at 0.95 (no fact on the sheet answers them), as a real judge reads them:
+    pause_disabled.html's optional referral code, so its
     Submit stays disabled after the fill, and pause_form.html's two "Please
     explain" boxes, so the run asks both. The rest goes to the judge it
     wraps."""
@@ -742,11 +743,11 @@ _CHALLENGE_STUB = ("<!doctype html><html><body><p>Select every image with a bus<
 
 @dataclass(frozen=True)
 class PauseSpec:
-    """How a pause flow's person answers (cycle 19, SP7): `mode` is "fill",
+    """How a pause flow's person answers: `mode` is "fill",
     "browser" or "park", or "timeout" (no answer comes); `values` are
     (words of the question's label, the value) pairs; `save` names the
     labels whose value is kept for future runs; `by_id` are (field id, value)
-    pairs, read first (two fields with the same label, SP7 review I2)."""
+    pairs, read first (two fields with the same label)."""
     mode: str
     values: tuple[tuple[str, str], ...] = ()
     save: tuple[str, ...] = ()
@@ -775,7 +776,7 @@ class PauseResponder:
     each request that lands in `apply_pause.pause_dir()` gets the answer
     `spec` gives (`PauseSpec.answer`), written with `apply_pause.write_answer`.
     With a `recorder`, every value given is noted with the field it answers
-    and the page the run paused on (the SP7 invariants), before the answer
+    and the page the run paused on (the pause invariants), before the answer
     file lands."""
 
     def __init__(self, spec: PauseSpec, recorder: Recorder | None = None, *,
@@ -872,10 +873,10 @@ class Flow:
     settle_s: float | None = None   # the quiet window when a page moves on by a timer
     # ((module, name), value) caps raised for this flow on top of `FAST_TIMING`:
     # a wait that ends on its condition (a placeholder clearing) is given room
-    # to, so a busy machine never ends it by its cap (SP5 review: the skeleton)
+    # to, so a busy machine never ends it by its cap (the skeleton fixture)
     timing: tuple = ()
     # JS the run's page evaluates after every `apply_form.extract` of it: a
-    # fixture that moves on once it has been read (the skeleton, SP5 round 2)
+    # fixture that moves on once it has been read (the skeleton)
     # waits for that condition, never for a clock
     on_read: str = ""
     covers: str = ""                # what the flow exercises
@@ -893,7 +894,7 @@ class Flow:
     judge_free: bool = False
     # the page's text changes with the clock, so no two runs ask the judge
     # the same request: a replay of the real judge's answers leaves the flow
-    # out (its recording's run is its real column, SP8b)
+    # out (its recording's run is its real column)
     replayable: bool = True
     # the real judge's cache holds a run of it: False for a flow added after
     # the last recording (a round that records nothing adds flows too). A
@@ -904,7 +905,7 @@ class Flow:
     # read, so a reworded question the saved answers settle parks under the
     # fake and its noisy seeds and fills under the real judge
     real_end: tuple[str, str] = ()
-    # cycle 19 SP7: the run pauses on a question it can ask, and this is how
+    # the run pauses on a question it can ask, and this is how
     # the person answers (`PauseSpec`); None: the run never pauses
     pause: PauseSpec | None = None
 
@@ -991,7 +992,7 @@ FLOWS: tuple[Flow, ...] = (
          confirm="body[data-confirmed]", covers="a real form POST the server counts"),
     Flow("captcha", "captcha.html", True, "needs_human", r"^captcha or bot check",
          covers="a bot check nobody solves parks"),
-    # --- SP2: the entry (Easy Apply, the LinkedIn job page, settling, consent) ---
+    # --- the entry (Easy Apply, the LinkedIn job page, settling, consent) ---
     Flow("linkedin_easy_apply", _LINKEDIN_JOB, True, "needs_human", _EASY_APPLY,
          routes=linkedin_job_routes("linkedin_easy_apply.html", "lever_single.html"),
          judge_free=True,
@@ -1042,7 +1043,6 @@ FLOWS: tuple[Flow, ...] = (
     Flow("consent_overlay", "consent_overlay.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible",
          covers="a cookie dialog over the posting, declined through its input button"),
-    # --- SP2 review round 1 ---
     Flow("consent_wrapper", "consent_wrapper.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible",
          covers="a consent vendor's sizeless wrapper holding a fixed banner and a page filter"),
@@ -1055,7 +1055,6 @@ FLOWS: tuple[Flow, ...] = (
          confirm="#thanks:visible", gate="#btn-submit:visible",
          routes=linkedin_job_routes("linkedin_posting_button.html", "lever_single.html"),
          covers="a signed-in page whose offsite Apply is a button opening a tab by script"),
-    # --- SP2 review round 2 ---
     Flow("linkedin_interstitial_tab", _LINKEDIN_JOB, False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible",
          routes=linkedin_job_routes("linkedin_posting.html", "lever_single.html",
@@ -1065,14 +1064,13 @@ FLOWS: tuple[Flow, ...] = (
          confirm="#thanks:visible", gate="#btn-submit:visible",
          routes=linkedin_job_routes("linkedin_apply_in_list.html", "lever_single.html"),
          covers="a top card's Apply in a list item, a rail of other jobs' Apply beside it"),
-    # --- SP2 review round 3 ---
     Flow("linkedin_more_jobs_late", _LINKEDIN_JOB, False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible",
          routes=lambda base: {**linkedin_job_routes("linkedin_more_jobs_late.html",
                                                     "lever_single.html")(base),
                               "https://careers.contoso.example/**": _OTHER_JOB},
          covers="a top card rendered late beside another job's card with a company-site Apply"),
-    # --- SP3: submit truth and the gate's invariants ---
+    # --- submit truth and the gate's invariants ---
     Flow("native_required_submit", "native_required_submit.html", True, "needs_human",
          r"^required field without an answer: Cover letter", confirm="#received:visible",
          covers="a hidden required box behind a rich-text editor: the gate reads the form's "
@@ -1086,7 +1084,8 @@ FLOWS: tuple[Flow, ...] = (
          covers="the submit raises a bot-check challenge: the person solves it"),
     Flow("slow_post", "slow_post.html", True, "submitted", _SUBMITTED,
          confirm="body[data-confirmed]", suite_seeds=1,
-         covers="a form post answered after 8 s: the click stays clicked, the answer is read"),
+         covers="a form post answered after the click's action timeout: the click stays "
+                "clicked, the answer is read"),
     Flow("posting_with_alert_box", "posting_with_alert_box.html", True, "submitted", _SUBMITTED,
          confirm="#thanks:visible",
          covers="a job-alert box beside the posting's Apply: the Apply is the entry"),
@@ -1098,7 +1097,6 @@ FLOWS: tuple[Flow, ...] = (
          routes=lambda base: {"https://www.google.com/recaptcha/**": _CHECKBOX_STUB},
          covers="a 78 px reCAPTCHA checkbox with an empty token: the form is filled, then the "
                 "person ticks it"),
-    # --- SP3 review round 1 ---
     Flow("recaptcha_checkbox_park", "recaptcha_checkbox.html", False, "ready_to_submit",
          r"^auto_apply_submit is off; a CAPTCHA checkbox is on the form",
          confirm="#received:visible", gate="#btn-submit:visible",
@@ -1111,7 +1109,6 @@ FLOWS: tuple[Flow, ...] = (
     Flow("ajax_reset", "ajax_reset.html", True, "needs_human",
          r"^check whether the application went through: a request left",
          covers="a fetch send, then the form reset: never read as not sent"),
-    # --- SP3 review round 2 ---
     Flow("success_flash_emptied", "success_flash.html", True, "needs_human",
          r"^check whether the application went through: a request left",
          covers="a success flash (role=alert) above the same form emptied after the post: "
@@ -1125,7 +1122,7 @@ FLOWS: tuple[Flow, ...] = (
          r"|a confirmation page before any submit)",
          inbox=True, ats={"system": "greenhouse"}, wrap=VerifiedReadAsConfirmation,
          covers="a sign-up's email Verify, then a thanks for it: never read as submitted"),
-    # --- SP4: page reading that holds up ---
+    # --- page reading that holds up ---
     Flow("review_with_next", "review_with_next.html", False, "ready_to_submit", _PARKED,
          confirm="#received:visible", gate="#btn-submit:visible",
          covers="a wizard step that reads as a review with only Next: the Next is clicked, the "
@@ -1171,7 +1168,7 @@ FLOWS: tuple[Flow, ...] = (
     Flow("mailto_apply", "mailto_apply.html", True, "needs_human",
          r"^apply by email to jobs@contoso\.example$",
          covers="an Apply that is an email address: parks with the address, nothing clicked"),
-    # --- SP5: extraction and fill coverage (the layout study's replicas) ---
+    # --- extraction and fill coverage (replicas of real application forms) ---
     Flow("lever_cards", "lever_cards.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible",
          covers="star markers in their own spans, a location typeahead with no ARIA, a "
@@ -1192,12 +1189,12 @@ FLOWS: tuple[Flow, ...] = (
                 "is no Yes), sponsorship on Yes / No buttons settled by the alias set, and "
                 "relocation: it confirms authorization, sponsorship and relocation from the "
                 "typed answers"),
-    # cycle 18 SP6c round 5: the same form, its relocation label naming a
+    # the same form, its relocation label naming a
     # place ("the job location (New York)"). The gate holds the stored
     # relocation answer back from a question worded another way, and the
     # settle read asks Jev whether it answers this one. The fake leaves every
     # settle read open, so the fake run parks on it; the real judge reads it
-    # with where the candidate lives (the home line, 2026-09-27) and picks
+    # with where the candidate lives (the home line) and picks
     # the willing option, which the confirmation marker checks
     Flow("ashby_relocation_place", "ashby_relocation_place.html", True, "needs_human",
          r"^required field without an answer: Are you willing to relocate to the job location "
@@ -1237,7 +1234,7 @@ FLOWS: tuple[Flow, ...] = (
          confirm="#thanks:visible",
          covers="'Search' / 'Select...' / 'textbox' aria-labels under visible questions, a "
                 "role=radio question, the only submit disabled until the form is complete "
-                "(its question was 'May we text you about this application?' until SP8b: the "
+                "(its question was once 'May we text you about this application?': the "
                 "live judge leaves that blank, since no fact answers it, and the job parks)"),
     Flow("bamboo_honeypot_mui", "bamboo_honeypot_mui.html", True, "submitted", _SUBMITTED,
          confirm="#thanks:visible",
@@ -1246,7 +1243,6 @@ FLOWS: tuple[Flow, ...] = (
     Flow("ukg_shadow_apply", "ukg_shadow_apply.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible",
          covers="buttons and a box inside open shadow roots, the Apply and the Submit among them"),
-    # --- SP5 review round 1 ---
     Flow("aria_controls", "aria_controls.html", True, "submitted", _SUBMITTED,
          confirm="#thanks:visible",
          covers="a role=checkbox consent and a role=switch toggle, a resume box hidden inside a "
@@ -1254,123 +1250,120 @@ FLOWS: tuple[Flow, ...] = (
     Flow("typeahead_editor", "typeahead_editor.html", True, "submitted", _SUBMITTED,
          confirm="#thanks:visible",
          covers="a City combobox whose matches come only after typing, a rich-text cover letter"),
-    # --- SP5 review round 3 ---
     Flow("consent_commitment", "consent_commitment.html", True, "needs_human",
          r"^required field without an answer: I consent to a background check$",
          confirm="#thanks:visible", wrap=CommitmentUnderFloor,
          covers="a required background-check consent beside a routine privacy box, read as a "
                 "consent under 0.85 on every look: the run parks on it and never ticks it"),
-    # --- SP6: advancing and repair ---
+    # --- advancing and repair ---
     Flow("masked_phone", "masked_phone.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible",
          covers="a phone mask that takes keys only, a phone box beside a country code that "
-                "takes bare digits (FILL-04)"),
+                "takes bare digits"),
     Flow("date_mmddyyyy", "date_mmddyyyy.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible",
-         covers="a signature date box that takes MM/DD/YYYY only (FILL-05)"),
+         covers="a signature date box that takes MM/DD/YYYY only"),
     Flow("upload_resets_input", "upload_resets_input.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible",
          covers="an upload widget that keeps the file, shows a chip and resets its input: "
-                "verified by the chip, uploaded once (FILL-01)"),
+                "verified by the chip, uploaded once"),
     Flow("modal_with_combobox", "modal_with_combobox.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible",
          covers="a form in a dialog that Escape closes, a typeahead that says expanded with "
-                "no menu: no Escape without a menu (FILL-08)"),
+                "no menu: no Escape without a menu"),
     Flow("conditional_fields", "conditional_fields.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible", settle_s=0.8,
          covers="a source answer that reveals a required box half a second later, a consent "
-                "tick that reveals the only submit (FILL-10, study G10)"),
+                "tick that reveals the only submit"),
     Flow("resume_parse_autofill", "resume_parse_autofill.html", False, "ready_to_submit",
          _PARKED, confirm="#thanks:visible",
          gate="body[data-values-ok='1'] #btn-submit:visible", wrap=HeadlineLeftBlank,
          covers="a resume parser that writes its guesses after the upload, a profile lookup "
-                "after the email: the sheet's values stand at the gate (FILL-03)"),
+                "after the email: the sheet's values stand at the gate"),
     Flow("validation_errors", "validation_errors.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible", wrap=OptionalLeftBlank,
          covers="a Next the form refuses: a phone it wants in digits, a blank box it needs, a "
-                "summary no control names; repaired, then the gate (ADV-02)"),
+                "summary no control names; repaired, then the gate"),
     Flow("validation_errors_submit", "validation_errors.html", True, "submitted", _SUBMITTED,
          confirm="#thanks:visible", wrap=OptionalLeftBlank,
          covers="the same, then a submit the form refuses with nothing sent: repaired once and "
-                "sent through the gate again (ADV-02)"),
+                "sent through the gate again"),
     Flow("validation_in_button_box", "validation_in_button_box.html", False, "ready_to_submit",
          _PARKED, confirm="#thanks:visible", gate="#btn-submit:visible", wrap=OptionalLeftBlank,
          covers="a Next refused with its summary written into the Next's own box: the same "
-                "button found again after the repair (SP6 review R2-I1)"),
+                "button found again after the repair"),
     Flow("validation_in_button_box_submit", "validation_in_button_box.html", True, "submitted",
          _SUBMITTED, confirm="#thanks:visible", wrap=OptionalLeftBlank,
          covers="the same, and a submit refused with its message in its own box: repaired and "
-                "sent through the gate again (SP6 review R2-I1)"),
+                "sent through the gate again"),
     Flow("hydration_beacon", "hydration_beacon.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible",
          covers="a first Next click before the page's script is ready, on a page that posts its "
                 "own telemetry: the telemetry is no request of the click's, so the quiet click "
-                "gets its retry (SP6 review R2-I2)"),
+                "gets its retry"),
     Flow("validation_banner_only", "validation_banner_only.html", False, "ready_to_submit",
          _PARKED, confirm="#thanks:visible", gate="#btn-submit:visible", wrap=OptionalLeftBlank,
          covers="a Next refused with one banner no control names: the judge's mapping is the "
-                "only signal of the field it wants (SP6 review M1)"),
+                "only signal of the field it wants"),
     Flow("validation_banner_only_submit", "validation_banner_only.html", True, "submitted",
          _SUBMITTED, confirm="#thanks:visible", wrap=OptionalLeftBlank,
          covers="the same in submit mode: the banner's field repaired, then sent through the "
-                "gate (SP6 review M1)"),
+                "gate"),
     Flow("chat_launcher", "chat_launcher.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="body:not([data-chat-started]) #btn-submit:visible",
          covers="a chat panel fixed over the step's Next: closed by its own close button, the "
-                "Next clicked once more, the chat never started (ADV-04)"),
+                "Next clicked once more, the chat never started"),
     Flow("cookie_banner", "cookie_banner.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="body[data-consent='rejected'] #btn-submit:visible",
          covers="a consent overlay that shows on scroll, over the Next: rejected, never "
-                "accepted, and the Next clicked once more (ADV-04)"),
+                "accepted, and the Next clicked once more"),
     Flow("next_and_feedback_submit", "next_and_feedback_submit.html", False, "ready_to_submit",
          _PARKED, confirm="#thanks:visible",
          gate="body:not([data-feedback]) #btn-submit:visible",
          covers="a step's Next beside a feedback box's own Submit: the Next goes on, the "
-                "feedback is never sent, the gate waits for the last step (ADV-05)"),
+                "feedback is never sent, the gate waits for the last step"),
     Flow("two_forms", "two_forms.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="body:not([data-signin-typed]) #btn-submit:visible",
          password=True,
          covers="a sign-in and a sign-up side by side with no account in the ledger: the "
-                "sign-up's boxes alone take the address and the password (ADV-08)"),
+                "sign-up's boxes alone take the address and the password"),
     Flow("apply_with_linkedin", "apply_with_linkedin.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible",
          covers="Apply with LinkedIn beside the posting's own Apply, Continue with LinkedIn "
-                "above the step's Next: neither is taken (ADV-09)"),
-    # --- SP6 review round 1 ---
+                "above the step's Next: neither is taken"),
     Flow("talent_beside_application", "talent_beside_application.html", True, "submitted",
          _SUBMITTED, confirm="body:not([data-talent-sent]) #thanks:visible",
          wrap=OptionalLeftBlank,
          covers="a talent box's Submit above the application's own Submit, which refuses a "
                 "blank box: repaired, the application's Submit clicked again, the talent box "
-                "never sent (SP6 review I2)"),
+                "never sent"),
     Flow("upload_profile_kept", "upload_profile_kept.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="body[data-uploads='1'] #btn-submit:visible",
          covers="a returning candidate's page showing a kept resume of the same file name: "
-                "this job's resume is uploaded, exactly once (SP6 review I5)"),
+                "this job's resume is uploaded, exactly once"),
     Flow("upload_profile_replace", "upload_profile_replace.html", False, "ready_to_submit",
          _PARKED, confirm="#thanks:visible", gate="body[data-uploads='1'] #btn-submit:visible",
          covers="a widget that replaces a kept resume's chip with this upload's, of the same "
-                "name: verified by the change, uploaded once (SP6 review R2-M1)"),
+                "name: verified by the change, uploaded once"),
     Flow("form_associated_invalid", "form_associated_invalid.html", True, "needs_human",
          r"^required field without an answer: Preferred shift \(a control the run cannot "
          r"read: form-associated custom element\)$", confirm="#thanks:visible",
          covers="a form-associated control its internals mark invalid, no required "
-                "attribute: named, parked on, never sent (SP6 review I6)"),
+                "attribute: named, parked on, never sent"),
     Flow("form_associated_invalid_park", "form_associated_invalid.html", False, "needs_human",
          r"^required field without an answer: Preferred shift \(a control the run cannot "
          r"read: form-associated custom element\)$", confirm="#thanks:visible",
-         covers="the same in park mode: never ready_to_submit with it unanswered (SP6 review "
-                "I6)"),
+         covers="the same in park mode: never ready_to_submit with it unanswered"),
     Flow("recaptcha_disabled_submit", "recaptcha_disabled_submit.html", True, "needs_human",
          r"^a CAPTCHA check is on the form before the submit", confirm="#received:visible",
          routes=lambda base: {"https://www.google.com/recaptcha/**": _CHECKBOX_STUB},
          covers="a submit disabled until the reCAPTCHA tick: the gate's CAPTCHA path, the "
-                "person ticks it (SP6 review I4)"),
+                "person ticks it"),
     Flow("recaptcha_disabled_submit_park", "recaptcha_disabled_submit.html", False,
          "ready_to_submit", r"^auto_apply_submit is off; a CAPTCHA checkbox is on the form",
          confirm="#received:visible", gate="#btn-submit:visible",
          routes=lambda base: {"https://www.google.com/recaptcha/**": _CHECKBOX_STUB},
-         covers="the same in park mode: the gate with the checkbox's note (SP6 review I4)"),
+         covers="the same in park mode: the gate with the checkbox's note"),
     # the chaos case: the form is drawn anew (the same markup, new nodes)
     # right after the run first reads it, before any act
     Flow("rerender_after_read", "lever_single.html", False, "ready_to_submit", _PARKED,
@@ -1384,65 +1377,66 @@ FLOWS: tuple[Flow, ...] = (
          r"read: closed shadow root\)$",
          confirm="#thanks:visible",
          covers="a required start date inside a closed shadow root and a form-associated "
-                "relocation choice: named, and the job parks on the required one (EXT-01)"),
-    # --- SP7: accounts and email ---
+                "relocation choice: named, and the job parks on the required one"),
+    # --- accounts and email ---
     # served on the company's careers host: the code comes from
     # careers@fabrikam.example, and the live judge rightly reads that mail as
-    # sent by someone other than 127.0.0.1 (0.09, SP8b)
+    # sent by someone other than 127.0.0.1 (0.09)
     Flow("otp_six_boxes", f"{_CAREERS}/apply/otp", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible", password=True, inbox=True,
          inbox_page="otp_list.html",
          routes=lambda base: {f"{_CAREERS}/**": (FIXTURES_DIR / "forms" / "otp_six_boxes.html")
                               .read_text(encoding="utf-8")},
          covers="a sign-up, then its code in six one-character boxes, the fresh code below an "
-                "older one from the same sender, then the application (ACC-06, ACC-07)"),
+                "older one from the same sender, then the application"),
     Flow("workday_signin_modal", "workday_signin_modal.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible", password=True, inbox=True,
          inbox_page="link_list.html", ats={"system": "workday"},
          covers="Workday's start popup, a Sign In dialog whose way to an account is a Create "
                 "Account button, the password rules, the account checked by a link in the "
-                "email, the sign-in after it, then the wizard (ACC-01, ACC-04, ACC-05)"),
+                "email, the sign-in after it, then the wizard"),
     Flow("workday_link_pick", "workday_signin_modal.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible", password=True, inbox=True,
          inbox_page="link_pick_list.html", ats={"system": "workday"},
          covers="the account check's email holds two links whose words read as a check, the "
                 "job alerts' confirmation first: the judge picks the account's link, the "
-                "sign-in after it, then the wizard (ACC-05's link pick, SP8b)"),
+                "sign-in after it, then the wizard"),
     Flow("signup_exists", "signup_exists.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible", password=True,
          covers="a sign-up that says the address has an account: one sign-in instead, never a "
-                "second sign-up, then the wizard (ACC-03)"),
+                "second sign-up, then the wizard"),
     Flow("password_rules", "password_rules.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible", password=True,
          covers="a sign-up that states its password rules beside the box: read, met by the "
-                "stored password, then the wizard (ACC-04)"),
+                "stored password, then the wizard"),
     Flow("slow_signup", "slow_signup.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible", password=True, suite_seeds=1,
          covers="a sign-up that posts and then shows nothing for 8 s: waited for, clicked "
-                "once (ACC-09)"),
+                "once"),
     Flow("sso_buttons", "sso_buttons.html", True, "needs_human",
          r"^sign-in only through another site \(Google, Microsoft, LinkedIn, Apple\)",
          password=True,
          covers="a portal whose only way on is a sign-in with Google, Microsoft, LinkedIn or "
-                "Apple: parks at once, none clicked (ACC-11)"),
+                "Apple: parks at once, none clicked"),
     Flow("signin_alerts_link", "signin_alerts_link.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible", password=True,
          covers="a sign-in whose header carries a job-alerts sign-up link: the screen's own "
-                "Create Account button makes the account, never the alerts link (ACC-01)"),
-    # --- cycle 17 final review: the code and link steps after the answers (A Known
-    # Minor 5), recorded in cycle 18 (SP6) ---
+                "Create Account button makes the account, never the alerts link"),
+    # --- the code and link steps after the answers ---
     Flow("link_after_submit", "link_after_submit.html", True, "submitted",
          r"^submitted \(unconfirmed\): the emailed link's page on \S+ says "
          r"'application has been received'", inbox=True, inbox_page="link_confirm_list.html",
-         ats={"system": "greenhouse"},         covers="a form post answered with no redirect by a page that says a link was emailed: "
+         ats={"system": "greenhouse"},
+         covers="a form post answered with no redirect by a page that says a link was emailed: "
                 "the link opens in a tab of its own, its page is the confirmation, and the job's "
-                "tab is never loaded again, so one post goes (final review A-C1)"),
+                "tab is never loaded again, so one post goes"),
     Flow("link_after_answers_park", "link_after_answers.html", False, "ready_to_submit",
          r"^auto_apply_submit is off; the emailed link from \S+ is the step that may send the "
          r"application", gate="#link-sent:visible", inbox=True,
-         inbox_page="link_confirm_list.html", ats={"system": "greenhouse"},         covers="the answers, then a Continue to a page that says a link was emailed: park mode "
-                "stops there and never opens the link (final review A-I2)"),
-    # the same in submit mode (final review A Known Minor 5). The link's page
+         inbox_page="link_confirm_list.html", ats={"system": "greenhouse"},
+         covers="the answers, then a Continue to a page that says a link was emailed: park mode "
+                "stops there and never opens the link"),
+    # the same in submit mode. The link's page
     # confirms the address alone: a page that says the application was
     # received would end the job submitted through the link, a send this
     # harness sees only inside the submit gate
@@ -1450,33 +1444,36 @@ FLOWS: tuple[Flow, ...] = (
          "^" + re.escape(apply_run.CHECK_SENT_REASON) + r": the emailed link on \S+ was opened "
          r"after the application's answers went on the site, and its page shows no received "
          r"words; the job's tab was not loaded again$", inbox=True,
-         inbox_page="link_email_list.html", ats={"system": "greenhouse"},         covers="submit mode: the answers, then a Continue to a page that says a link was "
+         inbox_page="link_email_list.html", ats={"system": "greenhouse"},
+         covers="submit mode: the answers, then a Continue to a page that says a link was "
                 "emailed; the link opens in a tab of its own, its page confirms only the "
                 "address, and the job's tab is never loaded again: the person checks whether "
-                "the application went through (final review A Known Minor 5)"),
+                "the application went through"),
     Flow("code_after_answers", "code_after_answers.html", True, "submitted", _SUBMITTED,
          confirm="body[data-confirmed]", inbox=True, ats={"system": "greenhouse"},
          covers="the answers, a Continue to an emailed-code step, the code typed and its Verify "
-                "clicked once, then the last step sent through the gate (final review A-I2)"),
+                "clicked once, then the last step sent through the gate"),
     Flow("code_after_answers_park", "code_after_answers.html", False, "ready_to_submit",
          r"^auto_apply_submit is off; the emailed code is entered and its button \(Verify\) is "
          r"the step that may send the application", gate="#btn-verify:visible", inbox=True,
-         ats={"system": "greenhouse"},         covers="the same in park mode: the code is typed and its button never clicked, "
-                "whatever role the judge gave it (final review A-I2, A Known Minor 10)"),
+         ats={"system": "greenhouse"},
+         covers="the same in park mode: the code is typed and its button never clicked, "
+                "whatever role the judge gave it"),
     # a master password is stored, as for every flow with an address screen: a
     # noisy read of that screen as a login wall takes the account step's way
-    # through it (the 20-seed matrix of the fix round found seeds 6 and 18 so)
+    # through it (a 20-seed matrix run found seeds 6 and 18 so)
     Flow("email_code_first_park", "email_code_first.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible", inbox=True, password=True,
-         ats={"system": "greenhouse"},         covers="an email-first start, its emailed code, then the application: the address alone "
+         ats={"system": "greenhouse"},
+         covers="an email-first start, its emailed code, then the application: the address alone "
                 "is no application on the site, so park mode passes the code step and stops at "
-                "the submit (final review A-I2)"),
+                "the submit"),
     Flow("login_get_park", "login_get_form.html", False, "ready_to_submit", _PARKED,
          confirm="#received:visible", gate="#btn-submit:visible", password=True,
          covers="a sign-in form sent with method=get, whose next page's query carries the "
                 "password: the trace keeps each URL without its query, so PASSWORD-LEAK "
-                "covers it (final review C-M1)"),
-    # cycle 19 SP7 (park and resume): two required questions no saved answer
+                "covers it"),
+    # park and resume: two required questions no saved answer
     # holds pause the run; the person's answers go in and the run goes on
     Flow("pause_fill", "pause_form.html", True, "submitted", _SUBMITTED,
          confirm="#thanks:visible",
@@ -1505,11 +1502,10 @@ FLOWS: tuple[Flow, ...] = (
                 "types it, the value an answer gives for it is ignored"),
     Flow("pause_timeout", "pause_form.html", True, "needs_human",
          r"^required field without an answer: ", pause=PauseSpec("timeout"),
-         covers="no answer in time: the job parks as it did before SP7"),
+         covers="no answer in time: the job parks as a run with no pause would"),
     Flow("pause_park", "pause_form.html", True, "needs_human",
          r"^required field without an answer: ", pause=PauseSpec("park"),
-         covers="Park it: the job parks as it did before SP7"),
-    # SP7 fix round 1
+         covers="Park it: the job parks as a run with no pause would"),
     Flow("pause_dup_labels", "pause_form.html?dup=1&grow=1", True, "submitted", _SUBMITTED,
          confirm="#thanks:visible", wrap=PauseLeftBlank,
          pause=PauseSpec("fill", (("query language", "Datalog 2.0 (user)"),
@@ -1518,21 +1514,19 @@ FLOWS: tuple[Flow, ...] = (
                          by_id=(("explain_a", "Alpha reason (user)"),
                                 ("explain_b", "Beta reason (user)"))),
          covers="two required fields with the same label, answered in the card, on a page that "
-                "changed during the pause: each answer goes in its own field on the replan "
-                "(review I2)"),
+                "changed during the pause: each answer goes in its own field on the replan"),
     Flow("pause_submit_in_browser", "pause_disabled.html?click=1", True, "needs_human",
          "^" + re.escape(apply_run.CHECK_SENT_REASON) + r": the page moved on during the pause",
          wrap=PauseLeftBlank, pause=PauseSpec("browser"),
          covers="a Submit disabled after the fill; the person fixes the page and clicks Submit "
                 "in the browser during the pause: the run parks with the check-whether note, "
-                "never fills the page after it, and the job is never re-queued (review I1)"),
+                "never fills the page after it, and the job is never re-queued"),
     Flow("pause_fix_kept", "pause_disabled.html?reformat=1", False, "ready_to_submit",
          _PARKED, confirm="#thanks:visible",
          gate="body:not([data-phone-retyped]) #btn-submit:not([disabled])",
          wrap=PauseLeftBlank, pause=PauseSpec("browser"),
          covers="a Submit disabled after the fill; the person rewrites the phone the run typed "
-                "and fills the referral in the browser: the replan keeps both (review I3)"),
-    # SP7 fix round 2
+                "and fills the referral in the browser: the replan keeps both"),
     Flow("pause_submit_to_account", "pause_disabled.html?click=1&account=1", True,
          "needs_human",
          "^" + re.escape(apply_run.CHECK_SENT_REASON) + r": the page moved on during the pause "
@@ -1541,21 +1535,20 @@ FLOWS: tuple[Flow, ...] = (
          covers="the person clicks the enabled Submit during the pause and the site shows an "
                 "account form that shares the Email label, with no received words: the "
                 "paused page's send button is gone, so the job may have been sent and parks "
-                "with the check-whether note (review N2)"),
+                "with the check-whether note"),
     Flow("pause_wizard_next", "pause_disabled.html?click=1&wizard=1", True, "submitted",
          _SUBMITTED, confirm="#thanks:visible", wrap=PauseLeftBlank,
          pause=PauseSpec("browser"),
          covers="a Next disabled after the fill; the person fixes the page and clicks Next "
                 "during the pause, and the address moves on to a review step: a page with no "
-                "send button that moved on is planned again, and the gate sends (review N1)"),
-    # cycle 19 final review A I-1: added after the last recording
+                "send button that moved on is planned again, and the gate sends"),
+    # added after the last recording
     Flow("pause_wizard_fill", "pause_disabled.html?click=1&wizard=1&again=1", True,
          "submitted", _SUBMITTED, confirm="#thanks:visible", wrap=PauseLeftBlank,
          pause=PauseSpec("fill", (("referral code", "CARD-7 (user)"),)),
          covers="a Next disabled after the fill; the person answers the referral code in the "
                 "card and also clicks Next in the browser, and the review step has its own "
-                "Referral code box: the card's answer goes nowhere on the step it moved on to "
-                "(final review A I-1)"),
+                "Referral code box: the card's answer goes nowhere on the step it moved on to"),
 )
 
 
@@ -1597,8 +1590,8 @@ def _watch_document(page) -> None:
         pass
 
 
-# a request that failed before any connection was made never reached the site
-# (SP8a review R2-M2); a reset or a bare failure may have after it left
+# a request that failed before any connection was made never reached the site;
+# a reset or a bare failure may have after it left
 _NO_CONNECTION = re.compile(r"ERR_(?:CONNECTION_REFUSED|ADDRESS_UNREACHABLE|NAME_NOT_RESOLVED|"
                             r"NAME_RESOLUTION_FAILED|BLOCKED_BY_CLIENT)\b")
 
@@ -1659,7 +1652,7 @@ class Sends:
 
     def _failed(self, request) -> None:
         """A send request the network dropped: not accepted when no
-        connection was made (a later route's abort, SP8a review R2-M2)."""
+        connection was made (a later route's abort)."""
         try:
             failure = str(request.failure or "")
         except Exception:       # noqa: BLE001  (a request gone with its page)
@@ -1682,13 +1675,13 @@ _LIVE_JS = r"""el => {
   } else if (tag !== 'textarea' && tag !== 'select') {
     text = el.innerText || el.textContent || '';
   }
-  // an icon button's words are its accessible name (review R5-I1: a submit's
-  // menu arrow whose only text is white space around an svg)
+  // an icon button's words are its accessible name (a submit's menu arrow
+  // whose only text is white space around an svg)
   const shown = (text || '').replace(/\s+/g, ' ').trim();
   text = (shown || el.getAttribute('aria-label') || el.getAttribute('title') || '')
     .replace(/\s+/g, ' ').trim().slice(0, 160);
   // a box no person fills, by the page's own truth, never the extractor's
-  // word lists (review M10): read-only (a combobox opens on a click), a box
+  // word lists: read-only (a combobox opens on a click), a box
   // the fixture declares one (`data-harness-junk`), off the page, two pixels
   // or less, or under aria-hidden; a text box or a textarea only
   let junk = el.getAttribute('data-harness-junk') || '';
@@ -1702,7 +1695,7 @@ _LIVE_JS = r"""el => {
     else if (r.width <= 2 && r.height <= 2) junk = 'two pixels or less';
     else if (el.closest('[aria-hidden=true]')) junk = 'aria-hidden';
   }
-  // a tick or a toggle: it never sends (review round 6, Minor 1)
+  // a tick or a toggle: it never sends
   const role = el.getAttribute('role') || '';
   const toggle = ['checkbox', 'switch', 'radio', 'option', 'menuitemcheckbox',
                   'menuitemradio'].includes(role) || ['checkbox', 'radio'].includes(type)
@@ -1748,9 +1741,8 @@ def submit_worded(text: str, *, park_mode: bool, account_step: bool = False,
     but an account step (`apply_run._final_shaped`). A tick or a toggle
     (`toggle`: a checkbox, switch, radio or option, or an aria-pressed
     button) is left out of the last-step words only ("I confirm the
-    information above is complete" is an answer the loop ticks, review round
-    6, Minor 1); a toggle whose own name sends ("Submit application") still
-    reads as sending (review round 7, Minor 2)."""
+    information above is complete" is an answer the loop ticks); a toggle whose own name sends ("Submit application") still
+    reads as sending."""
     words = {w.lower() for w in SUBMIT_WORDS.findall(text or "")}
     if words - {"apply"} and not (account_step and apply_run.apply_judge.SIGN_IN_WORDS.search(text or "")):
         return True
@@ -1785,15 +1777,15 @@ class Action:
     form: bool = False  # the element (or the focused one) sits in a form
     aria: str = ""      # the element's aria-label
     in_account: bool = False    # made by the account step (`_Accounts._fill`)
-    junk: str = ""      # a box no person fills: read-only, or a honeypot (SP5, study G3)
+    junk: str = ""      # a box no person fills: read-only, or a honeypot
     toggle: bool = False    # a tick or a toggle (a checkbox, switch, radio or option role,
-                            # aria-pressed): it never sends (review round 6, Minor 1)
-    secret: bool = False    # the value typed is the master password (SP7: never the value)
+                            # aria-pressed): it never sends
+    secret: bool = False    # the value typed is the master password (never the value)
     unconfirmed: bool = False   # the value filled or picked holds an answer the user has
-                                # not confirmed (cycle 18, FL-1: never the value)
+                                # not confirmed (never the value)
     account: str = ""       # the account step's kind ("login" | "signup") and call, "login#2"
     name: str = ""          # the element's name, else its id
-    user: str = ""          # the person's answer to a pause the value holds (SP7), else ""
+    user: str = ""          # the person's answer to a pause the value holds, else ""
 
     @property
     def host(self) -> str:
@@ -1819,11 +1811,11 @@ class Recorder:
         self.files: list[Path] = []       # scanned for the password after the run
         self.judge_requests: list[str] = []   # every request the judge got, as JSON
         self.app_hosts: set[str] = set()  # where the master password may be typed
-        self.ledger: Path | None = None   # the run's account ledger (SP7: no password key)
+        self.ledger: Path | None = None   # the run's account ledger (no password key)
         self._keyboards: dict[int, Any] = {}
         self._account_calls = 0
         self._account_kind: list[str] = []    # the running account step's "login#n" / "signup#n"
-        # cycle 19 SP7: each answer the person gave a pause -> (the field it
+        # each answer the person gave a pause -> (the field it
         # answers, the page the run paused on); and the values given for a
         # sensitive field, which code must never type
         self.user_values: dict[str, tuple[str, str]] = {}
@@ -1853,7 +1845,7 @@ class Recorder:
         if kind in ("click", "tick") and info.get("toggle"):
             shown = f"{shown} {info.get('text', '')}"
         unconfirmed = any(u in shown for u in self.unconfirmed)
-        # the person's answer to a pause the value is, word for word (SP7)
+        # the person's answer to a pause the value is, word for word
         user = next((u for u in list(self.user_values) + sorted(self.sensitive_values)
                      if u and u == shown.strip()), "") if kind in ("fill", "pick") else ""
         self.actions.append(Action(kind=kind, how=how, url=str(info.get("url", "")),
@@ -2099,8 +2091,7 @@ def _text_files(paths: Iterable[Path]) -> Iterable[Path]:
 _NOTHING_SENT = "nothing was sent"
 # the runner's check-whether end: its reason's prefix, or the same words as
 # a clause of their own after "; " (the parks `_send_evidence` gives the
-# check-sent note: an error banner or page, a code not accepted, final
-# review C N1); a page's words quoted in a reason are never a clause
+# check-sent note: an error banner or page, a code not accepted); a page's words quoted in a reason are never a clause
 _CHECK_SENT_CLAUSE = re.compile(r"(?:^|; )" + re.escape(apply_run.CHECK_SENT_REASON)
                                 + r"(?=$|[:;])")
 
@@ -2112,7 +2103,7 @@ def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends, *,
     breaks: list[str] = []
     status = str(getattr(outcome, "status", ""))
     reason = str(getattr(outcome, "reason", ""))
-    # a send the site accepted (final review C N2): a post it refused, or a
+    # a send the site accepted: a post it refused, or a
     # request that never made its connection, sent nothing
     accepted = any(s.accepted for s in sends.events)
     if sends.count > 1:
@@ -2123,7 +2114,7 @@ def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends, *,
         if not s.in_gate:
             breaks.append(f"SEND-OUTSIDE-GATE: a {s.kind} send ({s.detail}) while the "
                           "submit gate was not running")
-    # final review C-M3: the runner's own prefix, never the word anywhere in
+    # the runner's own prefix, never the word anywhere in
     # a reason that may quote the page
     if status == "submitted" and not recorder.final.get("confirmed"):
         if not (reason.startswith("submitted (unconfirmed)") and accepted):
@@ -2132,10 +2123,10 @@ def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends, *,
     if status == "submitted" and not accepted:
         breaks.append(f"SUBMITTED-WITHOUT-SEND: submitted ({reason[:80]!r}) and no send the "
                       "site accepted was seen: the job would never be tried again")
-    # final review C-M2: after a send the site accepted, a park the person
+    # after a send the site accepted, a park the person
     # may re-queue sends a second application; only a check-whether park
     # (which is never re-queued as is) may follow one: its reason says so,
-    # or its note is the check-sent note (final review C N1)
+    # or its note is the check-sent note
     if accepted and status in ("needs_human", "failed") \
             and not _CHECK_SENT_CLAUSE.search(reason) and tab_note != apply_run.CHECK_SENT_NOTE:
         breaks.append(f"REQUEUABLE-AFTER-SEND: {status} ({reason[:80]!r}) after a send the site "
@@ -2145,7 +2136,6 @@ def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends, *,
                       "send(s): a review would send it again")
     # the run says nothing went: the submit that did not go through, a send
     # that never made its connection, a post the navigation guard stopped
-    # (SP8a review R2-M2)
     nothing_sent = reason.startswith(apply_run.NOT_SENT_REASON) or _NOTHING_SENT in reason
     if nothing_sent and any(s.accepted for s in sends.events):
         breaks.append(f"NOT-SENT-AFTER-SEND: {reason[:80]!r} after a send the site accepted: "
@@ -2177,7 +2167,7 @@ def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends, *,
                           f"{a.host}")
         if a.kind == "click" and _OTHER_SITE_SIGN_IN.search(f"{a.text} {a.aria}"):
             breaks.append(f"OTHER-SITE-CLICK: clicked {a.text or a.aria!r} on {a.host}: the run "
-                          "never signs in or applies with another site's account (ACC-11)")
+                          "never signs in or applies with another site's account")
         if a.secret and recorder.app_hosts and a.host not in recorder.app_hosts:
             breaks.append(f"PASSWORD-OFF-SITE: the master password typed on {a.host}")
         if a.secret and (a.type != "password" or a.how.startswith("Keyboard.")):
@@ -2217,15 +2207,15 @@ def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends, *,
 # a sign-in or an apply with another site's account (`apply_judge.THIRD_PARTY`)
 _OTHER_SITE_SIGN_IN = apply_run.apply_judge.THIRD_PARTY
 _PASSWORD_KEY = re.compile(r"pass|pwd|secret|token|credential", re.I)
-# SP7: the master password goes into one sign-in per site (a second is a
+# The master password goes into one sign-in per site (a second is a
 # rejected password: typing it again moves toward a lockout), a sign-up's
-# boxes twice at most (the one re-type of a form the site emptied, ACC-12),
+# boxes twice at most (the one re-type of a form the site emptied),
 # and no more than this many boxes on one site in all
 PASSWORD_TYPINGS_MAX = 6
 
 
 def _pause_breaks(a: Action, recorder: Recorder) -> list[str]:
-    """Cycle 19 SP7: a person's answer to a pause goes only into its own
+    """A person's answer to a pause goes only into its own
     field, on the page the run paused on; code never types into a sensitive
     field, and a value the answer gave for one is never typed anywhere."""
     out = []
@@ -2284,16 +2274,16 @@ def assert_invariants(outcome: Any, recorder: Recorder, sends: Sends, *,
 # the run cannot pass).
 _POLICY_PARKS = tuple(re.compile(p) for p in (
     r"^auto_apply_submit is off(; |$)", r"^required field without an answer",
-    # cycle 18 (FM-4): an optional answer that failed its check and that the
+    # an optional answer that failed its check and that the
     # run could not take out again (a radio group): the person removes it
     r"^a wrong answer could not be removed: ",
     r"^asks for .*which auto-apply never fills", r"^payment requested",
     # a bot check nobody solved: the loop's park and the run's own CAPTCHA
     # reasons, anchored (an unanchored word matched a reads list's
-    # "captcha_or_bot_check 0.17" inside another park's evidence, review M3)
+    # "captcha_or_bot_check 0.17" inside another park's evidence)
     r"^captcha or bot check on the page", r"^a CAPTCHA (?:challenge|check) ",
     # its one producer's shape (`_JobRun._click_advance`), anchored so a park
-    # whose evidence quotes the sentence never reads as it (final review C-M4)
+    # whose evidence quotes the sentence never reads as it
     r"^the \S+ button \(.*\) did nothing \(.*clicked twice\); a CAPTCHA checkbox",
     r"^error or dead page",
     "^" + re.escape(apply_run.CLOSED_REASON), "^" + re.escape(apply_run.TAB_CLOSED_REASON),
@@ -2301,7 +2291,7 @@ _POLICY_PARKS = tuple(re.compile(p) for p in (
     "^" + re.escape(apply_run.apply_linkedin.APPLIED_REASON),
     "^" + re.escape(apply_run.apply_linkedin.CLOSED_REASON),
     "^" + re.escape(apply_run.apply_linkedin.SIGNED_OUT_REASON),
-    # the site's own dead ends (SP4): a job it says was applied to before, a
+    # the site's own dead ends: a job it says was applied to before, a
     # posting it says is closed
     "^" + re.escape(apply_run.ALREADY_APPLIED_REASON),
     "^" + re.escape(apply_run.CLOSED_POSTING_REASON),
@@ -2309,38 +2299,38 @@ _POLICY_PARKS = tuple(re.compile(p) for p in (
     # the company's site, an Apply that is an email address
     "^" + re.escape(apply_run.AGGREGATOR_REASON) + " on ",
     "^" + re.escape(apply_run.MAILTO_REASON) + " to ",
-    # a real dead end (SP6 review I4): a way on still disabled once every
+    # a real dead end: a way on still disabled once every
     # field is answered, and no field the form or the plan names as blank
     r"^the .{1,80} button stays disabled after the fill( \(|$)",
-    # SP7's dead ends: a portal whose only way on is a sign-in with another
-    # site's account, which the run never uses (ACC-11); a site whose
-    # password rules the stored master password cannot meet (ACC-04)
+    # the account dead ends: a portal whose only way on is a sign-in with another
+    # site's account, which the run never uses; a site whose
+    # password rules the stored master password cannot meet
     "^" + re.escape(apply_run.SSO_REASON) + " ",
     "^" + re.escape(apply_run.PASSWORD_RULE_REASON) + " on ",
-    # SP8a: a queue entry the run cannot work (RES-09), which the user fixes
+    # a queue entry the run cannot work, which the user fixes
     "^" + re.escape(apply_run.MALFORMED_REASON) + ": ",
-    # SP8a: a judge that stays down after the submit click or the code step
-    # (RES-02): the job is never re-queued once something may have been
+    # a judge that stays down after the submit click or the code step: the
+    # job is never re-queued once something may have been
     # sent, and the run cannot read on, a dead end the user checks. The
     # window or the tab the user closed there, and the link and the
-    # final-worded steps, end the same way (`_stopped_after_send`, final
-    # review A R2-M4); a pause's wait that failed with the page still open
-    # ends as a close too (`_pause_closed`, final fix review round 2)
+    # final-worded steps, end the same way (`_stopped_after_send`); a pause's
+    # wait that failed with the page still open ends as a close too
+    # (`_pause_closed`)
     "^" + re.escape(apply_run.CHECK_SENT_REASON) + r": the run stopped after the "
     r"(?:submit click|code step|link step|final-worded step|pause) \((?:"
     + re.escape(apply_run.JUDGE_DOWN_REASON) + ": |" + re.escape(apply_run.CLOSED_REASON)
     + r"\)|" + re.escape(apply_run.TAB_CLOSED_REASON) + r"\)|"
     + re.escape(apply_run.PAUSE_UNANSWERED_REASON) + r"\))",
-    # SP7 review I1: the page moved on while the run waited for the person,
+    # the page moved on while the run waited for the person,
     # who may have sent it in the browser; the user checks it
     "^" + re.escape(apply_run.CHECK_SENT_REASON) + r": the page moved on during the pause \(",
-    # SP8a review M1: the judge down under the same job a second time, a
+    # the judge down under the same job a second time, a
     # failure the job's own request may cause: parked so the queue moves on.
-    # Only after the judge answered in the drain (R2-I1): a park while it
+    # Only after the judge answered in the drain: a park while it
     # answered nothing (an outage for every job) is outside the policy. Only
-    # for an error a request can cause (R3-M1): a 5xx other than 503 and
+    # for an error a request can cause: a 5xx other than 503 and
     # 529, a 408, or an error with no status (a timeout), never a dropped
-    # connection, most often the network's (R4-M2)
+    # connection, most often the network's
     "^" + re.escape(apply_run.JUDGE_DOWN_REASON) + r": (?!Connection|BrokenPipe)\S+"
     r"(?: (?:408|5(?!03|29)\d\d))? (?:at .+ )?after [1-9]\d* answers? in this drain; "
     + re.escape(apply_run.OUTAGES_PARKED) + "$"))
@@ -2411,7 +2401,7 @@ def judges(seeds: Iterable[int] = SUITE_SEEDS, *, fake: bool = True,
     return out
 
 
-# --- the real judge's column (SP8b) -----------------------------------------------------------
+# --- the real judge's column -----------------------------------------------------------
 #
 # One run per flow under the live model through its own replay cache
 # (`REAL_CACHE`, committed: the flows are synthetic pages). `record` asks the
@@ -2540,7 +2530,7 @@ def offline_contexts():
 
 # The flows' inbox has a host of its own (the application's is the fixture
 # server's): the master password is never typed on the inbox's site, and a
-# link in a message is the application's only by its host (SP7)
+# link in a message is the application's only by its host
 INBOX_HOST = "mail.fixtures.test"
 
 
@@ -2598,8 +2588,8 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
              workdir: Path, fast: bool = True, pause: PauseSpec | None = None) -> RunResult:
     """`f` once under `judge`: a fresh context, queue, ledger and job folder;
     the drain of that one job; the invariants. `pause`: how the person
-    answers a flow with no `Flow.pause` of its own (SP7 review M8: pauses on
-    and parked at once, every other flow must end as it did)."""
+    answers a flow with no `Flow.pause` of its own (pauses on and parked at
+    once, every other flow must end as it did)."""
     import apply_queue
 
     rundir = Path(tempfile.mkdtemp(prefix=f"{f.name}-{judge_name}-", dir=str(workdir)))
@@ -2643,7 +2633,7 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
         context.route(f"http://{INBOX_HOST}/**", _inbox_server(server.base))
         for glob, body in f.routes(server.base).items():
             # a page's HTML, or a route handler of its own (a load the
-            # network drops once, SP8a)
+            # network drops once)
             context.route(glob, body if callable(body) else _fulfiller(body))
         sends.install(context, f, server)
         stack.enter_context(recorder.recording())
@@ -2660,7 +2650,7 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
             sleep=lambda s: None, drain_report=False)
         outcomes = runner.drain(cap=1)
     # the record, the trace, the queue and the ledger: none may hold the
-    # master password, and the ledger no password-shaped key (SP7)
+    # master password, and the ledger no password-shaped key
     recorder.ledger = rundir / "accounts.json"
     recorder.files = [folder, queue, recorder.ledger]
     seconds = round(time.monotonic() - start, 2)

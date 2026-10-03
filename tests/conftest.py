@@ -71,7 +71,7 @@ os.environ["LOCALAPPDATA"] = _scratch_dir("inployed-test-appdata-")
 # the file-loading branch can still export its own value.
 os.environ.setdefault("INPLOYED_NO_DOTENV", "1")
 
-# SP7 (park and resume): a run that meets a question it can ask pauses for up
+# Park and resume: a run that meets a question it can ask pauses for up
 # to `auto_apply_pause_minutes` (10 by default). No test waits on that: the
 # switch below keeps every run in the suite from pausing (`apply_pause.NEVER_WAIT`
 # reads it at import). The pause tests and the harness's pause flows turn
@@ -129,7 +129,7 @@ for _leaked in (
     "SCORE_STAGE2_THRESHOLD", "SCORE_MAX_PER_RUN", "SCORE_RESCORE_CAP",
     "SCORE_MIN_FILTER_YEARS", "SCORE_DROP_EASY_APPLY", "SCORE_HTTP_TIMEOUT_S",
     "SCORE_JEV_WRITER", "SCORE_REPOST_REUSE_DAYS",
-    # cycle 21: the candidate's school status and clearance. Read by
+    # The candidate's school status and clearance. Read by
     # score_jobs.candidate_profile() through module constants frozen at import.
     "SCORE_EDUCATION_STATUS", "SCORE_GRADUATION_MONTH",
     "SCORE_CLEARANCE_LEVEL", "SCORE_CLEARANCE_SPONSORSHIP",
@@ -146,7 +146,7 @@ for _leaked in (
     # see run.
     "RESUME_TAILOR_REGROUND", "RESUME_TAILOR_AIWRITING_SWEEP",
     "RESUME_TAILOR_SWEEP_P2",
-    # cycle 19: the tailor's three Jev options, read the same way, and the
+    # The tailor's three Jev options, read the same way, and the
     # auto-apply judge mode, which `jev.get()` falls back to when it is handed
     # no mode: a shell export of `fake` would hand a fake judge to every test
     # that builds one that way and expects the keyless typesafe refusal.
@@ -371,7 +371,7 @@ def _restore_environ():
 
 @pytest.fixture(autouse=True)
 def _hermetic_apply_queue(tmp_path):
-    """SP3: MainWindow now mounts an ApplyQueuePanel that reads (and watches)
+    """MainWindow mounts an ApplyQueuePanel that reads (and watches)
     the apply-queue file and probes the master-password state on construction.
     Point every test at a scratch queue and stub the panel's password seam so
     no test ever touches the real %LOCALAPPDATA% queue or the Windows
@@ -429,7 +429,7 @@ def _hermetic_claude_cli(request):
 
     claude_cli also remembers, per process, each model the installed CLI
     refused and the fallback it swapped to, and run.py remembers which swaps it
-    has announced (VL-5). Both are cleared on each side of every test, so a swap
+    has announced. Both are cleared on each side of every test, so a swap
     one test learns never decides the model the next test's fake CLI is asked
     for or whether its warning shows. Same private-MonkeyPatch pattern as
     _hermetic_apply_queue."""

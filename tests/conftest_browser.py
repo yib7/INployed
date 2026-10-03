@@ -49,7 +49,7 @@ class _QuietHandler(http.server.SimpleHTTPRequestHandler):
 
 @pytest.fixture(scope="session")
 def fixtures_server():
-    import apply_harness                # its backlog outlasts a burst of connects (SP8a)
+    import apply_harness                # its backlog outlasts a burst of connects
     handler = functools.partial(_QuietHandler, directory=str(FIXTURES_DIR))
     server = apply_harness.FixtureHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, name="fixtures-http", daemon=True)
@@ -95,8 +95,7 @@ def _installed_browsers_path() -> str | None:
 
 
 # Set by CI's browser step, where Chromium was just installed: a browser that
-# cannot load or launch fails the tests there, never a green step of skips
-# (final review C N3)
+# cannot load or launch fails the tests there, never a green step of skips.
 BROWSER_REQUIRED_ENV = "APPLY_BROWSER_REQUIRED"
 
 

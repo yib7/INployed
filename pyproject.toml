@@ -29,9 +29,9 @@ timeout_method = "thread"
 filterwarnings = [
     "ignore::DeprecationWarning:google.genai.types",
 ]
-# A runner test whose replay recording a later phase makes (tests/jev_harness.py,
+# A runner test whose replay recording does not exist yet (tests/jev_harness.py,
 # UNRECORDED_MARK); conftest_jev registers it too, for a run that loads it alone.
 markers = [
-    "jev_unrecorded: no replay recording yet; SP8 records it (a replay miss skips)",
+    "jev_unrecorded: no replay recording yet; scripts/jev_record.ps1 records it (a replay miss skips)",
     "real_find_claude: keep the real claude_cli.find_claude (conftest hides the CLI otherwise)",
 ]

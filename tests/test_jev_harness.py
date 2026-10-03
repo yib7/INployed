@@ -740,7 +740,7 @@ def test_a_marked_tests_replay_miss_skips_until_sp8_records_it(pytester, monkeyp
                                           "-W", "error::pytest.PytestUnknownMarkWarning")
     result.assert_outcomes(skipped=1, failed=1)
     assert jev_harness.UNRECORDED_REASON in result.stdout.str()
-    assert jev_harness.UNRECORDED_REASON == "no replay recording yet; SP8 records it"
+    assert jev_harness.UNRECORDED_REASON == "no replay recording yet; scripts/jev_record.ps1 records it"
 
 
 def test_a_marked_test_runs_in_fake_mode(pytester, monkeypatch, tmp_path):

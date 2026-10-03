@@ -37,7 +37,7 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen   # Qt UI tests run headless (no display on CI)
         # The per-test timeout lives in pyproject.toml (timeout = 120), so a hung test
-        # fails fast with a thread dump everywhere, not just on CI. -n auto (SP3.5):
+        # fails fast with a thread dump everywhere, not just on CI. -n auto:
         # the whole suite passed twice under xdist with the same 4,604-test count as
         # serial on a 12-core dev machine before this landed; runners here have 2-4
         # cores, which pytest-xdist's "auto" reads from os.cpu_count() same as anywhere.

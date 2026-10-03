@@ -246,12 +246,3 @@ def test_import_resume_paths_keep_existing(tmp_path):
     assert cur.resume_paths() == {"1": "C:/cur/1", "2": "C:/bak/2"}
     cur.close()
 
-
-if __name__ == "__main__":
-    import tempfile
-
-    for fn in (test_marked_seen_survives_fresh_master,
-               test_empty_registry_never_unsees, test_reconcile_only_promotes,
-               test_unmark_reverses_mark):
-        fn(Path(tempfile.mkdtemp()))
-    print("SEEN RECONCILE TESTS OK")

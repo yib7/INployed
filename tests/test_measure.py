@@ -10,7 +10,6 @@ Both were re-verified against a compile of the current template (the 2026-09-22 
 pass narrowed the bullet column by 0.1in).
 """
 import importlib
-import os
 import re
 import sys
 from math import ceil
@@ -446,16 +445,17 @@ _SKILL_CAPACITY_DEFAULT = 53650
 def reload_measure():
     """Re-import measure under a chosen environment so its import-time constants are
     re-read. importlib.reload mutates the module object in place, so compose/run keep
-    seeing the same object; the teardown restores the documented defaults."""
-    def _load(**env):
-        for name in _FILL_ENV:
-            os.environ.pop(name, None)
-        os.environ.update(env)
-        return importlib.reload(measure)
+    seeing the same object. The env goes through a private MonkeyPatch undone before
+    the closing reload, which restores the documented defaults."""
+    with pytest.MonkeyPatch.context() as mp:
+        def _load(**env):
+            for name in _FILL_ENV:
+                mp.delenv(name, raising=False)
+            for name, value in env.items():
+                mp.setenv(name, value)
+            return importlib.reload(measure)
 
-    yield _load
-    for name in _FILL_ENV:
-        os.environ.pop(name, None)
+        yield _load
     importlib.reload(measure)
 
 

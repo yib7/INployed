@@ -46,8 +46,8 @@ class FakeSession:
         return FakeResp(self._payloads.pop(0))
 
 
-def test_download_waits_out_building_race():
-    scraper.POLL_INTERVAL = 0  # don't actually sleep between polls
+def test_download_waits_out_building_race(monkeypatch):
+    monkeypatch.setattr(scraper, "POLL_INTERVAL", 0)  # don't actually sleep between polls
     building = {"status": "building", "message": "Dataset is not ready yet, try again in 30s"}
     rows = [{"job_posting_id": "1"}, {"job_posting_id": "2"}]
     session = FakeSession([building, building, rows])
@@ -58,8 +58,8 @@ def test_download_waits_out_building_race():
     assert session.calls == 3, f"expected 3 polls (2 building + 1 ready), got {session.calls}"
 
 
-def test_download_returns_immediately_when_ready():
-    scraper.POLL_INTERVAL = 0
+def test_download_returns_immediately_when_ready(monkeypatch):
+    monkeypatch.setattr(scraper, "POLL_INTERVAL", 0)
     rows = [{"job_posting_id": "1"}]
     session = FakeSession([rows])
 
@@ -67,12 +67,6 @@ def test_download_returns_immediately_when_ready():
 
     assert result == rows
     assert session.calls == 1
-
-
-if __name__ == "__main__":
-    test_download_waits_out_building_race()
-    test_download_returns_immediately_when_ready()
-    print("DOWNLOAD RACE TESTS OK")
 
 
 # -- exception chaining on the bounded-retry raises (audit P2 #4) --------------

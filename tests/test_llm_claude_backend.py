@@ -82,7 +82,7 @@ _CLAUDE_MODEL_ENV = (
 
 
 @pytest.fixture
-def config_without_model_env(monkeypatch):
+def config_without_model_env(monkeypatch, tmp_path):
     """Re-import config with the tier overrides unset.
 
     The CLAUDE_MODEL_* constants are resolved at import time, so deleting the
@@ -99,7 +99,11 @@ def config_without_model_env(monkeypatch):
         mp.setattr(dotenv, "load_dotenv", lambda *a, **k: False)
         for name in _CLAUDE_MODEL_ENV:
             mp.delenv(name, raising=False)
-        yield importlib.reload(config)
+        mod = importlib.reload(config)
+        # the reload re-ran the module body, which points CONFIG_JSON back at the
+        # real local/config.json that conftest's _hermetic_repo_data had moved
+        mp.setattr(mod, "CONFIG_JSON", tmp_path / "config.json")
+        yield mod
     # The monkeypatch undo runs before this reload, so the module's constants go
     # back to whatever the (hermetic) session environment says for later tests.
     importlib.reload(config)

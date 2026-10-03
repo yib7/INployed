@@ -1119,25 +1119,26 @@ def reload_config(tmp_path):
     It also RE-RUNS the module body, which silently undoes conftest's
     _hermetic_repo_data patch of `config.CONFIG_JSON` -- so a reloaded config reads
     the author's real local/config.json again. Re-point it at an empty tmp file
-    after every reload, or these tests report on that machine's settings."""
+    after every reload, or these tests report on that machine's settings.
+
+    The env and the CONFIG_JSON patch go through a private MonkeyPatch that is
+    undone BEFORE the closing reload, so the module's constants come back from the
+    session's own environment."""
     import importlib
-    import os
 
     cfg_json = tmp_path / "config.json"
+    with pytest.MonkeyPatch.context() as mp:
+        def _load(**env):
+            for name in _PROJECT_ENV:
+                mp.delenv(name, raising=False)
+            for name, value in env.items():
+                mp.setenv(name, value)
+            mod = importlib.reload(config)
+            mp.setattr(mod, "CONFIG_JSON", cfg_json)    # reload restored the real path
+            return mod
 
-    def _load(**env):
-        for name in _PROJECT_ENV:
-            os.environ.pop(name, None)
-        os.environ.update(env)
-        mod = importlib.reload(config)
-        mod.CONFIG_JSON = cfg_json          # reload restored the real path
-        return mod
-
-    yield _load
-    for name in _PROJECT_ENV:
-        os.environ.pop(name, None)
+        yield _load
     importlib.reload(config)
-    config.CONFIG_JSON = cfg_json
 
 
 def _project_consts(mod):

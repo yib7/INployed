@@ -149,3 +149,41 @@ def test_seen_marks_refresh_the_backup(tmp_path):
             conn.close()
     finally:
         r.close()
+
+
+def test_import_lands_in_the_main_file_and_the_backup(tmp_path):
+    """Tracker > Import and the self-heal restore both go through import_from.
+    Its rows must reach the main db file (a killed dashboard leaves the -wal
+    behind, and a lost -wal used to take the merged rows with it) and the
+    auto-backup, like every other writer."""
+    src_db = tmp_path / "export_src.db"
+    src = SeenRegistry(src_db)
+    try:
+        src.mark(["J1", "J2"])
+        src.set_status("J3", "applied", company="Acme")
+        src.record_resume("J3", str(tmp_path / "out"))
+        export = src.export_to(tmp_path / "export.db")
+    finally:
+        src.close()
+
+    db = tmp_path / "seen.db"
+    r = SeenRegistry(db)          # never closed: the kill case
+    r.import_from(export)
+    assert _main_file_ids(db) == {"J1", "J2"}
+    import shutil
+    alone = tmp_path / "alone3.db"
+    shutil.copyfile(db, alone)
+    conn = sqlite3.connect(alone)
+    try:
+        assert conn.execute("SELECT count(*) FROM app_status").fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM resume_paths").fetchone()[0] == 1
+    finally:
+        conn.close()
+    bak = tmp_path / "seen.db.backup"
+    assert bak.exists()
+    conn = sqlite3.connect(bak)
+    try:
+        assert {row[0] for row in conn.execute("SELECT job_posting_id FROM seen")} == {"J1", "J2"}
+        assert conn.execute("SELECT count(*) FROM app_status").fetchone()[0] == 1
+    finally:
+        conn.close()

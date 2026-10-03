@@ -514,6 +514,10 @@ class SeenRegistry:
             raise
         finally:
             conn.execute("DETACH DATABASE bak")
+        # Same rule as every other writer: fold the merge into the main file and
+        # refresh the auto-backup, so an import survives a lost -wal.
+        self._checkpoint()
+        self._write_backup()
         return counts
 
     def close(self) -> None:

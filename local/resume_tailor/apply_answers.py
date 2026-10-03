@@ -1,6 +1,6 @@
 """The master answer store: the user's saved answers to screening questions.
 
-Version 2 (cycle 18) types every answer, so a form gets the answer you picked,
+Version 2 types every answer, so a form gets the answer you picked,
 or a blank. The file (repo-root `apply_answers.json`) is
 
     {"version": 2,
@@ -37,7 +37,7 @@ from .answer_tables import (
 )
 
 __all__ = [
-    "AnswerStoreError", "BOOL_IDS", "BUILTINS", "Builtin", "CUSTOM_TYPES", "KINDS",
+    "AnswerStoreError", "BOOL_IDS", "BUILTINS", "Builtin", "CUSTOM_TYPES",
     "NOTE_MAX", "NUMBER_MAX", "STATE_TEXT_MAX", "STATUSES", "STORE_PATH", "TEXT_MAX",
     "TYPES", "US_STATES", "VERSION", "YES_NO", "fact_value",
     "find_collision", "load", "load_store", "load_with_defaults", "match_option",
@@ -51,13 +51,11 @@ STORE_PATH = REPO_ROOT / "apply_answers.json"
 
 VERSION = 2
 
-# The legacy v1 `kind` field: kept on load, ignored. The Apply Answers tab still
-# shows it until SP4 rebuilds the tab.
-KINDS = ("fixed", "open-ended")
+# A v1 entry's `kind` field is kept on load and ignored.
 # Every saved entry is active; a v1 "needs-review" row migrates to active, unconfirmed.
 STATUSES = ("active",)
 
-TYPES = ("yes_no", "number", "choice", "text")
+TYPES = ("yes_no", "number", "choice", "text")  # every type the store holds
 CUSTOM_TYPES = ("text", "yes_no", "number")      # what "Add answer" offers
 YES_NO = ("Yes", "No")
 TEXT_MAX = 1000
@@ -361,7 +359,7 @@ def _clean_read(eid: str, etype: str, raw: str, answer: str, note: str) -> bool:
     is the value (case, spacing and end punctuation aside for a choice), or a
     spelling alias (a state code, "USA", a decline form). A worded yes/no, a
     number with words after it and any other alias are readings the user
-    confirms (final review C1)."""
+    confirms."""
     if not answer or note:
         return False
     if _reads_same(raw, answer, etype):
@@ -520,7 +518,7 @@ def validate(answers: List[Dict[str, Any]]) -> List[str]:
             errors.append("%s: id is required" % label)
         if not question:
             errors.append("answer '%s': question is required" % label)
-        if e.get("status") != "active":
+        if e.get("status") not in STATUSES:
             errors.append("answer '%s': status must be active" % label)
         if not isinstance(e.get("confirmed"), bool):
             errors.append("answer '%s': confirmed must be true or false" % label)

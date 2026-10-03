@@ -868,3 +868,9 @@ def test_find_collision_between_custom_questions_uses_normalised_text():
 def test_find_collision_names_the_authorization_statement_by_its_own_text():
     question = aa.BUILTINS["authorization_statement"].question
     assert aa.find_collision(question, aa.seed_defaults()) == question
+
+
+def test_every_built_in_and_custom_type_is_a_store_type():
+    assert {b.type for b in aa.BUILTINS.values()} <= set(aa.TYPES)
+    assert set(aa.CUSTOM_TYPES) <= set(aa.TYPES)
+    assert aa.STATUSES == ("active",)

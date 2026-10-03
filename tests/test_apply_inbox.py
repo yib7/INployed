@@ -374,7 +374,15 @@ def test_a_code_older_than_the_job_is_never_used(browser_page, fixtures_server):
     from datetime import datetime, timedelta
     inbox = _inbox()
     url = fixtures_server + "/inbox/stale_list.html"
-    since = datetime.now() - timedelta(minutes=1)
+    # The fresh row shows the browser's own clock, so the start is read from
+    # that clock too: Python's local zone can differ from Chromium's (TZ=LIN-14
+    # moves Python's clock and leaves Chromium's on Windows), and a start
+    # taken from datetime.now() then lands hours after the fresh row.
+    browser_page.goto(url)
+    y, mo, d, h, mi = browser_page.evaluate(
+        "() => { const n = new Date(); return [n.getFullYear(), n.getMonth() + 1,"
+        " n.getDate(), n.getHours(), n.getMinutes()]; }")
+    since = datetime(y, mo, d, h, mi) - timedelta(minutes=1)
     assert inbox.fetch_code(browser_page, "127.0.0.1", url, jev=jev.FakeJev(), polls=1,
                             ats="greenhouse", since=since) == "MKPZ3QRA"
     # with no start time nothing is ruled stale, and the top row's code wins

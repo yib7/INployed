@@ -21,6 +21,7 @@ import pandas as pd
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
+import jobsdata  # noqa: E402
 from qt import main_window as mw  # noqa: E402
 from qt.main_window import MainWindow  # noqa: E402
 from seen_db import SeenRegistry  # noqa: E402
@@ -114,10 +115,21 @@ def test_reload_data_async_reports_errors_without_crashing(qtbot, tmp_path, monk
 
 # --- SP5: repost window wiring through a real refresh ----------------------------
 
+# The repost window counts days on the UTC clock (jobsdata._utc_today), so these
+# tests pin that clock and date their rows and marks from it. A local
+# date.today() runs a day ahead of UTC east of Greenwich in the evening: under
+# TZ=LIN-14 the "31 days ago" mark read as 30 and the repost stayed hidden.
+TODAY = date(2026, 9, 15)
+
+
+def _pin_today(monkeypatch):
+    monkeypatch.setattr(jobsdata, "_utc_today", lambda: TODAY)
+
+
 def _repost_master(tmp_path):
     """Three postings sharing one repost key: one already marked seen, two not."""
     p = tmp_path / "linkedin_jobs_master.csv.gz"
-    today = date.today()
+    today = TODAY
     df = pd.DataFrame([
         {"job_posting_id": "A", "job_title": "Data Engineer", "company_name": "Acme",
          "job_location": "Seattle, WA", "score": "5",
@@ -140,10 +152,11 @@ def _mark(reg, jid, marked_at):
     reg._conn.commit()
 
 
-def test_refresh_hides_reposts_marked_inside_the_window(qtbot, tmp_path):
+def test_refresh_hides_reposts_marked_inside_the_window(qtbot, tmp_path, monkeypatch):
+    _pin_today(monkeypatch)
     reg = SeenRegistry(tmp_path / "seen.db")
     try:
-        mark_at = date.today() - timedelta(days=10)
+        mark_at = TODAY - timedelta(days=10)
         _mark(reg, "A", f"{mark_at}T00:00:00+00:00")   # 10 days before today
         p = _repost_master(tmp_path)
         w = MainWindow(csv_paths=[p], registry=reg)
@@ -159,10 +172,12 @@ def test_refresh_hides_reposts_marked_inside_the_window(qtbot, tmp_path):
         reg.close()
 
 
-def test_refresh_keeps_the_newest_repost_once_the_mark_ages_out(qtbot, tmp_path):
+def test_refresh_keeps_the_newest_repost_once_the_mark_ages_out(qtbot, tmp_path,
+                                                                 monkeypatch):
+    _pin_today(monkeypatch)
     reg = SeenRegistry(tmp_path / "seen.db")
     try:
-        mark_at = date.today() - timedelta(days=31)
+        mark_at = TODAY - timedelta(days=31)
         _mark(reg, "A", f"{mark_at}T00:00:00+00:00")   # 31 days before today
         p = _repost_master(tmp_path)
         w = MainWindow(csv_paths=[p], registry=reg)

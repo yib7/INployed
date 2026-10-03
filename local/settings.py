@@ -201,13 +201,13 @@ GEMINI_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-f
 # there is no newer haiku to move to, so the id stays and this comment is the
 # reminder to re-check it.
 #
-# claude-opus-5-5 joined in cycle 19 (2026-09-27) as the deep tier's default
+# claude-opus-5-5 is the deep tier's default
 # (RESUME_TAILOR_CLAUDE_MODEL_PRO here and resume_tailor/config.py's tier map).
 # claude-opus-5 stays in the tuple, so a stored config naming it keeps resolving
 # and it stays one pick away in all six Claude dropdowns.
 #
-# claude-sonnet-5-5 joined in cycle 21 (2026-09-29) as an option in all six Claude
-# dropdowns; no default changed.
+# claude-sonnet-5-5 is an option in all six Claude dropdowns and no tier's
+# default.
 #
 # Re-checked 2026-10-03 against the same table: all five ids are Active, none
 # deprecated. claude-haiku-4-5-20251001 still reads "Not sooner than October 15,
@@ -331,7 +331,7 @@ def graduation_month_passed(status: Any, month: Any, today: date | None = None) 
 
 
 SETTINGS_SCHEMA: list[Field] = [
-    # --- Jev (cycle 19): one switch for every Jev use, read by local/jev_switch.py
+    # --- Jev: one switch for every Jev use, read by local/jev_switch.py
     # at call time from config.json, so a flip needs no restart. The master
     # switch stays in plain sight; the three area switches fold under advanced
     # and gate on it, so the chain hides them (and the Resume section's three
@@ -407,7 +407,7 @@ SETTINGS_SCHEMA: list[Field] = [
                "as showing the apply sheet. Off keeps you in the dashboard; the posting URL "
                "is still on the apply sheet and the Open-folder button still works."),
 
-    # --- About you (cycle 21): the candidate's school status and clearance, written
+    # --- About you: the candidate's school status and clearance, written
     # to root-level scoring_config.json. score_jobs.candidate_profile() resolves
     # these four keys into the profile the scorer's prompts and filters read. The
     # two dropdown lists and every default mirror score_jobs (EDUCATION_STATUSES,
@@ -492,7 +492,7 @@ SETTINGS_SCHEMA: list[Field] = [
                "to the VM after changing this, and re-upload score_jobs.py once."),
 
     # --- Scoring: written to root-level scoring_config.json (read by score_jobs.py) ---
-    # `provider` leads the section (cycle 19's ST-2) and gates the two model PAIRS
+    # `provider` leads the section and gates the two model PAIRS
     # after it: only the pair the chosen provider uses is on screen, and the other
     # pair keeps its stored value.
     Field("provider", "Scoring provider", "choice", "gemini", "Scoring", "scoring",
@@ -619,7 +619,7 @@ SETTINGS_SCHEMA: list[Field] = [
                "list, every bullet the same length, a three-part series in each line. "
                "COSTS ONE MODEL CALL PER RÉSUMÉ ENTRY ON EVERY TAILOR RUN. Turn it off "
                "to save that; the always-on per-bullet style gate is unaffected."),
-    # The tailor's three Jev options (cycle 19, TL-7 to TL-9), each off by default
+    # The tailor's three Jev options, each off by default
     # and on screen only while Jev runs for the tailor: they gate on jev_tailor,
     # which gates on jev_enabled. Read through resume_tailor/config.py's
     # best_of_n(), cover_letter_jev_check() and ats_meaning().
@@ -648,7 +648,7 @@ SETTINGS_SCHEMA: list[Field] = [
                "auto-apply' action, and the most one drain works through. ~10 keeps a "
                "batch reviewable in one sitting: the run submits when 'Submit when "
                "verified' passes and parks the rest at their review page for you."),
-    # The parallel difficulty check (cycle 22, local/assess_pool.py): on screen
+    # The parallel difficulty check (local/assess_pool.py): on screen
     # only while the check itself is, the same gate that hides its button.
     # apply_run.DEFAULT_SETTINGS carries the same default, and apply_assess.py's
     # --parallel overrides it for one run.
@@ -683,9 +683,9 @@ SETTINGS_SCHEMA: list[Field] = [
                "https://outlook.office.com/mail/' for Microsoft 365. Your signup "
                "email's domain (basics.email) is looked up here; a domain not listed "
                "falls back to Gmail. That inbox must already be signed in in Chrome."),
-    # The Jev-judged run (cycle 16, local/jev.py + local/apply_run.py). Its key row
-    # moved to the Jev section in cycle 19, since every Jev use spends it. The
-    # judge mode stays in this section under advanced (ST-5): its one other
+    # The Jev-judged run (local/jev.py + local/apply_run.py). Its key row sits in
+    # the Jev section, since every Jev use spends it. The judge mode stays in
+    # this section under advanced: its one other
     # choice is the test judge the drain refuses.
     Field("auto_apply_jev_mode", "Auto-apply judge", "choice", "typesafe",
           "Auto-apply", "config", choices=("typesafe", "fake"), advanced=True,
@@ -698,8 +698,8 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Submit an application when every required field is filled from your "
                "answers, verified, and no CAPTCHA, payment, or blocked question appeared. "
                "Off: park at the review page for you."),
-    # The pause (cycle 19, PR): how long a run waits for the user's answer before it
-    # parks the job. 0 is the behaviour every run had before the pause existed.
+    # The pause: how long a run waits for the user's answer before it parks the
+    # job. 0 parks at once.
     # apply_run.DEFAULT_SETTINGS carries the same default for a run with no config.
     Field("auto_apply_pause_minutes", "Wait for your answer (minutes)", "int", 10,
           "Auto-apply", "config", min=0, max=60,
@@ -808,8 +808,8 @@ SETTINGS_SCHEMA: list[Field] = [
                "Blank = your default browser."),
 
     # --- Engine (shown as "Résumé tailor"): which AI service tailors résumés
-    # (gemini/claude provider switch, local/config.json, leading the section since
-    # cycle 19's ST-3), which Google billing method the Gemini side uses, and the
+    # (gemini/claude provider switch, local/config.json, leading the section),
+    # which Google billing method the Gemini side uses, and the
     # per-stage Gemini + Claude model pickers (.env). -------------------------
     Field("tailor_provider", "Resume tailor provider", "choice", "gemini",
           "Engine", "config",
@@ -1257,9 +1257,9 @@ def secret_status(targets: dict[str, Path] | None = None) -> dict[str, bool]:
     return out
 
 
-# The four default-on Jev switches (cycle 19) and the one rule both of their
+# The four default-on Jev switches and the one rule both of their
 # readers use: the Settings checkbox (`settings_tab`) and `jev_switch`, which
-# decides whether a run spends TypeSafe credits (SP1 follow-up 3). A missing
+# decides whether a run spends TypeSafe credits. A missing
 # key is the Field's default (on) and a real bool is itself. Any other value
 # is on only as one of SWITCH_ON_WORDS, any case, spaces stripped, the words
 # `score_jobs._as_bool` reads for the scoring config's bools. A hand-edited

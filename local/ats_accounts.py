@@ -124,7 +124,7 @@ def record(domain_or_url: str, email: str, method: str = "master_password",
     return dict(rec)
 
 
-# Multi-tenant ATS hosts (ACC-13): the tenant a host names, with its site. A
+# Multi-tenant ATS hosts: the tenant a host names, with its site. A
 # tenant's sign-in can sit on another host of the same site than its careers
 # pages (iCIMS: careers-<tenant>.icims.com, <tenant>.icims.com), and one site
 # holds every company's tenant, so the site alone never finds an account.
@@ -153,7 +153,7 @@ def tenant_key(domain_or_url: str) -> str:
 
 
 def _find(ledger: Dict[str, Dict[str, Any]], host: str) -> Optional[Dict[str, Any]]:
-    """The entry for `host`: by its netloc, else by its tenant (ACC-13)."""
+    """The entry for `host`: by its netloc, else by its tenant."""
     rec = ledger.get(_netloc(host))
     if rec:
         return rec
@@ -172,7 +172,7 @@ def lookup(domain_or_url: str, path: Optional[Path] = None, *,
     (`tenant_key`). `related`: the job's own hosts on the same site (its
     careers host beside a shared sign-in host, `login.icims.com`), looked up
     the same way when the host itself finds nothing; one that names another
-    tenant than the host never lends its account (ACC-13)."""
+    tenant than the host never lends its account."""
     ledger = _load_ledger(path)
     rec = _find(ledger, domain_or_url)
     if rec is None:
@@ -272,7 +272,7 @@ def _count(value: Any) -> int:
 
 
 def unmet_rules(rules: Dict[str, Any]) -> Optional[List[str]]:
-    """The password rules a site states (ACC-04: `min_length`, `max_length`,
+    """The password rules a site states (`min_length`, `max_length`,
     `upper`, `lower`, `digit`, `special`, `classes_needed` of those when the
     site asks for a count of them, `forbidden` characters) that the
     stored master password does not meet, each in words ("at least 12

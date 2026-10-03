@@ -291,7 +291,8 @@ def test_wait_for_change_sees_a_late_dom_change_and_a_quiet_page(browser_page, f
     browser_page.goto(fixture_url("slow_submit.html"))
     t0 = time.monotonic()
     assert apply_fill.wait_for_change(browser_page, timeout_s=1.0) is False
-    assert time.monotonic() - t0 < 3
+    # the 1 s timeout, never the 20 s default; the slack is for a loaded -n auto run
+    assert time.monotonic() - t0 < 10
     browser_page.click("#btn-submit")                      # the change lands 3 s later
     assert apply_fill.wait_for_change(browser_page, timeout_s=10.0) is True
     assert browser_page.locator("#thanks").is_visible()

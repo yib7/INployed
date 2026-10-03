@@ -362,21 +362,24 @@ def test_a_script_get_send_from_the_page_a_post_led_to_is_never_loaded_again(
     assert r.sends == 1 and r.breaks == []
 
 
-def _closed_port() -> int:
-    """A local port nothing listens on: a load of it is refused at once."""
+@pytest.fixture
+def closed_port():
+    """A local port nothing listens on: a load of it is refused at once. The
+    socket stays bound (never listening) for the whole test, so no other xdist
+    worker's server can take the port between the lookup and the load."""
     import socket
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+        yield s.getsockname()[1]
 
 
 def test_after_a_post_send_the_page_its_http_redirect_led_to_is_loaded_again(
-        _browser, flow_server, tmp_path):
+        _browser, flow_server, tmp_path, closed_port):
     # SP8a review R4-M1: the POST's answer is a 303 to a thank-you address
     # with a query. The routes never see a redirect their own answer made, so
     # the redirected load goes to a closed local port and fails; the retry
     # is a new load, which the routes answer
-    site = f"http://127.0.0.1:{_closed_port()}"
+    site = f"http://127.0.0.1:{closed_port}"
     posts: list[str] = []
     thanks: list[str] = []
 

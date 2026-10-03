@@ -330,6 +330,26 @@ def _unnumbered(lines):
     return sorted(re.sub(r"^\[\d+/(\d+)\] ", r"[k/\1] ", x) for x in lines)
 
 
+@pytest.fixture
+def printed(monkeypatch):
+    """`printed[jid]` is set once job `jid`'s line is out: a fake worker that
+    has to finish after another job waits on it, never on a sleep."""
+    events: dict[str, threading.Event] = {}
+    real = ap._Pool._line
+
+    def line(self, entry, *args, **kwargs):
+        try:
+            return real(self, entry, *args, **kwargs)
+        finally:
+            events.setdefault(str(entry.get("job_posting_id")), threading.Event()).set()
+    monkeypatch.setattr(ap._Pool, "_line", line)
+
+    class _Printed(dict):
+        def __missing__(self, jid):
+            return events.setdefault(jid, threading.Event())
+    return _Printed()
+
+
 def test_the_pool_never_runs_more_workers_than_its_slots(pool, capsys):
     spawner = FakeSpawner(hold_s=0.05)
     assert pool.run(spawner, parallel=3) == 0
@@ -365,11 +385,10 @@ def test_each_slot_is_a_copy_of_the_profile_without_caches_or_locks(pool, capsys
     assert seen["1"] == seen["2"] == ["Default/Network/Cookies", "Local State"]
 
 
-def test_the_lines_come_in_finish_order_with_summed_totals(pool, capsys):
-    delays = {"1": 0.3, "2": 0.0}
-
+def test_the_lines_come_in_finish_order_with_summed_totals(pool, capsys, printed):
     def behave(jid, proc):
-        time.sleep(delays[jid])
+        if jid == "1":
+            assert printed["2"].wait(5)     # job 2 finishes first
         return _result(jid, score=5 if jid == "1" else 2,
                        band="May need an answer or two" if jid == "1" else "Queue it",
                        requests=3, usd=0.0125), ""
@@ -408,7 +427,7 @@ def test_a_job_that_left_the_queue_reads_as_today(pool, capsys):
     ]
 
 
-def test_jev_down_starts_no_new_job_and_lets_the_running_ones_finish(pool, capsys):
+def test_jev_down_starts_no_new_job_and_lets_the_running_ones_finish(pool, capsys, printed):
     running = threading.Event()
 
     def behave(jid, proc):
@@ -416,7 +435,7 @@ def test_jev_down_starts_no_new_job_and_lets_the_running_ones_finish(pool, capsy
             assert running.wait(5)
             return _result(jid, "outage", why="Jev is down (ConnectError)"), ""
         running.set()
-        time.sleep(0.3)                 # still running when Jev goes down
+        assert printed["1"].wait(5)     # still running when Jev goes down
         return _result(jid), ""
     spawner = FakeSpawner(behave)
     assert pool.run(spawner, parallel=2) == 1
@@ -427,7 +446,7 @@ def test_jev_down_starts_no_new_job_and_lets_the_running_ones_finish(pool, capsy
     ]
 
 
-def test_a_closed_window_stops_the_pool(pool, capsys):
+def test_a_closed_window_stops_the_pool(pool, capsys, printed):
     running = threading.Event()
 
     def behave(jid, proc):
@@ -435,7 +454,7 @@ def test_a_closed_window_stops_the_pool(pool, capsys):
             assert running.wait(5)
             return _result(jid, "closed", why="the browser window was closed"), ""
         running.set()
-        time.sleep(0.3)
+        assert printed["1"].wait(5)     # still running when the window closes
         return _result(jid), ""
     spawner = FakeSpawner(behave)
     assert pool.run(spawner, parallel=2) == 1
@@ -480,10 +499,10 @@ def test_a_job_gone_from_the_queue_is_no_refusal(pool, capsys, why):
                for x in _out(capsys))
 
 
-def test_a_worker_with_no_result_line_is_noted_as_stopped(pool, capsys):
+def test_a_worker_with_no_result_line_is_noted_as_stopped(pool, capsys, printed):
     def behave(jid, proc):
         if jid == "1":
-            time.sleep(0.2)
+            assert printed["2"].wait(5)
             return "[1/1] half a line\n", (
                 "2026-10-01 10:00:00,123 apply_assess INFO job 1: difficulty walk\n"
                 "Traceback (most recent call last):\n"
@@ -653,9 +672,11 @@ def test_a_missing_profile_is_made_as_today(pool, capsys):
 def test_ctrl_c_ends_the_workers_sweeps_and_exits_one(pool, capsys):
     import _thread
 
+    both_started = threading.Barrier(2, timeout=5)
+
     def behave(jid, proc):
+        both_started.wait()             # job 2 runs when the interrupt lands
         if jid == "1":
-            time.sleep(0.1)
             _thread.interrupt_main()
         proc.ended.wait(5)
         return "", "KeyboardInterrupt\n"

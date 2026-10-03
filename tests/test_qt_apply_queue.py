@@ -14,6 +14,7 @@ MagicMock, tailoring is a fake (never a real Gemini client), the password seam
 is monkeypatched (the real Credential Manager is never queried), and the
 clipboard is the offscreen QApplication's in-process one.
 """
+import datetime as _dt
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -1361,10 +1362,28 @@ def test_status_chips_keep_their_labels_on_a_narrow_window(qtbot, tmp_path):
 
 # --- SP6: the difficulty check (DF-4, DF-5, DF-6) -----------------------------------------
 
+_NOW = _dt.datetime(2026, 9, 25, 12, 0, 0)
+
+
+class _Clock(_dt.datetime):
+    """apply_assess's `datetime` with now pinned to `_NOW`."""
+    @classmethod
+    def now(cls, tz=None):
+        return cls.fromisoformat(_NOW.isoformat()) if tz is None else _NOW.astimezone(tz)
+
+
+@pytest.fixture(autouse=True)
+def _assess_clock(monkeypatch):
+    """The difficulty column's ages ("N days old", "failed today") read `_NOW`,
+    the same moment the tests stamp their results with, so no run that crosses
+    a day boundary between the stamp and the read moves a result's age."""
+    import apply_assess
+    monkeypatch.setattr(apply_assess, "datetime", _Clock)
+
+
 def _difficulty(score=7, *, days_old=0, questions=None, reasons=None):
-    import datetime as _dt
     from apply_assess import band_for
-    checked = (_dt.datetime.now() - _dt.timedelta(days=days_old)).isoformat(timespec="seconds")
+    checked = (_NOW - _dt.timedelta(days=days_old)).isoformat(timespec="seconds")
     return {"score": score, "band": band_for(score), "checked_at": checked, "system": "lever",
             "reasons": reasons or ["Application system: Lever (base 2)"],
             "questions": questions or [], "jev_usd": 0.0}
@@ -1664,10 +1683,9 @@ def test_a_required_upload_shows_in_the_tooltip(qtbot, tmp_path):
 
 
 def test_a_failed_check_shows_in_the_tooltip_over_the_earlier_result(qtbot, tmp_path):
-    import datetime as _dt
     qfile = _qfile(tmp_path)
     _checked(qfile, "1", difficulty=_difficulty(3))
-    now = _dt.datetime.now().isoformat(timespec="seconds")
+    now = _NOW.isoformat(timespec="seconds")
     apply_queue.note_difficulty_failure("1", "the posting did not load (TimeoutError)",
                                         at=now, path=qfile)
     _checked(qfile, "2", difficulty=None)

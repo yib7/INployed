@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from unittest.mock import MagicMock
 
 import pandas as pd
+import pytest
 from PySide6 import QtWidgets
 
 from qt import main_window as mw
@@ -106,9 +107,28 @@ def test_tracker_prep_runs_worker(qtbot, monkeypatch):
     assert "fn" in ran
 
 
-def test_due_only_filters_tracker(qtbot):
-    old = (date.today() - timedelta(days=99)).isoformat()
-    today = date.today().isoformat()
+_TODAY = date(2026, 9, 25)
+
+
+class _FrozenDate(date):
+    """main_window's `date` with today pinned to `_TODAY`."""
+    @classmethod
+    def today(cls):
+        return cls(_TODAY.year, _TODAY.month, _TODAY.day)
+
+
+@pytest.fixture
+def frozen_today(monkeypatch):
+    """The tracker's day counts read `_TODAY`: a run that crosses midnight
+    between a test's dates and the tracker's own `date.today()` never moves a
+    row across the follow-up line."""
+    monkeypatch.setattr(mw, "date", _FrozenDate)
+    return _TODAY
+
+
+def test_due_only_filters_tracker(qtbot, frozen_today):
+    old = (frozen_today - timedelta(days=99)).isoformat()
+    today = frozen_today.isoformat()
     rows = [
         {"job_posting_id": "1", "status": "applied", "applied_date": old},
         {"job_posting_id": "2", "status": "applied", "applied_date": today},
@@ -120,10 +140,10 @@ def test_due_only_filters_tracker(qtbot):
     assert w.tracker_tab.model.rowCount() == 1     # only the overdue one
 
 
-def test_tracker_chip_filters_by_status_and_counts(qtbot):
+def test_tracker_chip_filters_by_status_and_counts(qtbot, frozen_today):
     # Cycle 40 3d: the pipeline ChipBar filters the recs list (not the proxy)
     # and each chip shows its FULL bucket count regardless of the selection.
-    old = (date.today() - timedelta(days=99)).isoformat()
+    old = (frozen_today - timedelta(days=99)).isoformat()
     rows = [
         {"job_posting_id": "1", "status": "applied", "applied_date": old},
         {"job_posting_id": "2", "status": "interviewing", "applied_date": old},
@@ -144,11 +164,11 @@ def test_tracker_chip_filters_by_status_and_counts(qtbot):
     assert w.tracker_tab.model.rowCount() == 3
 
 
-def test_followup_due_chip_proxies_the_popup_checkbox(qtbot):
+def test_followup_due_chip_proxies_the_popup_checkbox(qtbot, frozen_today):
     # The "Follow-up due" chip PROXIES tracker_due_only — the checkbox stays in
     # the Filters popup (test-coupled) and remains the filter's source of truth.
-    old = (date.today() - timedelta(days=99)).isoformat()
-    today = date.today().isoformat()
+    old = (frozen_today - timedelta(days=99)).isoformat()
+    today = frozen_today.isoformat()
     rows = [
         {"job_posting_id": "1", "status": "applied", "applied_date": old},
         {"job_posting_id": "2", "status": "applied", "applied_date": today},

@@ -2284,3 +2284,29 @@ def test_a_check_of_every_queued_job_that_will_not_start_says_so(qtbot, tmp_path
     p.table.clearSelection()
     p.check_difficulty_btn.click()
     assert p.status_label.text().startswith("The difficulty check did not start (OSError).")
+
+
+# --- a console that will not start says so on the panel ----------------------------------
+
+def _no_console():
+    raise FileNotFoundError(2, "The system cannot find the file specified",
+                            r"C:\Users\someone\secret\powershell.exe")
+
+
+def test_sign_in_that_cannot_start_a_console_says_so(qtbot, tmp_path):
+    p = _panel(qtbot, _qfile(tmp_path), on_login=_no_console)
+    p.login_btn.click()
+    note = p.status_label.text()
+    assert note.startswith("The sign-in did not start:")
+    assert "someone" not in note
+
+
+def test_start_run_that_cannot_start_a_console_says_so(qtbot, tmp_path, monkeypatch):
+    qfile = _qfile(tmp_path)
+    apply_queue.enqueue(apply_queue.new_entry("1", company="Acme", title="A"), path=qfile)
+    p = _panel(qtbot, qfile, on_start_run=_no_console, password_exists=lambda: True)
+    monkeypatch.setattr(p, "_confirm_run", lambda n: True)
+    p.start_run_btn.click()
+    note = p.status_label.text()
+    assert note.startswith("The auto-apply run did not start:")
+    assert "someone" not in note

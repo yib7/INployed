@@ -1429,7 +1429,11 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self._set_note("Kickoff command copied to the clipboard.")
 
     def _sign_in(self) -> None:
-        self._on_login()
+        try:
+            self._on_login()
+        except OSError as e:     # no console could start (PowerShell missing, say)
+            self._set_note(f"The sign-in did not start: {errmsg.for_user(e)}")
+            return
         self._set_note("Sign in to LinkedIn and your inbox in the new browser window, "
                        "then close it.")
 
@@ -1460,5 +1464,9 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         n = self._batch_cap(queued)
         if not self._confirm_run(n):
             return
-        self._on_start_run()
+        try:
+            self._on_start_run()
+        except OSError as e:     # no console could start (PowerShell missing, say)
+            self._set_note(f"The auto-apply run did not start: {errmsg.for_user(e)}")
+            return
         self._set_note("Auto-apply run started in a new terminal window.")

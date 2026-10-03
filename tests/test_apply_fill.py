@@ -818,3 +818,19 @@ def test_a_combobox_list_whose_id_holds_a_quote_is_its_own_list(browser_page):
     frame = apply_form.frames(browser_page)[0]
     got = apply_fill._options_locator(frame, browser_page.locator("#c"))
     assert got.all_inner_texts() == ["Yes", "No"]
+
+
+def test_a_control_whose_identity_cannot_be_read_is_refused():
+    class _Loc:
+        @property
+        def first(self):
+            return self
+
+        def evaluate(self, *a, **k):
+            raise RuntimeError("Element is not attached to the DOM")
+
+    pf = PlannedField(n=1, locator=(0, "body > div:nth-of-type(2) > input"), label="Email",
+                      required=True, fact_key="email", value="jane@example.com", option=None,
+                      confidence=1.0, action="fill", ident="input|email||||email")
+    with pytest.raises(LookupError):
+        apply_fill._same_control(object(), pf, _Loc())

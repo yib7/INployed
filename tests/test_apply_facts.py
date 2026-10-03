@@ -768,3 +768,46 @@ def test_a_plain_join_misses_the_gate_the_saved_question_passes():
 ])
 def test_answer_type_follows_the_widget(field_type, options, want):
     assert apply_facts.answer_type(field_type, options) == want
+
+
+# --- ship audit S5: duplicate custom ids, the PDF names, quick_map's stop words ----------
+
+def test_build_a_duplicate_custom_id_the_first_entry_wins_whole(folder):
+    """Value and note come from one entry: the first."""
+    bank = _bank() + [custom("visa_note", "Which visa do you hold?", "None", note="first"),
+                      custom("visa_note", "Which visa do you hold?", "H-1B", note="second")]
+    cat = apply_facts.build(folder, answers=bank)
+    assert cat.value("answer_visa_note") == "None"
+    assert cat.note("answer_visa_note") == "first"
+
+
+def test_build_finds_the_resume_of_a_candidate_named_cover(tmp_path):
+    (tmp_path / "apply.md").write_text(
+        apply_data.build_markdown(_MASTER, _JOB, _bank()), encoding="utf-8")
+    (tmp_path / "Jo_Coverdale_Resume.pdf").write_bytes(b"%PDF-1.4 resume")
+    (tmp_path / "Jo_Coverdale_Cover_Letter.pdf").write_bytes(b"%PDF-1.4 cover")
+    cat = apply_facts.build(tmp_path, answers=_bank())
+    assert cat.value("resume_file") == str(tmp_path / "Jo_Coverdale_Resume.pdf")
+    assert cat.value("cover_letter_file") == str(tmp_path / "Jo_Coverdale_Cover_Letter.pdf")
+
+
+@pytest.mark.parametrize("label, type_, key", [
+    # a code, an extension or a place of birth is no phone number or address
+    ("Country code", "text", None),
+    ("City of birth", "text", None),
+    ("Phone extension", "text", None),
+    ("Phone ext.", "text", None),
+    ("Place of birth: city", "text", None),
+    ("Country of birth", "select", None),
+    ("Mobile phone country code", "text", None),
+    # the plain fields still map
+    ("Country of residence", "select", "address_country"),
+    ("Country", "select", "address_country"),
+    ("City", "text", "address_city"),
+    ("Zip code", "text", "address_zip"),
+    ("Postal code", "text", "address_zip"),
+    ("Phone", "tel", "phone"),
+    ("Mobile phone number", "text", "phone"),
+])
+def test_quick_map_leaves_codes_extensions_and_birthplaces_to_the_judge(label, type_, key):
+    assert apply_facts.quick_map(label, "", type_) == key

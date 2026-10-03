@@ -54,7 +54,7 @@ DESCRIPTIONS: dict[str, str] = {
     "linkedin_url": "The candidate's LinkedIn profile URL",
     # the sheet's "GitHub / Portfolio" row: a form's Portfolio URL takes it
     # (the live judge left "Portfolio URL" blank at 0.54 to 0.65 while this
-    # said "GitHub profile URL" only, 2026-09-25)
+    # said "GitHub profile URL" only)
     "github_url": "The candidate's GitHub or portfolio URL",
     "website_url": "The candidate's personal website or portfolio URL",
     "work_authorized": "Whether the candidate is legally authorized to work in the "
@@ -93,8 +93,8 @@ DESCRIPTIONS: dict[str, str] = {
 # lists equal). Their facts are `bool`.
 _BOOL_BANK_IDS = frozenset(("work_authorized", "requires_sponsorship", "willing_to_relocate",
                             "onsite_ok"))
-# Yes / no facts the run works out from the store's confirmed answers
-# (cycle 18, SP6c), for the questions whose polarity or scope the stored ones
+# Yes / no facts the run works out from the store's confirmed answers,
+# for the questions whose polarity or scope the stored ones
 # do not answer ("authorized to work without sponsorship", "remote only").
 # Never stored or edited; unset while an input is unset or unconfirmed.
 DERIVED_YES_NO: tuple[str, ...] = ("authorized_without_sponsorship", "remote_only")
@@ -188,7 +188,7 @@ class FactCatalog:
     def yes_no(self, key: str) -> bool:
         """Is `key` a yes / no fact: a named one (`YES_NO_KEYS`), a custom
         yes / no answer, or a custom answer of any type whose value is a yes
-        or a no (final review C1)?"""
+        or a no?"""
         return key in YES_NO_KEYS or self.custom_type(key) == "yes_no" or (
             self._custom(key) and yes_no_form(self.value(key)))
 
@@ -199,10 +199,9 @@ class FactCatalog:
     def _gated(self, key: str, value: str | None) -> bool:
         """Does custom answer `key` settle only its own saved question: a
         gated type (`GATED_CUSTOM_TYPES`), or a value code settles whatever
-        the type (`code_settled`: a yes / no or a plain number; final review
-        C1: a v1 answer migrates as Text, and Text is the Add dialog's
-        default), or a value that opens with a yes or a no ("No, I would need
-        a work permit"; final re-review N1)?"""
+        the type (`code_settled`: a yes / no or a plain number; a v1 answer
+        migrates as Text, and Text is the Add dialog's default), or a value
+        that opens with a yes or a no ("No, I would need a work permit")?"""
         if not self._custom(key):
             return False
         return self.custom_type(key) in GATED_CUSTOM_TYPES or any(
@@ -304,22 +303,21 @@ def build(folder: Path, *, answers: list[dict] | None = None,
 
     # The answers and the address: the store's, through `fact_value` ("" when
     # an answer is not set, not confirmed or does not fit its type). A sheet
-    # written before a change in the store never outranks it (cycle 18). A
-    # duplicate id takes its value from the FIRST entry that carries it (a
-    # well-formed store never has one; `validate` rejects it) and ignores any
-    # entry after it, confirmed or not.
+    # written before a change in the store never outranks it. A duplicate id,
+    # named or custom, takes its value from the FIRST entry that carries it
+    # (a well-formed store never has one; `validate` rejects it) and ignores
+    # any entry after it, confirmed or not, so its value and its note
+    # (`FactCatalog.note`) come from one entry.
     answer_facts: list[Fact] = []
-    seen_named: set[str] = set()
+    seen_ids: set[str] = set()
     for entry in bank:
         eid = str(entry.get("id", "")).strip()
-        if not eid:
+        if not eid or eid in seen_ids:
             continue
+        seen_ids.add(eid)
         question = str(entry.get("question", "") or "").strip()
         value = apply_answers.fact_value(entry)
         if eid in _NAMED_BANK_IDS:
-            if eid in seen_named:
-                continue
-            seen_named.add(eid)
             values[eid] = value
         else:
             answer_facts.append(Fact(key=f"answer_{eid}", value=value,
@@ -421,7 +419,7 @@ _UNDER_WAY_RE = re.compile(r"\b(present|current|now)\b[\s).]*$", re.I)
 
 
 def _grad_year(chunks: list[str]) -> str:
-    """An education line's graduation year (cycle 18, FM-8): the expected
+    """An education line's graduation year: the expected
     year when the line names one ("Expected May 2026"); none for a degree
     under way ("2022 - Present"); else the last year on the line."""
     text = " ".join(chunks)
@@ -448,16 +446,28 @@ def _current_job(section: str) -> dict[str, str]:
     return out
 
 
+# the stems the tailor writes (`resume_tailor.output.resume_filename` and
+# `cover_filename`: "<Name>_Resume.pdf", "<Name>_Cover_Letter.pdf")
+_RESUME_STEM = "_resume"
+_COVER_STEM = "_cover_letter"
+
+
 def _pdfs(folder: Path) -> tuple[str, str]:
-    """(resume, cover letter): the newest PDF whose stem contains `cover` is the
-    letter, the newest other PDF the resume; "" when absent."""
+    """(resume, cover letter): the newest PDF named as the tailor names
+    each (`_RESUME_STEM`, `_COVER_STEM`), so a candidate named Coverdale
+    keeps a resume. With no such name, the newest PDF whose stem holds
+    `cover` is the letter and the newest other PDF the resume; "" when
+    absent."""
     try:
         pdfs = sorted((p for p in folder.glob("*.pdf") if p.is_file()),
                       key=lambda p: p.stat().st_mtime, reverse=True)
     except OSError:
         return "", ""
-    cover = next((p for p in pdfs if "cover" in p.stem.lower()), None)
-    resume = next((p for p in pdfs if "cover" not in p.stem.lower()), None)
+    cover = next((p for p in pdfs if p.stem.lower().endswith(_COVER_STEM)), None) or next(
+        (p for p in pdfs if "cover" in p.stem.lower()
+         and not p.stem.lower().endswith(_RESUME_STEM)), None)
+    resume = next((p for p in pdfs if p.stem.lower().endswith(_RESUME_STEM)), None) or next(
+        (p for p in pdfs if p != cover and "cover" not in p.stem.lower()), None)
     return (str(resume) if resume else ""), (str(cover) if cover else "")
 
 
@@ -501,11 +511,17 @@ _ADDRESS_QUICK: tuple[tuple[tuple[str, ...], str, frozenset[str]], ...] = (
 _ADDRESS_MAX_TOKENS = 4
 _ADDRESS_STOP = frozenset((
     "salary", "authorization", "authorized", "work", "desired", "preferred", "citizenship",
-    "company", "employer", "user", "username"))
+    "company", "employer", "user", "username", "birth", "extension", "ext"))
+# a code is a zip or postal code, or another field ("Country code"): it stops
+# every address token but those two
+_CODE_STOP = frozenset(("code",))
+_ZIP_KEYS = frozenset(("address_zip",))
+# a phone box's neighbours: an extension or a dialling code is no phone number
+_PHONE_STOP = frozenset(("extension", "ext", "code", "birth"))
 _NAME_ALONE = (("name",), ("full", "name"), ("your", "name"))
 
 
-# another person's field (cycle 18, FM-3): a referrer's, an emergency
+# another person's field: a referrer's, an emergency
 # contact's, a manager's; and the how-did-you-hear question, whose listed
 # sources ("LinkedIn, website") are no profile of the candidate's
 _OTHER_PERSON = re.compile(r"\b(referr\w*|referral|reference|emergency|manager|supervisor|spouse"
@@ -516,7 +532,7 @@ _CAMEL = re.compile(r"(?<=[a-z])(?=[A-Z])")
 
 
 def _person_text(text: str) -> str:
-    """`text` for the FM-3 guards: camelCase split, lowercased, and every
+    """`text` for the other-person guards: camelCase split, lowercased, and every
     run of other characters a single space ("emergencyContactPhone" reads
     "emergency contact phone")."""
     return " ".join(_NORM_RE.sub(" ", _CAMEL.sub(" ", text or "").lower()).split())
@@ -533,7 +549,7 @@ def _contains(tokens: tuple[str, ...], phrase: tuple[str, ...]) -> bool:
 
 def quick_map(label: str, id_or_name: str, type_: str) -> str | None:
     """`_quick_key`, and None for a label its fact does not answer
-    (`asks_own_question`, cycle 18 SP6c): the judge maps that one, to a
+    (`asks_own_question`): the judge maps that one, to a
     derived fact when one answers it."""
     key = _quick_key(label, id_or_name, type_)
     return key if key is None or asks_own_question(key, label) else None
@@ -552,7 +568,7 @@ def _quick_key(label: str, id_or_name: str, type_: str) -> str | None:
     A field whose label or id names another person ("Referrer email",
     "emergencyContactPhone", `_OTHER_PERSON`) is None: the judge reads it.
     A how-did-you-hear question (`_HEAR_ABOUT`) never maps to a profile URL,
-    whatever sources it lists (cycle 18, FM-3)."""
+    whatever sources it lists."""
     type_ = (type_ or "").lower()
     texts = [_person_text(label), _person_text(id_or_name)]
     if any(_OTHER_PERSON.search(t) for t in texts):
@@ -565,28 +581,32 @@ def _quick_key(label: str, id_or_name: str, type_: str) -> str | None:
         for phrase, key, types in _QUICK:
             if hear and key in _PROFILE_URLS:
                 continue
+            if key == "phone" and _PHONE_STOP & set(tokens):
+                continue
             if type_ in types and _contains(tokens, phrase):
                 return key
         if type_ in _TEXTISH and tokens in _NAME_ALONE:
             return "full_name"
         if len(tokens) <= _ADDRESS_MAX_TOKENS and not _ADDRESS_STOP & set(tokens):
             for phrase, key, types in _ADDRESS_QUICK:
+                if key not in _ZIP_KEYS and _CODE_STOP & set(tokens):
+                    continue
                 if type_ in types and _contains(tokens, phrase):
                     return key
     return None
 
 
-# --- a fact's own question (cycle 18, SP6c) -------------------------------------------
+# --- a fact's own question -----------------------------------------------------------
 
 # Code fills or settles a yes / no or number fact only when the field asks that
 # fact's own question: every content word of the field's label and help
-# belongs to the fact's own-question vocabulary (round 3). A saved "Yes" to
+# belongs to the fact's own-question vocabulary. A saved "Yes" to
 # "authorized to work?" is no answer to "authorized to work? (Without
 # sponsorship)", and total years are no answer to "Python - years of
 # experience". The text is read whole (`question_tokens`): nothing is dropped
 # before the vocabulary reads it but a trailing sentence from a fixed list
 # (`_NEUTRAL_TAILS`: "Please select one", "Required", "*", ...), compared
-# whole (round 5). Characters are normalised, contractions spelled out, set
+# whole. Characters are normalised, contractions spelled out, set
 # phrases become one token (`_PHRASES`) and the shared filler goes; any word
 # left outside the fact's vocabulary makes it another question: a country, a
 # city, an example, a skill, a number, "commute", "assistance",
@@ -595,7 +615,7 @@ def _quick_key(label: str, id_or_name: str, type_: str) -> str | None:
 # location is out of the plan's reach, so "the job location (New York)" is
 # another question too.
 #
-# The words are read in their sentences too (round 7). "Employed",
+# The words are read in their sentences too. "Employed",
 # "employment", "working" and "work" settle work authorization only beside
 # an authorization word in the same sentence ("legally" is none; "able" and
 # "allowed" count only beside the United States, since "Are you able to work
@@ -617,13 +637,13 @@ class _OwnQuestion:
     # no sponsorship now or later is Yes to no sponsorship now)
     narrower: frozenset[str] = frozenset()
     settles_narrower: str = ""
-    # the authorization anchor (round 7): "authorized" asks one sentence at
+    # the authorization anchor: "authorized" asks one sentence at
     # least, and every sentence with a status word (`_WORK`), to hold an
     # authorization word (`_authorized_in`); "unsponsored" reads "able",
     # "allowed" and "can you" beside a sponsorship phrase as well as beside
     # the United States
     authorization: str = ""
-    # the willingness or ability anchors (round 7): every question sentence
+    # the willingness or ability anchors: every question sentence
     # (with none, every sentence holding a word of the first topic set) holds
     # one of these word sequences
     anchors: tuple[tuple[str, ...], ...] = ()
@@ -638,7 +658,7 @@ class _OwnQuestion:
 
 
 # the words no question turns on ("able", "have" and "legally" are content
-# words: the facts whose own question uses them hold them, round 5)
+# words: the facts whose own question uses them hold them)
 _FILLER = frozenset((
     "are", "you", "do", "does", "will", "would", "be", "to", "the", "a", "an", "of", "in",
     "for", "your", "i", "am", "can", "has"))
@@ -658,7 +678,7 @@ _NEUTRAL_TAILS = frozenset((
     "select one", "please select", "please enter a number", "enter a number", "required",
     "yes/no", "*", "y/n", "please select an option", "choose one", "required field",
     "please select yes or no", "please enter a whole number", "numbers only",
-    # the sentence Lever's sponsorship question closes with (round 7)
+    # the sentence Lever's sponsorship question closes with
     "this is sometimes called sponsorship for an employment-based visa status"))
 # a sentence with its closing marks, a parenthetical, a "*"
 _SEGMENT = re.compile(r"\([^()]*\)[.:?!]*|\*|[^()*?.!\n]+[?.!:]*|[?.!:]+|\n")
@@ -684,7 +704,7 @@ _PHRASES: tuple[tuple[str, re.Pattern], ...] = tuple((token, re.compile(p)) for 
                     r"(?:visas?|visa types?|immigration cases?))?"
                     r"(?: visas?(?: status)?| status)?\)?"),
     # "without the need for current or future sponsorship", "will not require
-    # sponsorship in the future" (round 7)
+    # sponsorship in the future"
     ("NOSPONSOR", r"\bwithout (?:the need (?:for|of) |needing |requiring |any )?"
                   r"(?:(?:current|present) (?:or|and) future )?"
                   r"(?:(?:employer|employment|visa|company|work|any) )*sponsorship\b"
@@ -712,11 +732,11 @@ _TOKEN = re.compile(r"[A-Z]+|[^\W_A-Z]+(?:'[^\W_A-Z]+)?")
 _SENTENCE = re.compile(r"([^?.!;:\n]*)([?.!;:\n]*)")
 # a word of later: with one, "now" asks now or later
 _LATER = frozenset(("FUTURE", "NOWFUTURE"))
-# the job's company name, read as the company or "us" (round 7)
+# the job's company name, read as the company or "us"
 _COMPANY = "COMPANY"
 _COMPANY_MARK = chr(0xE000)                 # its place while the text is lowercased
 
-# work authorization's anchors (round 7): an authorization word, or "able"
+# work authorization's anchors: an authorization word, or "able"
 # / "allowed" beside the United States (`_authorized_in`)
 _AUTHORIZED = frozenset(("authorized", "authorised", "authorization", "authorisation",
                          "eligible", "permitted", "RIGHTTOWORK"))
@@ -729,8 +749,8 @@ _USA = frozenset(("US", "us", _COMPANY))
 _WORK_AUTHORIZED = (_AUTHORIZED | _ABLE | _WORK | _USA
                     | {"legal", "legally", "lawfully", "have", "take", "up", "STARTDATE", "NOW"})
 _YEARS = frozenset(("years", "year", "yrs", "yr"))
-# the candidate's willingness or ability, the anchor of a preference (round
-# 7): "open" only as "open to", "require" only with the candidate its subject
+# the candidate's willingness or ability, the anchor of a preference:
+# "open" only as "open to", "require" only with the candidate its subject
 _WILLING = (("willing",), ("able",), ("open", "to"), ("comfortable",), ("consider",),
             ("prefer",), ("interested", "in"), ("can", "you"), ("could", "you"),
             ("would", "you"), ("you", "require"), ("you", "requires"))
@@ -740,7 +760,7 @@ _CAN_YOU = (("can", "you"), ("could", "you"))
 # as "us" ("to work for Example Co"): an employer's or the company's own
 # need is another question; "continue" only before working ("to continue
 # working in the United States"), since continuing a sponsorship asks
-# whether the candidate holds one (round 7)
+# whether the candidate holds one
 _BEFORE_COMPANY = "".join(rf"(?<!\b{v} )(?<!\b{v} the )"
                           for v in ("require", "requiring", "need", "needs"))
 _SPONSOR_ELSEWHERE = re.compile(rf"{_BEFORE_COMPANY}\bcompany\b"
@@ -789,19 +809,18 @@ OWN_QUESTIONS: dict[str, _OwnQuestion] = {
         frozenset(("ONSITE", "office", "hybrid", "work", "working", "our", "at", "into", "come",
                    "report", "from", "DAYSWEEK", "schedule", "willing", "open", "able", "NOW",
                    # "This role requires working in the office 3 days a week. Are
-                   # you comfortable with this?" (round 4)
+                   # you comfortable with this?"
                    "comfortable", "with", "this", "that", "role", "position", "requires",
                    "requiring", "is", _COMPANY)),
         (frozenset(("ONSITE", "office", "hybrid")),),
         # a part-week office schedule ("3 days a week") is the hybrid
-        # question: a Yes to on-site work settles it, a No does not (final
-        # review I2)
+        # question: a Yes to on-site work settles it, a No does not
         narrower=frozenset(("hybrid", "DAYSWEEK")), settles_narrower="Yes",
         anchors=_WILLING, apart=(frozenset(("NOW",)), frozenset(("work", "working")))),
     # "only" or "require": a question of accepting remote work is another;
     # "looking for" and "seeking" ask the candidate's own search, and so
     # does "you require". "Can you" and "would you" ask whether the candidate
-    # accepts a remote role (final review I1), so they are no anchor here
+    # accepts a remote role, so they are no anchor here
     "remote_only": _OwnQuestion(
         frozenset(("remote", "remotely", "only", "fully", "looking", "seeking", "role", "roles",
                    "position", "positions", "require", "work", "NOW")),
@@ -821,10 +840,9 @@ OWN_QUESTIONS: dict[str, _OwnQuestion] = {
 OWN_QUESTION_KEYS = frozenset(OWN_QUESTIONS)
 # the custom answer types code settles: only for their own saved question
 GATED_CUSTOM_TYPES = ("yes_no", "number")
-# the values code settles, whatever the custom answer's stored type (final
-# review C1): a yes or a no as `apply_judge.code_pick` reads one, and a plain
-# number as a number box takes one ("3", "1.5"; "5+", "$120,000" and "3-5"
-# are none, cycle 18 FM-5)
+# the values code settles, whatever the custom answer's stored type: a yes
+# or a no as `apply_judge.code_pick` reads one, and a plain number as a
+# number box takes one ("3", "1.5"; "5+", "$120,000" and "3-5" are none)
 YES_FORMS = frozenset(("yes", "y", "true"))
 NO_FORMS = frozenset(("no", "n", "false"))
 YES_NO_FORMS = YES_FORMS | NO_FORMS
@@ -884,7 +902,7 @@ def _name_words(text: str) -> tuple[str, ...]:
     return tuple(re.findall(r"[^\W_]+", (text or "").translate(_CHARACTERS).lower()))
 
 
-# the places a company may be named for (final review M1): a country, a US
+# the places a company may be named for: a country, a US
 # state, the United States
 _PLACE_NAMES = frozenset(_name_words(p) for p in (
     *COUNTRIES, *US_STATES.values(), "US", "USA", "America", "United States of America"))
@@ -896,7 +914,7 @@ def _company_name(company: str) -> re.Pattern | None:
     ("Example Co", "Example Co.'s", "example co"), where no "in" leads it
     (a place follows "in": "to work in Boston"); None for no name, a one-word name
     that is a word of these questions (`_NOT_A_NAME`) or a name that is a
-    place (`_PLACE_NAMES`: "Canada", "Texas", final review M1)."""
+    place (`_PLACE_NAMES`: "Canada", "Texas")."""
     words = _name_words(company)
     if not words or (len(words) == 1 and words[0] in _NOT_A_NAME) or words in _PLACE_NAMES:
         return None
@@ -911,7 +929,7 @@ def _normalised(label: str, help_text: str, *, country: bool, company: str = "")
     spaces and apostrophes in their plain forms, "e.g." as "eg" and a
     contraction spelled out ("don't" is "do not"). With `country`, "U.S." and
     "USA" read as the United States; with `company`, the job's company name
-    is the token COMPANY (round 7)."""
+    is the token COMPANY."""
     name = _company_name(company) if company else None
     parts = []
     for part in (label or "", help_text or ""):
@@ -1029,7 +1047,7 @@ def question_fit(fact_key: str | None, label: str, help_text: str = "",
     COMPANY) must be one of the fact's vocabulary, the words must name its
     subject (`topic`) and must not hold a form of another question
     (`refuse`); a word of now beside a word of later asks now or later. Then
-    the sentences (round 7): work authorization needs its anchor
+    the sentences: work authorization needs its anchor
     (`_authorized`), a preference its willingness or ability
     (`_asked_willing`), and `apart` words need an anchor between them. A cut
     label (`partial`) is "other": the words it lost are unread."""
@@ -1106,7 +1124,7 @@ def answers_question(fact_key: str | None, value: str, label: str,
     every narrower form (`settles_narrower`: a stored No to sponsorship now
     or in the future is No to "Will you require H-1B sponsorship?", and a
     Yes there is no answer); another question, never. `company` is the
-    job's company name, read as the company (round 7)."""
+    job's company name, read as the company."""
     fit = question_fit(fact_key, label, help_text, partial, company=company)
     if fit == "narrower":
         settles = OWN_QUESTIONS[fact_key].settles_narrower
@@ -1114,7 +1132,7 @@ def answers_question(fact_key: str | None, value: str, label: str,
     return fit == "own"
 
 
-# the words that make a label a clause (round 7): an auxiliary, a modal, a
+# the words that make a label a clause: an auxiliary, a modal, a
 # copula, "need" or "require" as a verb, or "to"
 _VERBS = frozenset(("am", "is", "are", "was", "were", "be", "been", "being", "do", "does", "did",
                     "have", "has", "had", "will", "would", "can", "could", "cannot", "shall",
@@ -1129,7 +1147,7 @@ def noun_phrase(label: str) -> bool:
     one token, a contraction spelled out) hold none of `_VERBS`. Such a
     label heads a status list (US Citizen / Permanent Resident / H-1B ...)
     as often as a Yes / No, so its yes / no fact settles only a plain Yes /
-    No in code (`apply_judge.plan`, round 7)."""
+    No in code (`apply_judge.plan`)."""
     words = question_tokens(label)
     return bool(words) and not set(words) & _VERBS
 
@@ -1139,7 +1157,7 @@ def same_question(label: str, help_text: str, saved: str) -> bool:
     (`literal_words` in order, with at least one word)? Every word counts,
     the modal and auxiliary verbs, a visa type and a number too: "Will you
     have ..." is not "Do you have ...", "Python over Java" is not "Java over
-    Python", and "an H-1B visa" is not "an F-1 visa" (round 7). A custom yes
+    Python", and "an H-1B visa" is not "an F-1 visa". A custom yes
     / no or number answer settles only its own saved question."""
     words = literal_words(label, help_text)
     return bool(words) and words == literal_words(saved)
@@ -1147,7 +1165,7 @@ def same_question(label: str, help_text: str, saved: str) -> bool:
 
 def saved_question(label: str, help_text: str = "") -> str:
     """The question a custom answer saves for a field with this label and
-    help (PR-6, PR-9): the label, then the help when present, each without
+    help: the label, then the help when present, each without
     its trailing neutral sentences (`_NEUTRAL_TAILS`) and in plain characters,
     so `same_question` reads the field as this question word for word next
     time. A plain join would keep a label's "(If not, please explain.)" in the
@@ -1158,7 +1176,7 @@ def saved_question(label: str, help_text: str = "") -> str:
 
 
 def answer_type(field_type: str, options=()) -> str:
-    """The answer type a field's widget takes (PR-6): yes / no options
+    """The answer type a field's widget takes: yes / no options
     ("Yes" and "No", `yes_no_form`) give "yes_no", a number box "number",
     other options "choice", anything else "text". A custom answer holds text,
     yes / no or a number (`apply_answers.CUSTOM_TYPES`), so the Add answer

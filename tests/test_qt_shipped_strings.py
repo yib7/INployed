@@ -59,13 +59,24 @@ def test_freshness_badge_carries_no_em_dash(qtbot):
     assert DASH not in tab.badge.text()
 
 
-def test_tracker_next_step_carries_no_em_dash(qtbot):
+class _FrozenDate(date):
+    """main_window's `date` with today pinned, so a run that crosses midnight
+    between this test's dates and the tracker's own `date.today()` reads the
+    same day on both sides."""
+    @classmethod
+    def today(cls):
+        return cls(2026, 9, 25)
+
+
+def test_tracker_next_step_carries_no_em_dash(qtbot, monkeypatch):
+    from qt import main_window as mw
+    monkeypatch.setattr(mw, "date", _FrozenDate)
     reg = MagicMock()
     reg.resume_paths.return_value = {}
     reg.status_rows.return_value = []
     w = MainWindow(csv_paths=[], registry=reg)
     qtbot.addWidget(w)
-    today = date.today()
+    today = _FrozenDate.today()
     fresh = (today - timedelta(days=1)).isoformat()
     stale = (today - timedelta(days=w.followup_days + 5)).isoformat()
     rows = {

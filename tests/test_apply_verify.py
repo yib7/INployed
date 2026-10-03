@@ -1,10 +1,6 @@
-"""Tests for the email-verification / security-code gate handling (apply_verify).
-
-Pure/fast: exercises code extraction from email bodies and the file handshake
-between the Playwright driver (request_code / await_code) and the orchestrator
-(write_code). No browser, no network — the Playwright bits (detect_code_gate,
-fill_code) are thin locator wrappers exercised in live runs, not here.
-"""
+"""Tests for reading a security code out of a verification mail body
+(apply_verify.extract_code). No browser, no network: `fill_code` is driven
+through the runner's own code-gate tests."""
 import sys
 from pathlib import Path
 
@@ -102,21 +98,3 @@ def test_extract_length_hint_disambiguates_multi_token_body():
 def test_extract_rejects_bare_year_token():
     # A bare 4-digit year with no code context is not a code.
     assert apply_verify.extract_code("Copyright 2026 Greenhouse") is None
-
-
-def test_handshake_request_then_await(tmp_path):
-    apply_verify.request_code(tmp_path, {"company": "Acme Analytics",
-                                         "email": "jane.doe@example.com"})
-    assert (tmp_path / apply_verify.REQUEST_FILE).exists()
-    apply_verify.write_code(tmp_path, "Q7X4ZTB2")
-    assert apply_verify.await_code(tmp_path, timeout=2, poll=0.05) == "Q7X4ZTB2"
-
-
-def test_request_code_clears_stale_response(tmp_path):
-    apply_verify.write_code(tmp_path, "OLDCODE1")
-    apply_verify.request_code(tmp_path, {})
-    assert not (tmp_path / apply_verify.RESPONSE_FILE).exists()
-
-
-def test_await_times_out_when_no_code(tmp_path):
-    assert apply_verify.await_code(tmp_path, timeout=0.3, poll=0.05) is None

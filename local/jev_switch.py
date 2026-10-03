@@ -35,8 +35,9 @@ difficulty check's Jev gate, the sentence `apply_assess.py` prints and the
 panel's Check difficulty shows after the same mode refusal, and
 `switched_off(area)` reads the switches alone, so the panel hides that button
 while a switch turns it off. `key_saved()` is the saved-key probe the
-dashboard passes the gates. `client(area)` returns a `jev.Guarded` judge, or None when the area is
-off or the judge cannot be built. Its one production caller is the tailor
+dashboard passes the gates. `client(area)` returns a `jev.Guarded` judge for
+scoring or the tailor, or None when the area is off or the judge cannot be
+built. Its one production caller is the tailor
 (`jev_assist`), which keeps its LLM path on None; that judge retries briefly
 (`jev.QUICK_RETRY_DELAYS_S`), so an outage reaches that path in seconds. The
 scorer builds its own judge (`jev_score.make_judge`, since the VM has no
@@ -320,22 +321,22 @@ def start_blocked(*, config: Mapping[str, Any] | None = None,
 
 
 def client(area: str) -> Any:
-    """The judge for `area`, or None when Jev is off for it or the judge cannot
-    be built. The tailor (`jev_assist`, the one production caller) and
-    scoring get a guarded TypeSafe judge that retries briefly
-    (`jev.QUICK_RETRY_DELAYS_S`): the tailor falls back to its LLM path, so
-    an outage costs it seconds. Apply and the difficulty check get the
-    auto-apply mode's judge (`jev.get`) with the run's retries
-    (`jev.RETRY_DELAYS_S`); the drain and `apply_assess` build theirs the
-    same way without this function. A build failure
-    is logged by its type only, since its message can carry request detail.
-    An unknown area raises ValueError (`_check`)."""
+    """The judge for `area` ("scoring" or "tailor"), or None when Jev is off
+    for it or the judge cannot be built: a guarded TypeSafe judge that
+    retries briefly (`jev.QUICK_RETRY_DELAYS_S`), since both fall back to
+    their LLM path and an outage should cost them seconds. The tailor
+    (`jev_assist`) is the one production caller. Apply and the difficulty
+    check build the auto-apply mode's judge themselves (`jev.get`, in the
+    drain and `apply_assess`), so those areas raise ValueError here, as an
+    unknown area does (`_check`). A build failure is logged by its type
+    only, since its message can carry request detail."""
+    _check_area(area)
+    if area in _MODE_AREAS:
+        raise ValueError(f"the {area} judge is the auto-apply mode's: build it with jev.get")
     cfg = _config()
     if _check(area, cfg, None)[0]:
         return None
     try:
-        if area in _MODE_AREAS:
-            return jev.Guarded(jev.get(apply_mode(config=cfg)))
         return jev.Guarded(jev.TypeSafeJev(), delays=jev.QUICK_RETRY_DELAYS_S)
     except Exception as e:      # noqa: BLE001  (None keeps the caller on its own path)
         log.warning("jev_switch: the %s judge could not be built (%s)", area,

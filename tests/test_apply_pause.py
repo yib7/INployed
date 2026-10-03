@@ -316,6 +316,45 @@ def test_a_value_the_store_refuses_is_not_saved():
     assert not [e for e in apply_answers.load() if e["question"] == "Years of Rust"]
 
 
+def test_two_saves_at_once_both_keep_their_answer(monkeypatch):
+    """Two runs saving at the same moment each read the store, add one
+    answer and write it back; the second write never drops the first's."""
+    import threading
+    apply_answers.save(apply_answers.seed_defaults())
+    real = apply_answers.load_store
+    both_read = threading.Barrier(2)
+
+    def _read_then_wait(*a, **kw):
+        store = real(*a, **kw)
+        try:
+            both_read.wait(timeout=1)       # a lock lets one read at a time
+        except threading.BrokenBarrierError:
+            pass
+        return store
+    monkeypatch.setattr(apply_answers, "load_store", _read_then_wait)
+    got: list = []
+    saves = [threading.Thread(target=lambda label=label, value=value: got.append(
+        apply_pause.save_answer(_question(label=label), value, "Fabrikam")))
+        for label, value in (("Favourite colour", "teal"), ("Favourite tree", "oak"))]
+    for t in saves:
+        t.start()
+    for t in saves:
+        t.join(10)
+    assert got == ["", ""]
+    answers = {e["question"]: e["answer"] for e in real()["answers"]}
+    assert answers.get("Favourite colour") == "teal" and answers.get("Favourite tree") == "oak"
+
+
+def test_a_save_while_the_store_stays_locked_says_so(monkeypatch):
+    import locks
+    apply_answers.save(apply_answers.seed_defaults())
+    monkeypatch.setattr(apply_pause, "SAVE_LOCK_TIMEOUT", 0.2)
+    with locks.file_lock(apply_answers.STORE_PATH):
+        why = apply_pause.save_answer(_question(label="Favourite colour"), "teal", "Fabrikam")
+    assert why == apply_pause.STORE_LOCKED
+    assert not [e for e in apply_answers.load() if e["question"] == "Favourite colour"]
+
+
 def test_the_builtin_check_is_shared_with_the_answers_tab():
     pytest.importorskip("PySide6")
     from qt import answers_tab

@@ -60,6 +60,7 @@ if str(HERE) not in sys.path:
 import apply_facts  # noqa: E402
 import apply_judge  # noqa: E402
 from jsonutil import atomic_write_json, read_json_dict  # noqa: E402
+from locks import FileLockTimeout, file_lock  # noqa: E402
 from resume_tailor import apply_answers  # noqa: E402
 
 log = logging.getLogger("apply_pause")
@@ -499,14 +500,31 @@ def save_refusal(question: str, answers: list[dict]) -> str:
     return ""
 
 
+SAVE_LOCK_TIMEOUT = 10.0     # seconds a save waits for another run's save
+STORE_LOCKED = "the answer store stayed locked (another run was saving to it)"
+
+
 def save_answer(question: Mapping[str, Any], value: str, company: str, *,
                 today: date | None = None, path: Path | None = None) -> str:
     """Keep the person's `value` for a request `question` as a confirmed
     custom answer through the store's own save (atomic, with a `.bak`).
-    Returns "" once saved, else why it was not."""
+    The read, the check and the write hold the store's lock, so two runs
+    saving at once both keep their answer. Returns "" once saved, else why
+    it was not."""
     text = apply_facts.saved_question(question.get("label", ""), question.get("help", ""))
     if not text:
         return "the question has no words"
+    store_path = Path(path) if path is not None else apply_answers.STORE_PATH
+    try:
+        with file_lock(store_path, timeout=SAVE_LOCK_TIMEOUT):
+            return _save_answer(question, text, value, company, today=today, path=path)
+    except FileLockTimeout:
+        return STORE_LOCKED
+
+
+def _save_answer(question: Mapping[str, Any], text: str, value: str, company: str, *,
+                 today: date | None, path: Path | None) -> str:
+    """`save_answer`'s read, check and write, under the store's lock."""
     try:
         store = apply_answers.load_store(path)
     except apply_answers.AnswerStoreError as e:

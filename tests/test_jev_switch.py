@@ -142,6 +142,7 @@ def test_an_exported_test_mode_opens_nothing(sdk, monkeypatch, mode):
     monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
     for area in ("apply", "difficulty"):
         assert jev_switch.jev_why_off(area, config=ON) == "no TypeSafe API key", area
+    for area in ("scoring", "tailor"):
         assert jev_switch.client(area) is None, area
     assert jev_switch.apply_blocked(config=ON) == \
         "Auto-apply runs on Jev. Add the TypeSafe API key in Settings > Jev."
@@ -230,14 +231,14 @@ def test_the_key_value_never_reaches_a_reason_the_log_or_the_console(sdk, monkey
         raise jev.JevUnavailable(f"the key {secret} was rejected")
     monkeypatch.setattr(jev, "TypeSafeJev", echo_the_key)
     caplog.set_level(logging.DEBUG)
-    for area in jev_switch.AREAS:
+    for area in ("scoring", "tailor"):
         assert jev_switch.client(area) is None, area
     texts = [jev_switch.jev_why_off(a, config=ON) for a in jev_switch.AREAS]
     sdk(False)
     texts += [jev_switch.jev_why_off(a, config=ON) for a in jev_switch.AREAS]
     texts.append(jev_switch.apply_blocked(config=ON))
     out, err = capsys.readouterr()
-    assert caplog.text.count("JevUnavailable") == len(jev_switch.AREAS)
+    assert caplog.text.count("JevUnavailable") == 2      # scoring and tailor
     for text in (*texts, caplog.text, out, err):
         assert secret not in text
 
@@ -532,7 +533,7 @@ def test_client_is_none_while_the_area_is_off_and_builds_nothing(sdk, monkeypatc
     monkeypatch.setattr(jev, "get", never)
     jev_switch.config_path().write_text(json.dumps({"jev_enabled": False}), encoding="utf-8")
     monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key")
-    for area in jev_switch.AREAS:
+    for area in ("scoring", "tailor"):
         assert jev_switch.client(area) is None, area
 
 
@@ -548,25 +549,18 @@ def test_client_for_scoring_and_tailor_is_a_guarded_typesafe_judge(sdk, monkeypa
 
 
 @pytest.mark.parametrize("area", ["apply", "difficulty"])
-def test_client_for_apply_and_difficulty_is_the_auto_apply_judge_settings_judge(
-        sdk, monkeypatch, area):
-    sdk(False)
-    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+def test_client_refuses_the_areas_whose_judge_is_the_auto_apply_modes(sdk, monkeypatch, area):
+    """The drain and `apply_assess` build the auto-apply mode's judge
+    themselves (`jev.get`); client() never builds one for them."""
+    def never(*a, **kw):
+        raise AssertionError("client() built a judge for " + area)
+    monkeypatch.setattr(jev, "get", never)
+    monkeypatch.setattr(jev, "TypeSafeJev", never)
+    monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key")
     jev_switch.config_path().write_text(json.dumps({"auto_apply_jev_mode": "fake"}),
                                         encoding="utf-8")
-    judge = jev_switch.client(area)
-    assert isinstance(judge, jev.Guarded)
-    assert isinstance(judge.inner, jev.FakeJev)
-
-
-def test_client_builds_the_settings_judge_whatever_the_shell_exports(sdk, monkeypatch):
-    """With a key, the live setting builds the live judge though the shell
-    exports AUTO_APPLY_JEV_MODE=fake: the drain would build that one too."""
-    monkeypatch.setattr(jev, "TypeSafeJev", _StubTypeSafe)
-    monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key")
-    monkeypatch.setenv("AUTO_APPLY_JEV_MODE", "fake")
-    judge = jev_switch.client("apply")
-    assert isinstance(judge, jev.Guarded) and isinstance(judge.inner, _StubTypeSafe)
+    with pytest.raises(ValueError, match="jev.get"):
+        jev_switch.client(area)
 
 
 def test_client_is_none_when_the_judge_cannot_be_built(sdk, monkeypatch, caplog):
@@ -591,18 +585,12 @@ class _Unreachable:
         raise ConnectionError("the service did not answer")
 
 
-@pytest.mark.parametrize("area, quick", [
-    ("scoring", True), ("tailor", True), ("apply", False), ("difficulty", False),
-])
-def test_the_judges_with_an_llm_fallback_retry_on_the_quick_waits(sdk, monkeypatch,
-                                                                    area, quick):
-    """Fix round 2: scoring and the tailor fall back to their LLM path, so
-    their judge's breaker opens after the quick waits (`QUICK_RETRY_DELAYS_S`,
-    a few seconds). Auto-apply has no fallback and keeps the run's waits
-    (`RETRY_DELAYS_S`, about a minute). The sleep is a recorder, so nothing
-    waits for real."""
+@pytest.mark.parametrize("area", ["scoring", "tailor"])
+def test_the_judges_with_an_llm_fallback_retry_on_the_quick_waits(sdk, monkeypatch, area):
+    """Scoring and the tailor fall back to their LLM path, so their judge's
+    breaker opens after the quick waits (`QUICK_RETRY_DELAYS_S`, a few
+    seconds). The sleep is a recorder, so nothing waits for real."""
     monkeypatch.setattr(jev, "TypeSafeJev", _Unreachable)
-    monkeypatch.setattr(jev, "get", lambda mode="": _Unreachable())
     monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key")
     judge = jev_switch.client(area)
     slept = []
@@ -610,7 +598,7 @@ def test_the_judges_with_an_llm_fallback_retry_on_the_quick_waits(sdk, monkeypat
     request = ({"page": "a form"}, {"q": {"type": "boolean", "instructions": "Is it?"}})
     with pytest.raises(jev.JudgeOutage):
         judge.judge(*request)
-    waits = list(jev.QUICK_RETRY_DELAYS_S if quick else jev.RETRY_DELAYS_S)
+    waits = list(jev.QUICK_RETRY_DELAYS_S)
     assert slept == waits
     assert judge.down == "ConnectionError"          # the breaker is open
     with pytest.raises(jev.JudgeOutage):

@@ -1,39 +1,14 @@
-"""Security-code / email-verification gate handling for Playwright-driven applies.
+"""Security codes from verification mail, and typing one into a form.
 
-Some ATS (Greenhouse, etc.) email an N-character security code *after* the
-candidate clicks Submit and require it before the application is accepted. The
-browser driver (a Playwright process) can't read the candidate's inbox — the
-orchestrator can, via the Outlook/Gmail MCP. They cooperate through a tiny file
-handshake in a per-run directory:
-
-    code_request.json   <- driver:       {"needed", "meta", "requested_at"}
-    code_response.json  <- orchestrator:  {"code"}
-
-Flow: the driver detects the gate (`detect_code_gate`), writes a request
-(`request_code`), and blocks on `await_code`. The orchestrator watches for
-code_request.json, fetches the newest verification email for the run's signup
-address, runs `extract_code` on the body, and hands it back with `write_code`.
-The driver then `fill_code`s it.
-
-Policy: this module FILLS the code but never clicks the final resubmit/submit —
-the caller parks at the button (park-at-review invariant). Auto-resubmit is a
-separate, explicit decision for the human to make.
+`extract_code` reads the code out of a message body; `apply_inbox` uses it
+to list a message's code-shaped tokens for the judge to pick from.
+`fill_code` types a code into the form's code field, into a single input or
+into a row of one-character boxes, and never submits: the caller decides
+when the form goes.
 """
-import json
 import re
-import time
-from pathlib import Path
 
-REQUEST_FILE = "code_request.json"
-RESPONSE_FILE = "code_response.json"
-
-# Text that signals a verification-code screen is showing (checked in page body).
-_CODE_FIELD_HINTS = (
-    "security code", "verification code", "confirmation code", "enter the code",
-    "one-time", "one time code", "verify your email", "6-digit", "8-character",
-)
-
-# All-caps tokens that look code-shaped but are ordinary words — never a code.
+# All-caps tokens that look code-shaped but are ordinary words, never a code.
 _NOT_A_CODE = {
     "HELLO", "GREENHOUSE", "APPLICATION", "SECURITY", "AFTER", "ENTER", "FIELD",
     "YOUR", "THIS", "CODE", "COPY", "PASTE", "INTO", "EMAIL", "SUBMIT", "RESUBMIT",
@@ -46,7 +21,7 @@ def extract_code(text, length=None):
 
     Best signal first: a token alone on its own line, then a token near the word
     'code' (a couple of filler words like "is"/"the" tolerated between them),
-    then — ONLY when a ``length`` hint constrains it — any standalone token of
+    then, ONLY when a ``length`` hint constrains it, any standalone token of
     that length. The bare-``anywhere`` fallback is deliberately gated on a length
     hint: without one, an inline order number / ZIP / confirmation ref
     ([A-Za-z0-9]{4,12} tokens the footer is full of) would be mistaken for a
@@ -56,12 +31,12 @@ def extract_code(text, length=None):
     if not text:
         return None
     t = text.replace("\r", "\n")
-    # Codes can be mixed-case (e.g. "mkPz3Qra") — match [A-Za-z0-9], not just caps.
+    # Codes can be mixed-case (e.g. "mkPz3Qra"): match [A-Za-z0-9], not just caps.
     own_line = re.findall(r"(?m)^\s*([A-Za-z0-9]{4,12})\s*$", t)   # alone on a line
     # Near 'code': allow a short run of filler ("is", "the", "your", ":") between
     # the keyword and the token, not only non-word chars. A lookahead, so every
     # 'code' starts a match of its own: "Your code / Your code is MKPZ3QRA"
-    # would otherwise be one match ending on the second 'code' (c16 backlog).
+    # would otherwise be one match ending on the second 'code'.
     after = re.findall(
         r"(?=code(?:\W+(?:is|the|your|to|be|of|below)\b)*\W{0,4}([A-Za-z0-9]{4,12})\b)",
         t, re.I)
@@ -81,8 +56,8 @@ def extract_code(text, length=None):
         return True
 
     # Strongest signal first (own line > near 'code' > length-gated anywhere);
-    # within each, prefer a token containing a digit — real codes almost always
-    # do — before falling back to an all-letter token.
+    # within each, prefer a token containing a digit (real codes almost always
+    # do) before falling back to an all-letter token.
     for group in (own_line, after, anywhere):
         for c in group:
             if _ok(c) and any(ch.isdigit() for ch in c):
@@ -92,75 +67,6 @@ def extract_code(text, length=None):
             if _ok(c):
                 return c
     return None
-
-
-def detect_code_gate(page):
-    """Return a Playwright locator for the code input if a code gate is showing, else None."""
-    for sel in (
-        "#security_code",
-        "input[autocomplete='one-time-code']",
-        "input[name*='security' i]",
-        "input[name*='verification' i]",
-        "input[name*='confirmation' i]",
-        "input[id*='security' i]",
-    ):
-        try:
-            loc = page.locator(sel)
-            if loc.count() and loc.first.is_visible():
-                return loc.first
-        except Exception:  # noqa: BLE001
-            pass
-    try:
-        body = page.inner_text("body").lower()
-    except Exception:  # noqa: BLE001
-        body = ""
-    if any(h in body for h in _CODE_FIELD_HINTS):
-        try:
-            loc = page.locator("input[type='text'], input:not([type])")
-            if loc.count() and loc.first.is_visible():
-                return loc.first
-        except Exception:  # noqa: BLE001
-            pass
-    return None
-
-
-def request_code(run_dir, meta):
-    """Driver side: signal that a code is needed. Clears any stale response first."""
-    run_dir = Path(run_dir)
-    run_dir.mkdir(parents=True, exist_ok=True)
-    resp = run_dir / RESPONSE_FILE
-    if resp.exists():
-        resp.unlink()
-    req = run_dir / REQUEST_FILE
-    req.write_text(
-        json.dumps({"needed": True, "meta": meta, "requested_at": time.time()}),
-        encoding="utf-8",
-    )
-    return req
-
-
-def await_code(run_dir, timeout=300.0, poll=2.0):
-    """Driver side: block until the orchestrator writes a code, or timeout. Returns code or None."""
-    resp = Path(run_dir) / RESPONSE_FILE
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if resp.exists():
-            try:
-                code = str(json.loads(resp.read_text(encoding="utf-8")).get("code", "")).strip()
-            except Exception:  # noqa: BLE001
-                code = ""
-            if code:
-                return code
-        time.sleep(poll)
-    return None
-
-
-def write_code(run_dir, code):
-    """Orchestrator side: hand a fetched code back to the waiting driver."""
-    Path(run_dir).mkdir(parents=True, exist_ok=True)
-    (Path(run_dir) / RESPONSE_FILE).write_text(
-        json.dumps({"code": str(code).strip()}), encoding="utf-8"
-    )
 
 
 def fill_code(page, code_input, code):

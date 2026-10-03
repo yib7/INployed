@@ -8,14 +8,14 @@ The store lives beside seen.db in %LOCALAPPDATA%\\linkedin_watcher\\
 (apply_queue.json; APPLY_QUEUE_PATH overrides, read at call time so tests stay
 hermetic).
 
-Concurrency model: every MUTATION runs inside `locked()` — an exclusive byte-0
+Concurrency model: every MUTATION runs inside `locked()`: an exclusive byte-0
 lock on the sidecar apply_queue.json.lock (msvcrt on Windows, fcntl elsewhere),
-retried every LOCK_RETRY seconds until LOCK_TIMEOUT then QueueLockTimeout —
+retried every LOCK_RETRY seconds until LOCK_TIMEOUT then QueueLockTimeout,
 wrapping a load -> mutate -> atomic_write_json cycle. READS are lock-free on
 purpose: atomic_write_json swaps the file in with os.replace, so a reader never
 sees a partial file, only the previous or the next complete state. A corrupt /
 unparseable queue starts fresh (a RuntimeWarning says so) and is renamed to
-apply_queue.json.corrupt-<stamp> by the next LOCKED mutation — lock-free
+apply_queue.json.corrupt-<stamp> by the next LOCKED mutation; lock-free
 readers never rename (they could race a writer that already quarantined and
 rewrote a healthy file). The queue is re-buildable from the dashboard, never
 precious.
@@ -29,7 +29,7 @@ human who submitted a parked tab and re-finished the entry. Every entry always c
 never .get()-dance around missing keys.
 
 This module NEVER returns, prints, or stores a password and never touches
-keyring — credentials are ats_accounts.py's job, and even there only the
+keyring: credentials are ats_accounts.py's job, and even there only the
 clipboard ever carries the secret.
 """
 from __future__ import annotations
@@ -156,14 +156,14 @@ _READ_RETRY = 0.02        # seconds between attempts
 
 
 def load(path: Optional[Path] = None, *, quarantine: bool = False) -> Dict[str, Any]:
-    """The queue dict ({"version": 1, "jobs": [...]}). Lock-free by design —
+    """The queue dict ({"version": 1, "jobs": [...]}). Lock-free by design:
     atomic_write_json means a concurrent reader only ever sees a complete file.
 
     Missing -> fresh. A read OSError (AV scan, sharing violation) is NOT
     corruption: it is retried briefly, then fresh is returned with the file
     left untouched. A file that reads but doesn't parse to the right shape
     returns fresh too, and is renamed aside (.corrupt-<stamp>) only when
-    quarantine=True — which callers may pass ONLY while holding locked():
+    quarantine=True, which callers may pass ONLY while holding locked():
     a lock-free reader renaming could race a lock-holding writer that already
     quarantined and rewrote a healthy queue, moving the VALID file aside."""
     qp = queue_path(path)
@@ -284,7 +284,7 @@ def _one_line(value) -> str:
 
 
 def _safe_url(value) -> str:
-    """An http(s) URL, or "" — the queue never stores a scheme it must not open."""
+    """An http(s) URL, or "": the queue never stores a scheme it must not open."""
     url = _one_line(value)
     return url if url.lower().startswith(("http://", "https://")) else ""
 
@@ -292,7 +292,7 @@ def _safe_url(value) -> str:
 def new_entry(job_posting_id: str, *, company: str = "", title: str = "",
               apply_url: str = "", is_easy_apply: bool = False,
               batch_id: str = "", status: str = "queued") -> Dict[str, Any]:
-    """A complete queue entry — every field always present. The dashboard
+    """A complete queue entry, every field always present. The dashboard
     enqueues with status="tailoring" while the tailor runs; set_artifacts flips
     it to "queued" once the PDFs exist. The CLI default is "queued"."""
     if status not in STATUSES:
@@ -348,7 +348,7 @@ def enqueue(entry: Dict[str, Any], path: Optional[Path] = None) -> Dict[str, Any
 def set_artifacts(job_id: str, artifacts: Dict[str, str],
                   path: Optional[Path] = None) -> Dict[str, Any]:
     """Fill artifact paths (unknown keys ignored). A "tailoring" entry becomes
-    "queued" — the tailor is done, the job may now be claimed."""
+    "queued": the tailor is done, the job may now be claimed."""
     with locked(path):
         data = load(path, quarantine=True)   # under locked(): may rename aside
         e = _find(data, job_id)
@@ -365,9 +365,9 @@ def set_artifacts(job_id: str, artifacts: Dict[str, str],
 
 def _fifo_key(e: Dict[str, Any]) -> tuple:
     """Claim ordering key. A blank/missing queued_at (a hand-edited or pre-schema
-    entry) is treated as newest-UNKNOWN — it sorts AFTER every real ISO timestamp
-    rather than before it. ('' would otherwise sort lexicographically before every
-    stamp, so a blank entry always jumped the queue.) The leading flag puts real
+    entry) is treated as newest-UNKNOWN: it sorts AFTER every real ISO
+    timestamp. ('' would otherwise sort lexicographically before every stamp,
+    so a blank entry always jumped the queue.) The leading flag puts real
     stamps (0) ahead of blanks (1); blanks all share ('', ) and tie, so the claim
     loop's strict `<` leaves list (insertion) order to break the tie."""
     qa = str(e.get("queued_at") or "")
@@ -441,7 +441,7 @@ def add_missing(job_id: str, question: str, context: str = "",
                 suggestion: str = "", path: Optional[Path] = None, *,
                 help: str = "", options: Any = (), type: str = ""
                 ) -> Dict[str, Any]:
-    """Append one missing-answer item ({question, context, suggestion}) — the
+    """Append one missing-answer item ({question, context, suggestion}): the
     agent's "this form asked something the answer store can't cover" report.
     The field's `help`, live `options` and answer `type` go with it when the
     run knows them (SP7, PR-7): Answer now opens Add answer prefilled with
@@ -772,14 +772,14 @@ def build_context(path: Optional[Path] = None) -> Dict[str, Any]:
     """The batch-run context the agent needs before draining the queue.
 
     signup_email comes from the master yaml (basics.email); batch_cap from the
-    dashboard config.json's auto_apply_* keys — tolerantly. inbox_url is resolved
+    dashboard config.json's auto_apply_* keys, tolerantly. inbox_url is resolved
     from the signup email's domain via DEFAULT_INBOX_MAP + the user's
     auto_apply_inbox_map (so an @hotmail.com signup opens Outlook, not Gmail), falling
     back to the single auto_apply_inbox_url then Gmail. The effective inbox_map is
     returned too, so a subagent that uses a different account email can resolve
     it. Never anything secret-shaped.
 
-    `auto_apply_inbox_url` is a LEGACY KEY, honoured for back-compat — do NOT
+    `auto_apply_inbox_url` is a LEGACY KEY, honoured for back-compat: do NOT
     "clean it up". The Settings tab dropped its Field (it duplicated
     auto_apply_inbox_map, which already ships the common providers), and this
     function is precisely what made that deletion safe: it reads config.json
@@ -830,7 +830,7 @@ def build_context(path: Optional[Path] = None) -> Dict[str, Any]:
 
 def _force_utf8_stdio() -> None:
     """Piped stdout/stderr on Windows default to cp1252, so any job title with
-    an emoji/arrow would UnicodeEncodeError mid-verb — AFTER a mutating verb
+    an emoji/arrow would UnicodeEncodeError mid-verb, AFTER a mutating verb
     already persisted its change, leaving the agent without the entry it now
     owns. Reconfigure both streams to UTF-8 up front; errors="replace" so
     printing can never raise, whatever the terminal."""
@@ -844,7 +844,7 @@ def _force_utf8_stdio() -> None:
 
 def _print_entry(e: Dict[str, Any]) -> None:
     print(f"{e['job_posting_id']}  {e['status']:16} "
-          f"{e['company']} — {e['title']}")
+          f"{e['company']} - {e['title']}")
 
 
 def main(argv: Optional[List[str]] = None) -> int:

@@ -94,8 +94,8 @@ the same rubric wording the LLM stage prompts use:
   longer goes to the LLM path for that reason alone). The deep score is
   `floor(DEEP_BASE + DEEP_SPAN * level / 4 + 0.5)`, `DEEP_BASE` 6.5 and `DEEP_SPAN` 3.5, landing
   on 7 to 10, so skip is unreachable at these values. `recommend()` reads the recommendation off
-  the composed deep score in code (apply at `RECOMMEND_APPLY`, 8, or more; consider at
-  `RECOMMEND_CONSIDER`, 6, or more; skip below): Jev no longer picks the recommendation as a
+  the composed deep score in code (apply at `RECOMMEND_APPLY`, 8, or more; consider below it,
+  a composed 7; the 7 to 10 range leaves no skip band): Jev no longer picks the recommendation as a
   Choice. Strengths are the met lines and gaps the unmet must-have lines, up to 5 each, cut to
   90 characters.
 
@@ -146,7 +146,8 @@ scoring off (jev_score.py is not beside score_jobs.py)." without it, and the VM 
 Gemini scores already in a master. It spends money (it refuses without `--live`), caches answers
 under `%LOCALAPPDATA%\INployed\jev_calibration\` and prints aggregates only. Version 2.0 dropped
 the stage 2 requirement-line minimum, so the script now runs stage 2 wherever Gemini ran it, and
-it leaves out rows Jev already scored: by the old "Skills fit " reason prefix and by an
+it leaves out rows Jev already scored: by a reason that starts with a `jev_score.SCORE_LABELS`
+label and a colon or with "Skills fit " (the earlier Jev scorer's prefix), and by an
 `extracted_date` on or after 2026-09-28.
 
 Stage 1 against Gemini on 400 jobs (Drive master, seed 19): exact match 46.5%, within one
@@ -164,7 +165,7 @@ A live writer check (Claude provider, 8 high-scoring jobs) wrote all 8, with eve
 to an unmet requirement line and no banned-topic gap; cost runs about $0.04 per call at Haiku
 list prices, 30 to 100 seconds per call.
 
-The tunables are `DEEP_BASE`, `DEEP_SPAN`, `RECOMMEND_APPLY`, `RECOMMEND_CONSIDER`, `MET_YES`,
+The tunables are `DEEP_BASE`, `DEEP_SPAN`, `RECOMMEND_APPLY`, `MET_YES`,
 `MUST_YES`, `YEARS_CAPS`, `CLEARANCE_CAP` and `ADVANCED_DEGREE_CAP` in `pipeline/jev_score.py`.
 
 **Repost score reuse** (`reuse_repost_scores`, gated by `SCORE_REPOST_REUSE_DAYS` / Settings
@@ -306,7 +307,7 @@ tab's Start button as `python local/apply_run.py drain` in a new console. Its mo
 | `local/apply_facts.py` | The fact catalog Jev chooses from: `apply.md` (candidate, address, education, current job, signature, cover letter) plus the answer bank as `answer_<id>` facts, each with a label-shaped description; `to_criteria()` sends keys and descriptions only; the values stay on this side. `quick_map` is the deterministic label table that wins over the judge for the obvious fields. The own-question gate (`OWN_QUESTIONS`, `question_fit`, `answers_question`) lets a saved yes / no or years answer settle a field only when every content word of its label and help is that fact's own question (a narrower form only for the value that answers every narrower form); a custom answer holding a yes / no or a number settles only its saved question word for word (`same_question`), and two derived facts answer "authorized without sponsorship" and "remote only". |
 | `local/apply_judge.py` | Every question and every threshold in one place, with a header block that records the live Jev distribution behind every threshold: `page_questions` (page kind, per-field source with `leave_blank` and `needs_generation` always present, per-field option, per-button role, the prohibited / account / CAPTCHA nouls), `option_questions`, `settle_questions` (a relocation, on-site, work authorization or sponsorship answer the own-question gate held back, asked whether it settles the field's reworded question, filled only when the judge is sure; `_unsaid` keeps out a question whose right option turns on something the saved answers do not say, such as another country, the present job or a visa held now; `settle_key` reads a question whose own sentence asks the move against the relocation answer when the first read took it for on-site work; a relocation or on-site read ends with where the candidate lives now, `where_they_live` giving the confirmed mailing address's city and state or else the résumé location, so an option such as "I am in NYC" is read against it), `verify_questions`, `inbox_questions`, `code_pick_questions`, `grounding_questions`, and the readers that turn answers into a `FillPlan`, a `VerifyResult` list, an inbox pick or a grounding verdict. |
 | `local/apply_screening.py` | The screening set behind Apply Answers' **Test my answers** and `tests/test_screening.py`: `screening_questions.json` beside it holds real-world screening fields, and `screen` runs one through the runner's own mapping, plan and option pick for one answer list, returning what the run would put in the field or None. Pure: no Qt, no browser. |
-| `local/apply_fill.py` | Acts on a `FillPlan`: fill, native select, radio and checkbox by label, React-style listbox by click, `set_input_files` for uploads, a read-back after each, and `click_button`, which waits for a navigation or a settled DOM. |
+| `local/apply_fill.py` | Acts on a `FillPlan`: fill, native select, radio and checkbox by label, React-style listbox by click, `set_input_files` for uploads, a read-back after each, and `click`, which reads the control's live text first (an unreadable control is refused when a check is given) and then waits for a navigation or a settled DOM. |
 | `local/apply_run.py` | The state machine and CLI (`drain`, `one`, `login`, `doctor`). Per job: open the posting in a persistent Chromium profile, follow the external Apply button (popup adopted, ATS host allowlisted), then per page extract, judge, act; up to `MAX_PAGES` and a wall clock. `can_submit` is the gate (the setting, no park reason, every required field filled and verified, prohibited and CAPTCHA below their caps, a confident submit button); anything else parks with the window held open. `write_record` writes `apply_record.md` beside the sheet. |
 | `local/apply_inbox.py` | Emailed verification codes: lists the newest rows of Outlook web or Gmail web in a tab of the same profile, asks Jev which message is the code mail, extracts the candidates with `apply_verify.extract_code`, and asks Jev to pick; three polls inside a three-minute budget, the inbox tab closed in a `finally`, every exception swallowed because a browser error can quote private mail. |
 | `local/apply_answergen.py` | Free-text answers for a required open-ended question (an optional one stays blank, `apply_judge.plan`): one flash-lite draft from the sheet excerpt under the résumé engine's AI-writing rules, `sentences` split, then `grounded` asks Jev whether each sentence is supported by the sheet; a draft with one unsupported sentence is dropped and the field is left for the user. `GENERATE_MAX` attempts per job. |
@@ -353,7 +354,11 @@ network) either target.
   recording summary undercounted the same way (9 live requests reported as 2). The recording
   summary (`jev_harness.Session.live_usage`), `apply_matrix --real` and the capture reads now
   read `total_usage()` too. `usage()` and `reset_usage()` keep their per-run meaning for the
-  per-run reports (the difficulty check, the drain, the dashboard, the scorer).
+  per-run reports (the difficulty check, the drain, the dashboard, the scorer). `DryRun`
+  requests count on a third counter, `simulated_usage()`: `total_usage()` and a live
+  `SpendCap` leave them out, `total_usage(include_simulated=True)` adds them (a dry
+  `apply_matrix --real` run), and the replay summary prints "live requests 0 (replay sends
+  nothing)".
 
 **Local scrapes feed the VM master** (the outbox/incoming bridge): a dashboard "Find new
 jobs" run or manual add writes its new full master rows to `<repo>/outbox/local_rows_*.csv.gz`

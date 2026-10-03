@@ -146,7 +146,7 @@ LINKEDIN_EASY_RECHECK_S = 1.5      # an Easy Apply read is read again after this
 LINKEDIN_CLICKS_MAX = 3            # offsite Apply clicks the handler makes per job
 CONSENT_MAX = 3                    # consent banners dismissed per job
 CONSENT_WAIT_S = 5                 # for a consent click's effect (the banner gone, a reload)
-CLICK_TIMEOUT_S = 20               # click_button's wait for a change
+CLICK_TIMEOUT_S = 20               # apply_fill.click's wait for a change
 FILL_ROUNDS_MAX = 3                # re-reads after a page's fill: revealed fields, the page's
                                    # own changes
 DISABLED_WAIT_S = 2.0              # a way on still disabled after the fill: waited on this long

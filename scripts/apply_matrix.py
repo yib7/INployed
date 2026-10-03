@@ -378,8 +378,9 @@ def _record_real(h, flows, mode: str, cache: Path, workdir: Path, *, fast: bool,
         # above 0: nothing is asked
         print(f"apply_matrix: {e}", file=sys.stderr)
         return 2
-    # the lifetime counter: a reset of usage() inside the run never hides a request
-    before = jev.total_usage()
+    # the lifetime counter: a reset of usage() inside the run never hides a
+    # request; a dry run counts its simulated requests, which only estimate
+    before = jev.total_usage(include_simulated=mode == "dry")
     server = h.FlowServer()
     server.start()
     from playwright.sync_api import sync_playwright
@@ -401,7 +402,7 @@ def _record_real(h, flows, mode: str, cache: Path, workdir: Path, *, fast: bool,
             browser.close()
     finally:
         server.stop()
-    after = jev.total_usage()
+    after = jev.total_usage(include_simulated=mode == "dry")
     requests = after["requests"] - before["requests"]
     tokens = after["input_tokens"] - before["input_tokens"]
     if col.results:

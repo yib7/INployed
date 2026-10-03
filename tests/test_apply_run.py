@@ -229,7 +229,7 @@ def test_submit_off_finishes_ready_to_submit_and_never_clicks_submit(
 
 def test_a_quiet_submit_is_clicked_exactly_once_and_the_late_confirmation_is_read(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
-    # the fixture's submit changes nothing for 3 s; click_button's window is cut
+    # the fixture's submit changes nothing for 3 s; apply_fill.click's window is cut
     # to 1 s so the click reads as "quiet", which is no proof it failed
     monkeypatch.setattr(apply_run, "CLICK_TIMEOUT_S", 1)
     _enqueue(job_folder, fixture_url("slow_submit.html"))
@@ -289,6 +289,12 @@ def test_a_submit_click_that_never_lands_parks_ready_to_submit_without_a_post_su
 
         def click(self, **kw):
             raise PWTimeout("Timeout 5000ms exceeded")
+
+        def evaluate(self, js, *a, **k):
+            # the live read before the click: an unreadable control is refused
+            if js is apply_form.LIVE_TEXT_JS:
+                return {"text": "Submit", "aria": "", "type": "submit", "tag": "BUTTON"}
+            return None
 
     monkeypatch.setattr(apply_run.apply_fill.apply_form, "resolve",
                         lambda page, loc: _Raising() if loc[1] == "#btn-submit"

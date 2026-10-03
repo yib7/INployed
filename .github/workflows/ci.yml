@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.14"
 
@@ -57,18 +57,24 @@ jobs:
   # `playwright install --with-deps` is a one-liner on Ubuntu.
   #
   # The rule for this list: a test file belongs here if it covers a module under
-  # pipeline/ (or a script the VM runs) and does not import Qt. Two Qt-free files are
-  # left out on purpose, so their absence does not read as an oversight:
+  # pipeline/ (or a script the VM runs) and does not import Qt. That includes the
+  # scorer's filter, candidate-profile, repost and writer files and the Jev scorer
+  # (pipeline/jev_score.py), which score_jobs.py imports. Qt-free files left out on
+  # purpose, so their absence does not read as an oversight:
   # tests/test_pipeline_dotenv_optout.py skips itself without a local .env, which is
   # always the CI case, so listing it would add a permanently-skipped test that looks
-  # like coverage; tests/test_outbox.py covers local/outbox.py, the Windows side.
+  # like coverage; tests/test_outbox.py covers local/outbox.py, the Windows side;
+  # tests/test_claude_cli*.py cover pipeline/claude_cli.py, the Claude Code CLI
+  # provider, which only the Windows side runs (the VM always scores with Gemini);
+  # tests/test_jev_score_calibrate.py covers a maintainer script that never runs
+  # on the VM.
   pipeline-linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.14"
 
@@ -88,7 +94,8 @@ jobs:
       # The auto-apply browser tests (tests/conftest_browser.py) drive headless
       # Chromium over local HTML fixtures. Playwright is optional in
       # requirements.txt, so it is installed here, with the runner's system
-      # libraries, on this job only: the Windows job runs the same files and they
+      # libraries, on this job only (pinned, the newest stable on 2026-10-03, so a run
+      # is reproducible): the Windows job runs the same files and they
       # skip there with "could not import playwright". Every one of those skips
       # runs here, because the browser step below selects each module that opts
       # into tests/conftest_browser.py, found by its opt-in line. Should this step
@@ -98,7 +105,7 @@ jobs:
       # here instead of skipping.
       - name: Install Playwright and Chromium
         run: |
-          python -m pip install playwright Pillow
+          python -m pip install playwright==1.63.0 Pillow==12.3.0
           python -m playwright install chromium --with-deps
 
       - name: Lint (ruff)
@@ -109,14 +116,26 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           python -m pytest -q -n auto \
+            tests/test_candidate_filters.py \
+            tests/test_candidate_jev.py \
+            tests/test_candidate_profile.py \
+            tests/test_candidate_prompts.py \
+            tests/test_download_race.py \
+            tests/test_jd_filters.py \
+            tests/test_jev_score.py \
             tests/test_keypool.py \
             tests/test_merge_incoming.py \
+            tests/test_min_required_years.py \
+            tests/test_repost_heal.py \
             tests/test_run_scraper_script.py \
             tests/test_score_jobs.py \
             tests/test_score_jobs_chunked.py \
             tests/test_score_jobs_claude.py \
+            tests/test_score_jobs_writer.py \
+            tests/test_scoring_config.py \
             tests/test_scraper_append.py \
             tests/test_scraper_bounds.py \
+            tests/test_search_config.py \
             tests/test_vm_sync.py
 
       # The browser-backed auto-apply tests, run where Chromium was just installed:
@@ -156,7 +175,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.14"
 

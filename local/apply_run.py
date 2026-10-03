@@ -3945,7 +3945,7 @@ def buttons_moved(before: apply_form.FormDigest, after: apply_form.FormDigest) -
 
 
 def pick_holds(value: str, option: str, group: bool = False) -> bool:
-    """Does the read-back `value` show the planned `option` (FILL-13): a tick
+    """Does the read-back `value` show the planned `option`: a tick
     reads "checked"; any other pick reads the option (case, punctuation and
     spacing aside) or a name it goes by (`apply_judge._alias_set`: United
     States of America for United States, CA for California); a question's
@@ -3954,9 +3954,8 @@ def pick_holds(value: str, option: str, group: bool = False) -> bool:
     option, and "Asian" is no "Asian, including Indian"); a read-back that
     carries no list is one option.
     Words that only contain the option never hold ("Yes, but I will need
-    sponsorship" is no "Yes", review M3), and neither do words the option
-    only starts with ("Yes" is no "Yes, I will need sponsorship", review R2
-    Minor 4)."""
+    sponsorship" is no "Yes"), and neither do words the option only starts
+    with ("Yes" is no "Yes, I will need sponsorship")."""
     if str(option).strip().lower() == "checked":
         return str(value).strip().lower() == "checked"
     norm = apply_judge._norm_option

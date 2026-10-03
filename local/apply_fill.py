@@ -14,17 +14,16 @@ gets ISO `YYYY-MM-DD`, converted from the common US shapes); a `select` picks
 by option label, case-insensitively; a radio group checks the radio whose
 label equals the option; a checkbox checks on `"checked"`; a combobox or
 listbox opens and clicks the option text; a file input takes
-`set_input_files` through its frame, the same call the old Playwright driver
-proved on Greenhouse. A file control gets no click. A field the extractor
-read as a widget (`PlannedField.widget`, SP5) is acted on its own way: a
+`set_input_files` through its frame. A file control gets no click. A field the extractor
+read as a widget (`PlannedField.widget`) is acted on its own way: a
 custom radio group, Yes / No buttons and a question's tick boxes by clicking
 the option's own element; a dropdown drawn as a button by opening it and
 clicking the option; a typeahead or an async combobox by typing the value and
 clicking its match; a hidden select in place; a hidden tick box or radio
 through its label; a rich-text box by typing; date parts part by part. The
-control is checked to be the one planned for before the act (FILL-02).
+control is checked to be the one planned for before the act.
 
-SP6: uploads go first and the page settles before the rest (a resume
+Uploads go first and the page settles before the rest (a resume
 parser's writes land before the planned values); a value the page reshapes
 goes in its shape (a masked phone key by key, a phone's national digits, a
 text date in the format its box names, a number box's number); an upload is
@@ -32,13 +31,13 @@ read from the widget's chip when the input was reset, and never sent twice;
 `repair(page, pf, hint)` types a value the form refused again in the shape
 its message asks; `apply` reports how it acted on each field (`outcomes`).
 
-Cycle 18: a yes or a no picks only an option in its own alias set (FM-1);
+A yes or a no picks only an option in its own alias set;
 a list the plan read no options for takes no option code cannot match
-(`OptionsUnread`, FM-2), and a yes or a no typed into a list or a
+(`OptionsUnread`), and a yes or a no typed into a list or a
 typeahead that offers no option of its own is taken out again, never kept
-as the answer, nor matched by an option's hidden value (SP3 fix round 1);
-a number box takes a plain number only (FM-5);
-`clear(page, pf)` takes an answer out again (FM-4).
+as the answer, nor matched by an option's hidden value;
+a number box takes a plain number only;
+`clear(page, pf)` takes an answer out again.
 
 `click(page, digest, n)` clicks a digest button and waits for a
 navigation or a DOM change (body length and the set of visible controls,
@@ -130,7 +129,7 @@ _READ_JS = """el => {
     const sel = el.querySelector('[aria-selected=true]');
     if (sel) return norm(sel.textContent);
     // react-select clears its input after a pick and shows the choice in a
-    // sibling (EXT-10): the single value in the widget's control box
+    // sibling: the single value in the widget's control box
     let box = el;
     for (let i = 0; box && i < 4; i++, box = box.parentElement) {
       const sv = box.querySelector('[class*=single-value], [class*=singleValue], '
@@ -223,7 +222,7 @@ def _date_value(value: str) -> str:
     return d.isoformat() if d is not None else (value or "").strip()
 
 
-# A text box's own hints (FILL-04, FILL-05): its type, placeholder, pattern,
+# A text box's own hints: its type, placeholder, pattern,
 # length cap, label and aria-label, input mode, autocomplete and mask
 # attribute, and whether a country-code control sits on its row (a select,
 # a dropdown or a box named for the country code or showing "+1").
@@ -313,15 +312,15 @@ def _masked(hints: dict) -> bool:
 
 
 def number_value(value: str) -> str | None:
-    """A number box's value (FILL-06): `value` when it is a plain number
-    ("3", "1.5"), else None (cycle 18, FM-5: "$120,000", "5+", "3-5" and
+    """A number box's value: `value` when it is a plain number
+    ("3", "1.5"), else None ("$120,000", "5+", "3-5" and
     "120k" are no number, and the box is left blank)."""
     text = str(value or "")
     return text.strip() if apply_judge.PLAIN_NUMBER.match(text) else None
 
 
 # `_ci_match`'s answer when the options that hold a value tie and differ in
-# meaning (final review B R2 M2): no option is chosen
+# meaning: no option is chosen
 OPTION_TIE = -2
 
 
@@ -333,9 +332,9 @@ class OptionTie(LookupError):
 
 class OptionsUnread(LookupError):
     """A list whose options were never read ahead (the plan holds none, so
-    no judge picked among them) shows none that code matches to the value
-    (cycle 18, FM-2), or a yes or a no finds no option of its own alias set
-    in a list or a typeahead, whatever it showed (SP3 fix round 1): none is
+    no judge picked among them) shows none that code matches to the value,
+    or a yes or a no finds no option of its own alias set
+    in a list or a typeahead, whatever it showed: none is
     chosen, the words typed to bring the options are taken out, and the
     runner parks a required box and leaves an optional one blank."""
 
@@ -347,7 +346,7 @@ class NothingShown(LookupError):
 
 # the words that turn an option against a value that lacks them: a negation
 # ("Not Hispanic or Latino" for "Latino") or a qualifier ("Yes, but I will
-# require sponsorship" for "Yes"; final review B R2 M2)
+# require sponsorship" for "Yes")
 _QUALIFIER = re.compile(r"(?<!\w)(?:not|no|non|never|without|none|neither|nor|declin(?:e|ed|es|ing)"
                         r"|but|except|unless|requir(?:e|ed|es|ing)|need(?:s|ed)?)(?!\w)"
                         r"|n['’]t(?!\w)", re.I)
@@ -368,33 +367,32 @@ def _qualifiers(text: str) -> set[str]:
 def _ci_match(want: str, candidates: list[str]) -> int:
     """Index of the candidate equal to `want` case-insensitively (whitespace
     folded), else the one a name of `want` matches (`apply_judge.match_option`:
-    USA for United States, CA for California, a decline for a decline;
-    FILL-07), else the closest one that holds it (`_holds`: "no" is never
+    USA for United States, CA for California, a decline for a decline),
+    else the closest one that holds it (`_holds`: "no" is never
     inside "None"), else -1.
 
     A negation or a qualifier the value lacks (`_qualifiers`) only breaks a
-    tie between options that each hold the value (final review B R2 M2, fix
-    round 3); it never puts out a lone one ("Not Hispanic or Latino" for
+    tie between options that each hold the value; it never puts out a lone one ("Not Hispanic or Latino" for
     "Latino" beside "White"). Among two or more, the ones that turn the
     value are out while one that leaves it unturned is left ("Hispanic or
     Latino" over "Not Hispanic or Latino" for "Latino"). When every one of
-    them turns it, and they are not all the same words, they tie (`OPTION_TIE`): the value names nothing
-    that tells their turns apart. A stored decline takes the one option
+    them turns it, and they are not all the same words, they tie
+    (`OPTION_TIE`): the value names nothing that tells their turns apart. A stored decline takes the one option
     that declines in its own words ("Prefer not to say"). The closest names
     each of the value's comma parts as one of its own ("Chicago, IL" for
     "chicago", never "Chicago Heights, IL"; `_names_each`); among such equal
     fits ("Anytown, California" and "Anytown, New York" for "anytown") the
-    site's own order stands (final review B-M2): the value names nothing
+    site's own order stands: the value names nothing
     that sets them apart, and the site's first match is what typing it gives
     a person. Two or more that only hold the value ("Software Engineering"
     and "Hardware Engineering" for "Engineering") differ in what the value
     leaves out: `OPTION_TIE`.
 
     A yes or a no (`apply_judge.yes_no`) matches only an option in its own
-    alias set (cycle 18, FM-1): "Yes" is none of "Yes - on a work visa" and
+    alias set: "Yes" is none of "Yes - on a work visa" and
     "Yes, without sponsorship", and a qualified option is the judge's pick.
     Two or more different options that each hold it and each turn it still
-    tie (`OPTION_TIE`, SP3 fix round 1), as they did before FM-1."""
+    tie (`OPTION_TIE`)."""
     w = " ".join((want or "").split()).lower()
     folded = [" ".join(str(c).split()).lower() for c in candidates]
     if w in folded:
@@ -493,7 +491,7 @@ _LINE_BREAK = re.compile(r"\r\n|\r|\n")
 def _keys_for(loc, text: object) -> str:
     """`text` as keys for the box `loc` names: a line break is a space in
     anything but a TEXTAREA, where a key-by-key Enter would submit the form
-    (implicit submission; final review B-I1)."""
+    (implicit submission)."""
     text = str(text or "")
     try:
         tag = str(loc.first.evaluate("el => el.tagName", timeout=ACTION_TIMEOUT_MS) or "")
@@ -524,15 +522,14 @@ def _typed(loc, text: str) -> None:
 
 def _fill(loc, kind: dict[str, str], value: str) -> str:
     """Type `value` into a text-like box in the shape the box asks for: a
-    native date control ISO; a number box a plain number (FILL-06; the
-    phone's digits in a box named for a phone, cycle 18 FM-5), and nothing
+    native date control ISO; a number box a plain number (the
+    phone's digits in a box named for a phone), and nothing
     else (LookupError); a
-    text box whose hints name a date format that format (FILL-05, "Date
+    text box whose hints name a date format that format ("Date
     (MM/DD/YYYY)"); a phone box its national digits when a country-code
     control sits on its row or its pattern or length asks for bare digits,
     typed key by key into a masked box, and typed again key by key when a
-    mask left the box holding other digits (FILL-04). Returns how
-    (FILL-15)."""
+    mask left the box holding other digits. Returns how it acted."""
     if kind["tag"] == "INPUT" and kind["type"] == "date":
         loc.first.fill(_date_value(value), timeout=ACTION_TIMEOUT_MS)
         return "date"
@@ -587,7 +584,7 @@ def _fill(loc, kind: dict[str, str], value: str) -> str:
 
 def _by_label_then_value(want: str, labels: list[str], values: list[str]) -> list:
     """The tries for an option's pick: its words, then its hidden value;
-    a yes or a no by the words alone (SP3 fix round 1: value="yes" behind
+    a yes or a no by the words alone (value="yes" behind
     "Yes - on a work visa" is no Yes)."""
     tries = [(want, labels)]
     if not apply_judge.yes_no(want):
@@ -638,7 +635,7 @@ def _check_radio(page, loc, want: str, pf: PlannedField | None = None) -> None:
     labels = loc.evaluate_all(_RADIO_LABELS_JS)
     i = _ci_match(want, labels)
     if i < 0 and not apply_judge.yes_no(want):
-        # a yes or a no by the words alone (SP3 fix round 1): value="yes"
+        # a yes or a no by the words alone: value="yes"
         # behind "Yes - on a work visa" is no Yes
         values = loc.evaluate_all("els => els.map(e => e.value)")
         j = _ci_match(want, values)
@@ -678,7 +675,7 @@ def _check_box(page, loc, want: str, pf: PlannedField | None = None) -> None:
         raise LookupError(f"checkbox option {want!r} is neither checked nor unchecked")
     tick = w in CHECKED_WORDS
     if pf is not None and pf.click_locator:
-        # a hidden or see-through box behind its label (study G6): the label
+        # a hidden or see-through box behind its label: the label
         # takes the click, the box's own state is read
         if _ticked(loc.first) != tick:
             _clicked(page, pf.click_locator[0], pf.click_locator[1]).click(timeout=ACTION_TIMEOUT_MS)
@@ -690,7 +687,7 @@ def _check_box(page, loc, want: str, pf: PlannedField | None = None) -> None:
 
 
 # a form's submit control: a <button> with no type or type=submit inside a
-# form, an input[type=submit]; `_choose` never clicks one (review M14)
+# form, an input[type=submit]; `_choose` never clicks one
 _SUBMITS_JS = """el => {
   const form = el.form || el.closest('form');
   if (!form) return false;
@@ -704,10 +701,10 @@ _PARTS = re.compile(r"\s*(?:[,;/]|\band\b)\s*", re.I)
 
 def _chosen(pf: PlannedField, want: str) -> list[int]:
     """The options to choose: the planned one; for a question's tick boxes
-    also every option the value names ("Python, SQL": each is ticked, the
-    study's G8), in the options' order. A value that is one option's whole
+    also every option the value names ("Python, SQL": each is
+    ticked), in the options' order. A value that is one option's whole
     name is that option alone ("Research and Development" never ticks
-    Research and Development apart, review R2 Minor 3)."""
+    Research and Development apart)."""
     options = list(pf.options)
     i = _ci_match(want, options)
     if i == OPTION_TIE:
@@ -776,7 +773,7 @@ def _options_locator(frame, loc):
     return frame.locator("[role=listbox] [role=option]").filter(visible=True)
 
 
-# the entries a dropdown drawn as a button shows (study G7): a listbox's
+# the entries a dropdown drawn as a button shows: a listbox's
 # options or a menu's radio items, visible
 _MENU_OPTIONS = ("[role=option], [role=menuitemradio], [role=menuitem], "
                  "[role=menuitemcheckbox]")
@@ -827,11 +824,10 @@ class PopupRefused(LookupError):
     """A popup whose own words send was not opened (`popup_refusal`)."""
 
 
-# What a popup's own words must not say for the run to open it (review round
-# 8): a send or a last step, as the run's other clicks read them
+# What a popup's own words must not say for the run to open it: a send or a
+# last step, as the run's other clicks read them
 # (`apply_run._send_worded`), a leading "Apply" too ("Apply with LinkedIn");
-# never "Does not apply". SP6 reads them as a name (`send_phrase`, review
-# round 9 and SP6 review I1):
+# never "Does not apply". They are read as a name (`send_phrase`):
 # - a "submit" or "send" that leads a short name names a send, whatever
 #   follows it ("Submit for review", "Submit resume", "Send to recruiter");
 # - a last-step verb ("finish", "complete", "confirm", "done", "finalize"),
@@ -840,8 +836,7 @@ class PopupRefused(LookupError):
 #   ("Done", "Complete application", "Confirm and submit", "Submit ▾",
 #   "More submit options", "Choose how to submit your application"), never
 #   another thing ("Finish month", "Confirm your citizenship status",
-#   "Expected finish date", "Willing to submit references") (SP6 review
-#   R2-I3);
+#   "Expected finish date", "Willing to submit references");
 # - a leading "Apply" names one alone or with "with", "now", "for"... ("Apply
 #   a location" is a placeholder).
 # Words that ask ("... a background check? Select One Required", Workday's
@@ -880,7 +875,7 @@ _NAMES_THE_SEND = re.compile(
     r"|finali[sz]e|proceed|next|done)\b", re.I)
 # a label that names a document or the application and then the value asked
 # of it ("Document delivery", "Resume status", "Application source"): a
-# question (SP6 review R2-I3)
+# question
 _VALUE_TAIL = re.compile(
     r"\b(status|delivery|method|type|format|date|preferences?|source|language|option|choice"
     r"|level|stage|mode|frequency|channel)\s*$", re.I)
@@ -936,7 +931,7 @@ def question_label(text: str) -> bool:
     status", "Delivery method" ask for a value; "Your application", "Resume
     *", "Step 3", "Share your profile" name the thing a send sends), or
     words that name one and then the value asked of it ("Document
-    delivery", "Resume status": `_VALUE_TAIL`, SP6 review R2-I3)?"""
+    delivery", "Resume status": `_VALUE_TAIL`)?"""
     t = " ".join(str(text or "").split()).strip(" *✱＊")
     if not t:
         return False
@@ -949,8 +944,8 @@ def send_phrase(text: str) -> bool:
     "submit" or "send" that leads a name of at most `_POPUP_LEAD_MAX` words,
     whatever follows it; any other send or last-step verb, leading or not,
     with nothing after it but fillers or symbols, or followed by the
-    application, the send's own words or another send verb (SP6 review
-    R2-I3: "Finish month" and "Confirm your citizenship status" ask); a
+    application, the send's own words or another send verb ("Finish month"
+    and "Confirm your citizenship status" ask); a
     leading "Apply" alone or with "with", "now", "for"..."""
     words = _POPUP_WORD.findall(str(text or ""))
     if words and _POPUP_LEAD.fullmatch(words[0]) and len(words) <= _POPUP_LEAD_MAX:
@@ -972,13 +967,13 @@ def popup_refusal(words: dict) -> str:
     """Why a popup whose own words read `words` ({shown, aria, title, label,
     named, box}) must not be opened, or "": its aria-label, its title, the
     element outside it that names it (`named`, aria-labelledby), its
-    `<label for>` (SP6 review R2-M4) or its shown text names a send or a
+    `<label for>` or its shown text names a send or a
     last step (`send_phrase`). Words that ask (`_question_shaped`) are never
     read as a name. The shown text and the title are never read under an
     outside question label (`question_label` of its label, its labelling
     element or its question box's words) or a question in its own
     aria-label: they are the answer. Under any other outside label they are
-    read (SP6 review I1)."""
+    read."""
     aria = " ".join(str(words.get("aria") or "").split())
     answered = (bool(aria) and _question_shaped(aria)) or any(
         question_label(words.get(key) or "") for key in ("label", "named", "box"))
@@ -1003,7 +998,7 @@ def _open_menu(frame, loc, *, popup: bool = False, face=None):
     LISTBOX_WAIT_MS. The control and the face are read on their element
     handles just before the click, and the handle read is the one clicked:
     one whose own words send is never opened, whatever the extractor made of
-    it (`PopupRefused`, review round 8)."""
+    it (`PopupRefused`)."""
     expanded = loc.first.get_attribute("aria-expanded", timeout=ACTION_TIMEOUT_MS)
     if popup:
         _mark_shown(frame, clear=expanded == "true")
@@ -1039,7 +1034,7 @@ def _menu_showing(options) -> bool:
 
 
 def _close_menu(page, loc, options=None) -> None:
-    """Escape only while a menu of options shows (FILL-08): its options
+    """Escape only while a menu of options shows: its options
     (`options`, the locator the open returned) are visible, and the control
     does not say `aria-expanded="false"`. A box that says
     `aria-expanded="true"` with nothing shown (a typeahead waiting for keys)
@@ -1062,8 +1057,8 @@ _TYPEABLE_JS = """el => {
 
 
 def _type_to_filter(page, frame, loc, want: str):
-    """An async combobox that shows nothing until typed in (EXT-06:
-    Greenhouse's location and school, Ashby's location): the value is typed,
+    """An async combobox that shows nothing until typed in
+    (Greenhouse's location and school, Ashby's location): the value is typed,
     and the options it brings are waited for."""
     try:
         if not loc.first.evaluate(_TYPEABLE_JS, timeout=ACTION_TIMEOUT_MS):
@@ -1107,11 +1102,11 @@ def _pick_listbox(page, frame, loc, want: str, *, popup: bool = False, face=None
         again.nth(i).click(timeout=ACTION_TIMEOUT_MS)
 
 
-# The matches a typeahead offers under its box (study G7: Lever's location has
+# The matches a typeahead offers under its box (Lever's location has
 # no ARIA): the visible entries of the nearest results list around it, each
 # marked for the click. An earlier typeahead's marks are cleared first, in
 # the document and every open shadow root: the click's locator reaches into
-# shadow roots and takes the first mark it meets (final review B-M1, B R2 nit).
+# shadow roots and takes the first mark it meets.
 _TYPEAHEAD_OPTIONS_JS = """el => {
   const clear = (root) => {
     root.querySelectorAll('[data-apply-option]')
@@ -1140,13 +1135,12 @@ _TYPEAHEAD_OPTIONS_JS = """el => {
 
 
 def _type_ahead(page, frame, loc, value: str) -> None:
-    """Type the value into a typeahead (study G7), wait for its matches and
+    """Type the value into a typeahead, wait for its matches and
     click the one that fits; with no match the typed value stays (a place
     the site does not list). Matches that tie and differ in meaning
-    (`OPTION_TIE`) leave the box empty and raise `OptionTie` (final review
-    B R2 M2). A yes or a no that finds no option of its own alias set,
+    (`OPTION_TIE`) leave the box empty and raise `OptionTie`. A yes or a no that finds no option of its own alias set,
     whether the box showed matches or none, leaves the box empty and raises
-    `OptionsUnread` (SP3 fix round 1, FM-2): a typed "No" is no answer
+    `OptionsUnread`: a typed "No" is no answer
     beside "No, I do not require sponsorship"."""
     keys = _keys_for(loc, value)
     loc.first.fill("", timeout=ACTION_TIMEOUT_MS)
@@ -1180,7 +1174,7 @@ _SET_SELECT_JS = """(el, value) => {
 
 
 def _select_hidden(loc, want: str) -> None:
-    """A hidden <select> behind a styled trigger (study G6): picked in place,
+    """A hidden <select> behind a styled trigger: picked in place,
     forced past the actionability check, else set and announced by script."""
     options = loc.first.evaluate(_SELECT_OPTIONS_JS, timeout=ACTION_TIMEOUT_MS)
     labels = [o[0] for o in options]
@@ -1204,7 +1198,7 @@ _SELECT_ALL_JS = """el => {
 
 
 def _fill_editable(page, loc, value: str) -> None:
-    """A rich-text box (EXT-13): focused, its content selected, the text
+    """A rich-text box: focused, its content selected, the text
     inserted as typing would."""
     loc.first.click(timeout=ACTION_TIMEOUT_MS)
     loc.first.evaluate(_SELECT_ALL_JS, timeout=ACTION_TIMEOUT_MS)
@@ -1221,7 +1215,7 @@ def _date_parts(value: str) -> dict[str, str]:
 
 
 def _fill_date_parts(page, pf: PlannedField, value: str) -> None:
-    """Month / Day / Year boxes (EXT-12): each part typed into its own box, in
+    """Month / Day / Year boxes: each part typed into its own box, in
     the order the widget names ("date:MDY")."""
     parts = _date_parts(value)
     order = pf.widget.split(":", 1)[1] if ":" in pf.widget else ""
@@ -1254,12 +1248,12 @@ def _take_out_typed(loc) -> None:
 
 def _pick_unread(pf: PlannedField, loc, want: str, pick: Callable[[], None]) -> None:
     """`pick` `want` among a list's options. The misses that leave no typed
-    guess behind (cycle 18, FM-2), the words typed to bring the options
+    guess behind, the words typed to bring the options
     taken out of the box first:
 
     - a yes or a no (`apply_judge.yes_no`) that no option matches exactly
       or by its alias set, whether the list showed nothing (`NothingShown`),
-      only other options, or options that tie (SP3 fix round 1): the error
+      only other options, or options that tie: the error
       is `OptionsUnread` on a list whose options the plan never read
       (`pf.options` empty), else its own (a tie's `OptionTie`; a plain miss
       on a list read ahead, whose empty box then fails its check);
@@ -1290,7 +1284,6 @@ def _act(page, pf: PlannedField, loc, kind: dict[str, str]) -> str:
         if upload_shown(page, loc, pf):
             # this run put the file in this box on this page, the chip showed
             # it, and it still does: a second upload would attach it twice
-            # (FILL-01)
             log.info("apply_fill: %r already holds %s from this run; not uploaded again",
                      pf.label, _file_name(pf.value))
             return "upload already shown"
@@ -1391,7 +1384,7 @@ def _read_widget(page, pf: PlannedField, loc) -> str:
     return ""
 
 
-# An upload's read-back (FILL-01): the input's file, else the widget's chip
+# An upload's read-back: the input's file, else the widget's chip
 # (a box that consumes the file and resets the input shows its name) or,
 # unless `named`, its success note, in the box around the input that holds
 # no other file input (four levels up, never the form or the page). The
@@ -1448,12 +1441,12 @@ def _upload_state(loc) -> dict:
 
 
 def upload_read(state: dict, name: str, before: str | None) -> str:
-    """An upload's read-back (FILL-01, SP6 review I5): the box's own file,
+    """An upload's read-back: the box's own file,
     else the file's name when the box's words show it more often than
     before this run's upload (a chip the upload added), a success note that
     was not there before, or words that changed and still show it with no
-    failure among them (a widget that replaced a kept chip of the same name,
-    SP6 review R2-M1); "" when none. With no upload by this run (`before`
+    failure among them (a widget that replaced a kept chip of the same
+    name); "" when none. With no upload by this run (`before`
     None) the name shown counts only as the box's own words."""
     if state.get("file"):
         return str(state["file"])
@@ -1472,11 +1465,11 @@ def upload_read(state: dict, name: str, before: str | None) -> str:
 
 
 def upload_shown(page, loc, pf: PlannedField) -> bool:
-    """May the upload of `pf` be skipped (FILL-01)? Only when this run put
+    """May the upload of `pf` be skipped? Only when this run put
     that file in that box on this page and saw it verified
     (`_verified_uploads`), and the box still shows it. A file of the same
     name the page showed before this run's upload (a resume kept from an
-    earlier application) never counts (SP6 review I5)."""
+    earlier application) never counts."""
     name = _file_name(pf.value)
     if not name or (_box_key(pf) + (name,)) not in _verified_uploads(page):
         return False
@@ -1513,7 +1506,7 @@ def _read_back(loc, kind: dict[str, str] | None, page=None, pf: PlannedField | N
         return ""
 
 
-# Who the control is now (FILL-02): `apply_form.IDENT_FN_JS`, the extractor's
+# Who the control is now: `apply_form.IDENT_FN_JS`, the extractor's
 # own identity, read on the live element; and every element of the frame,
 # open shadow roots walked, whose identity names the same control
 # (`apply_form.SAME_IDENT_JS`): how a control the page moved is found again.
@@ -1542,7 +1535,7 @@ _IDENTITY_BLIND = ("choice", "checkbox_group")      # a group's locator names no
 
 
 def _same_control(page, pf: PlannedField, loc):
-    """The control `pf` was planned for (FILL-02): the live element at its
+    """The control `pf` was planned for: the live element at its
     locator when its identity is the one the extractor read; else the one
     element of the frame with exactly that identity (a "Phone" box moved
     under its "Phone extension" neighbour is found again); else the live
@@ -1583,10 +1576,10 @@ def apply(page, plan: FillPlan, *, log: Callable[[str], Any] | None = None,
     (the job's wall clock belongs to the caller). A failed action lands in
     `errors` as `{n, label, action, error}` with the error's type name only
     (a Playwright message can quote the value). Before each act the control
-    is checked to be the one planned for (`_same_control`, FILL-02). The
-    uploads go first and the page settles after them (FILL-03: a resume
+    is checked to be the one planned for (`_same_control`). The
+    uploads go first and the page settles after them (a resume
     parser writes its guesses then, and the planned values go in after
-    them); the result keeps the plan's order. `outcomes` (FILL-15) takes
+    them); the result keeps the plan's order. `outcomes` takes
     one row per acted field: {n, label, action, how, error} (how it was
     acted on, the error's type name when it failed; never the value)."""
     done: dict[int, Filled] = {}
@@ -1637,11 +1630,11 @@ _DIGITS_HINT = re.compile(r"\b(digits?|numbers?\s+only|numeric|numerals?|0\s*-\s
 
 
 def repair_value(pf: PlannedField, hint: str, hints: dict | None = None) -> str:
-    """The value a refused box takes on its repair (ADV-02): the planned
+    """The value a refused box takes on its repair: the planned
     value in the shape the form's message asks: a date in the format the
     message (or the box) names, a phone's national digits when the message
     asks for digits, else the value as planned. Only a phone (its fact, or
-    a box the hints call a phone) has its digits joined (cycle 18, FM-5):
+    a box the hints call a phone) has its digits joined:
     "3-5" never becomes 35."""
     value = str(pf.value or "")
     d = parse_date(value)
@@ -1654,7 +1647,7 @@ def repair_value(pf: PlannedField, hint: str, hints: dict | None = None) -> str:
 
 
 def repair(page, pf: PlannedField, hint: str = "") -> Filled:
-    """Put a value the form refused in again (ADV-02): a text box is cleared
+    """Put a value the form refused in again: a text box is cleared
     and typed key by key with `repair_value` (a script that checks keys, a
     mask, a format the message names); any other control is acted on its
     own way once more. Returns the read-back."""
@@ -1725,7 +1718,7 @@ def _clear_select(loc, *, hidden: bool) -> bool:
 
 
 def clear(page, pf: PlannedField) -> bool:
-    """Take the answer out of `pf`'s control (cycle 18, FM-4: an optional
+    """Take the answer out of `pf`'s control (an optional
     answer that failed its check). A text box, a rich-text box, a
     typeahead and a dropdown's text box are emptied; a select returns to
     its empty or placeholder option; a tick box, a custom tick and a
@@ -1879,17 +1872,17 @@ def settle(page, timeout_s: float = 20) -> dict[str, Any]:
 class ClickResult:
     """`clicked`: the click itself landed (the element was found and the
     click was dispatched to it; a click that dispatched and then timed out
-    waiting for the navigation it started counts, TERM-02). `changed`: a
+    waiting for the navigation it started counts). `changed`: a
     navigation or a DOM change followed. A landed click on a quiet page is
     `(True, False)`; one that never landed is `(False, False)`. `refused`:
     the caller's live check (`click`'s `check`) stopped the click, and why;
     nothing was clicked. `late`: the error a dispatched click raised
     afterwards. `overlay`: what covered the control and how it was put away
-    before the click was made once more (ADV-04). `sent`: what the click set
+    before the click was made once more. `sent`: what the click set
     going, from the click to the end of its wait ("METHOD url", no query): a
     navigation of the page or of the button's frame, or a POST, PUT or PATCH
-    from either that the page was not already sending by itself (SP6 review
-    I3, R2-I2). Truthiness is `changed`."""
+    from either that the page was not already sending by itself.
+    Truthiness is `changed`."""
     clicked: bool
     changed: bool
     refused: str = ""
@@ -1905,7 +1898,7 @@ def _norm(text: str) -> str:
     return " ".join(str(text or "").split())
 
 
-# What covers a control a click was refused on (ADV-04): the element at the
+# What covers a control a click was refused on: the element at the
 # control's centre, when it is neither the control nor inside it, climbed to
 # its overlay (the outermost fixed or sticky box, a dialog), which is marked
 # `data-apply-overlay`. Then the one control to put it away: in a cookie or
@@ -1917,15 +1910,15 @@ def _norm(text: str) -> str:
 # thanks" or bare "x" control of the overlay (never one that accepts,
 # allows, agrees, or holds a send or last-step word of `_SEND_JS`); marked
 # `data-apply-close`. A box of the application itself is no cover: nothing
-# is picked and `own` says so (SP6 review M4; final review B-M6). A fixed
+# is picked and `own` says so. A fixed
 # bar is the application's by where it sits (the covered control's form or
-# the box around the control and its fields, final review B R2 M6), a
+# the box around the control and its fields), a
 # dialog by that or by what it holds (two or more fields, or a control
 # that applies, uploads or submits). Returns {what, kind:
 # consent|close|none, text, own} or null when nothing covers it.
 # The loop's send and last-step words (`apply_run.SUBMIT_WORDS` and
 # `FINAL_WORDS`) as a JS regex source for a string literal: the overlay
-# picker and the click's arm (`_ARM_JS`) splice it (final review B-M4).
+# picker and the click's arm (`_ARM_JS`) splice it.
 _SEND_JS = r"\\b(submit|apply|send|finish|complete|confirm|finali[sz]e|done)\\b"
 _OVERLAY_JS = r"""el => {
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
@@ -1960,7 +1953,7 @@ _OVERLAY_JS = r"""el => {
     + ' ' + (root.innerText || '').slice(0, 60)).slice(0, 80);
   const ctrls = Array.from(root.querySelectorAll(CTRLS)).filter((c) => shown(c) && !c.disabled);
   if (!consent) {
-    // the application's own box, never put away (final review B-M6). Any
+    // the application's own box, never put away. Any
     // fixed or sticky box is when it is part of the application: in the
     // form of the control it covers, holding a control that form owns (a
     // footer's `form=` submit), or inside the box that holds the control
@@ -1968,7 +1961,7 @@ _OVERLAY_JS = r"""el => {
     // or an apply, upload or submit control (Workday's "Start Your
     // Application"). A chat's pre-chat form, a talent-network or a
     // job-alert slide-in beside the application is put away, whatever
-    // fields it holds (final review B R2 M6)
+    // fields it holds
     const FIELDS = 'input:not([type=hidden]):not([type=button]):not([type=submit])'
       + ':not([type=checkbox]):not([type=radio]), select, textarea';
     const form = el.form || el.closest('form');
@@ -2015,7 +2008,7 @@ _INTERCEPTED = ("intercepts pointer events", "is not visible", "outside of the v
 
 
 def clear_overlay(frame, target) -> dict:
-    """ADV-04: put away what covers `target` (an element handle or a
+    """put away what covers `target` (an element handle or a
     locator in `frame`): `_OVERLAY_JS` finds it and the control to click
     (a consent banner's reject, else a close); that control is clicked, and
     `target` is scrolled to the viewport's centre either way. Returns what
@@ -2037,7 +2030,7 @@ def clear_overlay(frame, target) -> dict:
 # known to have been dispatched. With `want` (the text the live check read),
 # a click that finds the element's text changed into a send or a last step
 # (`_SEND_JS` words the checked text did not have) is cancelled there, at
-# its dispatch, before any handler of the page sees it (INV-04: the check
+# its dispatch, before any handler of the page sees it (the check
 # and the click are one step). The listener is removed once the run's click
 # is over (`_DISARM_JS`): a later click of the person's is never touched.
 _ARM_JS = """(el, want) => {
@@ -2075,7 +2068,7 @@ _DISPATCH_METHODS = ("POST", "PUT", "PATCH")
 # The page's own requests, logged from the moment the run starts watching it
 # (`watch_requests`): the POST, PUT or PATCH pairs a page sends by itself (its
 # telemetry, an autosave, a keep-alive) are no evidence a click set anything
-# going (SP6 review R2-I2)
+# going
 _REQUEST_LOG: "weakref.WeakKeyDictionary[Any, list]" = weakref.WeakKeyDictionary()
 _REQUEST_LOG_CAP = 400
 BACKGROUND_S = 120.0            # how far back the page's own requests are looked for
@@ -2218,7 +2211,7 @@ def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20,
     blocked: list[str] = []
     overlays: list[dict] = []
     # every navigation, POST, PUT or PATCH from the click to the end of its
-    # wait ("METHOD url"): what the click set going (SP6 review I3)
+    # wait ("METHOD url"): what the click set going
     sent: list[str] = []
 
     def _on_request(request) -> None:
@@ -2231,7 +2224,7 @@ def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20,
             pass
 
     def _on_sent(request) -> None:
-        # what the click set going (SP6 review R2-I2): a navigation of the
+        # what the click set going: a navigation of the
         # page or of the button's frame, or a POST, PUT or PATCH from either
         # that the page was not already sending by itself (`background`); a
         # beacon (`ping`) is never one
@@ -2306,7 +2299,7 @@ def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20,
                     if attempt == 1 and frame is not None \
                             and any(w in text for w in _INTERCEPTED) \
                             and not _dispatched(frame, url0, page, requests, e):
-                        # ADV-04: a banner, a chat window or a sticky bar took
+                        # a banner, a chat window or a sticky bar took
                         # the click; the click never reached the button, so
                         # it is made once more once the cover is put away
                         found = clear_overlay(frame, target)

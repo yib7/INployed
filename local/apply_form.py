@@ -46,7 +46,7 @@ class Field:
     options: list[str] = field(default_factory=list)
     id_or_name: str = ""
     autocomplete: str = ""      # the control's autocomplete token, when it has one
-    # How the control works when it is no plain native box (SP5): "choice" (a
+    # How the control works when it is no plain native box: "choice" (a
     # custom radio group or Yes / No buttons, clicked through
     # `option_locators`), "checkbox_group" (one question's boxes, ticked
     # through `option_locators`), "popup" (a dropdown drawn as a button),
@@ -55,20 +55,20 @@ class Field:
     # "aria_check" (a custom tick box), "editable" (a rich-text box),
     # "date:MDY" (date parts in that order, `option_locators`); "" else.
     widget: str = ""
-    # the visible thing to click for a hidden native box (study G6: its label
+    # the visible thing to click for a hidden native box (its label
     # or proxy), in the control's frame; None when the control takes the act
     click_locator: tuple[int, str] | None = None
     option_locators: list[str] = field(default_factory=list)   # per option, in its frame
-    section: str = ""           # the heading the control sits under (READ-05)
-    # the label was read in part (review R3-I1): cut at its cap, or a button's or a
+    section: str = ""           # the heading the control sits under
+    # the label was read in part: cut at its cap, or a button's or a
     # dropdown's words inside it left out; a consent so read is never routine
     label_partial: bool = False
     # set by the run when the control's own words send and its open was
-    # refused (`apply_fill.PopupRefused`, review round 8): the plan leaves it
+    # refused (`apply_fill.PopupRefused`): the plan leaves it
     # unanswered, and a required one parks on its question
     refused: str = ""
     ident: str = ""             # who the control is (tag|type|id|name|aria|...): read again
-                                # before every act (FILL-02)
+                                # before every act
     secret: bool = False        # an `<input type=password>`: its value is masked
 
 
@@ -82,7 +82,7 @@ def is_password_field(type_: str, id_or_name: str = "", label: str = "",
     `Field.secret`, `password_box`), only a real `<input type=password>`:
     sites put `autocomplete="new-password"` on an address or a location box
     to stop the browser's autofill, and that box takes its fact; a masked box
-    labelled "PIN" is one whatever its words (final review B-I2). For a
+    labelled "PIN" is one whatever its words. For a
     recorded row, which keeps no DOM type (`secret` None): an `other` control
     whose id, name or label carries `pass`, `pwd` or `secret`, or any control
     whose autocomplete token is `current-password` / `new-password`; the
@@ -112,7 +112,7 @@ def password_box(f: Any) -> bool:
     """Is the extracted control `f` a password box (`is_password_field` on
     its `secret`)? A control built without `secret` (an older capture, a
     hand-built `Field`) is one when its ident names an `<input
-    type=password>` (final review B R2 nit)."""
+    type=password>`."""
     secret = bool(getattr(f, "secret", False)) or typed_password(getattr(f, "ident", ""))
     return is_password_field(f.type, f.id_or_name, f.label, f.autocomplete, secret=secret)
 
@@ -124,17 +124,17 @@ class Button:
     `in_form`: the button's form holds a control a person fills (an input
     other than hidden or a button, a select, a textarea, an editable box, a
     custom control): an Apply there is the form's own button, never a
-    posting's entry (INV-03). `chrome`: it sits in the site's header, nav or
+    posting's entry. `chrome`: it sits in the site's header, nav or
     search landmark, a Workday header, or a bar fixed to the top of the page
-    (study G4: a header's "Sign In" is no sign-in page)."""
+    (a header's "Sign In" is no sign-in page)."""
     n: int
     locator: tuple[int, str]
     text: str
     kind_hint: str = ""
     in_form: bool = False
-    chrome: bool = False        # in the site's header, nav or top bar (study G4): kept for
+    chrome: bool = False        # in the site's header, nav or top bar: kept for
                                 # the mapping, left out of the page read
-    disabled: bool = False      # disabled or aria-disabled now (study G10: a Submit that
+    disabled: bool = False      # disabled or aria-disabled now (a Submit that
                                 # waits for the form to validate is kept, flagged)
     primary: bool = False       # styled as the page's main action (a primary or CTA class,
                                 # or its form's one submit control)
@@ -147,7 +147,7 @@ class FormDigest:
     text: str
     fields: list[Field] = field(default_factory=list)
     buttons: list[Button] = field(default_factory=list)
-    dialog: str = ""            # an open modal's title: its controls are the page's (G9)
+    dialog: str = ""            # an open modal's title: its controls are the page's
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -197,7 +197,7 @@ def _locator(raw: Any) -> tuple[int, str]:
 # One pass over a frame's DOM. Returns {"fields": [...], "buttons": [...], "text": str}
 # with plain values only; the dataclasses are built in Python. The rules:
 #   tree     the composed tree: open shadow roots are walked where their host
-#            stands (study G12: UKG's buttons, SAP's header).
+#            stands (UKG's buttons, SAP's header).
 #   fields   visible, enabled input (not hidden/submit/button/image/reset), select,
 #            textarea, [role=combobox], [role=listbox]; radios collapse into one
 #            entry per name group, or per question box when each radio has a
@@ -205,8 +205,8 @@ def _locator(raw: Any) -> tuple[int, str]:
 #            set_input_files works on it and ATS pages hide it behind a styled
 #            button, while its box has a layout and its form (or, outside a
 #            form, a box within three levels above it) shows; an input inside
-#            a [role=combobox] is part of that widget. SP5 (the study's G3,
-#            G6, G7, G8, EXT-02..13) adds, with `widget` naming how each works:
+#            a [role=combobox] is part of that widget. Widgets join
+#            them, with `widget` naming how each works:
 #            a custom radio group of [role=radio] and sibling Yes / No buttons
 #            with aria-pressed ("choice"); a question's tick boxes, by their
 #            shared name, an id's question prefix or their question box
@@ -227,7 +227,7 @@ def _locator(raw: Any) -> tuple[int, str]:
 #            from the body or the shadow root; inside a shadow root it is
 #            `<host> >> <inner>` (a Playwright CSS query pierces the root).
 #            `ident` carries who the control is, checked before every act.
-#   label    what a person sees (G2): label[for] (only for a unique id whose
+#   label    what a person sees: label[for] (only for a unique id whose
 #            control the label is), a non-generic aria-label ("Search",
 #            "Select...", "textbox" fall through; Workday's "Select One" and
 #            "Required" come off), aria-labelledby, an enclosing label, the
@@ -247,7 +247,7 @@ def _locator(raw: Any) -> tuple[int, str]:
 #   required the attribute, aria-required="true", or a required marker (a
 #            star, ✱, "(required)", "*Required", an sr-only "Required", an
 #            aria-hidden star) stripped from the label's words.
-#   section  the nearest h2 to h4 or heading above the control (READ-05).
+#   section  the nearest h2 to h4 or heading above the control.
 #   help     the aria-describedby text, then "Max N characters." from a
 #            maxlength (the answer generator's length budget).
 #   options  select option texts minus empty or "Select..." placeholders; radio
@@ -258,12 +258,12 @@ def _locator(raw: Any) -> tuple[int, str]:
 #            a[class*=button]; text from innerText, value, aria-label, title
 #            (a shadow button's host's words); a widget's own buttons (Yes /
 #            No, a dropdown's trigger) are no buttons. A disabled one is kept
-#            with `disabled` (G10); `primary` when styled as the main action
+#            with `disabled`; `primary` when styled as the main action
 #            or its form's one submit.
 #            `kind_hint` is `submit` for a submit control or a send word, never
 #            for "Apply with LinkedIn / Indeed", "Submit a general
-#            application", "Cancel", "Apply later" or "Save for later" (study
-#            G4); `in_form` when the button's form holds a control a person
+#            application", "Cancel", "Apply later" or "Save for later";
+#            `in_form` when the button's form holds a control a person
 #            fills (`Button.in_form`).
 #            A plain link joins them when its text or aria-label says "apply"
 #            and its text is short: LinkedIn's Apply entry is
@@ -281,21 +281,21 @@ def _locator(raw: Any) -> tuple[int, str]:
 #            longer accepting applications" banner) stays in front of it. The
 #            judge reads the first characters (`apply_judge.HEADLINE_CHARS`),
 #            and LinkedIn's skip links, header and upsell filled 597 of 600 of
-#            them on the 2026-09-22 run, so its posting read as a form.
+#            them on one run, so its posting read as a form.
 #   consent  a cookie or consent banner (`CONSENT_ROOTS_JS`) is chrome as
 #            well: its fields and buttons are dropped and its text goes to
-#            the end (the study's G1: 11 ATSs, the banner text first on 3).
+#            the end (11 ATSs, the banner text first on 3).
 #   modal    an open modal (`dialog[open]`, `aria-modal=true`, Workday's
 #            `data-automation-activepopup=true`, a dialog covering over 40% of
 #            the viewport, or a dialog of 280 x 200 px or more on top of the
 #            page, the element at its centre inside it; never a consent
 #            banner or preference center, never a chat window) is
-#            the page while it is open (study G9: Workday's "Start Your
+#            the page while it is open (Workday's "Start Your
 #            Application", Teamtailor's form overlay): only its fields and
 #            buttons are kept, its text goes first, and its title is
 #            returned as `dialog`.
 #   top bar  a Workday header (`data-automation-id*=header`) and a bar fixed
-#            or sticky at the top of the page (study G4) are chrome like the
+#            or sticky at the top of the page are chrome like the
 #            landmarks: no field is kept there, and its buttons carry
 #            `chrome` (the page read leaves them out, the entry and the
 #            advance never take one; a footer's button is no chrome, a
@@ -314,7 +314,7 @@ RADIO_OPTION_LABEL_JS = r"""(el) => {
   };
   if (el.id) {
     // label[for] only when the id is the element's alone and the label's
-    // control is this element (study G2e: Ashby gives every option one id)
+    // control is this element (Ashby gives every option one id)
     const root = el.getRootNode();
     const esc = el.id.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     if (root.querySelectorAll('[id="' + esc + '"]').length === 1) {
@@ -495,7 +495,7 @@ LOCATOR_FN_JS = r"""(el) => {
 _CONSENT_CONTROL_JS = _CONSENT_CONTROL_JS.replace("__CONSENT__", CONSENT_ROOTS_JS).replace(
     "__LOCATOR__", LOCATOR_FN_JS)
 
-# Who a control is (FILL-02): its tag, type, id, name, aria-label, stable
+# Who a control is: its tag, type, id, name, aria-label, stable
 # test attributes, placeholder, and the words of its label (the labels that
 # name it, else aria-labelledby, else the box it sits in alone), letters only
 # so a counter or a count never changes it. One definition for the extractor
@@ -562,7 +562,7 @@ _EXTRACT_JS = r"""
   const cssIdent = /^-?[_a-zA-Z][_a-zA-Z0-9-]*$/;
   const typeAttr = (el) => (el.getAttribute('type') || 'text').toLowerCase();
 
-  // the composed tree (G12): every element in document order, each open
+  // the composed tree: every element in document order, each open
   // shadow root walked where its host stands
   const roots = [document];
   const all = [];
@@ -605,7 +605,7 @@ _EXTRACT_JS = r"""
     return !!c && !(up(c) && closestC(up(c), 'form, dialog, [role=dialog]'));
   };
   // a button's chrome: the header, nav and search landmarks only; a footer
-  // holds a wizard's Next often enough (review M11)
+  // holds a wizard's Next often enough
   const HEAD_CHROME = 'header, nav, search, [role=banner], [role=navigation], [role=search]';
   const inHeadChrome = (el) => {
     const c = closestC(el, HEAD_CHROME);
@@ -613,7 +613,7 @@ _EXTRACT_JS = r"""
   };
   const consent = (__CONSENT__)();
   const inConsent = (el) => consent.some((root) => containsC(root, el));
-  // an open modal is the page while it is open (G9)
+  // an open modal is the page while it is open
   const vw = window.innerWidth || 1, vh = window.innerHeight || 1;
   const covers = (el) => {
     const r = el.getBoundingClientRect();
@@ -659,7 +659,7 @@ _EXTRACT_JS = r"""
     const h = modal.querySelector('h1, h2, h3, legend');
     return h ? norm(h.textContent) : '';
   })();
-  // a Workday header, a bar fixed or sticky at the top of the page (G4)
+  // a Workday header, a bar fixed or sticky at the top of the page
   const topBar = (el) => {
     const head = closestC(el, '[data-automation-id*=header i]');
     if (head && !closestC(el, 'form, dialog, [role=dialog]')) return true;
@@ -680,7 +680,7 @@ _EXTRACT_JS = r"""
     // under a hidden box (display:none above it): kept only while its
     // question shows, a label of its own or the box above the hidden part
     // holding words and no other question (JazzHR hides its upload until
-    // "Attach resume" is clicked); a hidden wizard step drops (review I3)
+    // "Attach resume" is clicked); a hidden wizard step drops
     let hiddenTop = null;
     for (let p = up(el); p && p !== document.body; p = up(p)) {
       if (p.nodeType === 1 && !p.getClientRects().length
@@ -720,7 +720,7 @@ _EXTRACT_JS = r"""
   };
   const NEVER_SUBMIT = /linkedin|indeed|general application|\bcancel\b|apply later|save for later/i;
 
-  // --- locators (EXT-19, G12) ---
+  // --- locators ---
   const countC = (sel) => {
     let n = 0;
     for (const r of roots) {
@@ -772,10 +772,10 @@ _EXTRACT_JS = r"""
     return parts.length ? parts.join(' >> ') + ' >> ' : '';
   };
   const locatorFor = (el) => hostPrefix(el) + ownLocator(el);
-  // who the control is, read again before every act (FILL-02; `IDENT_FN_JS`)
+  // who the control is, read again before every act (`IDENT_FN_JS`)
   const identOf = __IDENT__;
 
-  // --- what a person sees (G2) ---
+  // --- what a person sees ---
   const SR_CLASS = /(^|[\s_-])(sr-only|visually-?hidden|screen-?reader(-only|-text)?|a11y-hidden|visuallyhidden|assistive-text)([\s_-]|$)/i;
   const srOnly = (el) => {
     if (SR_CLASS.test(el.getAttribute('class') || '')) return true;
@@ -786,7 +786,7 @@ _EXTRACT_JS = r"""
       || /inset\((50|100)%\)/.test(st.clipPath || '');
   };
   const SKIP_TEXT = /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|INPUT|SELECT|TEXTAREA|BUTTON|OPTION|DATALIST|IFRAME|SVG)$/i;
-  // a form widget's own words inside a label (review I4): a button, a
+  // a form widget's own words inside a label: a button, a
   // combobox, listbox or spin box, an editable box, a dropdown drawn as a box;
   // never a link (Oracle's "terms and conditions" opens a dialog)
   const WIDGET_TEXT = 'button, [role=combobox], [role=listbox], [role=spinbutton], '
@@ -801,7 +801,7 @@ _EXTRACT_JS = r"""
   const REQ_CLASS = /(^|[\s_-])required([\s_-]|$)/i;
   // noted in `marks` where a label's words were left out or cut (a button's or
   // a dropdown's words skipped inside it, a box's words past their cap): such a
-  // label is read in part (`label_partial`, review R3-I1)
+  // label is read in part (`label_partial`)
   const CUT = '\u0000cut';
   // a skipped subtree whose shown words are more than a required marker
   const wordsLeft = (n) => {
@@ -840,7 +840,7 @@ _EXTRACT_JS = r"""
       }
       if (!top && n.getAttribute('aria-hidden') === 'true') {
         // hidden from the reader, seen by the person: a marker there counts;
-        // words there are words the label leaves out (review R4, Minor 1)
+        // words there are words the label leaves out
         if (marks && n.getClientRects().length) {
           marks.push(norm(n.textContent));
           if (wordsLeft(n)) marks.push(CUT);
@@ -852,11 +852,11 @@ _EXTRACT_JS = r"""
         return;
       }
       const st = getComputedStyle(n);
-      // (a hidden element's mark is none: Breezy's conditional `span.ng-hide.required`,
-      // review R2-I1)
+      // (a hidden element's mark is none: Breezy's conditional
+      // `span.ng-hide.required`)
       if (st.display === 'none') return;
       // a required marker drawn in CSS (Ashby's ::after star) or named by a
-      // class (Ashby's `_required_`): a marker the person sees (review I2)
+      // class (Ashby's `_required_`): a marker the person sees
       if (marks && st.visibility !== 'hidden' && styledMark(n)) marks.push('*');
       // a dropdown's shown value inside its label ("State Select a state")
       if (!top && n.matches(WIDGET_TEXT)) {
@@ -886,7 +886,7 @@ _EXTRACT_JS = r"""
     const n = byIdIn(el, id);
     return n && n !== el ? labelText(n, marks) : '';
   }).join(' '));
-  // required markers (G2a): `*`, `✱`, `(required)`, `*Required`; `(optional)`
+  // required markers: `*`, `✱`, `(required)`, `*Required`; `(optional)`
   const MARK_ONLY = /^\s*(?:[*✱＊]+|\(\s*required\s*\)|required\.?|[*✱＊]\s*required\.?|\(\s*optional\s*\)|optional)\s*$/i;
   const REQ_MARK = /^\s*(?:[*✱＊]+|\(\s*required\s*\)|required\.?|[*✱＊]\s*required\.?)\s*$/i;
   const LEAD_STAR = /^\s*[*✱＊]+\s*/;
@@ -905,7 +905,7 @@ _EXTRACT_JS = r"""
     if (MARK_ONLY.test(t)) { req = req || REQ_MARK.test(t); t = ''; }
     return [norm(t), req];
   };
-  // an aria-label that names no question (G2d): "Search", "Select...", "textbox"
+  // an aria-label that names no question: "Search", "Select...", "textbox"
   const GENERIC = /^(search|select( one| an option| an item)?|choose( one| an option)?|pick one|textbox|text box|combobox|input( \w+)?|type here|start typing|enter text|type to search)\s*(\.{3}|…)?$/i;
   // an aria-label's own words: Workday's "Country Select One Required"
   const ariaWords = (text) => {
@@ -958,7 +958,7 @@ _EXTRACT_JS = r"""
   };
   const optionLabel = __OPTION_LABEL__;
   // label[for] counts only when its id is unique and the label's control is
-  // this element (G2e: Ashby reuses a question's id on every option)
+  // this element (Ashby reuses a question's id on every option)
   const labelElementFor = (el) => {
     if (!el.id) return null;
     const labs = queryIn(el, 'label[for=' + q(el.id) + ']');
@@ -969,8 +969,8 @@ _EXTRACT_JS = r"""
     + ':not([type=reset]):not([type=image]), select, textarea, [role=combobox], [role=radio], '
     + '[role=checkbox], [role=switch], [role=spinbutton], [role=textbox], [contenteditable=""], '
     + '[contenteditable=true], button[aria-pressed], [aria-haspopup=listbox]';
-  const kept = new Set();       // hidden natives kept behind a visible proxy (G6)
-  // the question's box (G2e): up to five boxes above the control, the first
+  const kept = new Set();       // hidden natives kept behind a visible proxy
+  // the question's box: up to five boxes above the control, the first
   // that holds all of `own` and no other question's control
   const questionBox = (own) => {
     const list = Array.from(own);
@@ -986,7 +986,7 @@ _EXTRACT_JS = r"""
     return null;
   };
   const isCtrl = (n) => n.matches(QUESTION_CTRL + ', button, [role=button]');
-  // an upload's own words, never its question (G2c): "Attach", "Drop your file
+  // an upload's own words, never its question: "Attach", "Drop your file
   // or upload", "Total 0 file selected", "file-input", a missing-SVG fallback
   const FACE = /^(attach|upload( an?)?( files?)?|browse|choose( an?)? files?|select( an?)? files?|no file chosen|drop (your )?files?( here)?( or upload)?|drag (and|&) drop.*|click to upload|total \d+ files? selected|file-?input|svgs? (are )?not supported.*)\.?$/i;
   const STEP = /^\s*step\s+\d+\s*(of|\/)\s*\d+\s*$/i;     // a wizard's step marker
@@ -1028,10 +1028,10 @@ _EXTRACT_JS = r"""
 
   // [label, required] of one control
   // is the question the control answers marked required: its fieldset's
-  // own title, by a marker in its words or drawn by CSS (review I2). The
+  // own title, by a marker in its words or drawn by CSS. The
   // title is the fieldset's legend, or a label of it that no control in the
   // fieldset owns: another question's label ("First name *" beside Middle
-  // name) is no title (review R2-I1)
+  // name) is no title
   const titleReq = (el) => {
     const fs = el.closest('fieldset');
     if (!fs) return false;
@@ -1055,7 +1055,7 @@ _EXTRACT_JS = r"""
     const tryText = (t) => { const [s, r] = strip(t, marks); return [s, r]; };
     const lab = labelElementFor(el);
     if (el.tagName === 'INPUT' && typeAttr(el) === 'file') {
-      // a file box by its question (G2c): its group, its fieldset, its
+      // a file box by its question: its group, its fieldset, its
       // box's words, and only then its label (an "Attach" button's)
       const grp = closestC(el, '[role=group]');
       if (grp) {
@@ -1139,7 +1139,7 @@ _EXTRACT_JS = r"""
     return 'other';
   };
   // a placeholder option: an empty-valued "Select..." or "--", and "Click
-  // here..." or "-- No answer --" whatever its value (G7)
+  // here..." or "-- No answer --" whatever its value
   const PLACEHOLDER_OPTION = __PLACEHOLDER__;
   const PLACEHOLDER_ANY = /^(click here\b|-+\s*(no answer|none|select)?\s*-+$|\u2013\s*select\s*\u2013$)/i;
   const selectOptions = (el) => Array.from(el.options).map((o) => norm(o.text)).filter((t, i) => {
@@ -1169,15 +1169,15 @@ _EXTRACT_JS = r"""
     return [];
   };
   const isRequired = (el) => !!el.required || el.getAttribute('aria-required') === 'true';
-  // the heading a control sits under (READ-05): the nearest h2 to h4 or
+  // the heading a control sits under: the nearest h2 to h4 or
   // heading role before it, outside the site chrome
   const heads = all.filter((e) => e.matches('h2, h3, h4, [role=heading]') && !inChrome(e)
                            && !inConsent(e) && visible(e));
   // The nearest heading before the control whose nearest common ancestor
   // with it is no body, html or main (a posting's headings share only those
-  // with the form, review M7), taken from a header box beside the fields as
-  // well as from the fields' own box (Greenhouse's `div.section-header > h3`,
-  // review R2-I3). A heading whose own branch under that ancestor holds a
+  // with the form), taken from a header box beside the fields as
+  // well as from the fields' own box (Greenhouse's
+  // `div.section-header > h3`). A heading whose own branch under that ancestor holds a
   // control of its own (the resume parser's box, "Autofill from resume") is
   // another block's: it is no section, and it closes off the headings before
   // it. A heading in another column (Ashby's posting details beside the
@@ -1227,10 +1227,10 @@ _EXTRACT_JS = r"""
     };
   };
 
-  // --- junk boxes (G3) ---
+  // --- junk boxes ---
   // a honeypot's words: "honeypot", "robots only", "if you are human", or a
   // label that is nothing but "leave this field blank" / "do not fill this"
-  // (review M4: "Middle name (leave this field blank if none)" is a question)
+  // ("Middle name (leave this field blank if none)" is a question)
   const HONEY = /honey[\s_-]?pot|robots? only|for robots|if you('re| are) (a )?human|^\s*(please )?(leave (this )?(field |box )?(blank|empty)|do not (fill|enter)( (in|this)( field| box)?)?)\.?\s*$/i;
   const HONEY_ID = /^hp[_-]|nickname_hp|honey/i;
   const POSTING_WIDGET = /job alerts?\b|receive (an |job )?alerts?\b|newsletter|\bsort by\b|search (for )?jobs\b|^\s*(search( (jobs|roles|positions|openings))?|keywords?|find (a )?jobs?)\s*$/i;
@@ -1251,7 +1251,7 @@ _EXTRACT_JS = r"""
     return null;
   };
   // an opacity still moving on `n` itself: a transition or an animation of
-  // its opacity, running or about to start (final review B R2 M3)
+  // its opacity, running or about to start
   const fading = (n) => {
     try {
       return n.getAnimations().some((a) => (a.pending || a.playState === 'running')
@@ -1275,9 +1275,9 @@ _EXTRACT_JS = r"""
   const junk = (el, t, label, req) => {
     // a choice or a file box is often hidden behind its label or trigger
     const choice = t === 'checkbox' || t === 'radio' || t === 'file' || t === 'select';
-    // a read-only box, never a picker that opens on a click (review M6:
-    // react-select without search, a date picker; "date" as a word of the
-    // box's names, never inside "candidate" or "update", review R2 Minor 1)
+    // a read-only box, never a picker that opens on a click
+    // (react-select without search, a date picker; "date" as a word of the
+    // box's names, never inside "candidate" or "update")
     const picker = el.matches('[role=combobox], [aria-haspopup], [aria-autocomplete]')
       || [el.getAttribute('class'), el.getAttribute('placeholder'), el.id,
           el.getAttribute('name')].some((s) => nameWords(s).some((w) => DATE_WORDS.has(w)));
@@ -1296,16 +1296,16 @@ _EXTRACT_JS = r"""
       return 'posting widget';
     }
     if (choice) return '';
-    // react-select's dummy input: a field through its face (review R2 Minor 2)
+    // react-select's dummy input: a field through its face
     if (comboFace(el) && !closestC(el, '[aria-hidden=true]')) return '';
     if (closestC(el, '[aria-hidden=true]')) return 'aria-hidden';
     // a box a person cannot see: it nearly transparent, or a box around it
-    // that holds no other control, whatever its tabindex (final review B-M3:
-    // a trap at opacity 0, or in a transparent wrapper, labelled "Website").
+    // that holds no other control, whatever its tabindex
+    // (a trap at opacity 0, or in a transparent wrapper, labelled "Website").
     // A box whose opacity is still moving (a fade-in's transition or
     // animation) is read as it will be once it settles, and a transparent
     // box around other controls too is a page or a form held back until it
-    // loads: neither hides a field (final review B R2 M3)
+    // loads: neither hides a field
     for (let n = el; n && n !== document.body; n = up(n)) {
       if (n.nodeType === 1 && parseFloat(getComputedStyle(n).opacity) < 0.1 && !fading(n)
           && (n === el || lone(n, el))) return 'hidden';
@@ -1317,7 +1317,7 @@ _EXTRACT_JS = r"""
     return '';
   };
 
-  // --- hidden natives behind a visible label or proxy (G6) ---
+  // --- hidden natives behind a visible label or proxy ---
   const proxyFor = (el) => {
     if (el.tagName === 'SELECT') {
       // a styled trigger beside it (MUI, BambooHR) is what a person clicks
@@ -1343,19 +1343,19 @@ _EXTRACT_JS = r"""
   const items = [];             // {at, rec}: the fields in document order
   const consumed = new Set();   // controls already part of a field
   const asButtons = new Set();  // controls that are a field, never a button
-  // a posting's widgets (EXT-16, study G3): the fields of a form whose own
+  // a posting's widgets: the fields of a form whose own
   // buttons only search, filter, alert or subscribe; outside a form, of a box
   // named for filters, a search bar, job alerts or a newsletter, or whose
   // buttons only do those things; a lone picker beside the page's legal
   // links (a footer's language picker). Never a group with a password or a
   // file box, or one beside a button that goes on (submit, apply, next...).
   // a search, alert or subscribe action; Go, Clear and Reset go with one
-  // and never make a group a widget alone (review R2-I2: a phone box's Clear)
+  // and never make a group a widget alone (a phone box's Clear)
   const WIDGET_BTN = /^(search( jobs| roles)?|find( jobs)?|filters?|apply filters?|notify me|alert me|subscribe|get (job )?alerts|create (a )?(job )?alert|set (up )?(an? )?(job )?alert|email me( jobs)?|send me (jobs|alerts))$/i;
   const WIDGET_AID = /^(go|clear( all| filters)?|reset( filters)?)$/i;
   const WAY_ON = /\b(submit|apply|send|next|continue|save|finish|sign in|log in|create account|register)\b/i;
   // a box named for one: a whole class token or id ("filters", "job-alert",
-  // "search-bar"; never "location-search-box", review R2-I2), or an id that
+  // "search-bar"; never "location-search-box"), or an id that
   // ends in filters, alerts or a newsletter (Rippling's "open-roles-filters")
   const WIDGET_BOX = /^(filters?|job-?alerts?|newsletter|subscribe|search-?(bar|box|form|filters?))$/i;
   const WIDGET_ID_END = /[-_](filters|job-?alerts?|newsletter)$/i;
@@ -1380,7 +1380,7 @@ _EXTRACT_JS = r"""
       if (serious(form)) return false;
       if (form.matches('[role=search]')) return true;
       // its own buttons, those that name it from outside (`form=`), else,
-      // when all its buttons sit outside it, the page's (review R2-I2)
+      // when all its buttons sit outside it, the page's
       let btns = ownButtons(form);
       if (form.id) {
         btns = btns.concat(Array.from(document.querySelectorAll('[form=' + q(form.id) + ']'))
@@ -1395,7 +1395,7 @@ _EXTRACT_JS = r"""
     // a footer's language picker: a picker with no question of its own (no
     // label, a language or region, or words taken from the legal links
     // beside it: "Powered by ...") beside the page's legal links; an EEO
-    // question beside a privacy note is a question (review R2-I2)
+    // question beside a privacy note is a question
     const picker = el.matches('select, [role=combobox], [aria-haspopup]') && !isRequired(el);
     const letters = (t) => norm(t).toLowerCase().replace(/[^a-z]/g, '');
     const noQuestion = (legal) => !label || LEGAL.test(label) || LANGUAGE.test(label)
@@ -1429,7 +1429,7 @@ _EXTRACT_JS = r"""
     if (lb) controlled.add(lb);
   }
 
-  // custom radio groups (G7): [role=radiogroup] of [role=radio], and
+  // custom radio groups: [role=radiogroup] of [role=radio], and
   // [role=radio] siblings with no group
   const ariaRadios = all.filter((e) => e.matches('[role=radio]') && e.tagName !== 'INPUT');
   const radioGroups = new Map();
@@ -1451,7 +1451,7 @@ _EXTRACT_JS = r"""
                             { widget: 'choice', option_css: shown.map(locatorFor) }));
   }
 
-  // choice buttons (G7): sibling buttons that say pressed or checked
+  // choice buttons: sibling buttons that say pressed or checked
   // (Ashby's Yes / No), each a short text
   const pressedByParent = new Map();
   for (const b of all.filter((e) => e.matches('button[aria-pressed], [role=button][aria-pressed], '
@@ -1479,7 +1479,7 @@ _EXTRACT_JS = r"""
                             { widget: 'choice', option_css: shown.map(locatorFor) }));
   }
 
-  // date parts (EXT-12): Month / Day / Year spinbuttons in one box
+  // date parts: Month / Day / Year spinbuttons in one box
   const spins = all.filter((e) => e.matches('[role=spinbutton], input[data-automation-id^=dateSection]')
                            && !consumed.has(e) && visible(e));
   const spinBoxes = new Map();
@@ -1504,7 +1504,7 @@ _EXTRACT_JS = r"""
                             { widget: 'date:' + kinds.join(''), option_css: parts.map(locatorFor) }));
   }
 
-  // one-time code boxes (ACC-06): four or more one-character boxes in one
+  // one-time code boxes: four or more one-character boxes in one
   // box up to three levels above them (Greenhouse's security-input-N,
   // Oracle's PIN boxes) are one code field, typed from its first box
   const oneChar = (e) => e.tagName === 'INPUT' && ['text', 'tel', 'number'].includes(typeAttr(e))
@@ -1531,7 +1531,7 @@ _EXTRACT_JS = r"""
                             { widget: 'otp', option_css: parts.map(locatorFor) }));
   }
 
-  // checkbox groups (G8): boxes sharing a name, an id's question prefix, or
+  // checkbox groups: boxes sharing a name, an id's question prefix, or
   // a question box of their own
   // the question box of options with no shared name (bunq gives each box
   // and each radio a name of its own): up to four boxes above the option,
@@ -1572,7 +1572,7 @@ _EXTRACT_JS = r"""
       const words = strip(boxText(box))[0];
       const asks = /\?\s*$|all that apply|select|choose|which/i.test(words);
       // boxes that each state something ("I agree to ...", "I consent to
-      // ...") under a line that asks nothing stay apart (review M5)
+      // ...") under a line that asks nothing stay apart
       const statements = mine.every((o) => STATEMENT.test(optionLabel(o)));
       if (statements && !asks) return 'one:' + order.get(b);
       if (asks || /:\s*$/.test(words) || mine.every((o) => optionLabel(o).length <= 60)) {
@@ -1617,7 +1617,7 @@ _EXTRACT_JS = r"""
                               option_css: group.map((b) => clickFor(b) || locatorFor(b)) }));
   }
 
-  // hidden selects behind a styled trigger (G6): the trigger is the select's
+  // hidden selects behind a styled trigger: the trigger is the select's
   // face, never a field or a button of its own
   // (hidden: not shown, see-through, or a few pixels across)
   const hiddenish = (el) => {
@@ -1638,7 +1638,7 @@ _EXTRACT_JS = r"""
   const FIELD_SEL = 'input, select, textarea, [role=combobox], [role=listbox], [role=checkbox], '
     + '[role=switch], [role=textbox], [contenteditable], button[aria-haspopup], '
     + '[role=button][aria-haspopup], [aria-haspopup=listbox]';
-  // a chrome control drawn as a popup (review R4-I1): its whole shown text,
+  // a chrome control drawn as a popup: its whole shown text,
   // or its whole label, is a chrome word ("More", "Apply", "Sort by: Newest",
   // "Import from LinkedIn"); a word inside a question's text or value never
   // is ("Which of these apply to you?", "Back end", "Does not apply")
@@ -1647,14 +1647,14 @@ _EXTRACT_JS = r"""
   // a menu popup's label names the site's own chrome; a label that asks is
   // a question, whatever words it holds
   // a label that names the chrome itself, short: "Language", "Change
-  // language", "Account settings", "Your account" (review round 5, Minor 1:
-  // "Interview language" and a starred "Preferred language" are questions)
+  // language", "Account settings", "Your account"
+  // ("Interview language" and a starred "Preferred language" are questions)
   const POPUP_CHROME_LABEL = /^((change|select|choose|switch|set|your|my|site|display)\s+)?(language|account|profile|settings|share|sort( by)?|filters?)(\s+(settings|preferences|options|menu))?$/i;
   const ASKS = /\?\s*$|\ball that apply\b/i;
   const chromePopup = (text) => POPUP_CHROME.test(text) || POPUP_TOOL.test(text);
   // a send or go-on phrase, as a popup's own name ("More submit options",
   // "Save and continue", "Continue with", "Apply with", "Next step")
-  // (SP6 review M2, R2-I3) the send part is `apply_fill.send_phrase`'s rule:
+  // the send part is `apply_fill.send_phrase`'s rule:
   // a submit or send leading a short name, or a send or last-step verb
   // followed by nothing or by the application or the send itself; "Finish
   // month", "Expected finish date" and "Willing to submit references" name a
@@ -1678,7 +1678,7 @@ _EXTRACT_JS = r"""
   // A form's note about its required marks ("* Required field", "* indicates
   // a required field", "Fields marked with * are required", "Required
   // fields are marked with an asterisk (*)"): neither a question nor a star
-  // of any control (review round 9, Minor; final review B-M5)
+  // of any control
   const REQ_NOTE = /^\s*(?:[*✱＊]\s*)?(?:(?:indicates|denotes|marks)\s+(?:an?\s+)?)?(?:required|mandatory)(?:\s+(?:fields?|questions?|information))?(?:\s+(?:are|is)\s+(?:marked|shown|indicated)(?:\s+(?:with|by)(?:\s+an?)?)?(?:\s+(?:asterisk|star|[*✱＊]))?)?(?:\s*\(\s*[*✱＊]\s*\))?\.?\s*$|^\s*(?:all\s+)?(?:fields|questions)\s+(?:marked|shown)\s+(?:with|by)\s+(?:an?\s+)?(?:[*✱＊]|asterisk|star)\s*(?:\(\s*[*✱＊]\s*\)\s*)?(?:are|is)\s+(?:required|mandatory)\.?\s*$/i;
   // a star after the control in its box: a marker's own text node, or one
   // drawn by CSS or a class, outside a note (the words before the control
@@ -1700,15 +1700,14 @@ _EXTRACT_JS = r"""
     }
     return false;
   };
-  // A popup's question from outside the control (review round 8): the words
+  // A popup's question from outside the control: the words
   // of a label[for] or an aria-labelledby target outside it, else of its
   // question box (at most three boxes up, none a form or a fieldset, each
   // holding no other question), and whether that question is starred. Never
   // the control's own words, never a fieldset's legend. The third entry
   // says where the words came from: "label" or "box". A box's words that
   // are only a note about required marks are no question, and its star is
-  // taken only from a marker beside the control, never from such a note
-  // (review round 9, Minor).
+  // taken only from a marker beside the control, never from such a note.
   const popupQuestion = (el) => {
     const marks = [];
     const lab = labelElementFor(el);
@@ -1739,7 +1738,7 @@ _EXTRACT_JS = r"""
     }
     return ['', false, ''];
   };
-  // A popup's kind (review round 8): a field when it has a question from
+  // A popup's kind: a field when it has a question from
   // outside it that is no chrome name, or when it is required by its own
   // attributes (`aria-required`, `required`, Workday's aria-label ending
   // "Required") or its own question's star; else a button (left among the
@@ -1749,7 +1748,7 @@ _EXTRACT_JS = r"""
   // placeholder, or is a listbox inside a form.
   const chromeName = (t) => !!t && !ASKS.test(t) && (chromePopup(t) || POPUP_CHROME_LABEL.test(t));
   // A menu whose own name is chrome or a way on keeps that name over its
-  // box's words (review round 9, Minor): an aria-label that is chrome or a
+  // box's words: an aria-label that is chrome or a
   // way on ("More submit options"), or a shown text that is a whole chrome
   // word ("More"). A shown text with more words is an answer ("Continue
   // studies"), and a value picker (listbox) shows its answer, so its box's
@@ -1820,7 +1819,7 @@ _EXTRACT_JS = r"""
         continue;
       }
       if (!visible(el)) continue;
-      // an untyped typeahead (G7): a text box with a results list beside it
+      // an untyped typeahead: a text box with a results list beside it
       // (or inside a box beside it) or a hidden "selected" value (Lever's location)
       const RESULTS = '[class*=dropdown-results], [class*=autocomplete-results], [role=listbox]';
       const sibs = el.parentElement ? Array.from(el.parentElement.children) : [];
@@ -1836,7 +1835,7 @@ _EXTRACT_JS = r"""
       const [label, req] = labelFor(el, marks);
       if (junk(el, t, label, req)) continue;
       const type = typeahead || combo ? 'listbox' : typeOf(el);
-      // react-select's dummy input takes its clicks through its face (R2 Minor 2)
+      // react-select's dummy input takes its clicks through its face
       const face = hiddenish(el) ? comboFace(el) : null;
       if (face) kept.add(el);
       push(el, describe(el, type, label, req || isRequired(el), locatorFor(el),
@@ -1872,7 +1871,7 @@ _EXTRACT_JS = r"""
       continue;
     }
     if (role === 'checkbox' || role === 'switch') {
-      // a custom tick box (EXT-04)
+      // a custom tick box
       const [label, req] = labelFor(el, marks);
       if (junk(el, 'checkbox', label, req)) continue;
       asButtons.add(el);
@@ -1881,7 +1880,7 @@ _EXTRACT_JS = r"""
       continue;
     }
     if (role === 'textbox' || (el.isContentEditable && el.hasAttribute('contenteditable'))) {
-      // a rich-text box (EXT-13), the outermost editable only
+      // a rich-text box, the outermost editable only
       if (up(el) && closestC(up(el), '[contenteditable=""], [contenteditable=true], [role=textbox]')) continue;
       const [label, req] = labelFor(el, marks);
       push(el, describe(el, 'textarea', label, req || isRequired(el), locatorFor(el), [],
@@ -1889,7 +1888,7 @@ _EXTRACT_JS = r"""
       continue;
     }
     if (el.matches('[aria-haspopup]')) {
-      // a dropdown drawn as a button (G7, EXT-02): Workday's "Select One",
+      // a dropdown drawn as a button: Workday's "Select One",
       // Teamtailor's menu, Paylocity's div
       const pop = (el.getAttribute('aria-haspopup') || '').toLowerCase();
       if (!['listbox', 'menu', 'true'].includes(pop) || asButtons.has(el)) continue;
@@ -1943,16 +1942,16 @@ _EXTRACT_JS = r"""
   for (const el of all) {
     if (!el.matches(bsel + ', a[href]') || asButtons.has(el)) continue;
     if (!visible(el)) continue;
-    // a disabled control is kept, flagged (G10): a Submit that waits for the
+    // a disabled control is kept, flagged: a Submit that waits for the
     // form to validate is the page's way on once it is filled
     const disabled = !enabled(el);
     if (closestC(el, '[role=combobox]') || inConsent(el) || outsideModal(el)) continue;
     if (Array.from(asButtons).some((f) => f !== el && containsC(f, el))) continue;
-    // a shadow root's button shows its host's words through a slot (G12)
+    // a shadow root's button shows its host's words through a slot
     const host = rootOf(el).host;
     const text = norm(el.innerText) || norm(el.value) || norm(el.getAttribute('aria-label'))
       || norm(el.getAttribute('title')) || (host ? norm(host.innerText) : '');
-    if (!text) continue;        // an icon with no name the judge could read (G4)
+    if (!text) continue;        // an icon with no name the judge could read
     if (!el.matches(bsel) && !applyLink(el, text)) continue;
     // a button drawn under a click filter of the same words (Workday's
     // "Create Account"): the filter takes the click, the button is no
@@ -2002,7 +2001,7 @@ _EXTRACT_JS = r"""
   }
   if (banners.length) text = [text.trim(), ...banners].filter(Boolean).join('\n');
   if (modal) {
-    // the open modal's text first: it is what the page asks now (G9)
+    // the open modal's text first: it is what the page asks now
     const own = (modal.innerText || '').trim();
     if (own) text = [own, text.replace(own, '').trim()].filter(Boolean).join('\n');
   }
@@ -2015,11 +2014,11 @@ _EXTRACT_JS = r"""
 _TEXT_JS = "() => document.body ? (document.body.innerText || '') : ''"
 
 
-# The frame URLs of the last `extract` per page (study G14): a locator's frame
+# The frame URLs of the last `extract` per page: a locator's frame
 # index can shift when an ad or tracker frame detaches between the read and
 # the act; `resolve` finds the frame by the URL it had at the read first.
 _FRAME_URLS: "weakref.WeakKeyDictionary[Any, list[str]]" = weakref.WeakKeyDictionary()
-CONTENT_FRAME_MIN = (600, 300)    # px: a child frame this big is the content (G9)
+CONTENT_FRAME_MIN = (600, 300)    # px: a child frame this big is the content
 CONTENT_FRAME_ANY = (300, 150)    # px: or this big with fields or an Apply-worded control
 _APPLY_WORD = re.compile(r"\bapply\b", re.I)
 
@@ -2039,7 +2038,7 @@ def extract(page, *, content_site: Callable[[str], bool] | None = None) -> FormD
     `_content_frame`) and capped at `apply_judge.PAGE_TEXT_CAP`. A frame whose
     evaluate fails (detached, cross-origin) is skipped and keeps its index.
 
-    `content_site(frame_url)`: may that child frame be read first (R2-M1: an
+    `content_site(frame_url)`: may that child frame be read first (an
     embedded video or an ad stays in place)? The runner passes the page's
     site and the ATS platforms (`apply_run.content_frame_site`); the default
     takes only a frame of the page's own host, or a blank or srcdoc one."""
@@ -2047,7 +2046,7 @@ def extract(page, *, content_site: Callable[[str], bool] | None = None) -> FormD
 
     fields: list[Field] = []
     buttons: list[Button] = []
-    texts: list[tuple[int, str]] = []     # (order, text): a content frame's first (G9)
+    texts: list[tuple[int, str]] = []     # (order, text): a content frame's first
     dialog = ""
     all_frames = frames(page)
     if content_site is None:
@@ -2153,7 +2152,7 @@ def page_texts(page) -> list[str]:
 def resolve(page, locator: tuple[int, str]):
     """A digest locator `(frame_index, css)` as a Playwright `Locator` on that
     frame. The frame is found by the URL it had at the last `extract` first
-    (study G14: a frame that detached since shifts the indexes after it),
+    (a frame that detached since shifts the indexes after it),
     then by its index. Raises `IndexError` when the frame no longer
     exists.
 
@@ -2182,7 +2181,7 @@ def resolve(page, locator: tuple[int, str]):
     return all_frames[idx].locator(css)
 
 
-# --- live reads of the page (the submit gate and every click, SP3) ------------------------
+# --- live reads of the page (the submit gate and every click) ------------------------
 
 # A control's text as the extractor reads a button's (innerText, an input's
 # value, aria-label, title), with its aria-label and type apart.
@@ -2196,7 +2195,7 @@ LIVE_TEXT_JS = r"""el => {
 
 # The same, for every visible control of the frame that reads `want` (the
 # digest's text): how a control that changed under a stored locator is found
-# again (INV-04).
+# again.
 _FIND_BY_TEXT_JS = r"""(want) => {
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
   const locatorFor = __LOCATOR__;
@@ -2299,7 +2298,7 @@ _FORM_INDEX_JS = r"""(css) => css.map((c) => {
 
 def form_index(page, locators: list[tuple[int, str]]) -> list[tuple[int, int]]:
     """(frame, the index of its form among the frame's forms) for each
-    locator: -1 outside any form, -2 when the control is gone (ADV-08: a
+    locator: -1 outside any form, -2 when the control is gone (a
     sign-in and a sign-up side by side)."""
     out: list[tuple[int, int]] = [(int(loc[0]), -2) for loc in locators]
     by_frame: dict[int, list[int]] = {}
@@ -2333,10 +2332,10 @@ def form_index(page, locators: list[tuple[int, str]]) -> list[tuple[int, int]]:
 # `tied` when a control names it (`aria-describedby`, `aria-errormessage`).
 # Without a button, the forms of the filled fields (`fcss`) when there are
 # any. Returns {invalid: [{label, message, reason}], errors: [{text, field,
-# tied}]}. SP6: each invalid row carries the control's identity
+# tied}]}. Each invalid row carries the control's identity
 # (`IDENT_FN_JS`), its name or id and whether it shows (`shown`); each error
 # text the identity and name of the control that names it, or of the one
-# control in its box, so the repair can find the field (ADV-02).
+# control in its box, so the repair can find the field.
 _VALIDITY_JS = r"""({bcss, fcss}) => {
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
   const identOf = __IDENT__;
@@ -2525,8 +2524,8 @@ def validity_report(page, button_locator: tuple[int, str] | None = None,
 # The controls the extractor does not see as fields, in the composed tree
 # (open shadow roots walked): a native control inside a shadow root, an ARIA
 # textbox / radio / checkbox / switch / spinbutton that is no native control,
-# a contenteditable box, a custom element the run cannot read into (EXT-01,
-# kind "unreadable", `why`: a closed shadow root or a form-associated custom
+# a contenteditable box, a custom element the run cannot read into (kind
+# "unreadable", `why`: a closed shadow root or a form-associated custom
 # element; required by its attributes, empty by its own validity or its
 # value, else read as empty); outside the site chrome, a consent banner and a
 # combobox widget (each read across shadow boundaries, so a shadow header's
@@ -2558,7 +2557,7 @@ _SCAN_JS = r"""(requiredOnly) => {
   const NATIVE = /^(INPUT|SELECT|TEXTAREA)$/;
   const SKIP = new Set(['hidden', 'submit', 'button', 'image', 'reset']);
   const ROLES = /^(textbox|radio|checkbox|switch|spinbutton)$/;
-  // a custom element the run cannot read into (EXT-01): form-associated (its
+  // a custom element the run cannot read into: form-associated (its
   // value lives in the element's internals), or upgraded with a box, no open
   // shadow root and nothing inside in the light DOM, and named or marked as a
   // control (a name, required, a label, a control's role, a tab stop): a
@@ -2639,7 +2638,7 @@ _SCAN_JS = r"""(requiredOnly) => {
         if (why === 'form-associated custom element') {
           empty = invalid;
           // one its internals mark invalid blocks its form's send whatever
-          // its attributes say: it counts as required (SP6 review I6)
+          // its attributes say: it counts as required
           required = required || invalid;
         } else empty = invalid || !('value' in el) || !norm(String(el.value || ''));
       } else if (NATIVE.test(el.tagName)) {
@@ -2746,7 +2745,7 @@ _CHECKBOX_SIZES = ("normal", "compact", "flexible")
 
 def unsolved_checkbox(page) -> str:
     """A visible reCAPTCHA, hCaptcha or Turnstile checkbox (its frame's size
-    `normal`, whatever its height: study G11; Turnstile's compact and
+    `normal`, whatever its height; Turnstile's compact and
     flexible too) whose document holds an empty response token, or none:
     the provider's name, else "". The invisible badge (`size=invisible`)
     never counts."""

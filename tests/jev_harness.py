@@ -346,8 +346,10 @@ class Session:
         self.stopped: str | None = None
         # every count here is a delta of the lifetime counter
         # (`jev.total_usage()`): a runner test that calls `jev.reset_usage()`
-        # never makes the session forget a live request
-        self._usage_start = jev.total_usage()
+        # never makes the session forget a live request. A dry run's counts
+        # take the simulated requests too (`_counted`).
+        self._usage_start = self._counted()
+        self._simulated_start = jev.simulated_usage()
         self._usage_before: dict | None = None
         self.writer = OutcomesWriter(outcomes_path(self.cache_path)) if self.soft else None
 
@@ -382,20 +384,27 @@ class Session:
         rec = TestRecord(test=nodeid, mode=self.mode)
         self.records[nodeid] = rec
         self.current = rec
-        self._usage_before = jev.total_usage()
+        self._usage_before = self._counted()
         return rec
+
+    def _counted(self) -> dict:
+        """The lifetime counter this session measures: the live requests,
+        plus the simulated ones (`jev.DryRun`) in a dry run."""
+        return jev.total_usage(include_simulated=self.dry)
 
     def live_usage(self) -> dict:
         """{"requests", "input_tokens", "usd"} for the live requests (a dry
         run's estimated ones) made since the session began."""
-        now = jev.total_usage()
-        tokens = max(0, now["input_tokens"] - self._usage_start["input_tokens"])
-        return {"requests": max(0, now["requests"] - self._usage_start["requests"]),
-                "input_tokens": tokens, "usd": jev.usd_for(tokens)}
+        return _since(self._usage_start, self._counted())
+
+    def simulated_usage(self) -> dict:
+        """{"requests", "input_tokens", "usd"} for the `jev.DryRun` requests
+        made since the session began: estimated, never sent, never billed."""
+        return _since(self._simulated_start, jev.simulated_usage())
 
     def end(self, nodeid: str) -> None:
         if self.current is not None and self.current.test == nodeid:
-            before, after = self._usage_before or jev.total_usage(), jev.total_usage()
+            before, after = self._usage_before or self._counted(), self._counted()
             delta = max(0.0, after["usd"] - before["usd"])
             self.spent_usd += delta
             self.requests += max(0, after["requests"] - before["requests"])
@@ -440,6 +449,39 @@ class Session:
                 f"-n/--numprocesses: record and replay write a shared cache and "
                 f"outcomes file with no cross-process lock, see "
                 f"conftest_jev.pytest_configure).")
+
+
+def _since(start: Mapping[str, Any], now: Mapping[str, Any]) -> dict:
+    """The usage between two readings of one lifetime counter."""
+    tokens = max(0, now["input_tokens"] - start["input_tokens"])
+    return {"requests": max(0, now["requests"] - start["requests"]),
+            "input_tokens": tokens, "usd": jev.usd_for(tokens)}
+
+
+def summary_line(session: Session, hits: int, misses: int, diverged: int) -> str:
+    """The terminal summary's counts line. Replay sends nothing (and the
+    test conftest drops the key outside a recording), so in replay mode it
+    says live requests 0, and lists what test doubles counted on the live
+    counter apart as never sent. `jev.DryRun` requests are named as
+    simulated, never live."""
+    usage = session.live_usage()
+    if session.dry:
+        spend = (f"estimated live requests {usage['requests']}, {usage['input_tokens']} "
+                 f"input tokens, {usage['usd']:.4f} USD")
+    elif session.mode == "replay":
+        spend = "live requests 0 (replay sends nothing)"
+        if usage["requests"]:
+            spend += (f"; test doubles counted {usage['requests']} request(s) as live, "
+                      f"{usage['input_tokens']} input tokens (never sent, not billed)")
+    else:
+        spend = (f"live requests {usage['requests']}, {usage['input_tokens']} "
+                 f"input tokens, {usage['usd']:.4f} USD")
+    sim = session.simulated_usage()
+    if sim["requests"] and not session.dry:
+        spend += (f"; simulated DryRun requests {sim['requests']}, ~{sim['input_tokens']} "
+                  f"est. input tokens, est. {sim['usd']:.4f} USD (not billed)")
+    return (f"replay hits {hits}, misses {misses}; {spend}; {len(session.records)} test(s) "
+            f"recorded, {diverged} diverged from the fake")
 
 
 # --- the module-level factory the test helpers call ----------------------------------

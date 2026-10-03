@@ -91,9 +91,11 @@ def test_real_judge_dry_answers_with_the_fake_into_a_temp_copy_under_the_cap(tmp
     rj = h.real_judge("dry", cache, cap_usd=0.5)
     assert rj.cache != cache and isinstance(rj.cap.inner, jev.DryRun)
     assert rj.cap.cap_usd == 0.5 and not h.replay_only(rj.judge)
+    sim0 = jev.simulated_usage()["requests"]
     rj.judge.judge(_state("a"), QUESTIONS)
     assert rj.cache.is_file() and not cache.exists()
-    assert jev.usage()["requests"] == 1
+    assert jev.simulated_usage()["requests"] - sim0 == 1 and jev.usage()["requests"] == 0
+    assert rj.cap.requests == 1
 
 
 def test_real_judge_record_asks_the_live_judge_through_the_cap(tmp_path, monkeypatch):
@@ -146,7 +148,7 @@ def test_run_real_under_a_cap_that_holds_runs_every_flow(tmp_path, monkeypatch):
     col = h.run_real(_flows("a", "b"), rj, browser=None, server=None, workdir=tmp_path)
     assert [r.flow for r in col.results] == ["a", "b"]
     assert col.unrecorded == [] and col.stopped == ""
-    assert jev.usage()["requests"] == 2
+    assert rj.cap.requests == 2 and jev.usage()["requests"] == 0, "a dry run is simulated"
 
 
 # --- the flows a replay leaves out ----------------------------------------------------------

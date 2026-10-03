@@ -107,7 +107,11 @@ _USAGE = {"requests": 0, "input_tokens": 0}
 # reset anywhere in the process (a test, a per-run report) can never make
 # them forget a live request that was already made.
 _TOTAL = {"requests": 0, "input_tokens": 0}
-# The scorer judges from worker threads, so every read and write of either
+# Requests a stand-in made at their estimated size (`DryRun`): nothing left
+# the machine and nothing was billed, so neither counter above sees them. A
+# dry run's own cap and estimate read them beside the live ones.
+_SIMULATED = {"requests": 0, "input_tokens": 0}
+# The scorer judges from worker threads, so every read and write of any
 # counter holds this lock: no count is lost, and a reader never sees one half
 # counted.
 _USAGE_LOCK = threading.Lock()
@@ -115,32 +119,51 @@ _USAGE_LOCK = threading.Lock()
 
 def usage() -> dict:
     """{"requests", "input_tokens", "usd"} for every live request this process
-    made since the last `reset_usage()`. The fake and a replay hit never count."""
+    made since the last `reset_usage()`. The fake, a replay hit and a
+    `DryRun` never count."""
     with _USAGE_LOCK:
         requests, tokens = _USAGE["requests"], _USAGE["input_tokens"]
     return {"requests": requests, "input_tokens": tokens, "usd": usd_for(tokens)}
 
 
-def total_usage() -> dict:
+def total_usage(*, include_simulated: bool = False) -> dict:
     """{"requests", "input_tokens", "usd"} for every live request this process
     ever made: `usage()` without its resets, so it only grows. A guard reads a
-    delta of it."""
+    delta of it. `include_simulated` adds the `DryRun` requests
+    (`simulated_usage()`), for a dry run's estimate of what a recording
+    would spend."""
     with _USAGE_LOCK:
         requests, tokens = _TOTAL["requests"], _TOTAL["input_tokens"]
+        if include_simulated:
+            requests += _SIMULATED["requests"]
+            tokens += _SIMULATED["input_tokens"]
+    return {"requests": requests, "input_tokens": tokens, "usd": usd_for(tokens)}
+
+
+def simulated_usage() -> dict:
+    """{"requests", "input_tokens", "usd"} for every `DryRun` request this
+    process made, at their estimated size. Never billed; it only grows."""
+    with _USAGE_LOCK:
+        requests, tokens = _SIMULATED["requests"], _SIMULATED["input_tokens"]
     return {"requests": requests, "input_tokens": tokens, "usd": usd_for(tokens)}
 
 
 def reset_usage() -> None:
-    """Zero `usage()`; `total_usage()` keeps its counts."""
+    """Zero `usage()`; `total_usage()` and `simulated_usage()` keep their counts."""
     with _USAGE_LOCK:
         _USAGE["requests"] = 0
         _USAGE["input_tokens"] = 0
 
 
-def count_usage(tokens: int) -> None:
-    """Add one live request of `tokens` input tokens to both process counters."""
+def count_usage(tokens: int, *, simulated: bool = False) -> None:
+    """Add one live request of `tokens` input tokens to both process counters;
+    with `simulated`, one `DryRun` request to the simulated counter alone."""
     tokens = max(0, int(tokens))
     with _USAGE_LOCK:
+        if simulated:
+            _SIMULATED["requests"] += 1
+            _SIMULATED["input_tokens"] += tokens
+            return
         _USAGE["requests"] += 1
         _USAGE["input_tokens"] += tokens
         _TOTAL["requests"] += 1
@@ -1144,7 +1167,14 @@ class SpendCap:
     `cap_usd` raises `SpendCapReached` before it leaves; so does every
     request after. A request that raised before the counter saw it (a
     timeout or a server error after the service may have billed it) counts
-    at its estimate (`unbilled_usd`), so the cap never runs behind.
+    at its estimate (`unbilled_usd`), and so does an answered request whose
+    usage reported no input tokens, so the cap never runs behind. The check
+    and the request are one step under a lock: two threads never both pass
+    the check on the same spend.
+
+    Over a `DryRun` (`inner.simulated`) the cap also counts the simulated
+    requests, so a dry run stops where a recording would; a cap over a live
+    judge counts real requests only, and every real request counts either way.
     `reached` says the cap stopped a request; `refused` counts them;
     `reason` is the first refusal's text. `cap_usd` must be a finite amount
     above 0 (`checked_cap`)."""
@@ -1152,51 +1182,67 @@ class SpendCap:
     def __init__(self, inner: Jev, cap_usd: float):
         self.inner = inner
         self.cap_usd = checked_cap(cap_usd, source="cap_usd")
-        self._start = total_usage()
+        self.simulated = bool(getattr(inner, "simulated", False))
+        self._start = self._counted()
+        self._lock = threading.Lock()
         self.reached = False
         self.refused = 0
         self.reason = ""
         self.failed = 0             # requests that raised with no count of their own
-        self.unbilled_usd = 0.0     # their estimated cost
+        self.unbilled_usd = 0.0     # their estimated cost, and that of a zero-token answer
+
+    def _counted(self) -> dict:
+        return total_usage(include_simulated=self.simulated)
 
     @property
     def spent_usd(self) -> float:
-        return max(0.0, total_usage()["usd"] - self._start["usd"]) + self.unbilled_usd
+        return max(0.0, self._counted()["usd"] - self._start["usd"]) + self.unbilled_usd
 
     @property
     def requests(self) -> int:
-        return max(0, total_usage()["requests"] - self._start["requests"]) + self.failed
+        return max(0, self._counted()["requests"] - self._start["requests"]) + self.failed
 
     def judge(self, state: Any, questions: dict[str, dict]) -> dict[str, Answer]:
-        spent = self.spent_usd
-        next_usd = usd_for(request_size(state, questions)[1])
-        if self.reached or spent + next_usd > self.cap_usd:
-            self.refused += 1
-            reason = (f"{RECORD_CAP_ENV} reached: {spent:.4f} USD spent over {self.requests} "
-                      f"live request(s), the next estimated at {next_usd:.4f} USD, cap "
-                      f"{self.cap_usd:.4f} USD")
-            if not self.reached:
-                self.reached, self.reason = True, reason
-            raise SpendCapReached(reason)
-        before = total_usage()["requests"]
-        try:
-            return self.inner.judge(state, questions)
-        except SpendCapReached:
-            raise
-        except BaseException:
-            if total_usage()["requests"] == before:
-                # the request may have been billed before it failed
-                self.failed += 1
+        with self._lock:
+            spent = self.spent_usd
+            next_usd = usd_for(request_size(state, questions)[1])
+            if self.reached or spent + next_usd > self.cap_usd:
+                self.refused += 1
+                reason = (f"{RECORD_CAP_ENV} reached: {spent:.4f} USD spent over "
+                          f"{self.requests} live request(s), the next estimated at "
+                          f"{next_usd:.4f} USD, cap {self.cap_usd:.4f} USD")
+                if not self.reached:
+                    self.reached, self.reason = True, reason
+                raise SpendCapReached(reason)
+            before = self._counted()
+            try:
+                answers = self.inner.judge(state, questions)
+            except SpendCapReached:
+                raise
+            except BaseException:
+                if self._counted()["requests"] == before["requests"]:
+                    # the request may have been billed before it failed
+                    self.failed += 1
+                    self.unbilled_usd += next_usd
+                raise
+            after = self._counted()
+            if (after["requests"] > before["requests"]
+                    and after["input_tokens"] == before["input_tokens"]):
+                # answered, so billed, but its usage reported no input tokens
                 self.unbilled_usd += next_usd
-            raise
+            return answers
 
 
 class DryRun:
     """A stand-in for the live judge in a recording's dry run: `inner`
-    (the fake by default) answers, and each request counts as one live
-    request of its estimated size (`request_size`, the whole request), so
-    the cap and the spend estimate work as they would live. No key, no
-    network. Never a production judge."""
+    (the fake by default) answers, and each request counts as one simulated
+    request of its estimated size (`request_size`, the whole request,
+    `count_usage(..., simulated=True)`), so a `SpendCap` over it and a dry
+    run's estimate work as they would live. The live counters (`usage()`,
+    `total_usage()`) never see it. No key, no network. Never a production
+    judge."""
+
+    simulated = True
 
     def __init__(self, inner: Jev | None = None):
         self.inner = inner if inner is not None else FakeJev()
@@ -1208,7 +1254,7 @@ class DryRun:
         answers = self.inner.judge(state, questions)
         self.requests += 1
         self.tokens += tokens
-        count_usage(tokens)
+        count_usage(tokens, simulated=True)
         return answers
 
 

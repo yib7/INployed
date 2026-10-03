@@ -95,10 +95,10 @@ class _Reads:
         self.judge = jev.ReplayJev(inner, self.cache)
         self.rows: list[dict] = []
         # the lifetime counter: a reset of usage() never hides a request
-        self._before = jev.total_usage()
+        self._before = jev.total_usage(include_simulated=mode == "dry")
 
     def spend(self) -> dict:
-        after = jev.total_usage()
+        after = jev.total_usage(include_simulated=self.mode == "dry")
         tokens = after["input_tokens"] - self._before["input_tokens"]
         return {"requests": after["requests"] - self._before["requests"],
                 "input_tokens": tokens, "usd": round(jev.usd_for(tokens), 6)}

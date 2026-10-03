@@ -25,8 +25,9 @@ Hooks, active in `record` and `replay` mode only:
   other replay miss recorded on the test becomes a failure whose text names the fixture, the test and the
   re-record command; a failed `AssertionError` becomes an xfail carrying the
   divergence; either way the test's record goes to `outcomes.jsonl`.
-- terminal summary: replay hits and misses, live requests and spend, the
-  outcomes path, and the cap stop if it happened.
+- terminal summary: replay hits and misses, live requests and spend (replay
+  mode sends none and says so; `jev.DryRun` requests are listed apart as
+  simulated, never billed), the outcomes path, and the cap stop if it happened.
 - session finish: when `AUTO_APPLY_JEV_PRUNE` is set, the shared replay's used
   keys are written to `jev_harness.used_keys_path` (SP8, gitignored), and the
   cache is pruned to them, or refused with a reason
@@ -211,17 +212,14 @@ def pytest_terminal_summary(terminalreporter, config):
     session = _session(config)
     if session is None or not session.soft:
         return
-    usage = session.live_usage()    # the lifetime counter's delta: a reset never hides a request
     replay = session.replay
     hits = replay.hits if replay else 0
     misses = replay.misses if replay else 0
     diverged = sum(1 for r in session.records.values() if r.divergence)
     terminalreporter.write_sep("-", f"jev {session.mode}{' (dry run)' if session.dry else ''}")
-    live = "estimated live" if session.dry else "live"
-    terminalreporter.write_line(
-        f"replay hits {hits}, misses {misses}; {live} requests {usage['requests']}, "
-        f"{usage['input_tokens']} input tokens, {usage['usd']:.4f} USD; "
-        f"{len(session.records)} test(s) recorded, {diverged} diverged from the fake")
+    # the lifetime counters' deltas: a reset never hides a request, and a
+    # simulated `jev.DryRun` request is never reported as a live one
+    terminalreporter.write_line(jev_harness.summary_line(session, hits, misses, diverged))
     terminalreporter.write_line(f"outcomes: {session.writer.path}")
     if session.stopped:
         terminalreporter.write_line(session.stopped)

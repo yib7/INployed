@@ -1116,6 +1116,17 @@ class RefusesStage2For(ScriptedJudge):
         return super().judge(state, questions)
 
 
+class _CountsLikeLive(RefusesStage2For):
+    """`RefusesStage2For` that counts each answered request on the live
+    counters at its estimated size, as `jev.TypeSafeJev` counts the
+    service's own count (`jev.DryRun` counts on the simulated one)."""
+
+    def judge(self, state, questions):
+        answers = super().judge(state, questions)
+        jev.count_usage(jev.request_size(state, questions)[1])
+        return answers
+
+
 def test_run_scoring_scores_both_stages_with_jev_and_never_calls_the_llm(monkeypatch):
     sj = _sj()
     # SP2's writer is a deliberate exception to "never calls the LLM": it is
@@ -1388,7 +1399,7 @@ def test_the_run_summary_counts_jev_requests_spend_and_fallbacks_by_stage(monkey
     # This test is about the Jev/LLM request and spend counts; the writer's own
     # counts and summary suffix are tests/test_score_jobs_writer.py's subject.
     monkeypatch.setattr(sj, "JEV_WRITER", False)
-    run = sj.JevRun(jev.Guarded(jev.DryRun(RefusesStage2For("JOB-B"))))
+    run = sj.JevRun(jev.Guarded(_CountsLikeLive("JOB-B")))
     df = _jobs_df("JOB-A", "JOB-B")
     asyncio.run(sj.run_scoring(RecordingPool(), RESUME, df, jev_run=run))
     stats = run.stats()

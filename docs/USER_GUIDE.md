@@ -923,7 +923,7 @@ decisions live in `local/apply_judge.py`, with the live answers they were tuned 
    `TYPESAFE_API_KEY=...`, or paste it into **Settings → Jev → TypeSafe API key (Jev
    judge)** (it loads masked; untick *Hide* to see it; a rotated key needs a dashboard restart), and leave
    **Use Jev** on. `pip install
-   playwright typesafe-sdk` if **Check setup** says they are missing; the run uses your
+   playwright==1.61.0 typesafe-sdk` if **Check setup** says they are missing; the run uses your
    installed Google Chrome, and `python -m playwright install chromium` gives it a fallback
    browser when Chrome is absent; `python local/apply_run.py doctor` prints the same
    rows from a terminal.

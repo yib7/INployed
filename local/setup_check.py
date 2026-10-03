@@ -268,7 +268,7 @@ def auto_apply_warnings(has_key: bool, jev_mode: str, sdk_found: bool,
                        "`pip install typesafe-sdk` (it is in requirements.txt).")
     if not playwright_found:
         out.append("Playwright is not installed, and auto-apply runs drive a Playwright "
-                   "Chromium: run `pip install playwright`, then "
+                   "Chromium: run `pip install playwright==1.61.0`, then "
                    "`playwright install chromium`.")
     elif not chromium_found:
         out.append("Playwright is installed but its Chromium is not: run "

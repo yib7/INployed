@@ -42,6 +42,10 @@ All notable changes to INployed are recorded here. The format follows
   and `tzdata` 2026.5; the VM pin set takes the same `google-genai` and `pandas`.
   `typesafe-sdk` is pinned exactly at 0.7.2 (it was the range `>=0.7.0`), so a fresh install
   gets the version the suite ran against.
+- **Playwright is held at 1.61.0.** On 1.62.0 and 1.63.0, closing a page that a second failed
+  load left on Chrome's error page never returns, so an auto-apply run could hang. Check setup,
+  the User Guide and the `requirements.txt` comment now say `pip install playwright==1.61.0`,
+  and CI installs the same version.
 
 ### Fixed
 

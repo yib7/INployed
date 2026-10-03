@@ -43,12 +43,16 @@ This project stands on a lot of other people's work.
 - **Bright Data**: LinkedIn job dataset collection.
 - **Google Drive** + **rclone**: syncing scraped results from the VM to the desktop.
 - **MiKTeX** (`pdflatex`): LaTeX to PDF compilation.
+- **TypeSafe** (System One, through `typesafe-sdk`): the Jev judge behind auto-apply, the
+  difficulty check and the optional Jev scorer and tailor checks.
+- **Claude Code CLI** (Anthropic): the optional Claude provider for the tailor and the
+  local scorer.
 
 ## Python libraries
 pandas · google-genai · aiohttp · PyYAML · ruamel.yaml · pypdf · markdownify ·
-python-dotenv · tzdata · requests · Send2Trash · keyring · PySide6 (Qt) · pytest ·
-pytest-qt · pytest-timeout · ruff · and the Python standard library (asyncio, sqlite3,
-argparse). The VM pin set (`scripts/requirements-vm.txt`) adds **numpy**, whose own
+python-dotenv · tzdata · requests · Send2Trash · keyring · typesafe-sdk (MIT) ·
+PySide6 (Qt) · pytest · pytest-qt · pytest-xdist · pytest-timeout · ruff · and the
+Python standard library (asyncio, sqlite3, argparse). The VM pin set (`scripts/requirements-vm.txt`) adds **numpy**, whose own
 declared expression is `BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0`.
 
 Three more are optional and installed only if you want the feature they serve, so

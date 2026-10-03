@@ -3798,7 +3798,8 @@ def mailto_address(loc) -> str:
     return _cap(href[len("mailto:"):].split("?", 1)[0], 120)
 
 
-def click_entry(page, loc, *, timeout_ms: int | None = None) -> tuple[Any, str, int]:
+def click_entry(page, loc, *, timeout_ms: int | None = None,
+                on_popup: Callable[[Any], None] | None = None) -> tuple[Any, str, int]:
     """Click an Apply entry and wait for what it does, whichever comes
     first: a new tab (the popup), a same-tab navigation, or a same-tab DOM
     change (none of 24 real entry clicks opened a popup, and a
@@ -3807,12 +3808,19 @@ def click_entry(page, loc, *, timeout_ms: int | None = None) -> tuple[Any, str, 
     gets `POPUP_GRACE_S` more for a popup that follows it. Returns (the popup
     or None, "popup" | "navigation" | "dom" | "none" | "failed: <error>", the
     ms waited). A click that raised sent nothing on its way: "failed". A
-    popup later still is the caller's (`LateWatch`)."""
+    popup later still is the caller's (`LateWatch`). `on_popup` gets the new
+    tab at its popup event, while it still shows the address it opened at
+    (LinkedIn's `/safety/go/` hop moves on within a second)."""
     window_s = (POPUP_TIMEOUT_MS if timeout_ms is None else int(timeout_ms)) / 1000
     popups: list = []
 
     def _on_popup(p) -> None:
         popups.append(p)
+        if on_popup is not None:
+            try:
+                on_popup(p)
+            except Exception:   # noqa: BLE001  (a watch that fails never stops the click)
+                pass
 
     try:
         page.on("popup", _on_popup)
@@ -6779,7 +6787,8 @@ class _JobRun:
         live = apply_form.live_text(loc)
         # a control that cannot be read just before the click is never
         # clicked: what it would do is not known
-        why = live_refusal("apply_entry", text, live) if live else             "its text could not be read just before the click"
+        why = (live_refusal("apply_entry", text, live) if live
+               else "its text could not be read just before the click")
         if why:
             self._refused_click("apply_entry", text, why)
         address = mailto_address(loc)
@@ -6792,7 +6801,7 @@ class _JobRun:
         rec["clicked"].append(f"{text} (apply_entry)")
         self._last_click = (text, "apply_entry")
         source_url = self.page.url
-        popup, signal, waited = click_entry(self.page, loc)
+        popup, signal, waited = click_entry(self.page, loc, on_popup=self._watch_popup)
         if popup is None:
             self._stop_late_watch()
             self._late_watch = LateWatch(self.page, signal, str(source_url))
@@ -6824,6 +6833,12 @@ class _JobRun:
         finally:
             self._trace("apply_entry", n=n, text=text, how=how, popup=True, signal=signal,
                         waited_ms=waited, destination=str(self.page.url))
+
+    def _watch_popup(self, popup) -> None:
+        """The tab an Apply click opened, watched from its popup event: the
+        address it opened at goes into the URL chain before the tab leaves it."""
+        self.trace.nav(str(popup.url))
+        self._watch(popup)
 
     def _follow_popup(self, popup, *, source_url: str | None = None) -> None:
         """Adopt the tab Apply opened once it has reached its destination:

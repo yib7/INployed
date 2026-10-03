@@ -157,6 +157,24 @@ def test_the_trace_follows_the_popup_and_records_the_linkedin_shortcut(
     assert run["url_chain"][-1].endswith("/forms/ashby_steps.html")
 
 
+def test_click_entry_hands_the_popup_over_at_the_address_it_opened_at(context):
+    # a hop that moves on at once: the address the Apply opened is still seen,
+    # since the caller gets the tab at its popup event (a watch that starts
+    # once the tab has loaded can miss the hop on a loaded machine)
+    hop = "<script>location.replace('https://dest.example/jobs/1')</script>"
+    context.route("https://hop.example/**",
+                  lambda r: r.fulfill(content_type="text/html", body=hop))
+    context.route("https://dest.example/**",
+                  lambda r: r.fulfill(content_type="text/html", body="<p>The form</p>"))
+    page = context.new_page()
+    page.set_content('<a id="go" href="https://hop.example/go" target="_blank">Apply</a>')
+    seen: list[str] = []
+    popup, signal, _ = apply_run.click_entry(page, page.locator("#go"),
+                                             on_popup=lambda p: seen.append(str(p.url)))
+    assert signal == "popup" and popup is not None
+    assert seen == ["https://hop.example/go"]
+
+
 def test_screenshots_mask_the_password_and_code_boxes(context, tmp_path):
     page = context.new_page()
     page.set_content("""<body style="margin:0">

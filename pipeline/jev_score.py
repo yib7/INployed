@@ -55,21 +55,21 @@ SCORE_LABELS: dict[int, str] = {1: "No match", 2: "Weak match", 3: "Borderline",
                                 4: "Good match", 5: "Strong match"}
 
 # Stage 2 asks Jev the stage 2 rubric directly (`deep_fit`, a five-level Score);
-# the recommendation is no longer a Choice Jev picks, it is read off the
-# composed deep score (see RECOMMEND_APPLY, RECOMMEND_CONSIDER and `recommend`
-# below). `deep_fit`'s value maps to 1-10 by `floor(DEEP_BASE + DEEP_SPAN *
-# value / 4 + 0.5)`. Tuned 2026-09-28 against Gemini's deep score on 321
-# stage 2 jobs (two samples), mean gap 0.53 / 0.54; Jev's `deep_fit` reads a
-# mixed fit where Gemini gives about 8 of 10, so the map starts high. With
-# these values a stage 2 deep score lands on 7 to 10.
+# code reads the recommendation off the composed deep score (see
+# RECOMMEND_APPLY and `recommend` below). `deep_fit`'s value maps to 1-10 by
+# `floor(DEEP_BASE + DEEP_SPAN * value / 4 + 0.5)`. Tuned 2026-09-28 against
+# Gemini's deep score on 321 stage 2 jobs (two samples), mean gap 0.53 / 0.54;
+# Jev's `deep_fit` reads a mixed fit where Gemini gives about 8 of 10, so the
+# map starts high. With these values a stage 2 deep score lands on 7 to 10,
+# the range Gemini's own stage 2 uses: a job reaches stage 2 only as a good or
+# strong match, and Gemini's stage 2 almost never says skip.
 DEEP_BASE = 6.5
 DEEP_SPAN = 3.5
 # The recommendation is read off the composed deep score: apply at
-# RECOMMEND_APPLY or more, consider at RECOMMEND_CONSIDER or more, skip
-# below; 83.2% / 81.9% agreement with Gemini, where Jev's own apply /
-# consider / skip Choice agreed on 29.2% / 30.6%.
+# RECOMMEND_APPLY or more, consider below it (a composed 7). The 7-10 range
+# leaves no skip band. 83.2% / 81.9% agreement with Gemini, where Jev's own
+# apply / consider / skip Choice agreed on 29.2% / 30.6%.
 RECOMMEND_APPLY = 8
-RECOMMEND_CONSIDER = 6
 MIN_PREFERRED_LINES = 3         # requirement_lines(): below this many heading bullets,
                                  # other sections' bullets fill in too (unrelated to any
                                  # stage 2 minimum: stage 2 now runs on 0 to 30 lines)
@@ -904,13 +904,10 @@ def _joined(lines: list[str]) -> str:
 
 def recommend(deep: int) -> str:
     """The recommendation read off a composed deep score: apply at
-    RECOMMEND_APPLY or more, consider at RECOMMEND_CONSIDER or more, skip
-    below. Pure: the constants at the top of the module."""
-    if deep >= RECOMMEND_APPLY:
-        return "apply"
-    if deep >= RECOMMEND_CONSIDER:
-        return "consider"
-    return "skip"
+    RECOMMEND_APPLY or more, consider below. The composed deep score runs 7
+    to 10 (DEEP_BASE, DEEP_SPAN), so Jev's stage 2 never writes skip, the way
+    Gemini's stage 2 almost never does."""
+    return "apply" if deep >= RECOMMEND_APPLY else "consider"
 
 
 def compose_stage2(reqs: Sequence[Req], reads: Mapping[str, Any]) -> dict:
@@ -921,11 +918,11 @@ def compose_stage2(reqs: Sequence[Req], reads: Mapping[str, Any]) -> dict:
     one. `deep_score` maps `deep_fit`'s value (0-4) to 1-10 by
     `floor(DEEP_BASE + DEEP_SPAN * value / 4 + 0.5)`; since `deep_fit` already
     arrives scaled to 0-1 (value / 4), that is `floor(DEEP_BASE + DEEP_SPAN *
-    deep_fit + 0.5)`. `recommendation` is `recommend(deep_score)`: apply,
-    consider or skip by where the composed deep score falls, no longer a
-    Choice Jev picks. `findings` carries the full, unjoined line texts (met =
-    must-haves first, as `strengths` orders them) for the writer (SP2). Pure:
-    the rules and constants at the top of the module."""
+    deep_fit + 0.5)`, which lands on 7 to 10. `recommendation` is
+    `recommend(deep_score)`: apply or consider by where the composed deep
+    score falls. `findings` carries the full, unjoined line texts (met =
+    must-haves first, as `strengths` orders them) for the stage 2 writer.
+    Pure: the rules and constants at the top of the module."""
     lines = []
     for i, req in enumerate(reqs):
         met = min(1.0, max(0.0, float(reads[f"req_{i}_met"])))

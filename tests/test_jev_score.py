@@ -906,10 +906,23 @@ def test_stage2_deep_score_maps_deep_fit_to_one_to_ten(frac, deep):
 
 
 @pytest.mark.parametrize("deep,rec", [
-    (5, "skip"), (6, "consider"), (7, "consider"), (8, "apply"), (10, "apply"),
+    (7, "consider"), (8, "apply"), (9, "apply"), (10, "apply"),
 ])
 def test_recommend_reads_the_band_off_the_deep_score(deep, rec):
     assert jev_score.recommend(deep) == rec
+
+
+def test_composed_deep_score_spans_seven_to_ten_so_the_reading_is_apply_or_consider():
+    """The map starts at 7 (Gemini's stage 2 almost never says skip), so a
+    composed deep score never reaches a skip band: every `deep_fit` from 0 to 1
+    gives 7-10 and apply or consider, and the module keeps no skip threshold."""
+    seen = set()
+    for step in range(0, 1001):
+        got = jev_score.compose_stage2([], {"deep_fit": step / 1000})
+        assert 7 <= got["deep_score"] <= 10
+        seen.add((got["deep_score"], got["recommendation"]))
+    assert seen == {(7, "consider"), (8, "apply"), (9, "apply"), (10, "apply")}
+    assert not hasattr(jev_score, "RECOMMEND_CONSIDER")
 
 
 def test_stage2_recommendation_is_read_off_the_composed_deep_score():

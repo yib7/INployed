@@ -543,3 +543,18 @@ def test_guess_title_company_uses_raw_lines():
     title, company = manual_add._guess_title_company(
         "Data Analyst\nAcme Corp\nBuild dashboards.")
     assert title == "Data Analyst" and company == "Acme Corp"
+
+
+def test_a_tailor_failure_status_line_names_no_path():
+    """The status line is on screen: the exception's absolute path is dropped
+    to its file name, and a long multi-line reason shows its first line."""
+    def boom_tailor(job, **k):
+        raise OSError(r"could not write C:\Users\someone\Generated\resume.pdf" "\n"
+                      "Traceback detail line")
+
+    lines = []
+    record = {"job_posting_id": "manual-abc", "job_title": "T", "company_name": "C"}
+    manual_add.retailor_existing(record, tailor_fn=boom_tailor, on_status=lines.append)
+    failed = [m for m in lines if m.startswith("tailoring failed")]
+    assert failed == ["tailoring failed (could not write resume.pdf); the job is still "
+                      "saved. Retry with Tailor résumé."]

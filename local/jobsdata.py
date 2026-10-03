@@ -18,7 +18,7 @@ import tempfile
 import threading
 import unicodedata
 from collections.abc import Callable
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -1231,6 +1231,13 @@ def _mixed_timestamps(values: pd.Series) -> pd.Series:
     return parsed.dt.tz_localize(None)
 
 
+
+def _utc_today() -> date:
+    """Today on the UTC clock: seen.db stamps `marked_at` in UTC, so the repost
+    window counts its days on that clock too (a local date runs a day behind
+    in a US evening)."""
+    return datetime.now(timezone.utc).date()
+
 def blocked_repost_keys(df: pd.DataFrame, marked_at: dict[str, str], window_days: int,
                          today: date | None = None) -> set[str]:
     """Repost keys a mark blocks, over EVERY row of `df` whatever its score.
@@ -1250,7 +1257,7 @@ def blocked_repost_keys(df: pd.DataFrame, marked_at: dict[str, str], window_days
     if df.empty or window_days <= 0 or not marked_at:
         return set()
     if today is None:
-        today = date.today()
+        today = _utc_today()
     ids = _repost_col(df, "job_posting_id").astype(str)
     # Only a MARKED row can ever block anything, and marked_at is typically a
     # small fraction of a full loaded frame (thousands of historic marks
@@ -1292,7 +1299,7 @@ def suppress_reposts(df: pd.DataFrame, marked_at: dict[str, str], window_days: i
     if window_days <= 0 or df.empty:
         return df, 0
     if today is None:
-        today = date.today()
+        today = _utc_today()
     if key_source is None:
         key_source = df
 

@@ -2035,6 +2035,9 @@ class MainWindow(QtWidgets.QMainWindow):
             jd_text=vals.get("jd_text", ""), url=vals.get("url", ""),
             company=vals.get("company", ""), title=vals.get("title", ""),
             tailor_opts=opts, on_status=self.tailor_progress.emit)
+        if not res.get("appended"):
+            # the posting was already in the master: no new row to send to the VM
+            return dict(res, duplicate=True)
         self._push_manual_row_to_vm(res)
         return res
 
@@ -2083,7 +2086,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.reload_data_async()
         title = rec.get("job_title", "job")
         company = rec.get("company_name", "")
-        if result.get("resume_dir"):
+        if result.get("duplicate"):
+            lead = f"Already in your jobs, so not added again: {title} @ {company}."
+            self._set_status(
+                f"{lead} Tailored it again." if result.get("resume_dir") else
+                f"{lead} Tailoring failed; retry with Tailor résumé on the job.")
+        elif result.get("resume_dir"):
             self._set_status(f"Manual job tailored: {title} @ {company}.")
         else:
             # MA-4: tailoring failed but the row is still saved; say how to retry.

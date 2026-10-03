@@ -38,6 +38,8 @@ for _p in (str(HERE), str(REPO_ROOT / "pipeline")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+import errmsg  # noqa: E402  (local/, put on the path just above)
+
 
 # A manually-added job gets a deterministic synthetic id so re-adding the same JD
 # de-dupes against itself (and never collides with a real numeric LinkedIn id).
@@ -290,7 +292,9 @@ def _run_tailor(
         )
         return Path(out) if out else None
     except Exception as exc:  # noqa: BLE001 - tailoring is best-effort; the row is kept either way
-        log(f"tailoring failed ({exc}); the job is still saved. Retry with Tailor résumé.")
+        # the line goes on screen: no absolute path, and only the first line
+        reason = (errmsg.for_user(exc).splitlines() or [type(exc).__name__])[0]
+        log(f"tailoring failed ({reason}); the job is still saved. Retry with Tailor résumé.")
         return None
 
 

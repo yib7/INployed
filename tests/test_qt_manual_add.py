@@ -634,3 +634,38 @@ def test_unscored_recovery_skipped_while_manual_adding(qtbot, monkeypatch, tmp_p
     monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(
         lambda *a, **k: pytest.fail("no recovery prompt during a manual add")))
     w.offer_unscored_recovery()
+
+
+# ── a fresh add that lands on a row already in the master ─────────────────────
+
+def test_manual_add_work_that_appended_nothing_pushes_nothing(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    monkeypatch.setattr(manual_add, "add_manual_job", lambda **k: {
+        "record": {"job_posting_id": "manual-1", "source": "manual"},
+        "resume_dir": "/tmp/x", "appended": False})
+    monkeypatch.setattr(MainWindow, "_scrape_log_path",
+                        staticmethod(lambda: tmp_path / "scrape.log"))
+    pushed = []
+    monkeypatch.setattr(outbox, "write_rows_outbox", lambda ids: pushed.append(ids))
+    monkeypatch.setattr(outbox, "push_outbox", lambda *a, **k: pushed.append("push"))
+    out = w._manual_add_work({"jd_text": _JD, "url": "", "title": "T", "company": "C"},
+                             {"cover_letter": False})
+    assert pushed == []
+    assert out["duplicate"] is True
+
+
+def test_finish_manual_add_for_a_duplicate_says_it_was_not_added_again(qtbot, monkeypatch):
+    w = _win(qtbot)
+    monkeypatch.setattr(mw.jobsdata, "local_run_files", lambda *a, **k: [])
+    monkeypatch.setattr(w, "reload_data_async", lambda: None)
+    w._finish_manual_add({
+        "record": {"job_posting_id": "manual-1", "job_title": "DA", "company_name": "Acme"},
+        "resume_dir": "/tmp/Generated/Acme", "appended": False, "duplicate": True})
+    msg = w.statusBar().currentMessage()
+    assert msg == "Already in your jobs, so not added again: DA @ Acme. Tailored it again."
+    w._finish_manual_add({
+        "record": {"job_posting_id": "manual-1", "job_title": "DA", "company_name": "Acme"},
+        "resume_dir": None, "appended": False, "duplicate": True})
+    msg = w.statusBar().currentMessage()
+    assert msg == ("Already in your jobs, so not added again: DA @ Acme. Tailoring failed; "
+                   "retry with Tailor résumé on the job.")

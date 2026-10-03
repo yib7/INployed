@@ -2310,3 +2310,14 @@ def test_start_run_that_cannot_start_a_console_says_so(qtbot, tmp_path, monkeypa
     note = p.status_label.text()
     assert note.startswith("The auto-apply run did not start:")
     assert "someone" not in note
+
+
+def test_the_save_box_tooltip_shows_the_page_question_as_text(qtbot, pause_home):
+    """A form's label is the page's words: markup in it shows as written and is
+    never rendered in the tooltip (an <img> there would load)."""
+    _ask([_q(1, "<b>Bold</b> question <img src='x.png'>", apply_pause.W_TEXT)])
+    card = _card(qtbot)
+    tip = _row_for(card, 1)["save"].toolTip()
+    doc = QtGui.QTextDocument()
+    doc.setHtml(tip)
+    assert "<b>Bold</b> question <img src='x.png'>" in doc.toPlainText()

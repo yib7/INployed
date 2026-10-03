@@ -58,6 +58,11 @@ def _store_answers(path: Path | None) -> tuple[list[dict], str]:
         return [], f"the answer store could not be read ({type(e).__name__})"
 
 
+
+def _plain_tip(text: str) -> str:
+    """`text` as a tooltip that shows exactly as written, markup and all."""
+    return "<qt>" + html.escape(text, quote=False) + "</qt>"
+
 class PauseCard(QtWidgets.QFrame):
     """The card for one pause request (`set_request`); hidden with none.
     `answered(job_id, mode)` fires once the answer file is written."""
@@ -202,12 +207,15 @@ class PauseCard(QtWidgets.QFrame):
             question = apply_facts.saved_question(str(q.get("label") or ""),
                                                   str(q.get("help") or ""))
             why = unreadable or apply_pause.save_refusal(question, answers)
+            # The question is the page's words: Qt renders a tooltip that looks
+            # like markup, so it goes in escaped inside an explicit <qt>.
             if why:
                 save.setEnabled(False)
-                save.setToolTip(f"Not saved: {why}.")
+                save.setToolTip(_plain_tip(f"Not saved: {why}."))
             else:
-                save.setToolTip(f"Keep this answer as a confirmed custom answer for "
-                                f"\"{question}\", so a later form asking it fills on its own.")
+                save.setToolTip(_plain_tip(
+                    f"Keep this answer as a confirmed custom answer for "
+                    f"\"{question}\", so a later form asking it fills on its own."))
             lay.addWidget(save)
             row["save"] = save
         self._grid.addWidget(frame)

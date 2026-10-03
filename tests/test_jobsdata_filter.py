@@ -485,3 +485,22 @@ def test_filter_and_sort_min_score_keeps_manual_rows():
     ])
     out = jobsdata.filter_and_sort(df, "", "4", "All", "All", "All", False, None)
     assert list(out["job_posting_id"]) == ["manual-1"]
+
+
+def test_the_repost_window_counts_days_on_the_utc_clock_its_marks_use(monkeypatch):
+    """`marked_at` is UTC, so the default "today" is the UTC date too: in the
+    evening on the US east coast the UTC date is already tomorrow, and a local
+    date there held a mark in the window a day longer than set."""
+    from datetime import datetime, timezone
+
+    class _Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 9, 21, 1, 0, tzinfo=timezone.utc).astimezone(tz)
+
+    monkeypatch.setattr(jobsdata, "datetime", _Clock, raising=False)
+    df = pd.DataFrame([_row("A", "yes", "2026-07-01"), _row("B", "no", "2026-08-15")])
+    marked_at = {"A": "2026-09-20T02:00:00+00:00"}   # one UTC day before the clock
+    out, hidden = jobsdata.suppress_reposts(df, marked_at, 1)
+    assert list(out["job_posting_id"]) == ["A"] and hidden == 1
+    assert jobsdata.blocked_repost_keys(df, marked_at, 1) != set()

@@ -521,3 +521,23 @@ def test_tailor_path_passes_selected_background_and_seed(monkeypatch, tmp_path):
     # entries that printed nothing stay out
     assert "ExampleApp" not in rec["background"] and "Coding Club" not in rec["background"]
     assert rec["seed"] == "I want work where the data pipeline is the product."
+
+
+def test_letter_sentences_split_like_the_grounding_tracer_per_paragraph():
+    """The letter's sentence list (what the claims check reads) comes from
+    `common.split_sentences`, paragraph by paragraph: an abbreviation never
+    ends a sentence, a wrapped line inside a paragraph does not either, and a
+    blank line always does."""
+    from resume_tailor import common
+
+    body = ("I earned a B.S. in Statistics at Rice. I built dashboards\n"
+            "in Tableau for Dr. Lee's lab!\n\n"
+            "Is the U.S. office hiring? I would like to talk")
+    want = ["I earned a B.S. in Statistics at Rice.",
+            "I built dashboards in Tableau for Dr. Lee's lab!",
+            "Is the U.S. office hiring?",
+            "I would like to talk"]
+    assert coverletter._letter_sentences(body) == want
+    assert coverletter._letter_sentences("") == []
+    assert not hasattr(coverletter, "_SENTENCE_END_RE")
+    assert common.split_sentences(want[0] + " " + want[1]) == want[:2]

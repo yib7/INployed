@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
 
 from . import aiwriting, assets, compose, config, jev_assist, verify
+from .common import split_sentences
 from .llm import LLMError
 from .compile import CompileResult, compile_tex
 from .latexutil import to_latex
@@ -325,23 +326,27 @@ LETTER_CLAIMS_NOTE = (
     "something about the candidate that the resume bullets and BACKGROUND notes do "
     "not state; rewrite each one to say only what those sources state, or cut it):")
 
-_SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
-# A piece ending in one of these closes an abbreviation, so the next piece joins it: a
-# single letter ("B.S.", "e.g.", "J. Smith") or a title before a name.
-_ABBREVIATION_END_RE = re.compile(r"(?:\b[A-Za-z]|\b(?:Dr|Mr|Mrs|Ms|Jr|Sr|St|vs))\.$")
+# A sentence ending in a lone initial ("for J. Smith") joins the next one. The claims
+# check reads whole sentences, so a name keeps its surname; the grounding tracer's
+# splitter leaves this join out, since there it would take the free first-word slot
+# from a sentence that follows "in R." and flag its ordinary opening word.
+_INITIAL_END_RE = re.compile(r"\b[A-Z]\.$")
 
 
 def _letter_sentences(body: str) -> List[str]:
-    """The body's sentences in order, paragraph by paragraph. A break after an
-    abbreviation (`_ABBREVIATION_END_RE`) joins the two pieces back."""
+    """The body's sentences in order, paragraph by paragraph, split by
+    `common.split_sentences` (the grounding tracer's splitter, so an
+    abbreviation such as "B.S." or "Dr." never ends one), with a lone initial
+    joined to what follows (`_INITIAL_END_RE`). A wrapped line inside a
+    paragraph reads as a space."""
     out: List[str] = []
     for para in re.split(r"\n\s*\n", body or ""):
         pieces: List[str] = []
-        for s in _SENTENCE_END_RE.split(para.strip()):
+        for s in split_sentences(" ".join(para.split())):
             s = s.strip()
             if not s:
                 continue
-            if pieces and _ABBREVIATION_END_RE.search(pieces[-1]):
+            if pieces and _INITIAL_END_RE.search(pieces[-1]):
                 pieces[-1] += " " + s
             else:
                 pieces.append(s)

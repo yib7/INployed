@@ -129,3 +129,15 @@ local/settings_archive/
 # from GitHub's user-content CDN, which is the only place an inline player works,
 # so the repo has no reason to carry the binary.
 docs/walkthrough.mp4
+
+# Auto-apply run output. These land under the tailored-resume output folder and
+# LOCALAPPDATA by default; the patterns cover a folder pointed at the repo. The
+# record, trace and drain report hold form answers and page captures.
+apply_record.md
+apply_trace/
+apply_drain-*.md
+assess_profiles/
+browser_profile/
+
+# Captured live form pages kept for local regression work (real employer pages).
+tests/fixtures/local_captures/

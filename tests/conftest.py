@@ -8,7 +8,11 @@ personal data), so the résumé-data editor tests never touch the user's file.
 shared QApplication never accumulates leaked ones — see the fixture for why that
 matters (it's the difference between a 4-minute suite and a CI hang).
 """
+import atexit
+import ipaddress
 import os
+import shutil
+import socket
 import sys
 import tempfile
 import textwrap
@@ -35,7 +39,16 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # tests inherit this env, closing the subprocess-monkeypatch pollution hole too.
 # Individual tests may still monkeypatch their own LOCALAPPDATA on top.
 # tests/test_hermetic_appdata.py fails loudly if this redirect is ever removed.
-os.environ["LOCALAPPDATA"] = tempfile.mkdtemp(prefix="inployed-test-appdata-")
+def _scratch_dir(prefix: str) -> str:
+    """A temp dir for this session, removed when the process exits (each xdist
+    worker makes and removes its own). A file a test left open stays behind on
+    Windows; the rest goes."""
+    path = tempfile.mkdtemp(prefix=prefix)
+    atexit.register(shutil.rmtree, path, ignore_errors=True)
+    return path
+
+
+os.environ["LOCALAPPDATA"] = _scratch_dir("inployed-test-appdata-")
 
 # Isolate the suite from the developer's REAL scrape_data/.env.
 #
@@ -149,12 +162,31 @@ for _leaked in (
 # exported in the shell must never reach a test that builds the judge with no
 # key argument. Only a recording run keeps it (`scripts/jev_record.ps1`
 # exports it for that one run).
-if not any((os.environ.get(_mode) or "").strip().lower() == "record"
-           for _mode in ("AUTO_APPLY_TEST_JEV", "AUTO_APPLY_CAPTURE_JEV")):
+def _jev_recording(env) -> bool:
+    """A Jev recording run (`scripts/jev_record.ps1`): the one run that talks to
+    the live judge, so it keeps the judge's key and the network."""
+    return any((env.get(_mode) or "").strip().lower() == "record"
+               for _mode in ("AUTO_APPLY_TEST_JEV", "AUTO_APPLY_CAPTURE_JEV"))
+
+
+if not _jev_recording(os.environ):
     os.environ.pop("TYPESAFE_API_KEY", None)
 
 # Whatever a stray default resolves to, it must not be the real Downloads folder.
-os.environ["RESUME_TAILOR_OUTPUT"] = tempfile.mkdtemp(prefix="inployed-test-output-")
+os.environ["RESUME_TAILOR_OUTPUT"] = _scratch_dir("inployed-test-output-")
+
+# No cloud credentials reach a test. The tailor's Gemini client defaults to Vertex
+# (`config.gemini_auth()`), and Vertex reads application default credentials: a
+# GOOGLE_APPLICATION_CREDENTIALS file, else gcloud's own login under its config
+# dir. On a machine where the developer ran `gcloud auth application-default
+# login`, an unmocked `llm._build_client` would build a real client. The tailor's
+# own key goes, gcloud's config dir is an empty sandbox, and the credentials file
+# is a name in that sandbox that does not exist, so google-auth refuses at once
+# with "file not found" and never falls through to the real login.
+os.environ.pop("RESUME_TAILOR_GEMINI_API_KEY", None)
+os.environ["CLOUDSDK_CONFIG"] = _scratch_dir("inployed-test-gcloud-")
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.path.join(
+    os.environ["CLOUDSDK_CONFIG"], "no-credentials.json")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "local"))
 # pipeline/ holds the flat pipeline modules (scraper, score_jobs, keypool, …),
@@ -230,6 +262,86 @@ def master_tmp_broken(tmp_path, monkeypatch):
     yield p
     for fn in cached:
         fn.cache_clear()
+
+
+class OffMachineConnectionError(ConnectionRefusedError):
+    """A test tried to reach a host off this machine (`_loopback_only_network`)."""
+
+
+def _is_loopback(address) -> bool:
+    """True for an address on this machine: 127.0.0.0/8, ::1, the unspecified
+    address, `localhost` and `*.localhost`. An address that is not a host/port
+    tuple (an AF_UNIX path) never leaves the machine either."""
+    if not isinstance(address, tuple) or not address:
+        return True
+    host = address[0]
+    if isinstance(host, bytes):
+        host = host.decode("ascii", "replace")
+    host = str(host).strip().strip("[]").lower()
+    if host in ("", "localhost") or host.endswith(".localhost"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        return False                # a name other than localhost: off the machine
+    return ip.is_loopback or ip.is_unspecified
+
+
+def _refuse_off_machine(address) -> None:
+    if not _is_loopback(address):
+        raise OffMachineConnectionError(
+            f"tests/conftest.py refused a connection to {address!r}: the suite talks to "
+            f"loopback only (the fixture servers, Chromium). Fake the client, or serve "
+            f"the page on 127.0.0.1.")
+
+
+def _network_guarded(env) -> bool:
+    """The guard is on for every run apart from a Jev recording, which talks to
+    the live judge on purpose (`_jev_recording`)."""
+    return not _jev_recording(env)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _loopback_only_network():
+    """No test connects to a host off this machine.
+
+    Patches `socket.socket.connect` / `connect_ex` (every blocking client:
+    urllib, requests, httpx, google-auth's metadata probe) and both asyncio
+    loops' `sock_connect` (aiohttp; on Windows the proactor loop connects
+    through ConnectEx, which never calls `socket.connect`). Loopback stays open:
+    the fixture servers, the flow server, Playwright's driver and Chromium.
+    A child process a test starts is not covered; the env scrub above is what
+    keeps credentials out of it. Off for a Jev recording (`_network_guarded`).
+    """
+    if not _network_guarded(os.environ):
+        yield
+        return
+    from asyncio import proactor_events, selector_events
+
+    real_connect, real_connect_ex = socket.socket.connect, socket.socket.connect_ex
+
+    def connect(self, address):
+        _refuse_off_machine(address)
+        return real_connect(self, address)
+
+    def connect_ex(self, address):
+        _refuse_off_machine(address)
+        return real_connect_ex(self, address)
+
+    def guard_sock_connect(real):
+        async def sock_connect(self, sock, address):
+            _refuse_off_machine(address)
+            return await real(self, sock, address)
+        return sock_connect
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(socket.socket, "connect", connect)
+        mp.setattr(socket.socket, "connect_ex", connect_ex)
+        for loop_cls in (selector_events.BaseSelectorEventLoop,
+                         proactor_events.BaseProactorEventLoop):
+            mp.setattr(loop_cls, "sock_connect", guard_sock_connect(loop_cls.sock_connect))
+        yield
+
 
 
 @pytest.fixture(autouse=True)

@@ -35,12 +35,17 @@ def test_load_dotenv_is_neutralised():
 def test_importing_resume_tailor_config_leaks_no_secrets():
     from resume_tailor import config  # noqa: F401  (import is the thing under test)
 
-    for key in ("GEMINI_API_KEYS", "BRIGHT_DATA_API_TOKEN", "ANTHROPIC_API_KEY",
-                "GOOGLE_APPLICATION_CREDENTIALS"):
+    for key in ("GEMINI_API_KEYS", "BRIGHT_DATA_API_TOKEN", "ANTHROPIC_API_KEY"):
         assert key not in os.environ, (
             f"{key} reached the test environment — the real .env was loaded. "
             "See conftest's load_dotenv neutralisation."
         )
+    # conftest names a credentials file that does not exist, in an empty sandbox
+    # (tests/test_hermetic_network.py); anything else came from a .env
+    creds = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+    assert "inployed-test-gcloud" in creds.lower(), (
+        "GOOGLE_APPLICATION_CREDENTIALS is not conftest's sandbox name: the real .env "
+        "was loaded. See conftest's load_dotenv neutralisation.")
 
 
 def test_output_root_is_not_the_users_real_downloads():

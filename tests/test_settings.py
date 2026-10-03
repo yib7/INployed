@@ -1753,3 +1753,16 @@ def test_the_jev_switches_are_default_on_bool_fields():
     for key in settings.JEV_SWITCHES:
         assert by_key[key].type == "bool" and by_key[key].default is True, key
         assert settings.switch_on(by_key[key].default) is True, key
+
+
+def test_save_keeps_a_damaged_json_file_aside(tmp_path):
+    # settings.save's .bak held the damaged file for one save only; the second
+    # save copied the good file over it
+    targets = _targets(tmp_path)
+    targets["config"].write_text('{"min_score": 5,', encoding="utf-8")
+    assert settings.read_problem("config", targets) == "config.json is not valid JSON"
+    settings.save({"min_score": 3}, targets)
+    settings.save({"min_score": 2}, targets)
+    assert json.loads(targets["config"].read_text(encoding="utf-8"))["min_score"] == 2
+    kept = list(tmp_path.glob("config.json.corrupt-*"))
+    assert len(kept) == 1 and kept[0].read_text(encoding="utf-8") == '{"min_score": 5,'

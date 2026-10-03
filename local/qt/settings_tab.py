@@ -355,12 +355,29 @@ class SettingsForm(QtWidgets.QWidget):
 
         self._add_buttons()
         self._body.addStretch(1)
+        self._name_damaged_files()
         # Last, because it writes to the Save button `_add_buttons` just made. Not
         # a no-op on a fresh form either: a stored int the widget had to CLAMP is
         # dirty — the form is holding 5000 where the file says 99999, and
         # the next Save writes it — so the marker opens alongside P5's note saying
         # so, rather than the two disagreeing.
         self._refresh_dirty()
+
+    def _name_damaged_files(self) -> None:
+        """A settings file that exists and does not parse reads as defaults
+        (`settings.load`); the status line names it and says what Save does
+        with it (`jsonutil.keep_damaged`), so nobody saves over a hand edit
+        that broke one line without knowing."""
+        notes = []
+        for target_id in settings.TARGET_FILES:
+            if target_id in settings.ENV_TARGETS:
+                continue
+            problem = settings.read_problem(target_id, self.targets)
+            if problem:
+                name = problem.split(" ", 1)[0]
+                notes.append(f"{problem}, so its boxes show the defaults. Save keeps the "
+                             f"damaged file beside it as {name}.corrupt-<date-time>.")
+        self.status.setText(" ".join(notes))
 
     # ---- search / filter ------------------------------------------------------
 

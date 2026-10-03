@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any
 
 import envfile  # local module: comment-preserving .env reader/writer
-from jsonutil import replace_with_retry  # shared Windows-lock-retrying replace
+from jsonutil import keep_damaged, replace_with_retry  # damaged-file guard; lock-retrying replace
 from locks import file_lock              # shared sidecar read-modify-write lock
 
 HERE = Path(__file__).resolve().parent
@@ -1432,6 +1432,9 @@ def save(values: dict[str, Any], targets: dict[str, Path] | None = None) -> None
             # jobsdata._save_cfg, and from the watcher process; without the lock
             # whichever writer read first has its keys silently reverted.
             with file_lock(Path(path)):
+                # a file that does not parse would merge as {} and be written
+                # over: keep it beside the new one (its .bak lasts one save)
+                keep_damaged(Path(path))
                 merged = _read_file(path)
                 merged.update(updates)
                 _atomic_write(Path(path), merged)

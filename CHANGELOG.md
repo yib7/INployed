@@ -49,6 +49,13 @@ All notable changes to INployed are recorded here. The format follows
 
 ### Fixed
 
+- **A settings file that will not parse is kept, and named.** A hand edit that broke
+  `config.json`, `search_config.json` or `scoring_config.json` read as defaults with nothing
+  said, and the next save (a Settings save, or a column toggle) wrote over it. The damaged
+  file is now moved aside to `<name>.corrupt-<date-time>` before the write, and the Settings
+  tab's status line names it when the tab opens. The ATS account ledger
+  (`ats_accounts.json`) gets the same treatment, and `ats_accounts.py list` says when it
+  cannot read it.
 - **A long master reaches the cover letter and Ask AI whole again.** Both read the master
   under a 30,000-character cap, and a master with detailed project notes outgrew it: every
   tailored letter warned that its background was truncated, and the Ask AI chat was cut

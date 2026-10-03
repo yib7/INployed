@@ -3276,3 +3276,20 @@ def test_a_missing_jev_switch_reads_on_in_settings_and_jev_switch(qtbot, tmp_pat
         assert form._widgets[key].isChecked() is True, key
     for area in jev_switch.AREAS:
         assert jev_switch.jev_on(area, env={"TYPESAFE_API_KEY": "not-a-real-key"}), area
+
+
+def test_a_damaged_settings_file_is_named_when_the_form_opens(qtbot, tmp_path):
+    # The form shows defaults for a file it cannot read; the status line says
+    # which file and what Save does with it, so nobody saves over it unaware.
+    (tmp_path / "scoring_config.json").write_text('{"stage2_threshold": 6', encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    text = form.status.text()
+    assert "scoring_config.json is not valid JSON" in text
+    assert "scoring_config.json.corrupt-" in text
+
+
+def test_a_clean_form_opens_with_an_empty_status(qtbot, tmp_path):
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert form.status.text() == ""

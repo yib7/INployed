@@ -14,9 +14,11 @@ keys. Everything that read-modify-writes a shared JSON file goes through it.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -102,6 +104,49 @@ def read_json_dict(path: Path) -> dict:
     return raw if isinstance(raw, dict) else {}
 
 
+def corrupt_name(path: Path) -> Path:
+    """A free `<name>.corrupt-<YYYYmmdd-HHMMSS>[-n]` path beside `path`."""
+    path = Path(path)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    target = path.with_name(f"{path.name}.corrupt-{stamp}")
+    n = 1
+    while target.exists():
+        n += 1
+        target = path.with_name(f"{path.name}.corrupt-{stamp}-{n}")
+    return target
+
+
+def keep_damaged(path: Path) -> Path | None:
+    """Move `path` aside to `corrupt_name(path)` when it exists and does not
+    parse as a JSON object, and return where it went; None when the file is
+    absent or fine (a BOM is fine, as in `read_json_dict`), or could not be
+    read or moved. Writers call it before a read-merge-write: the merge reads
+    a damaged file as {}, and the write would then replace a hand edit that
+    broke one line with only the keys being saved."""
+    path = Path(path)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8-sig"))
+    except FileNotFoundError:
+        return None
+    except ValueError:
+        pass
+    except OSError:
+        return None             # unreadable for now (locked, permissions): not damage
+    else:
+        if isinstance(raw, dict):
+            return None
+    target = corrupt_name(path)
+    try:
+        os.replace(path, target)
+    except OSError:
+        logging.getLogger(__name__).warning(
+            "%s is not a JSON object and could not be moved aside", path)
+        return None
+    logging.getLogger(__name__).warning(
+        "%s was not a JSON object; kept it as %s and wrote a new one", path, target.name)
+    return target
+
+
 def update_json_locked(path: Path, updates: dict, *,
                        timeout: float | None = None) -> dict:
     """Merge `updates` into the JSON object at `path` under an exclusive lock.
@@ -119,6 +164,7 @@ def update_json_locked(path: Path, updates: dict, *,
     """
     path = Path(path)
     with file_lock(path, timeout=timeout):
+        keep_damaged(path)
         merged = read_json_dict(path)
         merged.update(updates)
         atomic_write_json(path, merged)

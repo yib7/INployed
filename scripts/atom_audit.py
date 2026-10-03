@@ -21,7 +21,8 @@ stops. It is the atom-layer twin of `local/resume_tailor/verify.py`, which gives
 the same guarantee at the bullet layer; the tokenizing rules below are that
 module's, re-stated rather than imported because importing anything under
 `local/resume_tailor/` runs `config.load_dotenv()` at import scope and a stray
-credential load has placed a billed API request before (see `.autopilot/AUTONOMY.md`).
+credential load has placed a billed API request before: an audit script must
+never be able to spend money.
 
 Standard library plus `yaml`. No file is written and no network call is made:
 the audit is read-only and free. The one thing loaded from under `local/` is the
@@ -118,6 +119,10 @@ SECTIONS = ("experience", "projects", "leadership", "activities")
 # reaches a bullet, but its numbers are read by a human at interview time and by
 # the chat context, so the census reports them for the same conversion pass.
 ENTRY_PROSE_KEYS = ("origin", "ship_state", "stack", "context", "schedule")
+
+# Atom keys the bullet writer never sees and the grounding gate never reads:
+# `assets.INERT_ATOM_KEYS`, restated here (a test holds the two equal).
+INERT_ATOM_KEYS = ("interview_notes",)
 
 # Keys that name an entry, in the order `assets.entry_lines` prefers them.
 ENTRY_NAME_KEYS = ("name", "org", "title_full", "title", "school")
@@ -376,10 +381,15 @@ def symbol_figures(raw_text: str) -> List[Tuple[int, str]]:
 #     a GENERATED action verb; an atom field is a fragment the user wrote, and
 #     capitalizing a word that already exists in the old file grounds anyway
 #     (matching is case-insensitive).
-#   * The OLD side's source is every leaf scalar of every atom — inert sibling
-#     keys included — plus the entry names, exactly as `group_source_text(ids,
-#     extra=_entry_names(...))` does. This phase RELOCATES true detail into
-#     sibling keys, and a fact already written in the file is not a new fact.
+#   * The OLD side's source is every leaf scalar of every atom (inert sibling
+#     keys included), the entry names and the entry prose. A rewrite may move
+#     true detail between keys, and a fact already written in the file is not a
+#     new fact.
+#   * The NEW side checks more than `verify` does per bullet: every leaf of every
+#     atom key the bullet writer receives (all but `INERT_ATOM_KEYS` and the
+#     `_`-prefixed keys) plus the entry prose. Each of those keys grounds a
+#     bullet once it is in the file, so an invented figure planted in any of
+#     them would pass the bullet gate later.
 
 # The word that replaces a banned `+` floor ("100+ customers" -> "over 100
 # customers"). Lowercase, so it is not distinctive anyway; named here so the
@@ -492,10 +502,13 @@ def rounds_to_an_old_figure(token: str, rounded: Dict[str, List[Tuple[Decimal, D
 
 
 def gate_source(master: Dict[str, Any]) -> str:
-    """Everything the old file already says: every atom scalar plus entry names."""
+    """Everything the old file already says: every atom scalar, the entry names
+    and the entry prose."""
     parts: List[str] = []
     for entry in entries(master):
         parts.extend(str(entry.raw.get(k) or "") for k in ENTRY_NAME_KEYS)
+        for key in ENTRY_PROSE_KEYS:
+            parts.extend(leaf_strings(entry.raw.get(key)))
         for atom in entry.atoms:
             for key, val in atom.items():
                 if not str(key).startswith("_"):
@@ -503,21 +516,64 @@ def gate_source(master: Dict[str, Any]) -> str:
     return "\n".join(p for p in parts if p)
 
 
+def labelled_leaves(val: Any, label: str) -> Iterator[Tuple[str, str]]:
+    """(path label, text) for every non-empty scalar under `val`, walking dicts
+    and lists the way `leaf_strings` does: `metrics.threads`, `impact[0]`."""
+    if isinstance(val, dict):
+        for key, item in val.items():
+            if not str(key).startswith("_"):
+                yield from labelled_leaves(item, f"{label}.{key}")
+    elif isinstance(val, (list, tuple, set)):
+        for i, item in enumerate(val):
+            yield from labelled_leaves(item, f"{label}[{i}]")
+    elif val is not None and not isinstance(val, bool):
+        text = str(val).strip()
+        if text:
+            yield label, text
+
+
+def gated_atom_fields(atom: Dict[str, Any]) -> List[Tuple[str, str]]:
+    """Every field of `atom` the gate checks: each leaf of each key the bullet
+    writer receives (`compose._atom_payload`) and the grounding gate accepts
+    (`verify.group_source_text`), so every key but the inert ones and the
+    `_`-prefixed ones. Wider than `atom_fields`, which is the census's set."""
+    out: List[Tuple[str, str]] = []
+    for key, val in atom.items():
+        key = str(key)
+        if key.startswith("_") or key in INERT_ATOM_KEYS:
+            continue
+        out.extend(labelled_leaves(val, key))
+    return out
+
+
+def gated_entry_fields(raw: Dict[str, Any]) -> List[Tuple[str, str]]:
+    """The entry prose (ENTRY_PROSE_KEYS), labelled, for the gate."""
+    out: List[Tuple[str, str]] = []
+    for key in ENTRY_PROSE_KEYS:
+        out.extend(labelled_leaves(raw.get(key), key))
+    return out
+
+
 def new_facts(old: Dict[str, Any], new: Dict[str, Any]) -> Tuple[List[Tuple[str, str, str]], int, int]:
     """(offenders, tokens checked, atoms checked).
 
-    An offender is (location, kind, token) for a distinctive token the new atoms
-    state and the old file does not, after the declared conversions.
+    An offender is (location, kind, token) for a distinctive token the new file
+    states in an atom (`gated_atom_fields`) or in entry prose
+    (`gated_entry_fields`) and the old file does not, after the declared
+    conversions.
     """
     source = norm_source(gate_source(old))
     old_numbers = source_numbers(source)
     offenders: List[Tuple[str, str, str]] = []
     checked = atoms = 0
     for entry in entries(new):
+        places = [(entry.label, gated_entry_fields(entry.raw))]
         for i, atom in enumerate(entry.atoms):
             atoms += 1
-            where = f"{entry.label} :: {entry.atom_id(atom, i)}"
-            for label, text in atom_fields(atom):
+            places.append((f"{entry.label} :: {entry.atom_id(atom, i)}",
+                           gated_atom_fields(atom)))
+        for where, fields in places:
+            for label, text in fields:
                 rounded = rounding_targets(text)
                 for token in NUM_RE.findall(text):
                     checked += 1
@@ -857,8 +913,8 @@ SLOP_RULES: Tuple[Rule, ...] = (
     # chatbot rule on purpose. `_CHATBOT_RE` ends its alternation
     # `(?:certainly|...|let's\s+\w)\b`, and that trailing boundary applies to the
     # whole group, so it can only match a one-letter verb; "Let's walk through
-    # the exporter" never fires there. Recorded in `.autopilot/BACKLOG.md`
-    # rather than fixed, because the fix changes what the BULLET layer repairs.
+    # the exporter" never fires there. That regex stays as it is because a fix
+    # there changes what the BULLET layer repairs.
     _rule(P1, "engagement hook",
           r"(?:^|[.;!?]\s+)(?:the (?:catch|kicker|result|best part|twist))\s*[?:]"
           r"|(?:^|[.;!?]\s+)here(?:'|’)s the (?:thing|kicker|interesting part)\b"

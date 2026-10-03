@@ -272,11 +272,60 @@ def test_gate_passes_an_ordinary_paraphrase(tmp_path, capsys):
 
 
 def test_gate_ignores_an_inert_sibling_key_in_the_new_file(tmp_path, capsys):
-    """Relocated detail leaves the tailor payload; it is not a new fact."""
+    """`interview_notes` never reaches the bullet writer and never grounds a
+    bullet, so what it says is not gated."""
     old = _clean_master()
     new = _clean_master()
-    new["projects"][0]["achievements"][0]["hardest_problem"] = (
+    new["projects"][0]["achievements"][0]["interview_notes"] = (
         "the Kubernetes rollout nobody asked for")
+    new["projects"][0]["achievements"][0]["_scratch"] = "48,000 rows on Kubernetes"
+    code = _gate(tmp_path, old, new)
+    assert code == 0, capsys.readouterr().out
+
+
+def test_gate_inert_keys_match_the_tailor():
+    """The script restates `assets.INERT_ATOM_KEYS` (it cannot import the
+    package); the two must stay equal."""
+    sys.path.insert(0, str(REPO / "local"))
+    from resume_tailor import assets
+
+    assert tuple(atom_audit.INERT_ATOM_KEYS) == tuple(assets.INERT_ATOM_KEYS)
+
+
+@pytest.mark.parametrize("key, value", [
+    ("hardest_problem", "sharded the trie across 48,000 conversations"),
+    ("angles", ["a reader for 48,000 conversations"]),
+    ("metrics", {"threads": "48,000 conversations"}),
+])
+def test_gate_fails_a_figure_planted_in_a_sibling_key(tmp_path, capsys, key, value):
+    """Every non-inert atom key reaches the bullet writer
+    (`compose._atom_payload`) and grounds a bullet (`verify.group_source_text`),
+    so an invented figure there is a new fact."""
+    new = _clean_master()
+    new["projects"][0]["achievements"][0][key] = value
+    code = _gate(tmp_path, _clean_master(), new)
+    out = capsys.readouterr().out
+    assert code == 1, out
+    assert "48,000" in out and "core" in out and key in out
+
+
+@pytest.mark.parametrize("key", atom_audit.ENTRY_PROSE_KEYS)
+def test_gate_fails_a_fact_planted_in_entry_prose(tmp_path, capsys, key):
+    new = _clean_master()
+    new["projects"][0][key] = "ran on Kubernetes for 48,000 users"
+    code = _gate(tmp_path, _clean_master(), new)
+    out = capsys.readouterr().out
+    assert code == 1, out
+    assert "48,000" in out and "Kubernetes" in out and key in out
+
+
+def test_gate_passes_a_fact_relocated_into_a_sibling_key(tmp_path, capsys):
+    """Moving a stated fact from `how` into a sibling key adds nothing."""
+    old = _clean_master()
+    old["projects"][0]["achievements"][0]["how"] = "indexed 9,120 threads on Kubernetes"
+    new = _clean_master()
+    new["projects"][0]["achievements"][0]["how"] = "indexed every thread"
+    new["projects"][0]["achievements"][0]["hardest_problem"] = "Kubernetes held 9,120 threads"
     code = _gate(tmp_path, old, new)
     assert code == 0, capsys.readouterr().out
 

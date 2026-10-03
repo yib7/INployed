@@ -190,8 +190,7 @@ def test_flatten_entries_of_an_empty_master_is_blank():
 
 
 def test_chat_flattening_now_comes_from_assets():
-    """chat's private helpers are the assets ones, so SP4 can reuse one copy."""
-    assert chat._atom_line is assets.atom_line
+    """chat's private helper is the assets one, so SP4 can reuse one copy."""
     assert chat._entries is assets.entry_lines
     assert chat.TRUNCATED_MARKER == assets.TRUNCATED_MARKER
     # chat's own callers (no atom filter) see exactly what they saw before

@@ -87,13 +87,6 @@ _PACIFIC = ZoneInfo("America/Los_Angeles")
 # .env at import scope).
 SCORING_CONFIG_FILE = "scoring_config.json"
 
-# (extra-models key, env var) per stage: the ranked fallback list that follows
-# the stage's primary model. See ranked_models().
-_STAGE_MODELS_KEYS = (
-    ("stage1_models", "SCORE_STAGE1_MODELS"),
-    ("stage2_models", "SCORE_STAGE2_MODELS"),
-)
-
 # Free-tier overrides keyed by MODEL rather than by stage, as "<model> <rpm> <rpd>"
 # lines. The per-stage rpm/rpd boxes cannot describe a stage that now names
 # several models -- only its primary has boxes -- and two stages naming one model

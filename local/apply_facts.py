@@ -837,7 +837,6 @@ OWN_QUESTIONS: dict[str, _OwnQuestion] = {
                   "NOW"},
         (_YEARS, frozenset(("experience",))), refuse=_ONE_JOB),
 }
-OWN_QUESTION_KEYS = frozenset(OWN_QUESTIONS)
 # the custom answer types code settles: only for their own saved question
 GATED_CUSTOM_TYPES = ("yes_no", "number")
 # the values code settles, whatever the custom answer's stored type: a yes

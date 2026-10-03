@@ -1706,7 +1706,7 @@ def test_asks_own_question_reads_the_help_text_and_passes_any_other_fact():
     assert apply_judge.asks_own_question("gender", "Gender") is True
     # every yes / no fact has its table, and so do the years
     assert set(apply_facts.YES_NO_KEYS) | {"years_experience"} == set(
-        apply_facts.OWN_QUESTION_KEYS)
+        apply_facts.OWN_QUESTIONS)
 
 
 _WITHOUT = "Are you authorized to work in the United States without sponsorship?"

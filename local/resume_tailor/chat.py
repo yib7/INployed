@@ -133,9 +133,8 @@ def _read_sheet(folder: Optional[Path]) -> str:
 
 
 # The atom and entry flattening lives in assets so the cover letter's background
-# block and this digest are built by one copy; these aliases keep the short names
+# block and this digest are built by one copy; the alias keeps the short name
 # the callers below use.
-_atom_line = assets.atom_line
 _entries = assets.entry_lines
 
 # The master's own tailoring configuration: layout budgets and ATS spelling

@@ -289,7 +289,7 @@ class JobDetailCard(QtWidgets.QFrame):
         # breaks and "• " bullets. A read-only QPlainTextEdit keeps that
         # structure (a QLabel would not) and is plain text BY CONSTRUCTION, so
         # angle-bracket content (<b>, <img>) renders verbatim instead of being
-        # rich-text interpreted (audit P2-19) — there is no textFormat switch
+        # rich-text interpreted; there is no textFormat switch
         # left to get wrong. Sibling fields stay html.escape()d.
         self.desc_view = QtWidgets.QPlainTextEdit("")
         self.desc_view.setObjectName("jdView")

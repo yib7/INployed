@@ -230,8 +230,8 @@ def add_extracted_date(df: pd.DataFrame,
 
 # The master lives on Google Drive for desktop. When Drive is not running, its
 # whole drive letter is gone and the master with it, and load_files skips an
-# absent path without a word (that is also the first-run state): on 2026-09-26
-# the dashboard went from 29,933 jobs to the 17,360 local ones and said nothing.
+# absent path without a word (that is also the first-run state), so the
+# dashboard would drop from every job to the local ones and say nothing.
 # So every clean read of a source outside the repo refreshes a local copy here,
 # and a source whose folder is gone loads from that copy.
 MIRROR_DIR = APPDATA / "mirror"
@@ -396,9 +396,9 @@ def load_files(paths: list[Path], *,
     if removed:
         present = set(combined["job_posting_id"].astype(str))
         combined = combined[~combined["job_posting_id"].astype(str).isin(removed)]
-        # Prune marker ids no source still carries (audit P2-30): once the Drive
+        # Prune marker ids no source still carries: once the Drive
         # sync has physically dropped the row everywhere, the hide-marker has done
-        # its job — without this, config.json's removed_jobs only ever grows.
+        # its job. Without this, config.json's removed_jobs only ever grows.
         stale = removed - present
         if stale:
             _save_removed_jobs(removed - stale)
@@ -490,7 +490,7 @@ log = logging.getLogger(__name__)
 # sibling). The dashboard deletes on a background write queue while manual-add
 # runs on its own worker thread, so without this two writers can both read the
 # master at N rows and the second atomic replace silently drops the first
-# writer's change (audit P2-25). RLock because update_manual_job holds it across
+# writer's change. RLock because update_manual_job holds it across
 # its drop + re-append sequence, which re-enters the helpers below.
 _MASTER_WRITE_LOCK = threading.RLock()
 
@@ -520,7 +520,7 @@ def _open_text_writer(tmp_path: Path, compression):
 
 
 def _append_dedup_csv_locked(record: dict, jid: str, path: Path, compression) -> bool:
-    """Streaming append (audit P2-21/BACKLOG): the master is copied chunk-by-chunk
+    """Streaming append: the master is copied chunk-by-chunk
     to a tempfile (dedup keep="first" on job_posting_id, columns unified with the
     new record), the new row lands at the end unless its id already exists, and
     the tempfile atomically replaces the master. Only an id set is held in
@@ -549,8 +549,8 @@ def _append_dedup_csv_locked(record: dict, jid: str, path: Path, compression) ->
         try:
             with _open_text_writer(tmp_path, compression) as out:
                 wrote_header = False
-                # dtype=object + keep_default_na=False (audit C6-1, extending
-                # P2-26): with inferred per-chunk dtypes every manual add
+                # dtype=object + keep_default_na=False: with inferred
+                # per-chunk dtypes every manual add
                 # reformats untouched rows of the master -- score 5 comes back
                 # as 5.0, and a chunk boundary can even infer two dtypes for one
                 # column. Reading every cell as the literal string keeps the
@@ -627,7 +627,7 @@ def _drop_ids_from_csv(path: Path, ids: set[str]) -> None:
         return
     compression = "gzip" if path.suffix == ".gz" else None
     with _MASTER_WRITE_LOCK:
-        # Streaming rewrite (audit P2-21/BACKLOG): chunked copy to a tempfile,
+        # Streaming rewrite: chunked copy to a tempfile,
         # atomically swapped in only when a target row was actually dropped.
         fd, tmp_name = tempfile.mkstemp(prefix=path.stem + ".", suffix=".drop.tmp",
                                         dir=str(path.parent))
@@ -639,7 +639,7 @@ def _drop_ids_from_csv(path: Path, ids: set[str]) -> None:
                 with _open_text_writer(tmp_path, compression) as out:
                     wrote_header = False
                     # dtype=str + keep_default_na=False: see the note in
-                    # _append_dedup_csv_locked (audit C6-1). A delete must not
+                    # _append_dedup_csv_locked. A delete must not
                     # silently reformat the rows it keeps.
                     for chunk in pd.read_csv(path, dtype=str, keep_default_na=False,
                                              compression=compression,
@@ -1223,8 +1223,8 @@ def _mixed_timestamps(values: pd.Series) -> pd.Series:
 
     The real seen.db holds both `2026-07-27 14:03:11` and
     `2026-09-19T20:11:04+00:00` in one column, and `pd.to_datetime(format=
-    "mixed")` alone raises "Mixed timezones detected" on that (seen 2026-09-20
-    on the live data; the synthetic fixtures were all one shape). `utc=True`
+    "mixed")` alone raises "Mixed timezones detected" on that (the live data
+    mixes the shapes; a synthetic fixture with one shape does not show it). `utc=True`
     makes the parse accept the mix; a naive value is read as UTC, which for a
     day-granular window is the right call."""
     parsed = pd.to_datetime(values, format="mixed", errors="coerce", utc=True)
@@ -1341,7 +1341,7 @@ def suppress_reposts(df: pd.DataFrame, marked_at: dict[str, str], window_days: i
 
 
 def is_manual_job_id(job_posting_id: object) -> bool:
-    """True for a hand-added job's id (SP5/MA-3): manual_add's own `is_manual_id`,
+    """True for a hand-added job's id: manual_add's own `is_manual_id`,
     or the documented "manual-" prefix if manual_add cannot be imported (import is
     lazy so a standalone pipeline run never needs the Qt-adjacent manual_add module
     just to filter). This is the ONE place the fallback lives: qt/jobs_tab.py and
@@ -1354,7 +1354,7 @@ def is_manual_job_id(job_posting_id: object) -> bool:
 
 
 def _is_manual_row(ids: pd.Series) -> pd.Series:
-    """Vectorized `is_manual_job_id` (SP5/MA-3): those rows are never scored, so a
+    """Vectorized `is_manual_job_id`: those rows are never scored, so a
     score-based filter must not hide them regardless of min_score."""
     return ids.astype(str).map(is_manual_job_id)
 
@@ -1370,7 +1370,7 @@ def filter_high_unseen_with_count(
     # A completely missing "score" column (e.g. the very first hand-added job on a
     # fresh install, before any scored run has ever landed) must behave exactly
     # like a present-but-blank one: every score reads as 0, so a normal row still
-    # needs min_score <= 0 to pass, but a manual row is exempt either way (MA-3).
+    # needs min_score <= 0 to pass, but a manual row is exempt either way.
     if "score" in df.columns:
         score = pd.to_numeric(df["score"], errors="coerce").fillna(0)
     else:

@@ -1,6 +1,6 @@
 """The Apply Answers editor (Qt): manage the master answer store from the dashboard.
 
-Cycle 18 (SP4) rebuilds this tab around the version 2 typed store (SP1): one row
+The tab is built around the version 2 typed store: one row
 per answer, widgeted by its type so the run reads a saved answer one way only. A yes/no row is a combo of Not set/Yes/No; a number row is a line
 edit shaped to the store's number pattern; a choice row is a combo of Not set
 plus its options (`address_state` swaps between the US state list and free text
@@ -13,7 +13,7 @@ unconfirmed answers, and those rows carry the theme's warning highlight.
 "Add answer" opens `AddAnswerDialog`, whose OK stays disabled while the
 candidate is a question the run fills from a built-in (`builtin_answering`)
 or another custom answer's question, or fails `validate`; `add_answer(prefill)`
-opens it prefilled with a form's question (PR-9), for a parked question's
+opens it prefilled with a form's question, for a parked question's
 Answer now on the Auto-apply tab. Save runs the same
 checks (blocking on problems) and shows `warnings` after a clean write. A
 damaged store shows its error, keeps its file as it is (no defaults drawn or
@@ -22,12 +22,12 @@ keeps the damaged file as `<name>.damaged`. A migration's review list shows as
 a banner that asks the user to tick Confirmed on each answer; "I've checked
 these" dismisses it and saves.
 
-The file on disk (cycle 19, SP7 PR-6): a paused run's "Save for future runs"
+The file on disk: a paused run's "Save for future runs"
 writes the store while the dashboard is open. Every `DISK_POLL_MS` the tab
 compares the file with what it last read (`check_disk`): with no unsaved edits
 here it reloads, else a "changed on disk" banner offers Reload.
 
-"Test my answers" (`ED-9`, SP6) runs the shipped screening set
+"Test my answers" runs the shipped screening set
 (`apply_screening.run_screening`) over the saved, confirmed answers on disk
 with the judge the Auto-apply judge setting names (`_current_jev_mode`, read by
 `jev_switch.apply_mode`, the reader `local/apply_run.py` uses), on a worker
@@ -106,12 +106,12 @@ _REVIEW_HEAD = ("The update read these answers from your old file. Tick Confirme
 _TYPE_LABELS = {"text": "Text", "yes_no": "Yes/No", "number": "Number"}
 _LABEL_TYPES = {v: k for k, v in _TYPE_LABELS.items()}
 
-# ST-1's number shape (`\d{1,2}(\.5)?`), written so every valid prefix a user
+# The store's number shape (`\d{1,2}(\.5)?`), written so every valid prefix a user
 # types is already a complete match, with no "keep typing" state to model. The
 # 0-60 range is a separate check `validate()` makes at save.
 _NUMBER_SHAPE = r"^\d{0,2}(\.5?)?$"
 
-# How often the tab looks at the store on disk (SP7): the Auto-apply tab's poll.
+# How often the tab looks at the store on disk: the Auto-apply tab's poll.
 DISK_POLL_MS = 5000
 
 _DISK_CHANGED = ("The answers file changed on disk (a paused run may have saved an "
@@ -129,7 +129,7 @@ def _number_validator(parent=None) -> QtGui.QRegularExpressionValidator:
     return QtGui.QRegularExpressionValidator(QtCore.QRegularExpression(_NUMBER_SHAPE), parent)
 
 
-# --- ED-9: "Test my answers" -------------------------------------------------------
+# --- "Test my answers" ------------------------------------------------------------
 
 def _typesafe_key_present() -> bool:
     """Whether `jev.KEY_ENV` (TYPESAFE_API_KEY) is saved in Settings
@@ -181,7 +181,7 @@ def _spend_text(mode: str, delta: dict) -> str:
 
 
 class TestAnswersDialog(QtWidgets.QDialog):
-    """ED-9's result: one row per shipped screening question, the run's pick
+    """Test my answers' result: one row per shipped screening question, the run's pick
     for it or "stops here", and the run's spend line."""
 
     def __init__(self, rows: list, spend_text: str, parent=None) -> None:
@@ -217,7 +217,7 @@ class TestAnswersDialog(QtWidgets.QDialog):
 
 
 class AddAnswerDialog(QtWidgets.QDialog):
-    """"Add answer" (ED-4): question, type, answer, and a note where the type
+    """"Add answer": question, type, answer, and a note where the type
     has one. OK stays disabled while the run would fill the question from a
     built-in (`builtin_answering`), another custom answer already has it
     (`apply_answers.find_collision`), or the candidate entry fails
@@ -225,8 +225,8 @@ class AddAnswerDialog(QtWidgets.QDialog):
     shows under the fields. A narrower question the run hands to a custom
     answer (another country, a city, a visa type) is accepted.
 
-    `prefill` (PR-9: a parked question's Answer now) holds a form's question: "question" (its label), "help",
-    "type" and "options". The question box gets `apply_facts.saved_question`
+    `prefill` (a parked question's Answer now) holds a form's question:
+    "question" (its label), "help", "type" and "options". The question box gets `apply_facts.saved_question`
     (the label plus its help, so the run's own-question gate matches the same
     field next time) and the type its widget's (`apply_facts.answer_type` when
     none is given). A custom answer holds text, yes / no or a number, so a
@@ -331,7 +331,7 @@ class AddAnswerDialog(QtWidgets.QDialog):
             widget.setValidator(_number_validator(widget))
             widget.textChanged.connect(self._recompute)
         elif self._options:
-            # a prefilled choice (PR-9): the form's options to pick from, or type
+            # a prefilled choice: the form's options to pick from, or type
             widget = QtWidgets.QComboBox()
             widget.setEditable(True)
             widget.addItems(self._options)
@@ -404,10 +404,10 @@ class AnswersEditor(QtWidgets.QWidget):
         self.rows: list[dict] = []
         self.load_error = ""
         self.review: list[dict] = []
-        # ED-9: the live judge by default; tests pass a fake/stub factory.
+        # Test my answers: the live judge by default; tests pass a fake/stub factory.
         self._judge_factory = judge_factory or _default_judge_factory
         self._test_running = False      # a Test my answers run is going
-        # SP7: the file as last read, and the rows as they were then
+        # the file as last read, and the rows as they were then
         self._disk_sig: tuple | None = None
         self._clean: list[dict] = []
         # the stamp and the entries of the read the rows come from; the
@@ -546,7 +546,7 @@ class AnswersEditor(QtWidgets.QWidget):
         self.refresh_test_answers_state()
         self._mark_read()
 
-    # ---- the file on disk (SP7) ------------------------------------------------
+    # ---- the file on disk ------------------------------------------------------
 
     def _store_sig(self) -> tuple | None:
         try:
@@ -564,7 +564,7 @@ class AnswersEditor(QtWidgets.QWidget):
         self.disk_banner.setVisible(False)
 
     def _merged_with_disk(self, answers: list[dict]) -> list[dict] | None:
-        """SP7 review I5: `answers` (the rows) with the entries added on disk
+        """`answers` (the rows) with the entries added on disk
         since the rows were read (a paused run's save), or None when the two
         clash: an entry read then was changed or removed on disk, or an added
         one has an id or a question the rows hold."""
@@ -919,7 +919,7 @@ class AnswersEditor(QtWidgets.QWidget):
 
     def add_answer(self, prefill: dict | None = None) -> bool:
         """Open Add answer, prefilled from a form's question when `prefill` is
-        given (PR-9, `AddAnswerDialog`), and append the new row unsaved: the
+        given (`AddAnswerDialog`), and append the new row unsaved: the
         status line asks for Save changes. True when a row was added; False
         when the dialog was cancelled or the store is damaged (nothing opens
         then, and the status line shows the damage)."""
@@ -1137,20 +1137,20 @@ class AnswersEditor(QtWidgets.QWidget):
             self.review = keep
         self._update_review_banner()
 
-    # ---- ED-9: "Test my answers" ----------------------------------------------------
+    # ---- "Test my answers" ---------------------------------------------------------
 
     def refresh_test_answers_state(self) -> str:
         """Re-read the judge mode, the Jev switch and the key, and set the
         button. The main window calls it after a Settings save, so a switch
         flipped or a key set there counts at once.
 
-        The test is a Jev use (SP1 review A): while `jev_switch.apply_blocked`
+        The test is a Jev use: while `jev_switch.apply_blocked`
         names a reason, the button is off with that sentence, the one the
         Auto-apply panel's Start shows for the live judge. Jev switched off
         stops every mode; the key and SDK checks skip the fake and replay
         judges, which run here (a probe) while Start refuses them as the drain
         does. A mode `jev.get` does not build is named first
-        (`jev_switch.unknown_mode`, SP1 follow-up 3), in the drain's sentence.
+        (`jev_switch.unknown_mode`), in the drain's sentence.
         Returns the sentence, "" when the gate is open."""
         mode = _current_jev_mode()
         live = mode not in jev_switch.TEST_MODES

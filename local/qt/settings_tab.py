@@ -40,7 +40,7 @@ from qt import theme
 from qt.widgets import CollapsibleSection
 
 SECTION_HELP = {
-    # Cycle 19's ST-1: what Jev does in each area, and what off means. The three
+    # What Jev does in each area, and what off means. The three
     # per-area switches are advanced rows, so the blurb names the disclosure by
     # its label (test_no_section_tagline_calls_its_own_section_advanced).
     "Jev": ("Jev is the TypeSafe judge. It makes the yes-or-no calls when jobs are "
@@ -57,7 +57,7 @@ SECTION_HELP = {
                "free-key pool), and which model each tailoring stage runs. Jev's checks "
                "around the writing are switched in the Jev section."),
     "Dashboard": "How the dashboard surfaces and tracks jobs.",
-    # Cycle 21: the four scorer-read profile rows. Names score_jobs.py, the one script
+    # The four scorer-read profile rows. Names score_jobs.py, the one script
     # the VM reads them from, which is uploaded by hand once (no automated code push).
     "About you": ("What the scorer knows about you. It states your school status in "
                   "every scoring prompt, and your clearance when you hold one or tick the "
@@ -92,7 +92,7 @@ SECTION_HELP = {
                            "schedule, and pause changes to it. Uses your existing `gcloud` login; "
                            "no SSH password or key is ever stored."),
 }
-# Jev first (cycle 19's ST-1): its master switch changes what Scoring, the
+# Jev first: its master switch changes what Scoring, the
 # résumé tailor and Auto-apply do, so it is read before any of them.
 SECTION_ORDER = ["Jev", "Credentials", "Connection & paths", "Engine",
                  "Dashboard", "About you", "Scraper", "Scoring", "Resume", "Auto-apply",
@@ -101,7 +101,7 @@ SECTION_ORDER = ["Jev", "Credentials", "Connection & paths", "Engine",
 # Friendlier section headers shown in the UI. The dict KEYS above stay the canonical
 # section names (they must match settings.Field.section); this only changes the
 # visible title so the dashboard reads as a "job discovery" tool. "Engine" shows as
-# "Résumé tailor" (ST-3), the thing its rows configure.
+# "Résumé tailor", the thing its rows configure.
 SECTION_DISPLAY = {
     "Engine": "Résumé tailor",
     "Scraper": "Job discovery",
@@ -1107,21 +1107,21 @@ class SettingsForm(QtWidgets.QWidget):
         blank ("" with `keep_blank`), else the entry it matches ignoring case and
         surrounding spaces, else the stripped text.
 
-        Cycle 19's ST-7. The old setter fell back to index 0, so a hand-edited
-        `"gemini_auth": "Api_Key"` opened as vertex billing and the next Save
-        wrote vertex over the user's choice. A value that matches no entry in any
+        A setter that fell back to index 0 would open a hand-edited
+        `"gemini_auth": "Api_Key"` as vertex billing, and the next Save
+        would write vertex over the user's choice. A value that matches no entry in any
         case comes back as typed, so the dropdown shows what the file says and
         Save names it (`settings.field_problem`) until the user picks one.
 
         A blank (a hand-written `KEY=` line, a JSON "" or null) reads as the
-        field's default (SP1 review C): shown as typed, it was an option
+        field's default: shown as typed, it was an option
         `field_problem` refuses, so every Save failed on a value the user never
         chose. The code that reads these settings mostly agrees: the tailor, the
         scorer's provider, the Jev judge and the snapshot pruner all take a blank
         as the default. The scraper hands a blank search filter to Bright Data
         as it is, so a Save puts the default in its place. A field whose help
         gives a blank a meaning of its own declares `Field.blank_label`
-        (SP1 follow-up 2), and its callers pass `keep_blank`, so the blank comes
+        and its callers pass `keep_blank`, so the blank comes
         back blank: the dropdown shows it on the labelled entry and Save writes
         it back unchanged."""
         text = "" if value is None else str(value)
@@ -1396,7 +1396,7 @@ class SettingsForm(QtWidgets.QWidget):
         the field against its CURRENT value, then re-read the unsaved-change
         markers.
 
-        SP5 (ED-11): the re-check is what shows a new problem the moment it is
+        The re-check is what shows a new problem the moment it is
         typed, live on every keystroke, ahead of focus-out. `_validate_field`
         runs the exact same rule Save runs (`settings.field_problem`, via `validate`), so
         the two can never disagree about what counts as a problem. The note is
@@ -1447,7 +1447,7 @@ class SettingsForm(QtWidgets.QWidget):
         "1 setting needs fixing" naming a field that is nowhere on the form. Every
         path that touches `self._errors` therefore lands on the same sentence.
 
-        SP5 (ED-11): also the one place that disables Save while `self._errors`
+        Also the one place that disables Save while `self._errors`
         is non-empty, re-enabling it the moment the set empties out again. Every
         path that changes `self._errors` already lands here, so Save's enabled
         state can never drift from the status line naming the same problems.
@@ -1859,10 +1859,10 @@ class SettingsForm(QtWidgets.QWidget):
         """A bool field's stored `value` as its checkbox shows it. The Jev
         switches are read by `settings.switch_on`, the rule `jev_switch` reads
         them by, so a hand-edited "false", null, 0 or "" shows off here and
-        spends nothing there (SP1 follow-up 3). The scoring_config.json bools go
+        spends nothing there. The scoring_config.json bools go
         through the same word list, which is the one `score_jobs._as_bool` reads
         them by, so a stored "false" opens unchecked and the next Save keeps it
-        off (cycle 21 Task 4 fix round). Every other bool keeps `bool()`: its
+        off. Every other bool keeps `bool()`: its
         runtime readers spell their own rule."""
         if f.key in settings.JEV_SWITCHES or f.target == "scoring":
             return settings.switch_on(value)

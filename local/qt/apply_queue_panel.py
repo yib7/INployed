@@ -9,20 +9,20 @@ exact PowerShell line that starts the drain) and "Start auto-apply run" (off,
 with the reason beside it, while the drain it launches would refuse to start:
 `refresh_jev_state`).
 
-The difficulty check (cycle 19, DF-4 to DF-6): the Difficulty column shows each
+The difficulty check: the Difficulty column shows each
 job's 1-10 score as a pill coloured by its band, with the reasons and the exact
 questions in its tooltip and the age of a result older than a week. "Check
 difficulty" runs `apply_assess.py` in its own console (hidden while the check
 is switched off, off with the reason while Jev cannot run or a browser holds
 the auto-apply profile).
 
-Several rows (cycle 22): the table takes a Ctrl/Shift-click selection. Check
+Several rows: the table takes a Ctrl/Shift-click selection. Check
 difficulty checks every selected job, several at once (`auto_apply_check_parallel`,
 read by the check's console), and Remove drops them all in one write after a
 confirm. Meanwhile the buttons that act on one job (Re-queue, Mark applied,
 Don't apply, and the details card's) are off with the tooltip "Select one job".
 
-Park and resume (cycle 19, SP7): a run that pauses on a question it cannot
+Park and resume: a run that pauses on a question it cannot
 answer writes a request into `apply_pause.pause_dir()`; the 5 s poll reads the
 folder and shows the oldest request in the "Waiting for you" card at the top
 (`qt.apply_pause_card.PauseCard`), and a new request flashes the taskbar
@@ -221,7 +221,7 @@ def _default_jev_blocked() -> str:
     """Panel seam for the Start gate: why the drain Start launches would refuse
     to start, in the words `apply_run.py drain` prints, or "" when it would run
     (`jev_switch.start_blocked`: the drain's refusal of a test judge or an
-    unknown one, then the Jev gate, JS-5). The drain has no --jev flag, so the gate reads the mode
+    unknown one, then the Jev gate). The drain has no --jev flag, so the gate reads the mode
     that drain reads (`jev_switch.apply_mode`). A key saved in Settings counts
     (`jev_switch.key_saved`): the drain's console loads `.env` itself, so the
     key reaches it before the dashboard restarts."""
@@ -260,7 +260,7 @@ def _default_profile_busy() -> bool:
     return apply_assess.profile_busy()
 
 
-# The tooltip on a single-job button while several rows are selected (cycle 22).
+# The tooltip on a single-job button while several rows are selected.
 SELECT_ONE = "Select one job"
 
 UPLOAD_HINT = "an upload: put the file in the job folder"
@@ -315,7 +315,7 @@ def _difficulty_tip(d: Dict[str, Any]) -> str:
 
 
 def _missing_prefill(m: Dict[str, Any]) -> Dict[str, Any]:
-    """Add answer's prefill (PR-7) for one of a parked job's missing answers:
+    """Add answer's prefill for one of a parked job's missing answers:
     the question with the help, options and type the run kept."""
     return {"question": str(m.get("question") or ""), "help": str(m.get("help") or ""),
             "type": str(m.get("type") or ""),
@@ -563,22 +563,22 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self._on_login = on_login or _spawn_login
         self._on_mark_applied = on_mark_applied or (lambda _e: None)
         self._on_mark_seen = on_mark_seen or (lambda _e: None)
-        # "Answer now" on the missing-answers callout (PR-7): the main window
+        # "Answer now" on the missing-answers callout: the main window
         # opens Add answer on the Apply Answers tab with the prefill (None when
         # the job kept no question) and returns True once the answer is saved.
         self._on_answer_now = on_answer_now or (lambda _p: None)
-        # The taskbar flash for a new pause request (SP7); tests inject a spy.
+        # The taskbar flash for a new pause request; tests inject a spy.
         self._alert = alert or _default_alert
         self._pauses_seen: set[str] = set()
         # Late-bound like password_exists: why a run cannot start ("" when it can).
         self._jev_blocked = jev_blocked or (lambda: _default_jev_blocked())
-        # The difficulty check (DF-4 to DF-6): its console (job ids) and its
+        # The difficulty check: its console (job ids) and its
         # gates, late-bound like the others.
         self._on_check_difficulty = on_check_difficulty or _spawn_check
         self._difficulty_blocked = difficulty_blocked or (lambda: _default_difficulty_blocked())
         self._difficulty_hidden = difficulty_hidden or (lambda: _default_difficulty_hidden())
         self._profile_busy = profile_busy or (lambda: _default_profile_busy())
-        # How many checks run at once (cycle 22), for the note only: the
+        # How many checks run at once, for the note only: the
         # check's console reads the setting itself.
         self._check_parallel = check_parallel or (lambda: _default_check_parallel())
         self._gate_busy = False     # the profile's state when the gates were last read
@@ -602,7 +602,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         v = QtWidgets.QVBoxLayout(self)
         v.setContentsMargins(8, 8, 8, 8)
 
-        # SP7: a paused run's questions, above everything else on the tab.
+        # A paused run's questions, above everything else on the tab.
         self.pause_card = PauseCard()
         self.pause_card.answered.connect(self._pause_answered)
         v.addWidget(self.pause_card)
@@ -703,7 +703,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         actions.addWidget(self.start_run_btn)
         v.addLayout(actions)
 
-        # Why Start is off (a test or unknown judge, or Jev unable to run: JS-5), in the
+        # Why Start is off (a test or unknown judge, or Jev unable to run), in the
         # drain's words; hidden while a run can start. Queueing goes on either way.
         self.jev_notice = QtWidgets.QFrame()
         self.jev_notice.setProperty("callout", "warning")
@@ -796,7 +796,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                                  "than one selected, it asks first",
                                  tier="destructive")
         btns.addStretch(1)
-        # The difficulty check (DF-4 to DF-6). The tip is kept for
+        # The difficulty check. The tip is kept for
         # refresh_difficulty_state, which shows a reason in its place.
         self._check_tip = (
             "Score how hard the selected jobs (or, with none selected, every queued "
@@ -809,7 +809,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self.check_difficulty_btn = button("Check difficulty", self._check_difficulty,
                                            self._check_tip, tier="tertiary")
         v.addLayout(btns)
-        # The buttons that act on one job (cycle 22): off, with SELECT_ONE as
+        # The buttons that act on one job: off, with SELECT_ONE as
         # the tooltip, while several rows are selected. Their own tips are kept
         # here to come back with one row.
         self._single_job_tips = {b: b.toolTip() for b in (
@@ -1042,7 +1042,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         """Read the Jev gate again each time the tab comes into view: the user
         may have fixed the named problem (installed the SDK, turned Jev on in
         config.json) since the last refresh, and Start is out of reach while
-        it is off (SP1 review D)."""
+        it is off."""
         super().showEvent(event)
         self.refresh_jev_state()
 
@@ -1058,7 +1058,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
     def refresh_jev_state(self) -> str:
         """Start is off, with the reason as its tooltip and in the notice under
         the buttons, while the drain it launches would refuse to start (a test
-        judge, or Jev unable to run: JS-5; then another browser on the
+        judge, or Jev unable to run; then another browser on the
         auto-apply profile, a difficulty check or a sign-in:
         `profile_lock.RUN_BUSY`). Read on every refresh, after a Settings
         save (the main window calls this), whenever the tab shows or the
@@ -1098,7 +1098,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         return hidden, reason, busy
 
     def refresh_difficulty_state(self) -> tuple[str, bool]:
-        """The Check difficulty button (DF-6): hidden while the check is
+        """The Check difficulty button: hidden while the check is
         switched off; off with the check's reason as its tooltip while Jev
         cannot run or a browser holds the auto-apply profile. Read with the
         Jev gate (`refresh_jev_state`) and on each selection. Returns (the
@@ -1388,7 +1388,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         return menu
 
     def _answer_now(self) -> None:
-        """Answer now (PR-7): Add answer prefilled with the parked question, or
+        """Answer now: Add answer prefilled with the parked question, or
         a menu of them when there are several; a job with none opens the
         Apply Answers tab."""
         questions = self._missing_questions()
@@ -1404,7 +1404,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
 
     def _answer_with(self, prefill: Dict[str, Any]) -> None:
         """The answer saved, a Re-queue is offered only for a job parked or
-        failed with nothing sent (SP7 review I4): never for a submitted job,
+        failed with nothing sent: never for a submitted job,
         one waiting for the person's submit, or one that may have been sent."""
         e = self._selected_entry()
         jid = str((e or {}).get("job_posting_id") or "")

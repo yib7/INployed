@@ -90,13 +90,13 @@ class ResumeDataEditor(QtWidgets.QWidget):
         self._atom_orig: dict[tuple, str] = {}
         self._atom_impact: dict[str, QtWidgets.QPlainTextEdit] = {}
         self._atom_impact_orig: dict[str, str] = {}
-        # SP5 (ED-10): which entry (section, index) each atom id belongs to, so
+        # Which entry (section, index) each atom id belongs to, so
         # Save can find and re-check the owning entry when only one of its atoms
         # changed -- populated in `_entry_block`/`_atom_block`, keyed by atom id.
         self._atom_owner: dict[str, tuple] = {}
         self._layout_section_edits: dict[str, QtWidgets.QLineEdit] = {}
         self._layout_project_edits: dict[str, QtWidgets.QLineEdit] = {}
-        # B8: stale custom-layout rows (name no longer in the master) — (kind, name,
+        # Stale custom-layout rows (name no longer in the master): (kind, name,
         # row-widget, form) so a per-row ✕ or the "Remove stale entries" button can
         # drop them from the saved map without a full tab rebuild.
         self._stale_layout_rows: list = []
@@ -328,8 +328,8 @@ class ResumeDataEditor(QtWidgets.QWidget):
         vb_cb.toggled.connect(_apply_mode)
         _apply_mode(vb_cb.isChecked())
         # Keyed by (section, idx), NOT name: two entries with the same org (or two
-        # unnamed entries) must not clobber each other's editor widgets — only the
-        # last block would survive Save (audit P2-5). The name rides in the value
+        # unnamed entries) must not clobber each other's editor widgets, or only the
+        # last block would survive Save. The name rides in the value
         # because the persisted store is name-keyed.
         self._verbatim_edits[(section, idx)] = (name, vb_cb, vb_edit)
 
@@ -347,7 +347,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         drop it (revert to normal tailoring). The persisted store is name-keyed, so
         when two same-named entries are both checked their lines are merged (in
         entry order, deduped) rather than the later one silently replacing the
-        earlier one's bullets (audit P2-5)."""
+        earlier one's bullets."""
         out = dict(jobsdata.load_verbatim_blocks())
         checked: dict[str, list] = {}
         for _key, (name, cb, edit) in self._verbatim_edits.items():
@@ -428,7 +428,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         self._layout_enabled_cb.toggled.connect(self._on_layout_toggled)  # after setChecked
         section.add_widget(self._layout_enabled_cb)
 
-        # B2: project count + at-most/exactly-N mode (moved here from Settings).
+        # Project count + at-most/exactly-N mode.
         section.add_widget(self._projects_control())
 
         help_lbl = QtWidgets.QLabel(
@@ -564,7 +564,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
             if nm in live_names:
                 form.addRow(nm, edit)
                 continue
-            # B8: stale row (no longer in the master) — mark it and give it a ✕ button.
+            # A stale row (no longer in the master): mark it and give it a ✕ button.
             field = QtWidgets.QWidget()
             hl = QtWidgets.QHBoxLayout(field)
             hl.setContentsMargins(0, 0, 0, 0)
@@ -918,7 +918,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
             data["achievements"] = [achievement]
             return data
 
-        # SP5 (ED-10): re-check on every keystroke with the same rules
+        # Re-check on every keystroke with the same rules
         # `append_entry` enforces, so a problem is visible (and OK is disabled)
         # from the first keystroke, ahead of any submit attempt.
         def _recheck() -> None:
@@ -954,7 +954,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
     def refresh_push_state(self) -> None:
         """Public slot: re-evaluate the resume.md push button (vm_enabled /
         VMTarget). Driven by the settings-saved path, not tab switches — it does
-        settings.load() + VMTarget.from_env() per call (audit P2-30)."""
+        settings.load() + VMTarget.from_env() per call."""
         import vm_sync
         cfg = settings.load()
         on = bool(cfg.get("vm_enabled")) and vm_sync.VMTarget.from_env().configured()

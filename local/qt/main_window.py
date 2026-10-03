@@ -83,7 +83,7 @@ PREVIEW_TABS = {"High Score (Unseen)", "All Jobs", "Tracker"}
 
 # The off-thread reload payload: the merged job frame + resume-path map, plus the
 # run_stats frame and staleness threshold read alongside them so no UI-thread
-# repaint ever touches the Drive-synced stats file (audit P1-5).
+# repaint ever touches the Drive-synced stats file.
 # `problems` carries the (path, reason) pairs for sources that exist but could
 # not be read, so the empty state can say "this file is unreadable" instead of
 # "no jobs yet". Defaulted so the four-field construction older tests use, and
@@ -93,11 +93,11 @@ PREVIEW_TABS = {"High Score (Unseen)", "All Jobs", "Tracker"}
 LoadedFrames = namedtuple("LoadedFrames", "df id_to_path stats stale_hours problems offline",
                           defaults=((), ()))
 
-# How long a cached resume-folder disk probe stays valid (audit P2-24: resume
+# How long a cached resume-folder disk probe stays valid (resume
 # folders can live under the Drive root, so per-selection stats must not hit the
 # filesystem on every click). Cleared outright on every _apply_frames.
 _DISK_CACHE_TTL_S = 20.0
-# Hard cap on cached probes (audit C6-5). Entries are per-key, and some keys are
+# Hard cap on cached probes. Entries are per-key, and some keys are
 # per-job, so an all-day triage session grew the dict without bound between
 # reloads. Comfortably above the handful of live keys a session actually reuses.
 _DISK_CACHE_MAX = 512
@@ -125,7 +125,7 @@ _JD_COLUMNS = ("job_description_formatted", "job_description")
 
 def _with_master_jd(job: dict) -> dict:
     """`job` with its full description from the master CSV when the payload
-    carries none (final review C I-1). A hand-added job's dashboard row holds
+    carries none. A hand-added job's dashboard row holds
     only the 1000-character `job_summary`: the gz bridge leaves its
     description out, and the master CSV keeps it. Worker threads only:
     `jobsdata.master_row` reads the file."""
@@ -839,8 +839,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _load_frames(self):
         """The blocking half of a reload, safe to run OFF the UI thread: read and
         merge the source files, drop blocklisted rows, and read run_stats.csv +
-        the staleness threshold (audit P1-5 — previously a synchronous Drive read
-        on every UI-thread repaint). Touches neither Qt nor the SQLite registry
+        the staleness threshold (a synchronous Drive read here would run on
+        every UI-thread repaint). Touches neither Qt nor the SQLite registry
         (both thread-affine) — those wait for _apply_frames."""
         problems: list[tuple[Path, str]] = []
         offline: list[tuple[Path, float | None, int]] = []
@@ -873,7 +873,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._offline = ()
         self._refresh_empty_hint()
         self._refresh_offline_banner()
-        self._disk_cache = {}   # resume-folder stats may be stale (audit P2-24)
+        self._disk_cache = {}   # resume-folder stats may be stale
         self.id_to_path = id_to_path
         if not df.empty:
             if "is_seen" not in df.columns:
@@ -921,8 +921,8 @@ class MainWindow(QtWidgets.QMainWindow):
                            if not df.empty and "url" in df.columns else {})
         # Repost suppression runs here on the UI thread. On a 30k-row frame the
         # key computation takes ~30 ms with pyarrow and ~90 ms on the pandas-only
-        # fallback; the whole High Score filter lands at ~60 ms and ~100 ms
-        # (measured 2026-09-19, cycle 15). pyarrow stays optional; that cost per
+        # fallback; the whole High Score filter lands at ~60 ms and ~100 ms.
+        # pyarrow stays optional; that cost per
         # refresh is the accepted trade for one fewer hard dependency.
         self.df_high, self._reposts_hidden = filter_high_unseen_with_count(
             df, self.min_score, marked_at=self.registry.marked_at_all(),
@@ -1062,7 +1062,7 @@ class MainWindow(QtWidgets.QMainWindow):
         chips.set_checked(key)   # silent — never re-fires _on_tracker_chip
 
     def _disk_cached(self, key, compute):
-        """Serve `compute()` through the short-TTL disk-probe cache (audit P2-24):
+        """Serve `compute()` through the short-TTL disk-probe cache:
         resume folders can live under the Drive root, so per-selection existence
         checks must not stat the filesystem on every click. `_apply_frames`
         clears the cache outright, so a reload always re-probes."""
@@ -1075,7 +1075,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return hit[0]
         value = compute()
         cache[key] = (value, now)
-        # Bound the cache (audit C6-5). Keys include per-job entries, so a long
+        # Bound the cache. Keys include per-job entries, so a long
         # triage session over a tens-of-thousands-row master added one entry per
         # job clicked and only ever shrank on a full reload. Every entry past the
         # TTL is dead weight by definition — drop those first, and if the cache is
@@ -1229,7 +1229,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # The resume.md push-button state is driven by the settings-saved path
         # (_on_settings_saved → refresh_push_state), not by tab switches — the old
         # per-switch refresh did settings.load() + VMTarget.from_env() on every
-        # tab change (audit P2-30).
+        # tab change.
 
     def _apply_preview_visibility(self) -> None:
         title = self.tabs.tabText(self.tabs.currentIndex())
@@ -1696,7 +1696,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         A scrape run and a manual add share scrape.log and the post-run outbox
         push, so they are mutually exclusive: whichever is in flight blocks the
-        other (audit P2-27). One check, used by every entry point."""
+        other. One check, used by every entry point."""
         if getattr(self, "_scraping", False):
             return "A job search is already running."
         if getattr(self, "_manual_adding", False):
@@ -1861,7 +1861,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # ANOTHER machine", so writing our own load_exclude_ids() there fed the
             # file straight back into the next run's exclude set — and those ids are
             # deliberately NOT windowed, so the exclusion array ratcheted up
-            # monotonically (the whole 2,679-row master by 2026-08-26) until Bright
+            # monotonically (to the whole 2,679-row master) until Bright
             # Data rejected every input with child_input_size_validation and the
             # scrape silently collected nothing. vm_sync only ever pushes this file
             # OUT (see push_exclude_ids_cmd), never pulls one in, so on this host it
@@ -1972,9 +1972,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _add_manual_job_dialog(self) -> None:
         """Open the manual-entry form, then run parse->tailor->append off-thread.
 
-        The user already chose this job (SP5/MA-1): there is no scoring step, it
+        The user already chose this job: there is no scoring step, it
         goes straight to the same tailoring (resume_tailor) pipeline a scraped job
-        gets. A duplicate check (MA-2) runs BEFORE any of that, against both the
+        gets. A duplicate check runs BEFORE any of that, against both the
         rows already loaded and the master file, so re-adding the same posting
         never spends a fresh tailor call. The heavy work runs on a worker thread
         so the window never freezes."""
@@ -2000,7 +2000,7 @@ class MainWindow(QtWidgets.QMainWindow):
             lambda opts: self._manual_add_work(vals, opts), verb="Adding job")
 
     def _confirm_retailor_duplicate(self, dup: dict) -> bool:
-        """MA-2's duplicate prompt: tailor the existing row again, or cancel. A
+        """The duplicate prompt: tailor the existing row again, or cancel. A
         duplicate never silently reports success."""
         import manual_add
         box = QtWidgets.QMessageBox(self)
@@ -2042,7 +2042,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return res
 
     def _manual_retailor_work(self, record: dict, jd_text: str, opts: dict) -> dict:
-        """Worker body for MA-2's "Tailor again": re-run tailoring on an already
+        """Worker body for "Tailor again": re-run tailoring on an already
         saved row, never appending a second copy. `jd_text` is the description
         the user just re-pasted into the dialog; retailor_existing uses it only
         to patch a blank stored description for this run (a hand-added job's
@@ -2094,7 +2094,7 @@ class MainWindow(QtWidgets.QMainWindow):
         elif result.get("resume_dir"):
             self._set_status(f"Manual job tailored: {title} @ {company}.")
         else:
-            # MA-4: tailoring failed but the row is still saved; say how to retry.
+            # tailoring failed but the row is still saved; say how to retry.
             self._set_status(
                 f"Manual job saved but tailoring failed: {title} @ {company}. "
                 "Retry with Tailor résumé on the job.")
@@ -2233,7 +2233,7 @@ class MainWindow(QtWidgets.QMainWindow):
         from resume_tailor import apply as apply_mod
         if payload:
             # a hand-added job's full description, for an apply sheet the
-            # resolver backfills (final fix review Minor 3; worker thread)
+            # resolver backfills (on the worker thread)
             payload = _with_master_jd(payload)
         folder = apply_mod.resolve_generated_dir(job_id=jid, job=payload)
         ctx = apply_mod.build_apply_context(folder)
@@ -2376,8 +2376,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 on_finished(None, RuntimeError(  # failed — orphans are unclaimable
                     f"tailor launch failed: {errmsg.for_user(exc)}"))
             # Surface in the status bar instead of re-raising into the Qt event
-            # loop, where the exception would just be printed and swallowed
-            # (audit P2-11).
+            # loop, where the exception would just be printed and swallowed.
             self._set_status(f"Could not start tailoring: {errmsg.for_user(exc)}")
             return False
         return True
@@ -2877,8 +2876,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _cover_work(self, job: dict, folder, tone: str):
         from resume_tailor.run import generate_cover_letter
         # a hand-added job's payload holds only its summary: the full
-        # description comes from the master here, on the worker (final fix
-        # review Minor 3)
+        # description comes from the master here, on the worker
         job = _with_master_jd(job)
         # Re-check on the worker: the folder may have been deleted between the
         # menu click and this thread starting.
@@ -2941,7 +2939,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._apply_auth_env()        # the chat calls the engine, same as tailor/cover
         # Parented to this window and self-removing on close — see qt/chat_dialog.py.
         # `prepare` runs on the chat's worker: a hand-added job's full
-        # description from the master (final fix review Minor 3)
+        # description from the master
         dlg = JobChatDialog(payload, parent=self,
                             on_closed=lambda: self._chat_dialogs.pop(jid, None),
                             prepare=_with_master_jd)
@@ -3101,7 +3099,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _prep_work(self, job: dict, resume_dir):
         from resume_tailor.prep import generate_prep_sheet
-        job = _with_master_jd(job)      # the full description, on the worker (Minor 3)
+        job = _with_master_jd(job)      # the full description, on the worker
         out_dir = Path(resume_dir) if resume_dir and Path(resume_dir).exists() else None
         return generate_prep_sheet(job, out_dir)
 
@@ -3121,7 +3119,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _refresh_stats(self) -> None:
         """Render the Stats tab from the CACHED run_stats frame `_load_frames`
-        read off-thread (audit P1-5): this runs on every mark-seen/undo/delete
+        read off-thread: this runs on every mark-seen/undo/delete
         repaint, so it must never do a synchronous Drive read itself."""
         stats_df = getattr(self, "_stats_df", None)
         summary = "run_stats.csv not synced yet; metrics appear after the next VM run."
@@ -3187,7 +3185,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.followup_days = load_followup_days()
         self.resume_data_tab.refresh_push_state()  # vm_enabled may have changed
         self.answers_tab.refresh_test_answers_state()  # the judge mode or key may have changed
-        self.apply_queue_panel.refresh_jev_state()  # Start follows the Jev switch (JS-5)
+        self.apply_queue_panel.refresh_jev_state()  # Start follows the Jev switch
         self.reload_data_async()
 
     # ---- engine env ----------------------------------------------------------

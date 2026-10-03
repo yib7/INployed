@@ -5,7 +5,7 @@ title, company and pasted description, then hands the input here. This module
 is pure Python with no Qt dependency, so the widget stays a thin shell and the
 logic is unit-testable.
 
-The user already chose this job, so there is no scoring step (SP5/MA-1): it is
+The user already chose this job, so there is no scoring step: it is
 saved and tailored at once.
 
     parse  -> build a job record (master-CSV schema, source="manual")
@@ -14,7 +14,7 @@ saved and tailored at once.
     append -> jobsdata.append_manual_job -> the master CSV (same dedup as scraped)
 
 `find_duplicate` runs the id check before any of the above, so re-adding the
-same posting never spends a fresh tailor call (MA-2); `retailor_existing` is
+same posting never spends a fresh tailor call; `retailor_existing` is
 the "Tailor again" path it offers instead.
 
 Every LLM/HTTP touch point is behind an injectable seam (``tailor_fn``,
@@ -80,7 +80,7 @@ def _guess_title_company(jd_text: str) -> tuple[str, str]:
     this just spares them typing for a clean copy-paste. Never raises.
     """
     # _strip_html collapses all whitespace, so line structure only survives in
-    # the RAW text (the old stripped-then-split branch was dead — audit P2-3).
+    # the RAW text.
     lines = [_strip_html(ln) for ln in str(jd_text or "").splitlines()
              if _strip_html(ln)]
     title = lines[0][:120] if lines else ""
@@ -150,7 +150,7 @@ def build_job_record(
 
 # ── optional free URL fetch (NEVER Bright Data; best-effort) ───────────────────
 
-# SSRF + robustness guards for the free GET (audit P2-16): the URL is pasted user
+# SSRF + robustness guards for the free GET: the URL is pasted user
 # input, so it must not reach loopback/private/link-local/metadata hosts (blind
 # SSRF), redirects must be re-validated against the same blocklist (an external
 # URL can 302 internal), and the body is streamed with a byte cap so a huge page
@@ -214,7 +214,7 @@ def fetch_url_text(url: str, *, timeout: float = 10.0) -> str:
     a pasted JD. It never uses the paid Bright Data scraper. Any failure (no
     requests lib, network error, non-2xx, blocked host, tiny body) returns "" —
     never raises. Private/metadata hosts are refused, each redirect target is
-    re-validated, and the body is streamed with a byte cap (audit P2-16).
+    re-validated, and the body is streamed with a byte cap.
     """
     url = (url or "").strip()
     if not _url_allowed(url):
@@ -233,7 +233,7 @@ def fetch_url_text(url: str, *, timeout: float = 10.0) -> str:
             # stream=True keeps the socket open until the body is consumed OR the
             # response is closed. Every early return below (redirect chain, non-2xx,
             # the byte cap tripping mid-body) used to leak the connection back to
-            # the pool unread — audit C6-9. try/finally rather than `with` because
+            # the pool unread. try/finally rather than `with` because
             # the tests stub the response with a plain object; close defensively.
             try:
                 status = getattr(resp, "status_code", 599)
@@ -273,7 +273,7 @@ def _run_tailor(
 ) -> Optional[Path]:
     """The tailor step shared by a fresh add and a "Tailor again" re-run.
 
-    Best-effort (MA-4): any failure is logged and swallowed here so the
+    Best-effort: any failure is logged and swallowed here so the
     caller's row is never lost over a tailoring error. Returns the tailored
     output folder, or None.
     """
@@ -315,9 +315,9 @@ def add_manual_job(
     """Full manual-add flow. Returns {record, resume_dir, appended}.
 
     record       the job record (source="manual") appended to the master;
-                 never scored (SP5/MA-1) -- the user already chose this job
+                 never scored, since the user already chose this job
     resume_dir   the tailored-résumé output folder (Path), or None when
-                 tailoring failed (the record is still appended -- MA-4)
+                 tailoring failed (the record is still appended)
     appended     True when the record landed in the master CSV (False if a dup)
 
     Call `find_duplicate` first: this always tailors, so running it again on a
@@ -360,7 +360,7 @@ def find_duplicate(
     df: Any = None,
     master_csv: Optional[Path] = None,
 ) -> Optional[Dict[str, Any]]:
-    """The existing row for this job's id, or None (MA-2's duplicate check).
+    """The existing row for this job's id, or None (the duplicate check).
 
     Computes the same deterministic id `add_manual_job` would use and looks
     for it before any tailoring spend: first in `df` (the rows the dashboard
@@ -382,7 +382,7 @@ def find_duplicate(
 
 
 def duplicate_message(dup: Dict[str, Any]) -> str:
-    """MA-2's duplicate-found text: "Already added on <date> as <title> at
+    """The duplicate-found text: "Already added on <date> as <title> at
     <company>.", or without the date clause when the row carries none."""
     title = str(dup.get("job_title") or "this job")
     company = str(dup.get("company_name") or "this company")
@@ -399,10 +399,10 @@ def retailor_existing(
     tailor_fn: Optional[Callable[..., Path]] = None,
     on_status: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
-    """Re-run the tailor step on an ALREADY-SAVED row (MA-2's "Tailor again").
+    """Re-run the tailor step on an ALREADY-SAVED row ("Tailor again").
 
     Never appends a new row (the record already lives in the master), so
-    `appended` is always False. Shares the tailor seam and the MA-4 failure
+    `appended` is always False. Shares the tailor seam and the failure
     handling with `add_manual_job` through `_run_tailor`.
 
     `jd_text` is the description the user just re-pasted into the dialog. The

@@ -6,7 +6,7 @@ parse -> tailor -> append pipeline on a worker thread. All the real logic lives 
 the toolkit-agnostic `manual_add` module (project convention: keep Qt-agnostic
 logic out of widgets).
 
-The user already chose this job (SP5/MA-1), so there is one action: "Add and
+The user already chose this job, so there is one action: "Add and
 tailor" saves the row and runs the résumé engine on it, no scoring involved.
 That needs all four fields (URL, title, company, description), so tailoring
 never breaks on a thin record.
@@ -87,7 +87,7 @@ class ManualAddDialog(QtWidgets.QDialog):
     def _on_accept(self) -> None:
         """Every field is required: a save (edit mode) or an add-and-tailor both
         need title, company, description and URL so tailoring never breaks on a
-        thin record (MA-5: the intro text no longer implies a URL alone will do)."""
+        thin record (the intro text does not imply a URL alone will do)."""
         missing: list[str] = []
         if not self.title.text().strip():
             missing.append("job title")

@@ -130,7 +130,7 @@ def engine_problems() -> list[str]:
         return []
 
 
-# --- The claude CLI's version against the models it is asked for (VL-5) ---------
+# --- The claude CLI's version against the models it is asked for ----------------
 
 def _claude_cli():
     """pipeline/claude_cli.py, through the same sys.path hop job_data_problems uses."""
@@ -232,7 +232,7 @@ def claude_version_problems() -> list[str]:
         return []
 
 
-# --- Auto-apply (cycle 16): the Jev judge and the Playwright browser -------------
+# --- Auto-apply: the Jev judge and the Playwright browser ------------------------
 
 def auto_apply_warnings(has_key: bool, jev_mode: str, sdk_found: bool,
                         playwright_found: bool, chromium_found: bool,
@@ -243,9 +243,8 @@ def auto_apply_warnings(has_key: bool, jev_mode: str, sdk_found: bool,
     The lines follow the order the drain checks in. `jev_mode` is a mode
     `jev_switch.apply_mode` resolved. The drain's refusal of the mode comes
     first (`jev_switch.mode_refusal`): a test judge ('fake', 'replay') is
-    fixture-only (cycle 16), and a mode `jev.get` does not build is unknown
-    (SP1 follow-up 2). Then Jev switched off (Settings > Jev) stops a run in
-    every mode (JS-5); these lines are the sentences the drain and the
+    fixture-only, and a mode `jev.get` does not build is unknown. Then Jev
+    switched off (Settings > Jev) stops a run in every mode; these lines are the sentences the drain and the
     Auto-apply panel's Start button give. The key and the SDK only matter in
     'typesafe' mode, since the test judges need neither. Playwright and
     Chromium are needed in every mode. A missing Playwright package folds the

@@ -43,7 +43,7 @@ _HEADER_RIGHT = frozenset({
 
 
 def _manual_mask(ids: list[str]) -> list[bool]:
-    """True where an id is a hand-added job (SP5/MA-3): those are never scored,
+    """True where an id is a hand-added job: those are never scored,
     so the Score cell reads "hand-added" instead of a blank value. Shares its
     fallback logic with jobsdata.is_manual_job_id (the one place it lives)."""
     return [is_manual_job_id(i) for i in ids]

@@ -63,9 +63,9 @@ class SeenRegistry:
         # Fold any write-ahead log into the main file on open. The dashboard is
         # a long-lived process that is usually killed rather than closed, so the
         # WAL never hits SQLite's close-time checkpoint, and the writes here are
-        # far too small to reach the 1000-page auto-checkpoint: on 2026-09-18 the
-        # main file still read as a 2026-07-27 snapshot with seven weeks of marks,
-        # tracker rows and resume links living only in seen.db-wal, and when that
+        # far too small to reach the 1000-page auto-checkpoint: the main file
+        # once still read as a seven-week-old snapshot, with every mark, tracker
+        # row and resume link since living only in seen.db-wal, and when that
         # file went missing the registry silently reverted. Every writer below
         # checkpoints after its commit for the same reason.
         self._checkpoint()
@@ -80,7 +80,7 @@ class SeenRegistry:
             "  job_posting_id TEXT PRIMARY KEY,"
             "  status         TEXT NOT NULL,"
             "  status_date    TEXT NOT NULL,"   # ISO date of the last status change (display)
-            "  status_ts      TEXT,"            # full ISO timestamp — merge tie-break (P2-6)
+            "  status_ts      TEXT,"            # full ISO timestamp: merge tie-break
             "  applied_date   TEXT,"            # ISO date first marked applied
             "  followed_up_at TEXT,"            # ISO date a follow-up nudge was sent
             "  company        TEXT DEFAULT ''," # snapshot — survives master turnover
@@ -88,8 +88,8 @@ class SeenRegistry:
             "  url            TEXT DEFAULT ''"
             ")"
         )
-        # Older DBs predate status_ts (audit P2-6: day-granular status_date makes
-        # same-day cross-machine merges machine-order dependent) — add in place.
+        # Older DBs predate status_ts (day-granular status_date makes same-day
+        # cross-machine merges machine-order dependent): add it in place.
         try:
             self._conn.execute("ALTER TABLE app_status ADD COLUMN status_ts TEXT")
         except sqlite3.OperationalError:
@@ -206,7 +206,7 @@ class SeenRegistry:
         app_status is the only table with no second store (seen self-heals from
         the CSVs, resume_paths from the on-disk apply.md files), so we refresh
         this backup after every mutation: tracker rows, seen marks and resume
-        links alike, since the 2026-09-18 WAL loss took all three at once. A whole-db VACUUM INTO of this
+        links alike, since a lost WAL takes all three at once. A whole-db VACUUM INTO of this
         small db is a few ms; it's written to a temp then os.replace'd so a crash
         mid-backup can't leave a torn file. Never fatal — a failed backup must
         not break the status write that triggered it."""
@@ -443,7 +443,7 @@ class SeenRegistry:
             )
             counts["seen"] = cur.rowcount
 
-            # A backup made before the status_ts column (P2-6) lacks it — select
+            # A backup made before the status_ts column lacks it: select
             # NULL in its place so old exports still merge.
             bak_cols = {r[1] for r in conn.execute(
                 "PRAGMA bak.table_info(app_status)").fetchall()}
@@ -472,7 +472,7 @@ class SeenRegistry:
                 else:
                     (ex_status, ex_sdate, ex_applied, ex_follow, ex_co, ex_title,
                      ex_url, ex_sts) = ex
-                    # Tie-break on the full timestamp when available (P2-6): a
+                    # Tie-break on the full timestamp when available: a
                     # same-day status change made on another machine can now win
                     # the merge. Timestamps and dates compare lexicographically;
                     # a bare date sorts before that day's timestamps, so the

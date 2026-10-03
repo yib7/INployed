@@ -1,4 +1,4 @@
-"""The "Waiting for you" card at the top of the Auto-apply tab (cycle 19, SP7).
+"""The "Waiting for you" card at the top of the Auto-apply tab.
 
 A run that meets a question it cannot answer pauses (`local/apply_pause.py`):
 it writes a request file and waits for the answer file. The card shows the

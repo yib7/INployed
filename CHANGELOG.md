@@ -34,6 +34,15 @@ All notable changes to INployed are recorded here. The format follows
   **Open folder**, **Open record** and **Answer now** are greyed out with "Select one job" while
   more than one row is selected.
 
+### Changed
+
+- **Dependencies moved to current stable releases.** `pypdf` 6.19.0 (one more input bound on
+  page labels), `google-genai` 2.28.0 (additive, plus a fix that closes aiohttp sessions of
+  closed event loops), `pandas` 3.0.6 (regression fixes), `python-dotenv` 1.2.4, `ruff` 0.16.10
+  and `tzdata` 2026.5; the VM pin set takes the same `google-genai` and `pandas`.
+  `typesafe-sdk` is pinned exactly at 0.7.2 (it was the range `>=0.7.0`), so a fresh install
+  gets the version the suite ran against.
+
 ### Fixed
 
 - **A long master reaches the cover letter and Ask AI whole again.** Both read the master

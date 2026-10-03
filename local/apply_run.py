@@ -3949,7 +3949,10 @@ def pick_holds(value: str, option: str, group: bool = False) -> bool:
     reads "checked"; any other pick reads the option (case, punctuation and
     spacing aside) or a name it goes by (`apply_judge._alias_set`: United
     States of America for United States, CA for California); a question's
-    tick boxes (`group`) read the option among the ticked ones ("A, B").
+    tick boxes (`group`) read the option among the ticked ones, each
+    compared whole (`apply_fill.Ticked`: "Yes, I am authorized" is one
+    option, and "Asian" is no "Asian, including Indian"); a read-back that
+    carries no list is one option.
     Words that only contain the option never hold ("Yes, but I will need
     sponsorship" is no "Yes", review M3), and neither do words the option
     only starts with ("Yes" is no "Yes, I will need sponsorship", review R2
@@ -3957,7 +3960,8 @@ def pick_holds(value: str, option: str, group: bool = False) -> bool:
     if str(option).strip().lower() == "checked":
         return str(value).strip().lower() == "checked"
     norm = apply_judge._norm_option
-    parts = str(value).split(", ") if group else [str(value)]
+    ticked = getattr(value, "options", None) if group else None
+    parts = [str(p) for p in ticked] if ticked is not None else [str(value)]
     o = norm(option)
     if not o:
         return False

@@ -890,7 +890,8 @@ def test_a_moved_box_with_no_attributes_is_told_apart_by_its_label(browser_page)
     ("checked", "checked", False, True), ("", "checked", False, False),
     ("Yes", "Yes", False, True), ("No", "Yes", False, False),
     ("United States of America", "United States", False, True),
-    ("SQL, Go", "Go", True, True), ("SQL, Go", "Python", True, False),
+    # a plain read-back is one whole option (`apply_fill.Ticked` carries a list)
+    ("Go", "Go", True, True), ("SQL, Go", "Go", True, False), ("SQL, Go", "Python", True, False),
     ("California", "CA", False, True), ("Select One", "Canada", False, False),
     # review M3: words that only contain the option are no pick of it
     ("Yes, but I will need sponsorship", "Yes", False, False),
@@ -1680,3 +1681,46 @@ def test_an_optional_question_with_a_send_word_is_a_field_only_by_an_outside_lab
     assert [(f.label, f.locator[1]) for f in d.fields] == [
         ("Willing to submit references", "#ref"), ("Willing to submit references", "#ref2")]
     assert "#send" in [b.locator[1] for b in d.buttons]
+
+
+# --- a question's tick boxes read back as whole options --------------------------------------------
+
+@pytest.mark.parametrize("ticked, option, ok", [
+    (["SQL", "Go"], "Go", True), (["SQL", "Go"], "Python", False),
+    # an option's own comma never splits it
+    (["Yes, I am authorized to work"], "Yes, I am authorized to work", True),
+    # a planned option that only starts a ticked one is no pick of it
+    (["Asian, including Indian"], "Asian", False),
+    (["Asian, including Indian", "White"], "White", True)])
+def test_a_tick_box_pick_is_compared_option_by_option(ticked, option, ok):
+    value = apply_fill.Ticked(ticked)
+    assert value == ", ".join(ticked)          # the record and the trace read it as before
+    assert apply_run.pick_holds(value, option, True) is ok
+
+
+def test_a_plain_read_back_of_tick_boxes_is_one_whole_option():
+    # words with no list behind them are never split on their commas
+    assert apply_run.pick_holds("Asian, including Indian", "Asian", True) is False
+    assert apply_run.pick_holds("Asian, including Indian", "Asian, including Indian", True)
+
+
+def test_tick_boxes_whose_options_hold_commas_verify_after_the_fill(browser_page):
+    browser_page.set_content("""<body><form><fieldset>
+      <legend>Which of these describe you? Select all that apply</legend>
+      <label><input type=checkbox name=d value=a> Yes, I am authorized to work</label>
+      <label><input type=checkbox name=d value=b> Asian</label>
+      <label><input type=checkbox name=d value=c> Asian, including Indian</label>
+      </fieldset><button>Submit</button></form></body>""")
+    d = apply_form.extract(browser_page)
+    q = next(f for f in d.fields if f.widget == "checkbox_group")
+    pf = PlannedField(n=q.n, locator=q.locator, label=q.label, required=True, fact_key=None,
+                      value="Yes, I am authorized to work", option="Yes, I am authorized to work",
+                      confidence=0.9, action="select", widget=q.widget, options=q.options,
+                      option_locators=q.option_locators, ident=q.ident)
+    out = apply_fill.apply(browser_page, FillPlan(fields=[pf]))
+    assert out[0].value.options == ("Yes, I am authorized to work",)
+    assert apply_run.pick_holds(out[0].value, pf.option, True)
+    # "Asian, including Indian" ticked by the person: a planned "Asian" does not hold
+    browser_page.locator("input[value=c]").check()
+    now = apply_fill.read_back(browser_page, pf)
+    assert not apply_run.pick_holds(now, "Asian", True)

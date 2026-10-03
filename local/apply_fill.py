@@ -57,7 +57,7 @@ import time
 import weakref
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 import apply_form
 import apply_judge
@@ -75,6 +75,23 @@ CHECKED_WORDS = ("checked", "yes", "true", "on", "1")
 UNCHECKED_WORDS = ("unchecked", "no", "false", "off", "0")
 _DATE_SHAPES = ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%Y/%m/%d", "%d %B %Y", "%B %d, %Y",
                 "%b %d, %Y", "%d %b %Y", "%m-%d-%Y")
+
+
+class Ticked(str):
+    """A question's tick boxes read back: the ticked options joined with
+    ", " for the record and the trace, and each ticked option whole in
+    `options`, so a check of the pick compares option by option (an option's
+    own comma never splits it)."""
+    options: tuple[str, ...]
+
+    def __new__(cls, options: Iterable[str]) -> Ticked:
+        opts = tuple(str(o) for o in options)
+        out = super().__new__(cls, ", ".join(opts))
+        out.options = opts
+        return out
+
+    def __reduce__(self):
+        return (Ticked, (self.options,))
 
 
 @dataclass
@@ -1249,7 +1266,7 @@ def _read_widget(page, pf: PlannedField, loc) -> str:
     if widget in ("choice", "checkbox_group"):
         chosen = [opt for opt, css in zip(pf.options, pf.option_locators)
                   if css and _ticked(_clicked(page, pf.locator[0], css))]
-        return ", ".join(chosen) if widget == "checkbox_group" else (chosen[0] if chosen else "")
+        return Ticked(chosen) if widget == "checkbox_group" else (chosen[0] if chosen else "")
     if widget == "popup":
         return str(loc.first.evaluate(_POPUP_READ_JS, timeout=ACTION_TIMEOUT_MS) or "")
     if widget == "combo":

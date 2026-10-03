@@ -273,30 +273,27 @@ def group_source_text(ids: Iterable[str], extra: str = "") -> str:
     sees them, so a fact that lives only there cannot ground a bullet."""
     parts: List[str] = [extra or ""]
     catalog = assets.atoms_by_id()
-
-    def _walk(val: Any) -> None:
-        """Collect every leaf scalar. Atom fields are usually strings or lists,
-        but master_experience.yaml allows a nested mapping (e.g. a `metrics:`
-        block). The old flat pass skipped dicts entirely (audit C6-10), so an
-        atom that recorded its numbers under `metrics:` had its OWN figures
-        treated as ungrounded and its legitimate bullet dropped."""
-        if isinstance(val, dict):
-            for k, v in val.items():
-                if not str(k).startswith("_"):
-                    _walk(v)
-        elif isinstance(val, (list, tuple, set)):
-            for v in val:
-                _walk(v)
-        elif val is not None and not isinstance(val, bool):
-            parts.append(str(val))
-
     for aid in ids:
-        atom: Dict[str, Any] = catalog.get(aid) or {}
-        for key, val in atom.items():
-            if key.startswith("_") or key in assets.INERT_ATOM_KEYS:
-                continue
-            _walk(val)
+        _source_leaves(catalog.get(aid) or {}, parts)
     return "\n".join(p for p in parts if p)
+
+
+def _source_leaves(val: Any, parts: List[str]) -> None:
+    """Append every leaf scalar under `val` to `parts`, skipping each mapping key
+    that starts with `_` or is inert (`assets.INERT_ATOM_KEYS`): the one filter
+    the bullet gate and the letter gate share. Atom fields are usually strings
+    or lists, but master_experience.yaml allows a nested mapping (a `metrics:`
+    block) whose figures are the atom's own, so mappings are walked too."""
+    if isinstance(val, dict):
+        for k, v in val.items():
+            key = str(k)
+            if not key.startswith("_") and key not in assets.INERT_ATOM_KEYS:
+                _source_leaves(v, parts)
+    elif isinstance(val, (list, tuple, set)):
+        for v in val:
+            _source_leaves(v, parts)
+    elif val is not None and not isinstance(val, bool):
+        parts.append(str(val))
 
 
 def _entry_names(sel: Dict[str, Any]) -> str:
@@ -350,14 +347,18 @@ def enforce_grounded(sel: Dict[str, Any], bullets: Dict[str, str], *,
 def letter_allowed_source(bullets: Dict[str, str], *, research: str = "",
                           company: str = "", job_title: str = "",
                           jd: str = "") -> str:
-    """Everything the cover letter may legitimately mention: the whole master
-    experience file (the candidate's own facts), the tailored bullets, the
-    research blurb, the role/company labels, and the JD (a letter naturally
-    echoes the posting's own terms — the deterministic guard here is against
-    facts from NOWHERE; JD-borne instruction injection is fenced at the prompt
-    and squeezed by refine_body's grounding pass)."""
+    """Everything the cover letter may legitimately mention: the master
+    experience file (the candidate's own facts) less the keys
+    `group_source_text` also leaves out (`interview_notes`, the `_`-prefixed
+    keys), the tailored bullets, the research blurb, the role/company labels,
+    and the JD (a letter naturally echoes the posting's own terms; the
+    deterministic guard here is against facts from NOWHERE, and JD-borne
+    instruction injection is fenced at the prompt and squeezed by
+    refine_body's grounding pass)."""
+    master: List[str] = []
+    _source_leaves(assets.load_master(), master)
     return "\n".join([
-        str(assets.load_master()),
+        "\n".join(master),
         "\n".join(bullets.values()),
         research or "", company or "", job_title or "", jd or "",
     ])

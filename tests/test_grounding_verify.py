@@ -497,3 +497,31 @@ def test_interview_notes_cannot_ground_a_bullet(monkeypatch):
     assert "Airflow" not in src
     assert "Airflow" in verify.unseen_tokens(
         "Built an ETL pipeline in Python on Airflow", src)
+
+
+def test_interview_notes_cannot_ground_the_cover_letter(monkeypatch):
+    """The letter's source is the master with the same keys left out that
+    `group_source_text` leaves out: `interview_notes` and `_`-prefixed keys
+    ground nothing, while every other atom key and entry field still does."""
+    master = {
+        "basics": {"name": "Jane Doe", "location": "Austin, TX"},
+        "experience": [{
+            "name": "Globex",
+            "context": "a Snowflake shop",
+            "achievements": [{
+                "id": "i1",
+                "what": "Built an ETL pipeline in Python",
+                "hardest_problem": "backfilling 9,120 partitions",
+                "interview_notes": ["the scheduler ran on Airflow 2.7"],
+                "_private": "Kubernetes",
+            }],
+        }],
+    }
+    monkeypatch.setattr(verify.assets, "load_master", lambda: master)
+    allowed = verify.letter_allowed_source({"i1": "Built an ETL pipeline in Python"})
+    bad = verify.letter_unseen(
+        "At Globex I built an ETL pipeline in Python on Airflow 2.7 and Kubernetes.",
+        allowed)
+    assert "Airflow" in bad and "2.7" in bad and "Kubernetes" in bad
+    assert verify.letter_unseen(
+        "At Globex, a Snowflake shop, Jane Doe backfilled 9,120 partitions.", allowed) == []

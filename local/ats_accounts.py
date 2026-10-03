@@ -85,13 +85,40 @@ def _netloc(domain_or_url: str) -> str:
     return host.strip().lower()
 
 
-def _load_ledger(path: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
+def _load_ledger(path: Optional[Path] = None, *,
+                 quarantine: bool = False) -> Dict[str, Dict[str, Any]]:
+    """The ledger map, or {} when there is none yet. A file that cannot be read
+    or is not a JSON object reads as {} with a warning naming it. `quarantine`
+    (the writer, `record`) also moves such a file aside to
+    ats_accounts.json.corrupt-<stamp>, so the write that follows never destroys
+    the record of which sites hold an account; readers leave it in place."""
     lp = ledger_path(path)
     try:
         data = json.loads(lp.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except FileNotFoundError:
         return {}
-    return data if isinstance(data, dict) else {}
+    except (OSError, ValueError) as exc:
+        reason = f"{type(exc).__name__}: {exc}"
+    else:
+        if isinstance(data, dict):
+            return data
+        reason = f"it holds a JSON {type(data).__name__}, not an object"
+    moved = ""
+    if quarantine and lp.exists():
+        target = lp.with_name(f"{lp.name}.corrupt-{datetime.now():%Y%m%d-%H%M%S}")
+        n = 1
+        while target.exists():
+            n += 1
+            target = lp.with_name(f"{lp.name}.corrupt-{datetime.now():%Y%m%d-%H%M%S}-{n}")
+        try:
+            os.replace(lp, target)
+            moved = f"; kept as {target.name}, starting a new ledger"
+        except OSError:
+            moved = "; it could not be moved aside"
+    logging.getLogger(__name__).warning(
+        "the ATS account ledger %s could not be read (%s)%s", lp, reason,
+        moved or "; reading it as empty")
+    return {}
 
 
 def _assert_no_password_keys(rec: Dict[str, Any]) -> None:
@@ -112,7 +139,7 @@ def record(domain_or_url: str, email: str, method: str = "master_password",
     if not key:
         raise ValueError("a domain or URL is required")
     _assert_no_password_keys(dict(extra))
-    ledger = _load_ledger(path)
+    ledger = _load_ledger(path, quarantine=True)
     rec = ledger.get(key) or {"created_at": _now()}
     rec.update({"email": str(email), "method": str(method),
                 "updated_at": _now(), **extra})
@@ -486,6 +513,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     keyring missing) or unexpected error (one line on stderr) · 2 lookup miss.
     NO verb ever outputs the password."""
     _force_utf8_stdio()
+    # a damaged ledger's warning reaches the terminal as one plain line (a
+    # no-op where the caller already set logging up)
+    logging.basicConfig(format="ats_accounts: %(message)s", level=logging.WARNING)
     ap = argparse.ArgumentParser(
         prog="ats_accounts",
         description="ATS account ledger + master-password clipboard transit "

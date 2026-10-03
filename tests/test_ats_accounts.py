@@ -150,6 +150,36 @@ def test_record_upsert_keeps_created_at(ledger):
     assert len(json.loads(ledger.read_text(encoding="utf-8"))) == 1
 
 
+@pytest.mark.parametrize("damaged", ['{"jobs.example.com": {"email": "a@x', '["a list"]'])
+def test_record_on_a_damaged_ledger_moves_it_aside(ledger, caplog, damaged):
+    # a damaged ledger is kept beside the new one, never written over: it still
+    # names the sites the candidate has accounts on
+    ledger.write_text(damaged, encoding="utf-8")
+    with caplog.at_level("WARNING", logger="ats_accounts"):
+        ats_accounts.record("acme.icims.com", email="a@x.com")
+    assert list(json.loads(ledger.read_text(encoding="utf-8"))) == ["acme.icims.com"]
+    kept = list(ledger.parent.glob("ats_accounts.json.corrupt-*"))
+    assert len(kept) == 1 and kept[0].read_text(encoding="utf-8") == damaged
+    assert "could not be read" in caplog.text and kept[0].name in caplog.text
+
+
+def test_reading_a_damaged_ledger_says_so_and_leaves_it(ledger, caplog, capsys):
+    ledger.write_text("{not json", encoding="utf-8")
+    with caplog.at_level("WARNING", logger="ats_accounts"):
+        assert ats_accounts.main(["list"]) == 0
+        assert ats_accounts.lookup("acme.icims.com") is None
+    assert capsys.readouterr().out == ""
+    assert f"the ATS account ledger {ledger} could not be read" in caplog.text
+    assert ledger.read_text(encoding="utf-8") == "{not json"     # readers never move it
+    assert not list(ledger.parent.glob("ats_accounts.json.corrupt-*"))
+
+
+def test_a_missing_ledger_reads_empty_without_a_warning(ledger, caplog):
+    with caplog.at_level("WARNING", logger="ats_accounts"):
+        assert ats_accounts.list_accounts() == {}
+    assert caplog.text == ""
+
+
 def test_record_rejects_password_like_keys(ledger):
     for bad in ("password", "Password", "pwd", "api_token", "client_secret"):
         with pytest.raises(ValueError):

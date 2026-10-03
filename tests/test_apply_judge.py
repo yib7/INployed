@@ -169,7 +169,7 @@ def test_threshold_constants_match_the_spec_table():
     assert apply_judge.MAX_PAGES == 20
     assert apply_judge.PAGE_TEXT_CAP == 4000
     doc = " ".join(apply_judge.__doc__.split())
-    assert "tuned 2026-09-25 (SP8b)" in doc and "UNTUNED" not in doc
+    assert "tuned against the recorded live answers" in doc and "UNTUNED" not in doc
     assert "cache.json" in doc and "matrix_cache.json" in doc
 
 
@@ -3828,9 +3828,15 @@ def test_a_settle_question_carries_the_authorization_statement(tmp_path):
     assert f"{apply_facts.DESCRIPTIONS['requires_sponsorship']}: No" in saved
     assert saved[-1] == f"{apply_judge.STATEMENT_LINE}: {_STATEMENT}"
     assert sum(line.startswith(apply_judge.STATEMENT_LINE) for line in saved) == 1
-    # with no statement saved, the yes / no lines alone
+    # with no statement saved, a question that names citizens is never
+    # asked (authorized with no sponsorship fits a permanent resident too),
+    # and any other carries the yes / no lines alone
     _, _, _, bare, _ = _held_back_plan(tmp_path / "bare", label=_CONTOSO_AUTH,
                                        key="work_authorized",
+                                       bank=standard_bank(authorization_statement=""))
+    assert bare == {}
+    _, _, _, bare, _ = _held_back_plan(tmp_path / "bare2", label=_CONTOSO_SPONSOR,
+                                       key="requires_sponsorship",
                                        bank=standard_bank(authorization_statement=""))
     assert apply_judge.STATEMENT_LINE not in bare["field_0_settle"]["instructions"]["saved_answer"]
 
@@ -3988,3 +3994,110 @@ def test_the_user_s_note_rides_with_the_saved_answer(tmp_path):
     # a text answer carries its note too
     assert apply_judge.candidate_answer(cat, "onsite_ok", "Yes").startswith(
         f"{apply_facts.DESCRIPTIONS['onsite_ok']}: Yes (the candidate's note:")
+
+
+# --- a lone tick box, settled in code (ship audit S5) ------------------------------------
+
+_SPONSOR_TICK = "I will require H-1B visa sponsorship now or in the future."
+_RELOCATE_TICK = "I am willing to relocate to the job's location."
+
+
+def _tick_plan(tmp_path, label, key, value, *, required=True, pick=None):
+    """The plan for one lone tick box (options ["checked"]) mapped to `key`
+    at 0.95, with `key` saved as `value` and the judge's pick `pick`."""
+    cat = _profile_catalog(tmp_path, **{key: value})
+    digest = _one_field(label, "checkbox", required=required, options=("checked",))
+    answers = _page_answers(digest, {0: (key, 0.95)})
+    if pick is not None:
+        answers["field_0_pick"] = answers["field_0_option"] = _choice(pick, 0.99)
+    return apply_judge.plan(digest, cat, answers)
+
+
+@pytest.mark.parametrize("required", [True, False])
+def test_a_lone_tick_box_is_never_ticked_for_a_no(tmp_path, required):
+    """A citizen's No to sponsorship never ticks "I will require H-1B visa
+    sponsorship", whatever the judge picks; a required box parks."""
+    p = _tick_plan(tmp_path, _SPONSOR_TICK, "requires_sponsorship", "No",
+                   required=required, pick="checked")
+    pf = p.fields[0]
+    assert (pf.action, pf.option) == ("skip", None)
+    if required:
+        assert p.park_reason == f"required field without an answer: {_SPONSOR_TICK}"
+    else:
+        assert p.park_reason == ""
+
+
+def test_a_lone_tick_box_is_ticked_in_code_for_a_yes(tmp_path):
+    """A Yes ticks the box with no pick from the judge."""
+    p = _tick_plan(tmp_path, _RELOCATE_TICK, "willing_to_relocate", "Yes", pick="no_match")
+    pf = p.fields[0]
+    assert (pf.action, pf.option, pf.fact_key) == ("select", "checked", "willing_to_relocate")
+    assert p.park_reason == ""
+
+
+def test_a_settle_read_never_ticks_a_lone_box_for_a_no(tmp_path):
+    cat = _profile_catalog(tmp_path, requires_sponsorship="No")
+    f = _f(0, _SPONSOR_TICK, "checkbox", required=True, options=("checked",))
+    answers = {"field_0_settle": _settle_answer("checked", 0.99,
+                                                {"checked": 0.99, "not_settled": 0.01})}
+    assert apply_judge.settled_pick(answers, f, "requires_sponsorship", cat) is None
+
+
+# --- the settle reads refused in code (ship audit S5) ------------------------------------
+
+def _auth_catalog(statement=""):
+    facts = [apply_facts.Fact(k, v, apply_facts.DESCRIPTIONS[k], "bool")
+             for k, v in (("work_authorized", "Yes"), ("requires_sponsorship", "No"),
+                          ("authorized_without_sponsorship", "Yes"),
+                          ("willing_to_relocate", "Yes"), ("onsite_ok", "Yes"))]
+    if statement:
+        facts.append(apply_facts.Fact(apply_judge.STATEMENT_KEY, statement, "statement"))
+    return apply_facts.FactCatalog(facts)
+
+
+@pytest.mark.parametrize("label", ["Are you a U.S. citizen?",
+                                   "Are you a U.S. citizen or permanent resident?"])
+def test_a_citizenship_question_is_unsaid_with_no_authorization_statement(label):
+    """Authorized with no sponsorship fits a permanent resident too: only
+    the candidate's own statement says citizen."""
+    f = _f(0, label, "radio", required=True, options=("Yes", "No"))
+    assert not apply_judge._settle_ok(f, "work_authorized", _auth_catalog())
+    assert apply_judge._settle_ok(f, "work_authorized", _auth_catalog(_STATEMENT))
+
+
+@pytest.mark.parametrize("label, key", [
+    ("Would you NOT be willing to relocate?", "willing_to_relocate"),
+    ("Are you unwilling to relocate?", "willing_to_relocate"),
+    ("Are you unable to work in the US without sponsorship?", "work_authorized"),
+    ("Are you NOT legally authorized to work in the US?", "work_authorized"),
+    ("Will you not require sponsorship?", "requires_sponsorship"),
+    ("Can you never work on-site?", "onsite_ok"),
+    ("Is there a reason you cannot work in the United States?", "work_authorized"),
+    ("Are you authorized to work in the country where this job is located?",
+     "work_authorized"),
+    ("Are you authorized to work in this country?", "work_authorized"),
+])
+def test_a_negated_or_placeless_question_is_never_settled(label, key):
+    f = _f(0, label, "radio", required=True, options=("Yes", "No"))
+    assert not apply_judge._settle_ok(f, key, _auth_catalog(_STATEMENT))
+
+
+@pytest.mark.parametrize("label, key", [
+    # a condition and a no-sponsorship clause are no negated question
+    (_CONTOSO_RELOCATE, "willing_to_relocate"),
+    ("Are you authorized to work in the US and will not require sponsorship?",
+     "authorized_without_sponsorship"),
+    ("Are you willing to relocate for this position? Relocation assistance is not provided.",
+     "willing_to_relocate"),
+])
+def test_a_negation_outside_the_question_still_settles(label, key):
+    f = _f(0, label, "radio", required=True, options=("Yes", "No"))
+    assert apply_judge._settle_ok(f, key, _auth_catalog(_STATEMENT))
+
+
+def test_the_emailed_code_body_is_capped_as_the_link_body_is():
+    body = "Your code is 482913. " + "x" * 5000
+    state, _ = apply_judge.code_pick_questions(["482913"], body)
+    link_state, _ = apply_judge.link_pick_questions([("Verify", "example.com")], body)
+    assert len(state["body"]) == len(link_state["body"]) == apply_judge.INBOX_BODY_CAP == 2000
+    assert state["body"] == body[:2000]

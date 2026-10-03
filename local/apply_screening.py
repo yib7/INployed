@@ -1,6 +1,5 @@
 """The screening set: real-world screening questions run through the auto-apply
-runner's own mapping and option pick for one answer list (cycle 18, TS-1,
-TS-2, ED-9).
+runner's own mapping and option pick for one answer list.
 
 `load_questions()` reads the shipped questions (`screening_questions.json`
 beside this module). Each is one form field as the extractor reads it: a label,
@@ -51,7 +50,7 @@ WIDGETS: dict[str, tuple[str, str]] = {
     "checkbox": ("checkbox", ""),        # one tick box (options ["checked"]) or a group
 }
 # a tick box's one option, as the extractor lists it
-TICKED = "checked"
+TICKED = apply_judge.TICKED
 
 # the page every question sits on: fixed, so a recorded answer replays
 PAGE_HOST = "jobs.example.com"
@@ -77,7 +76,7 @@ class Outcome:
 
 
 def load_questions(path: Path | None = None) -> list[dict]:
-    """The shipped screening questions (the fixture schema from decision 1)."""
+    """The shipped screening questions (`screening_questions.json`)."""
     raw = json.loads(Path(path or QUESTIONS_PATH).read_text(encoding="utf-8"))
     questions = raw.get("questions") if isinstance(raw, dict) else None
     if not isinstance(questions, list):
@@ -179,8 +178,13 @@ def screen(question: dict[str, Any], catalog, judge) -> Outcome:
     pf = plan.fields[0]
     answer = _given(pf)
     f = digest.fields[0]
+    # a lone tick box the gate passes is ticked in code (`apply_judge.lone_tick`);
+    # one the gate held back was ticked by the judge's settle read
+    lone = (apply_judge.lone_tick(f.options) and answer == apply_judge.TICKED
+            and bool(pf.fact_key) and catalog.answers_field(
+                pf.fact_key, f.label, f.help, company=JOB["company_name"]))
     by_code = (answer is not None and pf.action == "select" and bool(pf.value)
-               and apply_judge.code_pick(pf.value, f.options) == answer)
+               and (lone or apply_judge.code_pick(pf.value, f.options) == answer))
     return Outcome(answer=answer, fact_key=pf.fact_key if answer is not None else None,
                    by_code=by_code)
 

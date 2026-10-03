@@ -17,7 +17,7 @@ browser or the network.
                                            option picks, button roles, the
                                            prohibited flag
     page_requests(digest, catalog, job)    the same mapping in requests sized to
-                                           Jev's limits (RES-03), read back as
+                                           Jev's limits, read back as
                                            one by `merge_answers`
     option_questions(digest, plan, catalog)  the second request: option picks
                                            for fields whose fact the first
@@ -49,12 +49,12 @@ only meaningful once the fact is known. The first request carries a
 the value); a model-mapped select waits for `field_{n}_pick` from the second
 request, and until then it is `skip` and, when required, sets `park_reason`.
 
-The thresholds were tuned 2026-09-25 (SP8b) against the recorded live answers
-in `tests/fixtures/jev_cache/cache.json` (the runner tests) and
+The thresholds were tuned against the recorded live answers in
+`tests/fixtures/jev_cache/cache.json` (the runner tests) and
 `tests/fixtures/jev_cache/matrix_cache.json` (the flow matrix's real column),
-and the live page reads of the matrix and the local captures (first tuned
-2026-09-22, SP8); the block below the constants records the distribution each
-gate was read against. The constants are the only place to change them.
+and the live page reads of the matrix and the local captures; the block below
+the constants records the distribution each gate was read against. The
+constants are the only place to change them.
 """
 from __future__ import annotations
 
@@ -67,8 +67,8 @@ from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 # PLAIN_NUMBER (a number box's answer: "3", "1.5"; "5+", "$120,000" and "3-5"
-# are no number, cycle 18 FM-5) and the yes and no forms are the own-question
-# gate's too, so both read one list (final review C1)
+# are no number) and the yes and no forms are the own-question gate's too, so
+# both read one list
 from apply_facts import (DESCRIPTIONS, NO_FORMS, PLAIN_NUMBER, STORED_YES_NO_KEYS, YES_FORMS,
                          YES_NO_KEYS, FactCatalog, answers_question, asks_about, asks_willingness,
                          noun_phrase, question_tokens, quick_map)
@@ -83,7 +83,7 @@ from resume_tailor.answer_tables import US_STATES as _US_STATES
 
 log = logging.getLogger("apply_judge")
 
-# --- thresholds (tuned 2026-09-25 against the recorded live answers) ----------------
+# --- thresholds (tuned against the recorded live answers) ---------------------------
 
 PAGE_STATE_MIN_CONF = 0.40      # below it: park needs_human (the best guess wins above it)
 CONFIRMATION_MIN_CONF = 0.60    # after the submit click, a confirmation read with no
@@ -96,8 +96,8 @@ CONSENT_MIN_CONF = 0.85         # consent_attest needs this much: a tick cannot 
 OPTION_MIN_CONF = 0.70          # the same rule for select / radio picks
 # A saved answer the own-question gate held back fills its field only when the
 # judge says it settles the field's question as worded there (`settle_questions`)
-# at this confidence, this far ahead of every other choice (the user's call,
-# 2026-09-26: reworded questions are read by the judge when it is sure)
+# at this confidence, this far ahead of every other choice: a reworded
+# question is read by the judge only when it is sure
 SETTLE_MIN_CONF = 0.85
 SETTLE_MIN_GAP = 0.60
 BUTTON_SUBMIT_MIN_CONF = 0.50   # a click on a submit-role button needs this
@@ -112,7 +112,7 @@ INBOX_MIN = 0.50                # an inbox message needs from_site and has_code 
 MAX_PAGES = 20                  # pages per application before parking
 PAGE_TEXT_CAP = 4000            # the extractor's cap on the page's visible text
 
-# What parks a job (the user's rule, 2026-09-22): the submit step while park
+# What parks a job: the submit step while park
 # mode is on, a required question the user's data cannot answer, and a page the
 # run cannot get past (a payment, a dead posting, a check nobody solved, a page
 # that will not move). The `asks_for_prohibited` and `has_captcha` flags are
@@ -120,7 +120,7 @@ PAGE_TEXT_CAP = 4000            # the extractor's cap on the page's visible text
 # chose to share, so a question it cannot answer is the required-field park,
 # and a captcha widget that does not block the page is no reason to stop.
 
-# How each gate was read (SP8b, 2026-09-25): `scripts/jev_thresholds.py` over
+# How each gate was read: `scripts/jev_thresholds.py` over
 # the two committed caches (the runner tests' `cache.json`, 72 requests, and
 # the flow matrix's `matrix_cache.json`, 322 requests: 3,241 answers from the
 # live judge over every runner fixture and all 107 matrix flows) and the page
@@ -150,7 +150,7 @@ PAGE_TEXT_CAP = 4000            # the extractor's cap on the page's visible text
 #   OPTION_MIN_CONF 0.70       26 answers, median 1.00; under it "United States of
 #                              America" 0.57 (the long list is matched in code first)
 #                              and an optional country code "+1" 0.51 (left blank).
-#   BUTTON_SUBMIT_MIN_CONF 0.50 (0.90 -> 0.75 on 2026-09-22, 0.75 -> 0.50 now) 74
+#   BUTTON_SUBMIT_MIN_CONF 0.50 (0.90 -> 0.75 on the first recording, then 0.50) 74
 #                              submit picks: a single-page form's "Submit application"
 #                              0.60 (0.70 and 0.74 in the first recording, and 0.71 on
 #                              the runner's quiet-submit form), then 0.78 and above.
@@ -160,7 +160,7 @@ PAGE_TEXT_CAP = 4000            # the extractor's cap on the page's visible text
 #                              ("Notify me", picked other).
 #   BUTTON_ADVANCE_MIN_CONF 0.50 72 answers, median 1.00; one under it, Workday's "Use
 #                              My Last Application" 0.35, which the run must not click.
-#   BUTTON_SENDS_MIN 0.40      (0.80 -> 0.40 now) 18 answers: every posting's Apply
+#   BUTTON_SENDS_MIN 0.40      (0.80 before) 18 answers: every posting's Apply
 #                              entry and "Apply Manually" 0.08 to 0.15; the true sends
 #                              a signup form's "Create account and apply" 0.48 and a
 #                              form's own "Apply" 0.55 and 0.67, real misses at 0.80
@@ -182,15 +182,15 @@ PAGE_TEXT_CAP = 4000            # the extractor's cap on the page's visible text
 #                              alerts' link, and both code picks were 1.00.
 #   `asks_for_prohibited` (no gate): 126 answers, 0.13 at most but for the SSN
 #                              page's 0.99.
-# (SP8, 2026-09-22, on 38 requests: PAGE_STATE_MIN_CONF 0.60 -> 0.40,
-# BUTTON_ADVANCE_MIN_CONF 0.75 -> 0.50 and MAX_PAGES 12 -> 20 at the user's call
-# to stop only where the run cannot go on; PROHIBITED_MAX and CAPTCHA_MAX went
-# with the flag parks.)
+# (The first recording, 38 requests: PAGE_STATE_MIN_CONF 0.60 -> 0.40,
+# BUTTON_ADVANCE_MIN_CONF 0.75 -> 0.50 and MAX_PAGES 12 -> 20, so the run stops
+# only where it cannot go on; PROHIBITED_MAX and CAPTCHA_MAX went with the flag
+# parks.)
 
 HEADLINE_CHARS = 1200           # of the page text sent as `page.headline_text` (600
-                                # until 2026-09-22: LinkedIn's posting began past it)
+                                # missed LinkedIn's posting, which began past it)
 
-# The page read (SP4): its own small request, first on every page. Code
+# The page read: its own small request, first on every page. Code
 # combines its answers with the page's structure (`page_facts`) into the read
 # (`read_page`): a kind's evidence is the judge's probability for it times
 # `READ_CHOICE_WEIGHT`, plus its Nouls (the mean of (noul - 0.5) x 2 over the
@@ -204,7 +204,7 @@ HEADLINE_CHARS = 1200           # of the page text sent as `page.headline_text` 
 # with no Noul and no structure speaking it is the judge's own. A judge sure of
 # its read (0.75 and up) outweighs any one structural fact with a Noul
 # against it; a misread at 0.30 to 0.60 gives way to the true kind's Nouls and
-# structure. Not yet tuned against live answers (SP8).
+# structure. Not yet tuned against live answers.
 READ_HEAD_CHARS = 1000          # of the page text sent as `page.head`
 READ_LIST_CAP = 12              # field labels and button texts listed in the read
 READ_TEXT_CAP = 80              # characters per label or button text in the read
@@ -216,7 +216,7 @@ STRUCT_SUPPORT = 0.5
 STRUCT_HINT = 0.3               # the URL's shape
 STRUCT_AGAINST = -1.0           # the page cannot be the kind (a sign-in with no box)
 STRUCT_RULED_OUT = -2.0         # a confirmation beside a form with no received words
-                                # (SP3's rule: never the send's confirmation)
+                                # (never the send's confirmation)
 READ_NOUL_MIN = 0.50            # a read Noul at or above it says yes
 HELP_CAP = 200                  # per-field help text sent
 OPTIONS_CAP = 40                # per-field options sent
@@ -227,8 +227,6 @@ PAGE_STATES = ("application_form", "login_wall", "signup_form", "review_page",
 BUTTON_ROLES = ("advance", "submit", "back", "apply_entry", "upload", "other")
 SPECIAL_SOURCES = ("resume_file", "cover_letter_file", "cover_letter_text",
                    "signature_today", "consent_attest", "needs_generation", "leave_blank")
-
-ACTIONS = ("fill", "select", "upload", "generate", "skip")
 
 # --- criteria ----------------------------------------------------------------------
 
@@ -306,11 +304,11 @@ SPECIAL_DESCRIPTIONS: dict[str, Any] = {
     "leave_blank": "No source applies; the box is left blank",
 }
 
-# --- consent ticks: routine or not (controller decision, SP5 round 2) ----------------------------
+# --- consent ticks: routine or not ----------------------------------------------------------------
 # `CONSENT_MIN_CONF` was never calibrated, and under the noise model it parked
 # every third required privacy box; a live judge reads some routine boxes under
 # it too. A `consent_attest` read ticks at `FIELD_MAP_MIN_CONF` only when all of
-# these hold (a strict allowlist, review R3-I1); any other keeps
+# these hold (a strict allowlist); any other keeps
 # `CONSENT_MIN_CONF`:
 # - the box is required (an optional consent is an opt-in the user never asked
 #   for: a talent network, job alerts);
@@ -326,9 +324,8 @@ SPECIAL_DESCRIPTIONS: dict[str, Any] = {
 #   noun or a possessive: "the Fabrikam Privacy Notice", "Fabrikam's Privacy
 #   Policy"). No other name is taken: "the Biometric Privacy Policy", "the
 #   Talent Network Terms" and a vendor's "Checkr's Privacy Policy" are no
-#   routine consents (review round 4, M2);
-# - it does not end on a function word ("... and the"): such a label was cut
-#   (review round 4, M1).
+#   routine consents;
+# - it does not end on a function word ("... and the"): such a label was cut.
 CONSENT_RULES: dict[str, Any] = {
     # at least one routine thing is named
     "routine": re.compile(
@@ -575,7 +572,7 @@ def _compact_field(f) -> dict[str, Any]:
     return obj
 
 
-# --- options: a value matched in code first (EXT-07, FILL-07) ---------------------------
+# --- options: a value matched in code first --------------------------------------------
 
 AUTOFILL_PARSER = "autofill parser"     # the extractor's help for a resume parser's upload
 
@@ -592,7 +589,7 @@ _ALIASES: tuple[frozenset[str], ...] = tuple(frozenset(g) for g in (
 # the "I decline to answer" family: a stored decline matches any of them. A
 # negation counts only when it refuses to answer ("I do not wish to
 # self-identify"); "I do not identify as a protected veteran" is a statement
-# and no decline (cycle 18, FM-7)
+# and no decline
 _REFUSED = r"(?:self )?(?:answer|disclose|identify|say|specify|provide|respond|share)\b"
 _DECLINE = re.compile(r"\bdecline\b|\bprefer(?:s)? not\b"
                       r"|\b(?:do|does) not (?:wish|want|care|choose|like) to " + _REFUSED
@@ -635,7 +632,7 @@ def match_option(value: str, options: list[str], *, exact: bool = False) -> str 
     ("California (CA)"). None when nothing matches or two options do.
 
     A yes or a no (`yes_no`), and any value with `exact`, stops after the
-    names it goes by (cycle 18, FM-1 and FM-2): "Yes - on a work visa" is no
+    names it goes by: "Yes - on a work visa" is no
     "Yes", and a qualified option is the judge's pick."""
     want = _norm_option(value)
     if not want or not options:
@@ -651,15 +648,15 @@ def match_option(value: str, options: list[str], *, exact: bool = False) -> str 
     if exact or aliases in (_YES, _NO):
         return None
     if _DECLINE.search(want):
-        declines = [o for o, n in zip(options, normed) if _DECLINE.search(n)]
-        if len(declines) == 1:
-            return declines[0]
+        declining = [o for o, n in zip(options, normed) if _DECLINE.search(n)]
+        if len(declining) == 1:
+            return declining[0]
     starts = [o for o, n in zip(options, normed) if n.startswith(want + " ")]
     return starts[0] if len(starts) == 1 else None
 
 
 def code_pick(value: str, options: list[str]) -> str | None:
-    """The option code settles for `value` with no judge (cycle 18, FM-1): a
+    """The option code settles for `value` with no judge: a
     yes or a no on a list holding its own Yes / No, and on a list past
     `OPTIONS_CAP` the option with the same words or a name the value goes
     by. None leaves the pick to the judge (or, past the cap, blank)."""
@@ -668,9 +665,20 @@ def code_pick(value: str, options: list[str]) -> str | None:
     return match_option(value, options, exact=True)
 
 
+# a lone tick box's one option, as the extractor lists it
+TICKED = "checked"
+
+
+def lone_tick(options: list[str] | tuple[str, ...] | None) -> bool:
+    """Is `options` a lone tick box's (`["checked"]`)? Its label states the
+    fact ("I will require sponsorship"), so code settles it: a yes ticks it
+    and anything else never does (`plan`, `settled_pick`)."""
+    return list(options or ()) == [TICKED]
+
+
 # a status an option names (a citizen, a permanent resident, a green card, a
 # visa): the yes / no lines say Yes to every such option that starts with a
-# yes, and the saved authorization statement tells them apart (final review M5)
+# yes, and the saved authorization statement tells them apart
 _STATUS_WORDS = re.compile(r"\b(?:citizens?(?:hip)?|permanent residen(?:t|ce|cy)|green card"
                            r"|visas?|h-?1b|opt|cpt|ead|work permit)\b", re.I)
 _YES_LEAD = re.compile(r"^\W*(?:yes|y)\b", re.I)
@@ -695,8 +703,8 @@ def candidate_answer(catalog: FactCatalog | None, key: str, value: str,
     the whole story; a derived fact (`apply_facts.DERIVED_YES_NO`) leads its
     own pick and adds no line to another's, since the stored lines already
     say it. Among `options` naming a status after a yes (`status_choices`),
-    the saved authorization statement is the last line (`STATEMENT_LINE`,
-    final review M5); any other list's answer is the same with or without
+    the saved authorization statement is the last line (`STATEMENT_LINE`);
+    any other list's answer is the same with or without
     `options`. Any other fact carries its value alone. Each line carries
     the user's note on its answer when there is one (`_noted`)."""
     if catalog is None or key not in YES_NO_KEYS:
@@ -726,7 +734,7 @@ def phone_named(*names: str) -> bool:
 
 
 def shortlist(options: list[str], value: str, cap: int = OPTIONS_CAP) -> list[str]:
-    """At most `cap` of `options` for a pick question (EXT-07): the ones
+    """At most `cap` of `options` for a pick question: the ones
     sharing a word with `value` or a name it goes by first, the rest in page
     order after them."""
     if len(options) <= cap:
@@ -744,8 +752,8 @@ def shortlist(options: list[str], value: str, cap: int = OPTIONS_CAP) -> list[st
 
 
 def _sections(fields) -> list[dict[str, Any]]:
-    """The page's section headings in order, each with the fields under it
-    (READ-05): [{"heading": ..., "fields": [n, ...]}]; a field under no
+    """The page's section headings in order, each with the fields under it:
+    [{"heading": ..., "fields": [n, ...]}]; a field under no
     heading is in none."""
     out: list[dict[str, Any]] = []
     for f in fields:
@@ -795,10 +803,10 @@ def page_questions(digest: FormDigest, catalog: FactCatalog,
         "page": {"url_host": digest.url_host, "title": digest.title,
                  "headline_text": text[:HEADLINE_CHARS]},
         "fields": [_compact_field(f) for f in digest.fields] if fields else [],
-        # the text and three DOM flags (READ-10): the extractor's `kind_hint`
+        # the text and three DOM flags: the extractor's `kind_hint`
         # is a regex guess ("Apply now" and a wizard's Continue both read
-        # `submit`) and the live judge took the word at face value (SP8:
-        # apply_entry 0.55 / submit 0.45, advance 0.72 / submit 0.28), so it is
+        # `submit`) and the live judge took the word at face value
+        # (apply_entry 0.55 / submit 0.45, advance 0.72 / submit 0.28), so it is
         # left out; `apply_run._submit_shaped` guards on text. `in_form`: the
         # button's form holds the fields; `disabled`: it waits for the form to
         # validate; `primary`: styled as the main action
@@ -808,7 +816,7 @@ def page_questions(digest: FormDigest, catalog: FactCatalog,
     }
     sections = _sections(digest.fields) if fields else []
     if sections:
-        # READ-05: the headings the fields sit under ("Voluntary
+        # the headings the fields sit under ("Voluntary
         # Self-Identification", "Eligibility"), beside the fields: a field
         # question names `fields[i]` alone
         state["sections"] = sections
@@ -829,8 +837,8 @@ def page_questions(digest: FormDigest, catalog: FactCatalog,
             # here; a model-mapped field's pick is the second request's
             # `field_{n}_pick`. Asking for a "default" pick with no value in
             # hand was a coin toss the live judge answered at 0.00 confidence
-            # (SP8) and `plan` never read.
-            # A pick code settles (`code_pick`) asks nothing (cycle 18, FM-1)
+            # and `plan` never read.
+            # A pick code settles (`code_pick`) asks nothing
             key = quick_map(f.label, f.id_or_name, f.type)
             if (key and catalog.has(key)
                     and code_pick(catalog.value(key), f.options) is None):
@@ -867,8 +875,8 @@ def page_questions(digest: FormDigest, catalog: FactCatalog,
 def page_requests(digest: FormDigest, catalog: FactCatalog,
                   job: Mapping[str, Any] | None = None, *,
                   fields: bool = True) -> list[tuple[dict, dict]]:
-    """`page_questions` as requests that fit Jev's limits (RES-03,
-    `jev.request_fits`): the one request when it fits; else without the
+    """`page_questions` as requests that fit Jev's limits
+    (`jev.request_fits`): the one request when it fits; else without the
     buttons in the site's header, nav or top bar, which sit outside the
     application and whose roles never beat the page's own (`plan`); else
     the fields halved, again and again until every request fits or holds a
@@ -909,7 +917,7 @@ def merge_answers(parts: list[Mapping[str, Answer]]) -> dict[str, Answer]:
     return out
 
 
-# --- the page read (SP4) -----------------------------------------------------------
+# --- the page read -----------------------------------------------------------------
 
 # The words a page shows once an application was received: with the judge's
 # read, the deterministic half of a confirmation (after the submit click only
@@ -920,8 +928,8 @@ CONFIRMATION_WORDS = re.compile(
     r"|application (?:has been |was |is )?(?:received|submitted|sent|complete)"
     r"|we(?:'ve| have) received your application"
     r"|successfully (?:applied|submitted)|you(?:'ve| have) (?:successfully )?applied", re.I)
-# A job applied to before (TERM-04), a posting that takes no more applications
-# (READ-08), a review of the answers, an error page, a bot check.
+# A job applied to before, a posting that takes no more applications, a review
+# of the answers, an error page, a bot check.
 ALREADY_APPLIED_WORDS = re.compile(
     r"already (?:applied|submitted (?:an|your) application|have an application)"
     r"|you(?:'ve| have) (?:previously|already) applied"
@@ -959,7 +967,7 @@ PROFILE_APPLY = re.compile(
     r"|(1|one)[\s-]*click\s+apply", re.I)
 # A sign-in or a profile from another site ("Continue with LinkedIn", "Sign
 # in with Google", "Apply using Indeed"): never a step's way on or a
-# posting's entry (ADV-09); it leaves for that site
+# posting's entry; it leaves for that site
 THIRD_PARTY = re.compile(
     r"\b(?:with|using|via|through)\s+(?:your\s+)?(?:linkedin|indeed|google|facebook|apple|"
     r"microsoft|github|glassdoor|twitter|x|yahoo|amazon|okta|sso)\b", re.I)
@@ -973,7 +981,7 @@ SIGN_IN_WORDS = re.compile(r"\b(sign|log)[\s-]*(in|on)\b|\blogin\b"
                            r"(code|link)\b", re.I)
 ADVANCE_WORDS = re.compile(r"\b(next|continue)\b|^\s*(i\s+)?(accept|agree)\b", re.I)
 # A button that accepts an application's privacy agreement or data consent
-# step (study G13: Taleo's "I Accept", Jobvite's "Accept"), and one that
+# step (Taleo's "I Accept", Jobvite's "Accept"), and one that
 # declines or leaves it: never a step's way on.
 ACCEPT_WORDS = re.compile(r"^\s*(i\s+)?(accept|agree)\b", re.I)
 DECLINE_WORDS = re.compile(r"\b(decline|disagree|reject|withdraw)\b|\bcancel\b"
@@ -984,7 +992,7 @@ CODE_WORDS = re.compile(
     r"(?:verification|security|one[- ]?time|auth\w*)[ _-]*code|\botp\b|passcode", re.I)
 NOT_CODE_WORDS = re.compile(
     r"zip|post\s*code|postal|country|promo|coupon|discount|referral|invite|area\s*code", re.I)
-# A page's words that a verification link was emailed (ACC-05): "We sent a
+# A page's words that a verification link was emailed: "We sent a
 # verification link", "Click the link in the email", "Check your inbox".
 LINK_SENT_WORDS = re.compile(
     r"\b(?:verification|confirmation|activation|verify|confirm|activate)\w*\s+(?:link|e-?mail)\b"
@@ -995,7 +1003,7 @@ LINK_SENT_WORDS = re.compile(
 NEW_PASSWORD = re.compile(r"\b(create|new|choose|set|confirm|re-?enter|repeat|verify)\b"
                           r"|new[_-]?pass|confirm[_-]?pass", re.I)
 # A box no application asks: a job board's search or sort, a job-alert or
-# newsletter sign-up beside the posting (study G3), a sign-in's remember-me.
+# newsletter sign-up beside the posting, a sign-in's remember-me.
 _NOT_APPLICATION = re.compile(r"search|keyword|(?<![a-z])alerts?(?![a-z])|subscri|newsletter"
                               r"|sort\s*by|filter|remember me|keep me signed|stay signed"
                               r"|show password", re.I)
@@ -1028,11 +1036,11 @@ _NOT_ENTRY = re.compile(r"\bapplied\b|\bapply\s+(filters?|changes|coupon|promo|d
 
 
 def entry_worded(text: str) -> bool:
-    """Does a control's text read as a posting's Apply entry (READ-09): the
+    """Does a control's text read as a posting's Apply entry: the
     word "apply" ("Apply", "Apply now", "Apply for this job"), "I'm
     interested" (SmartRecruiters) or "Start application"; never "Applying
-    tips" or "Apply filters", "Applied", "Apply Later" or "Save for later"
-    (study G4), a profile Apply (`PROFILE_APPLY`) or a send word ("Submit
+    tips" or "Apply filters", "Applied", "Apply Later" or "Save for later",
+    a profile Apply (`PROFILE_APPLY`) or a send word ("Submit
     application")."""
     text = str(text or "").translate(APOSTROPHES)
     return (bool(_APPLY_ENTRY_WORDS.search(text)) and not _NOT_ENTRY.search(text)
@@ -1087,11 +1095,11 @@ def code_field(fields):
         return f"{f.label} {f.id_or_name}"
 
     # a code is typed: a question of tick boxes or a list that names code
-    # ("Which languages do you write code in?") is no code box (SP5: a
-    # group's question is its label now)
+    # ("Which languages do you write code in?") is no code box (a group's
+    # question is its label)
     fields = [f for f in fields if str(getattr(f, "type", "") or "") in _CODE_TYPES]
     for f in fields:
-        # one-character boxes side by side (ACC-06): the extractor's own
+        # one-character boxes side by side: the extractor's own
         # finding, whatever their label says
         if str(getattr(f, "widget", "") or "") == "otp":
             return f
@@ -1110,7 +1118,7 @@ def code_field(fields):
 
 
 def link_sent(digest: FormDigest) -> str:
-    """ACC-05: the words a page says a verification link was emailed with
+    """The words a page says a verification link was emailed with
     (`LINK_SENT_WORDS`), on a page with no box to fill but tick boxes, no
     code box, no Apply entry (a posting's "click the link below to apply")
     and no received words (a thank-you's "we sent a confirmation email"):
@@ -1180,7 +1188,7 @@ class PageFacts:
     url_kind: str = ""
     text_chars: int = 0
     dialog: str = ""            # an open modal dialog's title (the extractor's)
-    link_sent: str = ""         # the words a verification link was emailed with (ACC-05)
+    link_sent: str = ""         # the words a verification link was emailed with
 
     def to_dict(self) -> dict[str, Any]:
         return {k: v for k, v in asdict(self).items() if v}
@@ -1217,7 +1225,7 @@ def page_facts(digest: FormDigest, url: str = "", *, captcha_frame: bool = False
     code = code_field(digest.fields)
     passwords = [f for f in digest.fields if _password_kind(f)]
     kinds = [_password_kind(f) for f in passwords]
-    # the page's own buttons: never the site's header or top bar (study G4)
+    # the page's own buttons: never the site's header or top bar
     buttons = [b for b in digest.buttons if not getattr(b, "chrome", False)]
     # a send word other than a sign-in's ("Submit application", not "Send code")
     sends = [b for b in buttons if SEND_WORDS.search(b.text)
@@ -1428,7 +1436,7 @@ def read_questions(digest: FormDigest, url: str = "") -> tuple[dict, dict]:
     buttons = []
     for b in digest.buttons:
         if getattr(b, "chrome", False):
-            continue                # the site's header and top bar (study G4)
+            continue                # the site's header and top bar
         text = _cut(b.text)
         if text and text not in seen and len(buttons) < READ_LIST_CAP:
             seen.add(text)
@@ -1468,7 +1476,7 @@ def _structure(f: PageFacts) -> dict[str, float]:
         s["confirmation"] += STRUCT_AGAINST     # a page with a way on asks for more
     if (f.code_box and not f.passwords) or (f.link_sent and not f.received):
         # a code box, or a page that says a verification link was emailed
-        # and has no box to fill (ACC-05): an account check
+        # and has no box to fill: an account check
         s["code_gate"] += STRUCT_DECISIVE
     elif not f.code_box:
         s["code_gate"] += STRUCT_AGAINST
@@ -1580,7 +1588,7 @@ def structural_kind(facts: PageFacts, *, strict: bool = False) -> str | None:
     the floor after its second look (the unsure fallback): a bot-check frame,
     or a bot-check's words with no application box, is the check; a code box
     with no password box, or a page that says a verification link was emailed
-    (`link_sent`, ACC-05), the code step; a password box with no file box an
+    (`link_sent`), the code step; a password box with no file box an
     account screen (a sign-up when a box makes the password, a sign-in when
     the box is the current password); an Apply entry with no application box
     a posting; a closed posting's words (and no Apply entry) a dead end; an
@@ -1595,7 +1603,7 @@ def structural_kind(facts: PageFacts, *, strict: bool = False) -> str | None:
     if facts.code_box and not facts.passwords:
         return "code_gate"
     if facts.link_sent and not facts.received:
-        return "code_gate"          # an account check by an emailed link (ACC-05)
+        return "code_gate"          # an account check by an emailed link
     if facts.passwords and not facts.files:
         if facts.new_password:
             return "signup_form"
@@ -1608,9 +1616,9 @@ def structural_kind(facts: PageFacts, *, strict: bool = False) -> str | None:
         return "error_or_dead"      # after the Apply-entry rule: an Apply is no closed page
     if facts.review and facts.send_buttons and not facts.app_fields and not facts.files \
             and not facts.received:
-        # a review's words and a send button with no box left to fill (SP5:
-        # a review step misread as a confirmation, the structure ruling
-        # the confirmation out)
+        # a review's words and a send button with no box left to fill (a
+        # review step misread as a confirmation, the structure ruling the
+        # confirmation out)
         return "review_page"
     if facts.email_first:
         return "login_wall"
@@ -1629,13 +1637,13 @@ def structure_against(facts: PageFacts, state: str) -> bool:
     return _structure(facts).get(state, 0.0) < 0
 
 
-def already_applied(answers: Mapping[str, Answer], facts: PageFacts, state: str) -> str:
-    """The evidence that the job was applied to before (TERM-04, READ-07), or
-    "": the page's own words (`page_facts`: a statement, on a page with no
-    application box and no Apply entry), with the judge's
-    `page_already_applied` named beside them. The Noul alone never parks: a
-    pre-submit thanks page keeps SP3's "a confirmation page before any
-    submit; check whether ..." (`confirmation_step`)."""
+def already_applied(answers: Mapping[str, Answer], facts: PageFacts, state: str = "") -> str:
+    """The evidence that the job was applied to before, or "": the page's
+    own words (`page_facts`: a statement, on a page with no application box
+    and no Apply entry), with the judge's `page_already_applied` named
+    beside them. The Noul alone never parks: a pre-submit thanks page keeps
+    the reason "a confirmation page before any submit; check whether ..."
+    (`confirmation_step`). `state` is unused; callers may leave it out."""
     if not facts.already_applied:
         return ""
     p = noul_of(answers, "page_already_applied")
@@ -1645,11 +1653,11 @@ def already_applied(answers: Mapping[str, Answer], facts: PageFacts, state: str)
 
 def closed_posting(answers: Mapping[str, Answer], facts: PageFacts, state: str) -> str:
     """The evidence that a page the run parks on (`error_or_dead`, `other`)
-    is a closed posting (READ-08), or "": the page's words, or on a page read
+    is a closed posting, or "": the page's words, or on a page read
     as an error or a dead end the judge's `page_closed`; never a page that
     offers an Apply entry."""
     if state not in ("error_or_dead", "other") or facts.apply_entries:
-        return ""           # an Apply to open is no closed posting (I2)
+        return ""           # an Apply to open is no closed posting
     if facts.closed:
         return f"the page says {facts.closed!r}"
     p = noul_of(answers, "page_closed")
@@ -1671,7 +1679,7 @@ class PlannedField:
     confidence: float
     action: str
     quick: bool = False      # the fact came from quick_map (its pick rode in the first request)
-    # the field's widget, as the extractor read it (SP5): the filler acts
+    # the field's widget, as the extractor read it: the filler acts
     # through these (`apply_form.Field`)
     widget: str = ""
     click_locator: tuple[int, str] | None = None
@@ -1713,9 +1721,9 @@ def noul_of(answers: Mapping[str, Answer], qid: str) -> float:
 
 # Questions the run never answers, whatever the model maps them to: no fact
 # and no drafted text ever goes into one, so a required one parks as
-# unanswerable and an optional one stays blank. This is the user's line
-# (2026-09-22: the run gives out only the answers they chose to share) made
-# deterministic, in place of the removed `asks_for_prohibited` park. A yes/no
+# unanswerable and an optional one stays blank: the run gives out only the
+# answers the user chose to share, made deterministic in place of the removed
+# `asks_for_prohibited` park. A yes/no
 # question about holding a passport or a licence is not one of them; its number is.
 _SENSITIVE_LABEL = re.compile(
     r"social\s*security|\bssn\b|social\s*insurance|\bsin\b|national\s*insurance"
@@ -1744,7 +1752,7 @@ def sensitive_reason(label: str) -> str:
 # account made inside the application). The runner types the master password
 # into it from the keyring (`apply_run._JobRun._fill_passwords`); the plan
 # carries no value and asks the user no question. The master password is for
-# job applications only (the user's rule, 2026-09-22).
+# job applications only.
 PASSWORD_ACTION = "password"
 
 
@@ -1801,7 +1809,7 @@ def pooled_confidence(f, catalog: FactCatalog, answer: Answer | None, key: str) 
     """The judge's probability that field `f` gets the name `key` types:
     the sum over every name source (`POOL_KEYS`) that types the same words.
     A signature box read live as the full name at 0.61 and as the typed
-    signature at 0.29 (2026-09-25) is one answer at 0.90, since both type
+    signature at 0.29 is one answer at 0.90, since both type
     the name. Nothing else pools: an answer-bank entry, a Yes or a number
     shared by two questions of different meaning stays apart. 0.0 when
     `key` is no name source."""
@@ -1813,7 +1821,7 @@ def pooled_confidence(f, catalog: FactCatalog, answer: Answer | None, key: str) 
 
 
 def _number_box_takes(f, fact_key: str, value: str) -> bool:
-    """Does a number box take `value` (cycle 18, FM-5)? The phone only when
+    """Does a number box take `value`? The phone only when
     the box's label or name say phone and the phone has seven digits or
     more (its digits are typed); any other fact only as a plain number
     (`PLAIN_NUMBER`: "3", "1.5"; "5+", "120k" and "3-5" leave it blank)."""
@@ -1849,10 +1857,10 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
     (`answers_question`: "authorized to work without sponsorship" mapped to
     `work_authorized`, "years of Python" to `years_experience`, a Yes to
     sponsorship under "H-1B sponsorship") gives no value, and the judge's
-    pick does not override it (cycle 18, SP6c); nor does a custom yes / no or
+    pick does not override it; nor does a custom yes / no or
     number answer under a question other than its saved one, or any of them under
     a cut label (`FactCatalog.answers_field`); the job's `company` name in a
-    question reads as the company (round 7). A yes / no fact under a label
+    question reads as the company. A yes / no fact under a label
     with no verb (`apply_facts.noun_phrase`: "Work authorization") settles
     only a plain Yes / No in code (`code_pick`): a status list or a text box
     there gets no value from it. Buttons
@@ -1908,7 +1916,7 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
             out.fields.append(pf)
             continue
         if getattr(f, "refused", ""):
-            # a popup whose own words send, never opened (review round 8): no
+            # a popup whose own words send, never opened: no
             # answer, so a required one parks on its question
             fact_key, pf.fact_key, pf.confidence = None, None, 0.0
             out.fields.append(pf)
@@ -1933,7 +1941,7 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
             # no fact, or one that answers another question than the
             # field's, a narrower form its value does not settle, or a cut
             # label; a custom yes / no or number answer another question
-            # than its saved one (cycle 18, SP6c): no value from it, so a
+            # than its saved one: no value from it, so a
             # required field parks and an optional one stays blank, unless
             # the judge is sure the saved answer of the fact the field's
             # question names, else of its mapped fact, settles the question
@@ -1955,16 +1963,16 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
             # a label with no verb ("Work authorization") heads a status list
             # (US Citizen / Permanent Resident / H-1B ...) as often as a Yes /
             # No: its yes / no fact settles only a plain Yes / No in code,
-            # never the judge's pick nor a text box (cycle 18 SP6c, round 7)
+            # never the judge's pick nor a text box
             log.debug("field %d %r: %s under a label with no verb and no Yes / No; no value",
                       f.n, f.label, fact_key)
             fact_key, pf.fact_key = None, None
         elif fact_key == "needs_generation":
             # only a required question gets a draft: an optional one goes
-            # blank, since no saved answer holds what it asks. The user's
-            # Contoso run (2026-09-27) filled the optional "What are you
-            # looking for in your next role? What would you like to avoid?"
-            # with a line of the sheet about on-site work. The grounding
+            # blank, since no saved answer holds what it asks. A live run
+            # filled the optional "What are you looking for in your next
+            # role? What would you like to avoid?" with a line of the sheet
+            # about on-site work. The grounding
             # gate passed it: the gate checks that each sentence is true, and
             # a true sentence can leave the question unanswered.
             pf.action = "generate" if generation_enabled and f.required else "skip"
@@ -1980,15 +1988,22 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
                 # a quick_map field's pick rode in the first request with the
                 # value in hand; a model-mapped field's pick is `field_{n}_pick`
                 # from the second request, and until it arrives the field waits.
-                # A list past `OPTIONS_CAP` is searched in code first (EXT-07:
-                # the United States and most states sit past the 40th option)
+                # A list past `OPTIONS_CAP` is searched in code first (the
+                # United States and most states sit past the 40th option)
                 qid = f"field_{f.n}_option" if quick else f"field_{f.n}_pick"
                 opt, oconf = _choice_of(answers, qid)
                 # a plain Yes / No list, and a list past the cap on the same
-                # words or a name the value goes by, is settled in code
-                # (cycle 18, FM-1 and FM-2)
+                # words or a name the value goes by, is settled in code; so is
+                # a lone tick box: a yes ticks it, and a no or any other
+                # value leaves it blank whatever the judge picks, so a
+                # required one parks
                 found = code_pick(pf.value, f.options)
-                if found is not None:
+                if lone_tick(f.options):
+                    if _alias_set(pf.value) == _YES:
+                        pf.option = TICKED
+                    else:
+                        pf.action = "skip"
+                elif found is not None:
                     pf.option = found
                 elif opt is None or opt == "no_match" or oconf < OPTION_MIN_CONF:
                     pf.action = "skip"
@@ -1999,8 +2014,8 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
                 pf.action = "skip"
         out.fields.append(pf)
         if pf.action == "skip" and is_sensitive_field(f.label, f.id_or_name):
-            # no answer is asked for: one would never be used (the loop the
-            # SP8 review found), and the user is not nudged to store an SSN
+            # no answer is asked for: one would never be used (asking it
+            # looped), and the user is not nudged to store an SSN
             if f.required and not sensitive_reason_:
                 sensitive_reason_ = sensitive_reason(f.label)
         elif pf.action == "skip":
@@ -2014,16 +2029,16 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
         if role is None:
             continue
         if role in ("advance", "apply_entry") and THIRD_PARTY.search(b.text or ""):
-            continue        # ADV-09: a sign-in with another site is no way on
+            continue        # a sign-in with another site is no way on
         held = out.buttons.get(role)
-        # the page's own button beats the site's header for any role (M11)
+        # the page's own button beats the site's header for any role
         if held is None or (b.n not in chrome, conf) > (held[0] not in chrome, held[1]):
             out.buttons[role] = (b.n, conf)
 
     out.flags = {qid: noul_of(answers, qid)
                  for qid in ("asks_for_prohibited", "requires_account", "has_captcha")}
     if "requires_account" not in answers:
-        # the page read asks the sign-in and the sign-up apart (SP4)
+        # the page read asks the sign-in and the sign-up apart
         out.flags["requires_account"] = max(noul_of(answers, "page_sign_in"),
                                             noul_of(answers, "page_create_account"))
     out.park_reason = sensitive_reason_ or required_reason
@@ -2081,13 +2096,12 @@ def option_questions(digest: FormDigest, fill_plan: FillPlan,
 
 # --- the third request: a held-back answer, asked whether it settles the field -------
 
-# The facts the judge may read a reworded question for. The willingness
-# answers came first (2026-09-26). The work authorization answers joined on
-# 2026-09-27: a live run on the Contoso form parked on "Do you require visa
-# sponsorship ... This includes needing sponsorship for CPT, OPT or other visa
-# types" and on an authorization question that listed who counts, both
-# answered by the saved answers, because a word list held them back. The
-# user's call: the judge reads them. Their saved answer carries every stored
+# The facts the judge may read a reworded question for: the willingness
+# answers and the work authorization answers. A live run parked on "Do you
+# require visa sponsorship ... This includes needing sponsorship for CPT, OPT
+# or other visa types" and on an authorization question that listed who
+# counts, both answered by the saved answers, because a word list held them
+# back; the judge reads them. Their saved answer carries every stored
 # yes / no line and the authorization statement (`_settle_answer_text`). A
 # years count and fully remote work stay with the gate: the recording read
 # them wrong at up to 0.92.
@@ -2095,17 +2109,17 @@ SETTLE_KEYS = frozenset(("willing_to_relocate", "onsite_ok", "work_authorized",
                          "requires_sponsorship", "authorized_without_sponsorship"))
 # Relocation and on-site work, the pair a first read takes one for the
 # other: when it maps a field to either, at any confidence, the facts the
-# question's own words name (`apply_facts.asks_about`) are read first. The
-# live run on the Contoso form (2026-09-27) parked on "We work 5 days on-site in
-# NYC. If you're not local, are you willing to relocate?" after the first
+# question's own words name (`apply_facts.asks_about`) are read first. A
+# live run parked on "We work 5 days on-site in NYC. If you're not local, are
+# you willing to relocate?" after the first
 # read took it for on-site work, whose saved answer says nothing of where
 # the candidate lives. A field mapped to another fact or to none keeps its
 # mapping: "Would you rather work remotely than in the office?" names the
 # office beside a willingness word and asks something else.
 SUBJECT_KEYS = ("willing_to_relocate", "onsite_ok")
 # Where the candidate lives now, the line a relocation or on-site read
-# carries: an option can turn on it. The Contoso form (2026-09-27)
-# offers "I am in NYC and happy to work in office", "I will relocate and am
+# carries: an option can turn on it. A live form offers "I am in NYC and
+# happy to work in office", "I will relocate and am
 # happy to work in office" and "I do not want to work in office" under "If
 # you're not local, are you willing to relocate?", and the saved answers
 # said nothing of where the candidate lives, so the judge left it unsettled
@@ -2115,10 +2129,12 @@ HOME_LINE = "Where the candidate lives now"
 # background or drug check or a security clearance; the candidate's present
 # job or employer ("Are you currently legally employed in the United
 # States?", "Does your employer require visa sponsorship?"); a visa or a
-# sponsor the candidate holds now, or a sponsorship carried on; a fact about
+# sponsor the candidate has now, asked with no visa type between the verb
+# and the word ("Do you have a valid work visa?"; "Do you hold an H-1B
+# visa?" and "Are you on F-1 OPT?" are read against the saved answers, and
+# a citizen's No settles them), or a sponsorship carried on; a fact about
 # the role ("Is this role on-site?"); relocation help the candidate asks for.
-# The 2026-09-27 recording read each of these from the saved answers at 0.87
-# to 0.97.
+# A recorded run read each of these from the saved answers at 0.87 to 0.97.
 _NEVER_SETTLED = re.compile(
     r"clearance|convict|felon|criminal|background check|drug"
     r"|\b(?:are|were) you (?:currently |now |presently )?(?:legally |lawfully )?employed\b"
@@ -2130,6 +2146,27 @@ _NEVER_SETTLED = re.compile(
     r"|\bis (?:this|the) (?:role|position|job)\b"
     r"|\b(?:need|require|want|expect)\w* (?:any )?relocation "
     r"(?:assistance|support|help|package|benefits?)\b", re.I)
+# a question whose right answer turns on the job's country, which no saved
+# answer names ("authorized to work in the country where this job is located")
+_PLACELESS_COUNTRY = re.compile(
+    r"\bcountry (?:where|in which)\b|\b(?:this|that|the same) country\b"
+    r"|\b(?:job|role|position)(?:'s| s)? country\b", re.I)
+# citizenship: authorized with no sponsorship fits a permanent resident as
+# well, so only the candidate's own authorization statement says citizen
+_CITIZEN = re.compile(r"\bcitizen", re.I)
+# a negated question ("Would you NOT be willing to relocate?", "Are you
+# unable to work in the US?"): its Yes means the saved answer's No
+_NEGATION = re.compile(r"\b(?:not|never|unable|unwilling|cannot|can ?not)\b|n['’]t\b",
+                       re.I)
+# a condition ahead of the question ("If you're not local, are you willing
+# to relocate?"), whose negation is no part of what it asks
+_LEAD_CONDITION = re.compile(r"\b(?:if|unless|when)\b[^,?]*,", re.I)
+# no sponsorship needed, said with a negation ("authorized to work and will
+# not require sponsorship?"): the same as without sponsorship, for every fact
+# but the sponsorship answer itself, whose Yes it reverses
+_NO_SPONSOR = re.compile(r"\b(?:not|never)\s+(?:\w+\s+){0,2}?(?:require|need)\w*\s+"
+                         r"(?:\w+\s+){0,3}?sponsor", re.I)
+_SENTENCE = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
 # a country other than the United States, read after the US states and
 # territories are taken out ("New Mexico", "Georgia", "Puerto Rico")
 _US_PLACES = re.compile(r"\b(?:" + "|".join(
@@ -2225,13 +2262,28 @@ def _other_country(text: str) -> bool:
                 or _OTHER_COUNTRY_CODE.search(text))
 
 
+def _negated(label: str, key: str) -> bool:
+    """Does the question `label` asks hold a negation (`_NEGATION`)? Read
+    over its sentences that end in a question mark (the whole label when
+    none does), a leading condition (`_LEAD_CONDITION`) aside, and for any fact
+    but `requires_sponsorship` a no-sponsorship clause (`_NO_SPONSOR`)
+    aside."""
+    asked = [s for s in _SENTENCE.split(label.strip()) if s.rstrip().endswith("?")]
+    text = _LEAD_CONDITION.sub(" ", " ".join(asked) or label)
+    if key != "requires_sponsorship":
+        text = _NO_SPONSOR.sub(" ", text)
+    return bool(_NEGATION.search(text))
+
+
 def _unsaid(f, key: str, catalog: FactCatalog) -> bool:
     """Does field `f`'s right option turn on something the saved answers do
     not say? Read in code before the judge is asked and again on its
-    answer, since the 2026-09-27 recording read each of these at 0.85 to
-    0.98.
+    answer, since a recorded run read each of these at 0.85 to 0.98.
 
-    Any fact: a question `_NEVER_SETTLED` holds, or another country.
+    Any fact: a question `_NEVER_SETTLED` holds, another country, the
+    job's country with no place named (`_PLACELESS_COUNTRY`), a negated
+    question (`_negated`), and citizenship unless the authorization
+    statement is saved (`_CITIZEN`, `STATEMENT_KEY`).
     Relocation: a yes settles a question that asks the candidate's
     willingness (`asks_willingness`: "If you are not local, are you willing
     to relocate?"; a move with no relocation help is a move too, and a note
@@ -2247,7 +2299,10 @@ def _unsaid(f, key: str, catalog: FactCatalog) -> bool:
     sponsorship now or on the start date alone, of one visa type, or of
     authorization under a list of visa types."""
     text = f"{f.label}\n{f.help or ''}"
-    if _NEVER_SETTLED.search(text) or _other_country(text):
+    if (_NEVER_SETTLED.search(text) or _other_country(text)
+            or _PLACELESS_COUNTRY.search(text) or _negated(f.label, key)):
+        return True
+    if _CITIZEN.search(text) and not catalog.has(STATEMENT_KEY):
         return True
     if key == "willing_to_relocate":
         if _said(catalog, key, YES_FORMS):
@@ -2289,9 +2344,12 @@ def settled_pick(answers: Mapping[str, Answer], f, key: str,
     """The option the judge's settle answer (`field_{n}_settle`) gives
     field `f` for `key`'s saved answer: one of the field's options at
     `SETTLE_MIN_CONF` or more, `SETTLE_MIN_GAP` ahead of every other choice
-    (`not_settled` included); None otherwise, or when `_settle_ok` says no."""
+    (`not_settled` included); None otherwise, or when `_settle_ok` says no.
+    A lone tick box (`lone_tick`) takes a read only for a saved yes."""
     a = answers.get(f"field_{f.n}_settle")
     if a is None or a.choice is None or not _settle_ok(f, key, catalog):
+        return None
+    if lone_tick(f.options) and _alias_set(catalog.value(key)) != _YES:
         return None
     choice = str(a.choice)
     if choice == NOT_SETTLED or choice not in f.options:
@@ -2378,8 +2436,8 @@ def _pick_qid(pf: PlannedField) -> str:
 
 def reask_targets(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer],
                   fill_plan: FillPlan, *, what: str, company: str = "") -> list[int]:
-    """The fields to ask once more on their own before the run parks on them
-    (SP5): required, planned `skip`, never a sensitive or a password box.
+    """The fields to ask once more on their own before the run parks on them:
+    required, planned `skip`, never a sensitive or a password box.
     With `what` "source": no `field_{n}_source` answer came back (the first
     look dropped it), its mapping sits under `FIELD_MAP_MIN_CONF` (an unsure
     `leave_blank` too: an unsure "nothing fits" is no answer), or a
@@ -2389,7 +2447,7 @@ def reask_targets(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str
     and its pick is missing or under
     `OPTION_MIN_CONF`. A confident `leave_blank` or a confident `no_match` is
     the data's own answer: that field parks as it did. A consent tick's
-    second look stands alone against its floor (review I1)."""
+    second look stands alone against its floor."""
     if what not in REASK_WHAT:
         raise ValueError(f"unknown re-ask {what!r}")
     by_n = {f.n: f for f in digest.fields}
@@ -2426,7 +2484,7 @@ def reask_questions(digest: FormDigest, catalog: FactCatalog, fill_plan: FillPla
                     ns: list[int], *, what: str,
                     job: Mapping[str, Any] | None = None) -> tuple[dict, dict]:
     """The second look at the fields `ns` (`reask_targets`), one request for
-    them all (review M11): the fields alone (label, type, whether required,
+    them all: the fields alone (label, type, whether required,
     options, help, placeholder) and the headings they sit under. For
     "source", the job, the page's host and title and the descriptions of the
     sources their types can take (`facts`, never a value); each question is
@@ -2468,7 +2526,7 @@ def reask_questions(digest: FormDigest, catalog: FactCatalog, fill_plan: FillPla
     return state, questions
 
 
-# --- validation messages: which field each one names (ADV-02) --------------------------
+# --- validation messages: which field each one names -----------------------------------
 
 ERROR_FIELDS_CAP = 40           # fields offered per message
 ERROR_MESSAGE_CAP = 200         # characters of a message sent
@@ -2477,7 +2535,7 @@ ERROR_MESSAGE_CAP = 200         # characters of a message sent
 def error_questions(messages: list[str], fields, *, exclude=None,
                     again: bool = False) -> tuple[dict, dict]:
     """One request for the validation messages the page showed that no
-    control names (ADV-02; a message tied to its control needs no judge):
+    control names (a message tied to its control needs no judge):
     per message `error_{i}_field`, a Choice over the page's fields (each
     option its question's words) and `none` (the message names no one
     field: a note about the whole page). The state is the messages alone,
@@ -2485,8 +2543,8 @@ def error_questions(messages: list[str], fields, *, exclude=None,
     judgment (the Jev guide, sections 3 and 7).
 
     `exclude` (per message, field numbers): the fields not offered for that
-    message, the ones an earlier look named for it on this form (SP6 review
-    M1). `again`: the second look for a message the first request mapped
+    message, the ones an earlier look named for it on this form.
+    `again`: the second look for a message the first request mapped
     to no field, a fresh question."""
     state = {"messages": [" ".join(str(m or "").split())[:ERROR_MESSAGE_CAP] for m in messages]}
     questions: dict[str, dict] = {}
@@ -2589,7 +2647,7 @@ ATS_NAMES: dict[str, str] = {
 _INBOX_WANTS = {
     "code": "Does `messages[{i}]` carry a verification code or a security code for the reader "
             "to enter on a website?",
-    # ACC-05: an account check by link (Workday, SuccessFactors, iCIMS)
+    # an account check by link (Workday, SuccessFactors, iCIMS)
     "link": "Does `messages[{i}]` ask the reader to open a link to verify an email address or "
             "to activate an account?",
 }
@@ -2602,7 +2660,7 @@ def inbox_questions(messages: list[Mapping[str, Any]], site: str, *, ats: str = 
     `company`'s applications, when the system is a known one) and
     `msg_{n}_has_{want}`: with `want` "code", carries a verification or
     security code; with "link", asks for a link to be opened to verify the
-    address or activate the account (ACC-05). `read_inbox` combines them.
+    address or activate the account. `read_inbox` combines them.
     The site alone is the form's host, which rarely sends the mail; the ATS
     name is what the sender address shows."""
     rows = [{"n": int(m["n"]), "sender": str(m.get("sender", "")),
@@ -2654,13 +2712,18 @@ def read_inbox(answers: Mapping[str, Answer],
     return best_n
 
 
+# the most of an e-mail body a link or code pick carries: a verification
+# message says what it wants near its top, and the rest is the sender's text
+INBOX_BODY_CAP = 2000
+
+
 def link_pick_questions(links: list[tuple[str, str]], body: str) -> tuple[dict, dict]:
-    """ACC-05: one Choice `link_pick` over a message's verification links
+    """One Choice `link_pick` over a message's verification links
     (each its text and its host, never its URL: a token rides there) plus
     `none`."""
     rows = [{"n": i, "text": str(text)[:READ_TEXT_CAP], "host": str(host)}
             for i, (text, host) in enumerate(links)]
-    state = {"body": str(body or "")[:2000], "links": rows}
+    state = {"body": str(body or "")[:INBOX_BODY_CAP], "links": rows}
     criteria: dict[str, Any] = {f"link_{r['n']}": f"{r['text']} ({r['host']})" for r in rows}
     criteria["none"] = "No listed link verifies the address or activates the account"
     questions = {"link_pick": {
@@ -2680,8 +2743,9 @@ def read_link_pick(answers: Mapping[str, Answer], count: int) -> int | None:
 
 
 def code_pick_questions(candidates: list[str], body: str) -> tuple[dict, dict]:
-    """One Choice `code_pick` over the regex candidates plus `none`."""
-    state = {"body": body, "candidates": list(candidates)}
+    """One Choice `code_pick` over the regex candidates plus `none`, with
+    the body cut to `INBOX_BODY_CAP` as the link pick's is."""
+    state = {"body": str(body or "")[:INBOX_BODY_CAP], "candidates": list(candidates)}
     criteria: dict[str, Any] = {c: None for c in candidates}
     criteria["none"] = "No listed string is the right one"
     questions = {"code_pick": {

@@ -7,10 +7,12 @@ likely first failures in the whole résumé engine. Both used to surface as a ra
 naming the file, the position and the fix — and `ValueError` is already in the
 tuple `qt/resume_data_tab.py` catches, so the dashboard shows it as a message.
 """
+import shutil
 import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
@@ -64,18 +66,20 @@ def test_missing_file_with_no_example_points_at_setup(master_at):
     assert ei.value.__cause__ is None
 
 
-def test_a_fresh_clone_still_falls_back_to_the_committed_example(monkeypatch):
+def test_a_fresh_clone_still_falls_back_to_the_committed_example(master_at):
     """The missing-file message must only appear when the example is gone too:
-    a fresh clone has the example and the engine has to keep working on it."""
-    real = REPO / "resume_tailor_files" / "master_experience.yaml"
-    monkeypatch.setattr(config, "MASTER_YAML", real)
-    assets.load_master.cache_clear()
-    try:
-        assert (real.with_name("master_experience.example.yaml")).exists()
-        data = assets.load_master()
-        assert isinstance(data, dict) and data
-    finally:
-        assets.load_master.cache_clear()
+    a fresh clone has the example and the engine has to keep working on it.
+
+    Built in tmp_path: the committed example copied beside a master that does
+    not exist, so the fallback runs and the user's own master is never read."""
+    example = REPO / "resume_tailor_files" / "master_experience.example.yaml"
+    missing = master_at(None)                           # nothing written
+    shutil.copy(example, missing.with_name(example.name))
+    assert not missing.exists()
+    assert assets.using_example_master()
+    data = assets.load_master()
+    assert data == yaml.safe_load(example.read_text(encoding="utf-8"))
+    assert isinstance(data, dict) and data
 
 
 def test_a_yaml_scalar_is_still_the_mapping_error_not_the_parse_error(master_at):

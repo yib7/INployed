@@ -7,11 +7,9 @@ main() checks anything, so a "what happens with no token" probe places a live
 paid request. The opt-out is the only safe way to exercise those paths, so it
 gets a test.
 
-The first group needs the developer's real `.env` and skips without one, which is
-every CI run. The second group builds its own `.env` in a temp DATA_ROOT and so
-runs everywhere -- added 2026-08-27, when the first group turned out to be the
-only coverage this guard had. Nothing here prints a value; the assertions are on
-presence only.
+Each test builds its own `.env` in a temp DATA_ROOT, so the guard is covered on
+every machine and the developer's real `.env` is never read. Nothing here prints a
+value; the assertions are on presence only.
 """
 import os
 import shutil
@@ -22,61 +20,6 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
-ENV_FILE = REPO / ".env"
-
-_SNIPPET = """
-import importlib.util, os, sys
-sys.argv = [{mod!r}]
-spec = importlib.util.spec_from_file_location("probe", {path!r})
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-print("PRESENT" if os.environ.get({key!r}) else "ABSENT")
-"""
-
-
-def _first_key() -> str:
-    for line in ENV_FILE.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            name = line.split("=", 1)[0].strip()
-            if name and name.isidentifier():
-                return name
-    return ""
-
-
-@pytest.mark.skipif(not ENV_FILE.exists(), reason="no local .env to load")
-@pytest.mark.parametrize("script", ["scraper.py", "score_jobs.py"])
-@pytest.mark.parametrize(
-    "flag,expected", [("1", "ABSENT"), ("", "PRESENT")], ids=["opt-out", "default"]
-)
-def test_dotenv_optout_controls_whether_env_file_loads(script, flag, expected):
-    key = _first_key()
-    if not key:
-        pytest.skip(".env has no assignments to check")
-    path = REPO / "pipeline" / script
-    env = dict(os.environ)
-    env.pop(key, None)
-    # Importing scraper.py runs its sibling imports (run_labels) from pipeline/.
-    env["PYTHONPATH"] = str(REPO / "pipeline")
-    if flag:
-        env["INPLOYED_NO_DOTENV"] = flag
-    else:
-        env.pop("INPLOYED_NO_DOTENV", None)
-    code = _SNIPPET.format(mod=script, path=str(path), key=key)
-    out = subprocess.run(
-        [sys.executable, "-c", code], env=env, capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=120
-    )
-    assert out.returncode == 0, out.stderr[-2000:]
-    assert out.stdout.strip().endswith(expected)
-
-
-# --- the same guard, without needing the author's .env -----------------------
-#
-# Everything above skips whenever there is no local `.env`, which is EVERY CI run
-# and every fresh clone. That left the one mechanism making it safe to exercise a
-# billed script's unhappy path with no coverage anywhere except one laptop. These
-# build their own `.env` in a temp DATA_ROOT, so they run everywhere.
 
 _SNIPPET_TMP = """
 import importlib.util, os, sys

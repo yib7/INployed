@@ -729,7 +729,8 @@ _EXTRACT_JS = r"""
     return n;
   };
   // an nth-of-type path from the body (the document) or from the element's
-  // shadow root
+  // shadow root, anchored there (`:scope >` under the host's `>>`): an
+  // unanchored path also names a deeper element of the same shape
   const nthPath = (el) => {
     const parts = [];
     const root = rootOf(el);
@@ -741,7 +742,7 @@ _EXTRACT_JS = r"""
       if (root !== document && cur.parentNode === root) break;
       cur = cur.parentElement;
     }
-    return (root === document ? 'body > ' : '') + parts.join(' > ');
+    return (root === document ? 'body > ' : ':scope > ') + parts.join(' > ');
   };
   const STABLE = ['data-automation-id', 'data-testid', 'data-qa'];
   const ownLocator = (el) => {
@@ -1283,8 +1284,10 @@ _EXTRACT_JS = r"""
     if ((el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && el.readOnly && !choice && !picker) {
       return 'read-only';
     }
-    if (HONEY_ID.test(el.id || '') || HONEY_ID.test(el.getAttribute('name') || '')
-        || HONEY.test(label)) return 'honeypot';
+    // an id or name that starts with hp- is a trap only while nothing marks
+    // it required: a trap a person must fill would stop every person
+    if (((HONEY_ID.test(el.id || '') || HONEY_ID.test(el.getAttribute('name') || ''))
+         && !req && !isRequired(el)) || HONEY.test(label)) return 'honeypot';
     // a required question among the application's other questions is the
     // application's whatever its words name ("How did you hear about us (job
     // board, newsletter, referral)? *"); a posting's lone required alert box
@@ -2061,7 +2064,9 @@ def extract(page, *, content_site: Callable[[str], bool] | None = None) -> FormD
         try:
             raw = frame.evaluate(_EXTRACT_JS, PAGE_TEXT_CAP)
         except Exception as e:      # noqa: BLE001  (a detached or cross-origin frame)
-            log.info("apply_form: frame %d skipped: %s", idx, e)
+            # the main frame unread leaves the digest empty: said louder
+            (log.warning if idx == 0 else log.info)(
+                "apply_form: frame %d skipped: %s", idx, type(e).__name__)
             continue
         for f in raw.get("fields") or []:
             fields.append(Field(
@@ -2091,7 +2096,12 @@ def extract(page, *, content_site: Callable[[str], bool] | None = None) -> FormD
                      and _content_frame(frame, CONTENT_FRAME_ANY if own else CONTENT_FRAME_MIN))
             texts.append((0 if first else 1, str(raw["text"])))
     text = "\n".join(t for _, t in sorted(texts, key=lambda row: row[0]))[:PAGE_TEXT_CAP]
-    return FormDigest(url_host=urlparse(page.url).hostname or "", title=page.title(),
+    try:
+        title = str(page.title() or "")
+    except Exception as e:      # noqa: BLE001  (a page closed or navigating)
+        log.info("apply_form: page title unread: %s", type(e).__name__)
+        title = ""
+    return FormDigest(url_host=urlparse(page.url).hostname or "", title=title,
                       text=text, fields=fields, buttons=buttons, dialog=dialog)
 
 

@@ -40,7 +40,7 @@ as the answer, nor matched by an option's hidden value (SP3 fix round 1);
 a number box takes a plain number only (FM-5);
 `clear(page, pf)` takes an answer out again (FM-4).
 
-`click_button(page, digest, n)` clicks a digest button and waits for a
+`click(page, digest, n)` clicks a digest button and waits for a
 navigation or a DOM change (body length and the set of visible controls,
 polled every 250 ms), capped; a click a banner, a chat window or a sticky
 bar took is made once more after `clear_overlay` put the cover away (a
@@ -70,7 +70,7 @@ SETTLE_QUIET_S = 2.0           # _settle returns once nothing has moved for this
 SETTLE_MAX_S = 8.0             # _settle gives up on a page that keeps moving after this
 NETWORK_IDLE_MS = 3_000        # best-effort wait for the network to go quiet
 LISTBOX_WAIT_MS = 2_000        # for a combobox menu to render its options
-POLL_S = 0.25                  # click_button's DOM poll
+POLL_S = 0.25                  # the click wait's DOM poll
 CHECKED_WORDS = ("checked", "yes", "true", "on", "1")
 UNCHECKED_WORDS = ("unchecked", "no", "false", "off", "0")
 _DATE_SHAPES = ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%Y/%m/%d", "%d %B %Y", "%B %d, %Y",
@@ -111,10 +111,14 @@ _KIND_JS = """el => ({
   role: el.getAttribute('role') || '',
 })"""
 
+# what a password box reads back when it holds anything: its value never
+# leaves the page (a read-back can reach a trace or a record)
+PASSWORD_MASK = "********"
 _READ_JS = """el => {
   const tag = el.tagName, type = (el.getAttribute('type') || '').toLowerCase();
   const role = el.getAttribute('role') || '';
   const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+  if (tag === 'INPUT' && type === 'password') return el.value ? '__MASK__' : '';
   if (tag === 'SELECT') { const o = el.selectedOptions[0]; return o ? norm(o.text) : ''; }
   if (type === 'checkbox') return el.checked ? 'checked' : '';
   if (type === 'file') return el.files && el.files.length ? el.files[0].name : '';
@@ -139,7 +143,7 @@ _READ_JS = """el => {
   }
   if (el.value !== undefined) return el.value;
   return norm(el.textContent);
-}"""
+}""".replace("__MASK__", PASSWORD_MASK)
 
 _RADIO_LABELS_JS = "els => els.map(" + apply_form.RADIO_OPTION_LABEL_JS + ")"
 
@@ -498,13 +502,24 @@ def _keys_for(loc, text: object) -> str:
     return text if tag.upper() == "TEXTAREA" else _LINE_BREAK.sub(" ", text)
 
 
+# key-by-key typing: the pause between keys for a short text (a mask's
+# script reads each key), and the time each key may take on top of the
+# action's own timeout (a 600-character answer outlasts a flat 5 s)
+KEY_DELAY_MS = 15
+KEY_DELAY_MAX_KEYS = 200        # longer text is typed with no pause between keys
+KEY_BUDGET_MS = 40
+
+
 def _typed(loc, text: str) -> None:
     """Clear the box and type `text` key by key (a masked box takes keys,
     never a pasted value); a line break is a space outside a TEXTAREA
-    (`_keys_for`)."""
+    (`_keys_for`). The typing's timeout grows with the text, so a long
+    answer is typed whole."""
     keys = _keys_for(loc, text)
+    delay = KEY_DELAY_MS if len(keys) <= KEY_DELAY_MAX_KEYS else 0
     loc.first.fill("", timeout=ACTION_TIMEOUT_MS)
-    loc.first.press_sequentially(keys, delay=15, timeout=ACTION_TIMEOUT_MS)
+    loc.first.press_sequentially(keys, delay=delay,
+                                 timeout=ACTION_TIMEOUT_MS + len(keys) * (KEY_BUDGET_MS + delay))
 
 
 def _fill(loc, kind: dict[str, str], value: str) -> str:
@@ -612,6 +627,14 @@ def _ticked(loc) -> bool:
 
 
 def _check_radio(page, loc, want: str, pf: PlannedField | None = None) -> None:
+    """Choose the radio that reads `want`. With the extractor's option
+    locators (one per shown, enabled radio, in `pf.options` order) the
+    option is matched among `pf.options`, so a hidden or disabled radio of
+    the same name never shifts the pick onto its neighbour; else among the
+    live labels of every radio `loc` names."""
+    if pf is not None and pf.option_locators and len(pf.option_locators) == len(pf.options):
+        _check_radio_by_option(page, loc, want, pf)
+        return
     labels = loc.evaluate_all(_RADIO_LABELS_JS)
     i = _ci_match(want, labels)
     if i < 0 and not apply_judge.yes_no(want):
@@ -622,13 +645,31 @@ def _check_radio(page, loc, want: str, pf: PlannedField | None = None) -> None:
         i = j if j >= 0 or i == -1 else i       # a tie among the labels stands
     if i < 0:
         raise _no_option(want, i, labels)
-    if pf is not None and i < len(pf.option_locators) and pf.option_locators[i]:
-        # a hidden native radio behind its label (study G6): the label takes the click
-        target = _clicked(page, pf.locator[0], pf.option_locators[i])
-        if not _ticked(target):
-            target.click(timeout=ACTION_TIMEOUT_MS)
-        return
     loc.nth(i).check(timeout=ACTION_TIMEOUT_MS)
+
+
+def _check_radio_by_option(page, loc, want: str, pf: PlannedField) -> None:
+    """`_check_radio` through the extractor's option locators: `want` among
+    `pf.options`, else (never for a yes or a no) by a live radio's value,
+    taken back to its own label among `pf.options`. The option's locator (a
+    hidden native radio's label, else the radio) takes the click."""
+    options = list(pf.options)
+    i = _ci_match(want, options)
+    if i < 0 and i != OPTION_TIE and not apply_judge.yes_no(want):
+        labels = loc.evaluate_all(_RADIO_LABELS_JS)
+        values = loc.evaluate_all("els => els.map(e => e.value)")
+        j = _ci_match(want, values)
+        if 0 <= j < len(labels):
+            hits = [k for k, o in enumerate(options) if _norm(o) == _norm(labels[j])]
+            i = hits[0] if len(hits) == 1 else -1
+    if i < 0:
+        raise _no_option(want, i, options)
+    css = pf.option_locators[i]
+    if not css:
+        raise LookupError(f"the option {options[i]!r} has no locator")
+    target = _clicked(page, pf.locator[0], css)
+    if not _ticked(target):
+        target.click(timeout=ACTION_TIMEOUT_MS)
 
 
 def _check_box(page, loc, want: str, pf: PlannedField | None = None) -> None:
@@ -686,12 +727,20 @@ def _chosen(pf: PlannedField, want: str) -> list[int]:
 
 def _choose(page, pf: PlannedField, want: str) -> None:
     """A custom radio group or Yes / No buttons (widget "choice"), a question's
-    tick boxes (widget "checkbox_group", each chosen option ticked): the
-    option's own element takes the click, unless it is already chosen, and
-    never when it is a form's submit control."""
+    tick boxes (widget "checkbox_group", each chosen option ticked and every
+    other one the page ticked before unticked): the option's own element
+    takes the click, unless it is already as wanted, and never when it is a
+    form's submit control."""
     picked = _chosen(pf, want)
     if not picked or any(i >= len(pf.option_locators) for i in picked):
         raise LookupError(f"no option {want!r} among {list(pf.options)}")
+    if pf.widget == "checkbox_group":
+        for i, css in enumerate(pf.option_locators):
+            if i in picked or not css:
+                continue
+            target = _clicked(page, pf.locator[0], css)
+            if _ticked(target) and not target.evaluate(_SUBMITS_JS, timeout=ACTION_TIMEOUT_MS):
+                target.click(timeout=ACTION_TIMEOUT_MS)
     for i in picked:
         target = _clicked(page, pf.locator[0], pf.option_locators[i])
         if target.evaluate(_SUBMITS_JS, timeout=ACTION_TIMEOUT_MS):
@@ -708,6 +757,12 @@ def _aria_check(loc, want: str) -> None:
         loc.first.click(timeout=ACTION_TIMEOUT_MS)
 
 
+def _css_quoted(text: str) -> str:
+    """`text` for a CSS attribute value in double quotes: its backslashes
+    and double quotes escaped."""
+    return str(text).replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _options_locator(frame, loc):
     """The `[role=option]` entries a combobox shows: the listbox its
     `aria-controls` / `aria-owns` names when set, else any visible listbox in
@@ -715,7 +770,7 @@ def _options_locator(frame, loc):
     for attr in ("aria-controls", "aria-owns"):
         ref = loc.first.get_attribute(attr, timeout=ACTION_TIMEOUT_MS)
         if ref:
-            target = frame.locator(f'[id="{ref.split()[0]}"] [role=option]')
+            target = frame.locator(f'[id="{_css_quoted(ref.split()[0])}"] [role=option]')
             if target.count():
                 return target
     return frame.locator("[role=listbox] [role=option]").filter(visible=True)
@@ -725,6 +780,47 @@ def _options_locator(frame, loc):
 # options or a menu's radio items, visible
 _MENU_OPTIONS = ("[role=option], [role=menuitemradio], [role=menuitem], "
                  "[role=menuitemcheckbox]")
+_MENU_PARTS = tuple(p.strip() for p in _MENU_OPTIONS.split(","))
+# the menu entries that already show before a popup's click (a site's menu
+# bar, another open list) are marked, so the popup's options are the ones its
+# click brought; `clear` only takes earlier marks away
+_MARK_SHOWN_JS = """([sel, clear]) => {
+  document.querySelectorAll('[data-apply-shown]').forEach((n) => n.removeAttribute('data-apply-shown'));
+  if (clear) return 0;
+  let marked = 0;
+  for (const n of document.querySelectorAll(sel)) {
+    const st = getComputedStyle(n), r = n.getBoundingClientRect();
+    if (st.display !== 'none' && st.visibility !== 'hidden' && (r.width > 0 || r.height > 0)) {
+      n.setAttribute('data-apply-shown', '1');
+      marked += 1;
+    }
+  }
+  return marked;
+}"""
+
+
+def _mark_shown(frame, *, clear: bool = False) -> None:
+    """Mark the menu entries that show now (`_MARK_SHOWN_JS`); `clear` only
+    takes earlier marks away."""
+    try:
+        frame.evaluate(_MARK_SHOWN_JS, [_MENU_OPTIONS, bool(clear)])
+    except Exception:       # noqa: BLE001  (a frame double: nothing marked)
+        pass
+
+
+def _popup_options(frame, loc):
+    """The entries a popup shows: the menu its `aria-controls` / `aria-owns`
+    names when set, else the visible entries its click brought (none that
+    `_mark_shown` marked before it)."""
+    for attr in ("aria-controls", "aria-owns"):
+        ref = loc.first.get_attribute(attr, timeout=ACTION_TIMEOUT_MS)
+        if ref:
+            box = f'[id="{_css_quoted(ref.split()[0])}"]'
+            target = frame.locator(", ".join(f"{box} {p}, {box}{p}" for p in _MENU_PARTS))
+            if target.count():
+                return target.filter(visible=True)
+    return frame.locator(", ".join(f"{p}:not([data-apply-shown])" for p in _MENU_PARTS)) \
+        .filter(visible=True)
 
 
 class PopupRefused(LookupError):
@@ -909,6 +1005,8 @@ def _open_menu(frame, loc, *, popup: bool = False, face=None):
     one whose own words send is never opened, whatever the extractor made of
     it (`PopupRefused`, review round 8)."""
     expanded = loc.first.get_attribute("aria-expanded", timeout=ACTION_TIMEOUT_MS)
+    if popup:
+        _mark_shown(frame, clear=expanded == "true")
     if expanded != "true":
         handles = [loc.first.element_handle(timeout=ACTION_TIMEOUT_MS)]
         if face is not None:
@@ -925,8 +1023,7 @@ def _open_menu(frame, loc, *, popup: bool = False, face=None):
                     handle.dispose()
                 except Exception:   # noqa: BLE001
                     pass
-    options = frame.locator(_MENU_OPTIONS).filter(visible=True) if popup \
-        else _options_locator(frame, loc)
+    options = _popup_options(frame, loc) if popup else _options_locator(frame, loc)
     try:
         options.first.wait_for(state="visible", timeout=LISTBOX_WAIT_MS)
     except Exception:       # noqa: BLE001  (Playwright's TimeoutError)
@@ -943,11 +1040,18 @@ def _menu_showing(options) -> bool:
 
 def _close_menu(page, loc, options=None) -> None:
     """Escape only while a menu of options shows (FILL-08): its options
-    (`options`, the locator the open returned) are visible. A box that says
+    (`options`, the locator the open returned) are visible, and the control
+    does not say `aria-expanded="false"`. A box that says
     `aria-expanded="true"` with nothing shown (a typeahead waiting for keys)
     gets no Escape: with no menu to take it, an Escape closes the dialog
     the form lives in."""
-    if _menu_showing(options):
+    if not _menu_showing(options):
+        return
+    try:
+        expanded = loc.first.get_attribute("aria-expanded", timeout=ACTION_TIMEOUT_MS)
+    except Exception:       # noqa: BLE001  (gone: no menu of its own to close)
+        return
+    if expanded != "false":
         page.keyboard.press("Escape")
 
 
@@ -1130,9 +1234,10 @@ def _fill_date_parts(page, pf: PlannedField, value: str) -> None:
             page.keyboard.insert_text(parts[kind])
 
 
-def _upload(page, locator: tuple[int, str], path: str) -> None:
-    frame = apply_form.frames(page)[int(locator[0])]
-    frame.set_input_files(str(locator[1]), path, timeout=ACTION_TIMEOUT_MS)
+def _upload(loc, path: str) -> None:
+    """Put the file at `path` in the file box `loc` names (the control
+    `_same_control` confirmed, found through `apply_form.resolve`)."""
+    loc.first.set_input_files(path, timeout=ACTION_TIMEOUT_MS)
 
 
 def _take_out_typed(loc) -> None:
@@ -1192,7 +1297,7 @@ def _act(page, pf: PlannedField, loc, kind: dict[str, str]) -> str:
         # the box's words before this run's upload: a file of the same name
         # the page showed already (a stored resume) never counts as this one
         _before_upload(page)[_box_key(pf)] = _upload_state(loc).get("text", "")
-        _upload(page, pf.locator, pf.value)
+        _upload(loc, pf.value)
         return "upload"
     if pf.action not in ("fill", "select"):
         return ""
@@ -1412,7 +1517,7 @@ def _read_back(loc, kind: dict[str, str] | None, page=None, pf: PlannedField | N
 # own identity, read on the live element; and every element of the frame,
 # open shadow roots walked, whose identity names the same control
 # (`apply_form.SAME_IDENT_JS`): how a control the page moved is found again.
-_FIND_IDENT_JS = r"""(want) => {
+_FIND_IDENT_JS = r"""(_root, want) => {
   const identOf = __IDENT__;
   const same = __SAME__;
   const all = [];
@@ -1426,32 +1531,44 @@ _FIND_IDENT_JS = r"""(want) => {
   all.forEach((el) => el.removeAttribute('data-apply-found'));
   const out = all.filter((el) => el.matches('input, select, textarea, button, [role], '
                                             + '[contenteditable]') && same(identOf(el), want));
-  if (out.length === 1) out[0].setAttribute('data-apply-found', '1');
-  return out.length;
+  // the control whose identity is the planned one exactly comes before one
+  // whose label only starts with it ("Phone" before "Phone extension")
+  const exact = out.filter((el) => identOf(el) === want);
+  const pick = exact.length === 1 ? exact : out;
+  if (pick.length === 1) pick[0].setAttribute('data-apply-found', '1');
+  return pick.length;
 }""".replace("__IDENT__", apply_form.IDENT_FN_JS).replace("__SAME__", apply_form.SAME_IDENT_JS)
 _IDENTITY_BLIND = ("choice", "checkbox_group")      # a group's locator names no one control
 
 
 def _same_control(page, pf: PlannedField, loc):
     """The control `pf` was planned for (FILL-02): the live element at its
-    locator when it is still that control (its identity the extractor read),
-    else the one element of the frame with that identity, else a
-    LookupError: a value is never typed into another box."""
-    if not pf.ident or pf.widget in _IDENTITY_BLIND or "radio" in str(pf.locator[1]):
+    locator when its identity is the one the extractor read; else the one
+    element of the frame with exactly that identity (a "Phone" box moved
+    under its "Phone extension" neighbour is found again); else the live
+    element when its identity is the planned one with more label words
+    (a "required" the label gained); else a LookupError: a value is never
+    typed into another box. A group's locator names no one control, and a
+    radio group's names every radio: neither is checked. An identity that
+    cannot be read is refused as well."""
+    if not pf.ident or pf.widget in _IDENTITY_BLIND or "[type=radio]" in str(pf.locator[1]):
         return loc
     try:
         live = str(loc.first.evaluate(apply_form.IDENT_FN_JS, timeout=ACTION_TIMEOUT_MS))
-    except Exception:       # noqa: BLE001  (the click finds out)
+    except Exception as e:      # noqa: BLE001  (detached, or a frame gone)
+        raise LookupError(f"the control at {pf.locator[1]} cannot be read "
+                          f"({type(e).__name__})") from None
+    if live == pf.ident:
         return loc
+    root = apply_form.resolve(page, (pf.locator[0], ":root"))
+    found = root.first.evaluate(_FIND_IDENT_JS, pf.ident, timeout=ACTION_TIMEOUT_MS)
+    if found == 1:
+        log.info("apply_fill: %r moved; found again by its identity", pf.label)
+        return apply_form.resolve(page, (pf.locator[0], "[data-apply-found='1']"))
     if apply_form.same_ident(live, pf.ident):
         return loc
-    frame = apply_form.frames(page)[int(pf.locator[0])]
-    found = frame.evaluate(_FIND_IDENT_JS, pf.ident)
-    if found != 1:
-        raise LookupError(f"the control at {pf.locator[1]} is another one now "
-                          f"({found} match its identity)")
-    log.info("apply_fill: %r moved; found again by its identity", pf.label)
-    return frame.locator("[data-apply-found='1']")
+    raise LookupError(f"the control at {pf.locator[1]} is another one now "
+                      f"({found} match its identity)")
 
 
 def apply(page, plan: FillPlan, *, log: Callable[[str], Any] | None = None,
@@ -1490,11 +1607,13 @@ def apply(page, plan: FillPlan, *, log: Callable[[str], Any] | None = None,
         kind = None
         how, failed = "", ""
         try:
-            loc = apply_form.resolve(page, pf.locator)
-            if loc.count() == 0:
+            # `loc` is set once the control is confirmed: a box that is
+            # another one now is never read back (its neighbour's value
+            # would pass for this field's)
+            found = apply_form.resolve(page, pf.locator)
+            if found.count() == 0:
                 raise LookupError(f"no element at {pf.locator}")
-            if pf.action != "upload":
-                loc = _same_control(page, pf, loc)
+            loc = _same_control(page, pf, found)
             kind = _kind(loc)
             how = _act(page, pf, loc, kind)
         except Exception as e:      # noqa: BLE001  (the read-back reports the outcome)
@@ -1542,10 +1661,10 @@ def repair(page, pf: PlannedField, hint: str = "") -> Filled:
     loc = None
     kind = None
     try:
-        loc = apply_form.resolve(page, pf.locator)
-        if loc.count() == 0:
+        found = apply_form.resolve(page, pf.locator)
+        if found.count() == 0:
             raise LookupError(f"no element at {pf.locator}")
-        loc = _same_control(page, pf, loc)
+        loc = _same_control(page, pf, found)       # unset when it is another one now
         kind = _kind(loc)
         textish = (kind["tag"] == "TEXTAREA" or (kind["tag"] == "INPUT" and kind["type"] not in (
             "checkbox", "radio", "file", "date", "hidden"))) and not pf.widget \
@@ -1571,11 +1690,13 @@ def repair(page, pf: PlannedField, hint: str = "") -> Filled:
 
 def read_back(page, pf: PlannedField) -> str:
     """What the control `pf` names holds now, read the way `apply` reads it
-    after its act ("" when it is gone)."""
+    after its act ("" when it is gone, or when the control at its locator
+    is another one now and its own is not found: `_same_control`)."""
     try:
         loc = apply_form.resolve(page, pf.locator)
         if loc.count() == 0:
             return ""
+        loc = _same_control(page, pf, loc)
         return _read_back(loc, _kind(loc), page, pf)
     except Exception:       # noqa: BLE001  (a frame or a control gone)
         return ""
@@ -1768,8 +1889,7 @@ class ClickResult:
     going, from the click to the end of its wait ("METHOD url", no query): a
     navigation of the page or of the button's frame, or a POST, PUT or PATCH
     from either that the page was not already sending by itself (SP6 review
-    I3, R2-I2). Truthiness is `changed`, the shape `click_button`
-    returns."""
+    I3, R2-I2). Truthiness is `changed`."""
     clicked: bool
     changed: bool
     refused: str = ""
@@ -1930,7 +2050,10 @@ _ARM_JS = """(el, want) => {
   w.__applyClickSeen = false;
   w.__applyClickBlocked = '';
   w.__applyClickMark = (e) => {
-    if (!(e.target === el || el.contains(e.target))) return;
+    // a click inside a shadow root reaches the window retargeted to its
+    // host: the event's composed path still holds the element
+    const path = e.composedPath ? e.composedPath() : [];
+    if (!(path.includes(el) || e.target === el || el.contains(e.target))) return;
     const now = textOf(el);
     if (want !== null && now !== want && SEND.test(now) && !SEND.test(want)) {
       e.preventDefault();
@@ -2162,7 +2285,7 @@ def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20,
             blocked.append(why)
             raise _ClickStopped(why)
 
-    def _act() -> None:
+    def _do_click() -> None:
         url0 = str(page.url)
         page.on("request", _on_request)
         try:
@@ -2249,7 +2372,7 @@ def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20,
     except Exception:       # noqa: BLE001  (a page double)
         pass
     try:
-        changed = _await_change(page, _act, timeout_s)
+        changed = _await_change(page, _do_click, timeout_s)
     except Exception as e:      # noqa: BLE001
         if blocked:
             log.info("apply_fill: click on %r refused: %s", button.text, blocked[0])
@@ -2266,15 +2389,8 @@ def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20,
                        overlay=_cover(), sent=tuple(sent))
 
 
-def click_button(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20) -> bool:
-    """`click(...).changed`: True only when the click landed and something
-    changed (and the page has settled); False on an unknown button, a missing
-    element, a click that raised, or a quiet page. `click` tells those apart."""
-    return click(page, digest, n, timeout_s=timeout_s).changed
-
-
 def wait_for_change(page, *, timeout_s: float = 20) -> bool:
-    """`click_button`'s wait without the click: up to `timeout_s` for a
+    """`click`'s wait without the click: up to `timeout_s` for a
     navigation or a DOM change from now, then `_settle`. True when something
     changed. For a click the caller already made whose effect may still be
     on its way (a submit that answered quietly)."""

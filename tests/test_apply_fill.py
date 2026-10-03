@@ -148,37 +148,37 @@ def test_apply_select_on_a_listbox_clicks_the_matching_option(browser_page, fixt
     assert browser_page.get_attribute("#country", "data-value") == "Canada"
 
 
-# --- (d) click_button: DOM change, navigation, marker, timeout --------------------
+# --- (d) click: DOM change, navigation, marker, timeout --------------------
 
-def test_click_button_waits_for_the_ashby_step_change(browser_page, fixture_url):
+def test_a_click_waits_for_the_ashby_step_change(browser_page, fixture_url):
     browser_page.goto(fixture_url("ashby_steps.html"))
     d = apply_form.extract(browser_page)
-    assert apply_fill.click_button(browser_page, d, _button(d, "Continue").n) is True
+    assert apply_fill.click(browser_page, d, _button(d, "Continue").n).changed is True
     d2 = apply_form.extract(browser_page)
     ids = [f.id_or_name for f in d2.fields]
     assert ids == ["work_auth", "sponsorship"]
     assert browser_page.url.endswith("ashby_steps.html")       # no navigation happened
 
 
-def test_click_button_submit_sets_the_marker_on_lever(browser_page, fixture_url):
+def test_a_click_submit_sets_the_marker_on_lever(browser_page, fixture_url):
     browser_page.goto(fixture_url("lever_single.html"))
     d = apply_form.extract(browser_page)
-    assert apply_fill.click_button(browser_page, d, _button(d, "Submit application").n) is True
+    assert apply_fill.click(browser_page, d, _button(d, "Submit application").n).changed is True
     assert browser_page.get_attribute("body", "data-submitted") == "1"
     assert "Thank you for applying" in apply_fill.page_text(browser_page)
 
 
-def test_click_button_follows_a_navigation(browser_page, fixture_url):
+def test_a_click_follows_a_navigation(browser_page, fixture_url):
     browser_page.goto(fixture_url("login_wall.html"))
     browser_page.fill("#login_email", "jane@example.com")
     browser_page.fill("#login_password", "not-a-real-password")
     d = apply_form.extract(browser_page)
-    assert apply_fill.click_button(browser_page, d, _button(d, "Sign in").n) is True
+    assert apply_fill.click(browser_page, d, _button(d, "Sign in").n).changed is True
     assert browser_page.url.endswith("ashby_steps.html")
     assert "first_name" in [f.id_or_name for f in apply_form.extract(browser_page).fields]
 
 
-def test_click_button_settles_before_returning_on_a_delayed_navigation(browser_page, fixture_url):
+def test_a_click_settles_before_returning_on_a_delayed_navigation(browser_page, fixture_url):
     browser_page.goto(fixture_url("login_wall.html"))
     browser_page.fill("#login_password", "not-a-real-password")
     # the navigation starts 300 ms after the click, so the poll sees the page leave mid-flight
@@ -190,12 +190,12 @@ def test_click_button_settles_before_returning_on_a_delayed_navigation(browser_p
         });
     }""")
     d = apply_form.extract(browser_page)
-    assert apply_fill.click_button(browser_page, d, _button(d, "Sign in").n) is True
+    assert apply_fill.click(browser_page, d, _button(d, "Sign in").n).changed is True
     assert browser_page.url.endswith("ashby_steps.html")
     assert "first_name" in [f.id_or_name for f in apply_form.extract(browser_page).fields]
 
 
-def test_click_button_outlasts_a_spinner_that_precedes_the_navigation(browser_page, fixture_url):
+def test_a_click_outlasts_a_spinner_that_precedes_the_navigation(browser_page, fixture_url):
     browser_page.goto(fixture_url("login_wall.html"))
     browser_page.fill("#login_password", "not-a-real-password")
     # the click shows a spinner at once (a DOM change) and the navigation lands 800 ms later
@@ -208,13 +208,13 @@ def test_click_button_outlasts_a_spinner_that_precedes_the_navigation(browser_pa
         });
     }""")
     d = apply_form.extract(browser_page)
-    assert apply_fill.click_button(browser_page, d, _button(d, "Sign in").n) is True
+    assert apply_fill.click(browser_page, d, _button(d, "Sign in").n).changed is True
     assert browser_page.url.endswith("ashby_steps.html")
     ids = [f.id_or_name for f in apply_form.extract(browser_page).fields]
     assert ids == ["first_name", "last_name", "email", "phone"]
 
 
-def test_click_button_routes_the_torn_down_frame_path_through_settle(browser_page, fixture_url, monkeypatch):
+def test_a_click_routes_the_torn_down_frame_path_through_settle(browser_page, fixture_url, monkeypatch):
     browser_page.goto(fixture_url("lever_single.html"))
     d = apply_form.extract(browser_page)
     real_snapshot = apply_fill._snapshot
@@ -227,7 +227,7 @@ def test_click_button_routes_the_torn_down_frame_path_through_settle(browser_pag
     monkeypatch.setattr(apply_fill, "_snapshot", torn_down)
     monkeypatch.setattr(apply_fill, "_settle",
                         lambda page, timeout_s, **kw: calls.__setitem__("settled", calls["settled"] + 1))
-    assert apply_fill.click_button(browser_page, d, _button(d, "Submit application").n) is True
+    assert apply_fill.click(browser_page, d, _button(d, "Submit application").n).changed is True
     assert calls["settled"] == 1
 
 
@@ -261,18 +261,18 @@ def test_apply_with_a_future_deadline_fills(browser_page, fixture_url):
     assert [x.value for x in filled] == ["Jane Doe"]
 
 
-def test_click_button_returns_false_when_nothing_changes(browser_page, fixture_url):
+def test_a_click_returns_false_when_nothing_changes(browser_page, fixture_url):
     browser_page.goto(fixture_url("lever_single.html"))
     browser_page.evaluate("document.body.insertAdjacentHTML('beforeend', "
                           "'<button type=\"button\" id=\"noop\">Nothing</button>')")
     d = apply_form.extract(browser_page)
-    assert apply_fill.click_button(browser_page, d, _button(d, "Nothing").n, timeout_s=1) is False
+    assert apply_fill.click(browser_page, d, _button(d, "Nothing").n, timeout_s=1).changed is False
 
 
-def test_click_button_unknown_n_is_false(browser_page, fixture_url):
+def test_a_click_unknown_n_is_false(browser_page, fixture_url):
     browser_page.goto(fixture_url("lever_single.html"))
     d = apply_form.extract(browser_page)
-    assert apply_fill.click_button(browser_page, d, 42, timeout_s=1) is False
+    assert apply_fill.click(browser_page, d, 42, timeout_s=1).changed is False
 
 
 def test_page_text_is_capped(browser_page, fixture_url):
@@ -285,7 +285,7 @@ def test_page_text_is_capped(browser_page, fixture_url):
     assert len(apply_fill.page_text(browser_page)) == apply_judge.PAGE_TEXT_CAP
 
 
-# --- wait_for_change: the click_button wait without the click ---------------------------
+# --- wait_for_change: the click wait without the click ---------------------------------
 
 def test_wait_for_change_sees_a_late_dom_change_and_a_quiet_page(browser_page, fixture_url):
     browser_page.goto(fixture_url("slow_submit.html"))
@@ -299,7 +299,7 @@ def test_wait_for_change_sees_a_late_dom_change_and_a_quiet_page(browser_page, f
     assert browser_page.evaluate("window.__clicks") == 1
 
 
-# --- click: the tri-state result behind click_button ------------------------------------
+# --- click: the tri-state result -------------------------------------------------------
 
 def test_click_tells_a_quiet_click_from_one_that_never_landed(browser_page, fixture_url,
                                                               monkeypatch):
@@ -331,7 +331,7 @@ def test_click_tells_a_quiet_click_from_one_that_never_landed(browser_page, fixt
                         else real(page, loc))
     r = apply_fill.click(browser_page, d, _button(d, "Nothing").n, timeout_s=1)
     assert (r.clicked, r.changed) == (False, False)
-    assert apply_fill.click_button(browser_page, d, _button(d, "Nothing").n, timeout_s=1) is False
+    assert apply_fill.click(browser_page, d, _button(d, "Nothing").n, timeout_s=1).changed is False
 
 
 # --- cycle 18 FM-1: a yes or no matches only an option in its own alias set ---------------
@@ -602,3 +602,219 @@ def test_an_unchecked_click_still_goes_ahead_without_a_live_read(monkeypatch):
         apply_form.Button(n=0, locator=(0, "#next"), text="Next")])
     r = apply_fill.click(_ClickPage(), digest, 0)
     assert clicks == ["clicked"] and r.clicked
+
+
+# --- a radio's option locators line up with the options the extractor read --------------
+
+def test_a_hidden_radio_of_the_same_name_never_shifts_the_pick(browser_page):
+    browser_page.set_content("""<html><body><form>
+      <fieldset><legend>Are you willing to travel?</legend>
+      <span><input type=radio name=q value="none" style="display:none"></span>
+      <label for=y>Yes</label><input type=radio id=y name=q value=yes style="opacity:0">
+      <label for=n>No</label><input type=radio id=n name=q value=no style="opacity:0">
+      </fieldset><button type=submit>Submit</button></form></body></html>""")
+    d = apply_form.extract(browser_page)
+    f = next(x for x in d.fields if x.type == "radio")
+    assert f.options == ["Yes", "No"] and len(f.option_locators) == 2
+    pf = PlannedField(n=f.n, locator=f.locator, label=f.label, required=f.required,
+                      fact_key=None, value="Yes", option="Yes", confidence=1.0,
+                      action="select", widget=f.widget, click_locator=f.click_locator,
+                      option_locators=f.option_locators, options=f.options, ident=f.ident)
+    out = apply_fill.apply(browser_page, FillPlan(fields=[pf]))
+    checked = browser_page.evaluate("() => document.querySelector('input[name=q]:checked')?.value")
+    assert checked == "yes" and out[0].value == "Yes"
+
+
+def test_a_repair_types_a_long_answer_whole(browser_page):
+    browser_page.set_content("<form><label for=w>Why do you want this role?</label>"
+                             "<textarea id=w name=w required></textarea></form>")
+    d = apply_form.extract(browser_page)
+    f = d.fields[0]
+    text = "I build data tools for small teams. " * 17         # 612 characters
+    pf = PlannedField(n=f.n, locator=f.locator, label=f.label, required=True, fact_key=None,
+                      value=text, option=None, confidence=1.0, action="fill", ident=f.ident)
+    got = apply_fill.repair(browser_page, pf, "Please fill out this field.")
+    assert got.value.strip() == text.strip()
+
+
+# --- the click guard sees a click on a button inside a shadow root ------------------------
+
+_SHADOW_NEXT = """<html><body><div id=host></div><script>
+const r = document.getElementById('host').attachShadow({mode: 'open'});
+r.innerHTML = '<button id=b>Next</button>';
+window.__pageSaw = 0;
+r.getElementById('b').addEventListener('click', () => { window.__pageSaw += 1; });
+</script></body></html>"""
+
+
+def test_the_click_guard_sees_and_stops_a_shadow_buttons_click(browser_page):
+    browser_page.set_content(_SHADOW_NEXT)
+    h = browser_page.locator("#host >> #b").element_handle()
+    h.evaluate(apply_fill._ARM_JS, "Next")
+    h.click()
+    assert browser_page.evaluate(apply_fill._SEEN_JS) is True
+    # its text turns into a send between the check and the click: stopped
+    browser_page.evaluate(apply_fill._UNSEEN_JS)
+    h.evaluate("el => { el.textContent = 'Submit application'; }")
+    h.click()
+    assert browser_page.evaluate(apply_fill._BLOCKED_JS) == "Submit application"
+    assert browser_page.evaluate("window.__pageSaw") == 1
+
+
+# --- a popup reads only its own menu, and Escape never closes the form's dialog ----------
+
+_POPUP_IN_DIALOG = """<html><body>
+<nav><ul role=menubar><li role=menuitem>Jobs</li><li role=menuitem>About</li></ul></nav>
+<div role=dialog aria-modal=true id=dlg style="width:600px;height:400px">
+<h2>Start your application</h2>
+<label id=ql>Are you 18 or older? *</label>
+<button id=pop aria-haspopup=listbox aria-labelledby=ql aria-required=true>Select One</button>
+<ul id=menu role=listbox style="display:none"><li role=option>Yes</li><li role=option>No</li></ul>
+<button id=next>Next</button></div>
+<script>
+document.getElementById('pop').addEventListener('click', () => setTimeout(() => {
+  document.getElementById('menu').style.display = 'block'; }, 300));
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') document.getElementById('dlg').remove(); });
+document.getElementById('menu').addEventListener('click', (e) => {
+  document.getElementById('pop').textContent = e.target.textContent;
+  document.getElementById('menu').style.display = 'none'; });
+</script></body></html>"""
+
+
+def test_a_popup_never_reads_the_sites_menu_bar_as_its_options(browser_page):
+    browser_page.set_content(_POPUP_IN_DIALOG)
+    d = apply_form.extract(browser_page)
+    f = next(x for x in d.fields if x.widget == "popup")
+    pf = PlannedField(n=f.n, locator=f.locator, label=f.label, required=True, fact_key=None,
+                      value="Yes", option="Yes", confidence=1.0, action="select",
+                      widget=f.widget, options=["Yes", "No"], ident=f.ident)
+    errors: list[dict] = []
+    out = apply_fill.apply(browser_page, FillPlan(fields=[pf]), errors=errors)
+    assert errors == [] and out[0].value == "Yes"
+    assert browser_page.evaluate("() => !!document.getElementById('dlg')")
+
+
+def test_a_popup_whose_menu_never_opens_leaves_the_dialog_open(browser_page):
+    # the site's menu bar shows; the popup's own menu never does: nothing is
+    # picked, and no Escape reaches the dialog the form lives in
+    browser_page.set_content(_POPUP_IN_DIALOG.replace(
+        "document.getElementById('menu').style.display = 'block';", ""))
+    d = apply_form.extract(browser_page)
+    f = next(x for x in d.fields if x.widget == "popup")
+    pf = PlannedField(n=f.n, locator=f.locator, label=f.label, required=True, fact_key=None,
+                      value="Yes", option="Yes", confidence=1.0, action="select",
+                      widget=f.widget, options=["Yes", "No"], ident=f.ident)
+    errors: list[dict] = []
+    apply_fill.apply(browser_page, FillPlan(fields=[pf]), errors=errors)
+    assert [e["error"] for e in errors] == ["NothingShown"]
+    assert browser_page.evaluate("() => !!document.getElementById('dlg')")
+
+
+# --- an upload goes to the box it was planned for --------------------------------------
+
+def test_an_upload_into_a_moved_box_finds_its_own_box_again(browser_page, pdf):
+    browser_page.set_content("""<body><form><div id=f>
+      <div><label>Resume <input type=file data-k=resume></label></div>
+      </div><button>Submit</button></form></body>""")
+    d = apply_form.extract(browser_page)
+    f = next(x for x in d.fields if x.type == "file")
+    assert not f.locator[1].startswith("#")              # a path: a box put before it shifts it
+    browser_page.evaluate("""() => { const row = document.createElement('div');
+      row.innerHTML = '<label>Profile photo <input type=file data-k=photo></label>';
+      document.getElementById('f').prepend(row); }""")
+    pf = PlannedField(n=f.n, locator=f.locator, label=f.label, required=True, fact_key="resume",
+                      value=str(pdf), option=None, confidence=1.0, action="upload",
+                      ident=f.ident)
+    apply_fill.apply(browser_page, FillPlan(fields=[pf]))
+    names = browser_page.evaluate("""() => Array.from(document.querySelectorAll('input[type=file]'))
+      .map((i) => [i.dataset.k, i.files.length])""")
+    assert names == [["photo", 0], ["resume", 1]]
+
+
+# --- a control that is another one now reads back as nothing ---------------------------
+
+def test_a_box_that_is_another_one_now_never_reads_back_its_neighbours_value(browser_page):
+    browser_page.set_content("""<body><form><div id=f>
+      <div><label>Email <input type=email data-k=a></label></div>
+      <div><label>Confirm email <input type=email data-k=b></label></div>
+      </div><button>Submit</button></form></body>""")
+    d = apply_form.extract(browser_page)
+    email = next(x for x in d.fields if x.label == "Email")
+    assert not email.locator[1].startswith("#")
+    # the Email row goes, and the box now at its locator holds the same words
+    browser_page.evaluate("""() => { document.querySelector('[data-k=a]').closest('div').remove();
+      document.querySelector('[data-k=b]').value = 'jane@example.com'; }""")
+    pf = PlannedField(n=email.n, locator=email.locator, label=email.label, required=True,
+                      fact_key="email", value="jane@example.com", option=None, confidence=1.0,
+                      action="fill", ident=email.ident)
+    errors: list[dict] = []
+    out = apply_fill.apply(browser_page, FillPlan(fields=[pf]), errors=errors)
+    assert [e["error"] for e in errors] == ["LookupError"]
+    assert out[0].value == ""
+    assert apply_fill.repair(browser_page, pf, "Please enter an email.").value == ""
+    assert apply_fill.read_back(browser_page, pf) == ""
+
+
+def test_a_box_whose_label_only_starts_with_the_planned_label_is_another_box(browser_page):
+    browser_page.set_content("""<body><form><div id=f>
+      <div><label>Phone <input type=tel data-k=phone></label></div>
+      <div><label>Phone extension <input type=tel data-k=ext></label></div>
+      </div><button>Submit</button></form></body>""")
+    d = apply_form.extract(browser_page)
+    phone = next(x for x in d.fields if x.label == "Phone")
+    assert not phone.locator[1].startswith("#")
+    # the extension's row moves first: the Phone's path names it now
+    browser_page.evaluate("""() => { const f = document.getElementById('f');
+      f.prepend(f.children[1]); }""")
+    pf = PlannedField(n=phone.n, locator=phone.locator, label=phone.label, required=True,
+                      fact_key="phone", value="555-555-0100", option=None, confidence=1.0,
+                      action="fill", ident=phone.ident)
+    apply_fill.apply(browser_page, FillPlan(fields=[pf]))
+    got = browser_page.evaluate("""() => Object.fromEntries(Array.from(
+      document.querySelectorAll('input')).map((i) => [i.dataset.k, i.value]))""")
+    assert got == {"phone": "555-555-0100", "ext": ""}
+
+
+def test_tick_boxes_the_plan_did_not_choose_are_unticked(browser_page):
+    browser_page.set_content("""<body><form><fieldset>
+      <legend>Which languages do you write? Select all that apply</legend>
+      <label><input type=checkbox name=l value=py> Python</label>
+      <label><input type=checkbox name=l value=sql checked> SQL</label>
+      <label><input type=checkbox name=l value=go> Go</label>
+      </fieldset><button>Submit</button></form></body>""")
+    d = apply_form.extract(browser_page)
+    q = next(f for f in d.fields if f.widget == "checkbox_group")
+    pf = PlannedField(n=q.n, locator=q.locator, label=q.label, required=False, fact_key=None,
+                      value="Python, Go", option="Python", confidence=0.9, action="select",
+                      widget=q.widget, options=q.options, option_locators=q.option_locators,
+                      ident=q.ident)
+    out = apply_fill.apply(browser_page, FillPlan(fields=[pf]))
+    assert out[0].value.options == ("Python", "Go")
+    assert not browser_page.locator("input[value=sql]").is_checked()
+
+
+def test_a_password_box_reads_back_a_mask_and_never_its_value(browser_page):
+    browser_page.set_content("""<body><form>
+      <label>Password <input type=password id=pw></label>
+      <label>Again <input type=password id=pw2></label>
+      <button>Submit</button></form></body>""")
+    browser_page.fill("#pw", "s3cret-Value")
+    def pf(css):
+        return PlannedField(n=1, locator=(0, css), label="Password", required=True,
+                            fact_key=None, value="", option=None, confidence=1.0,
+                            action="fill")
+    got = apply_fill.read_back(browser_page, pf("#pw"))
+    assert got == apply_fill.PASSWORD_MASK
+    assert "s3cret" not in got
+    # an empty box still reads empty, so a pause can tell it is unanswered
+    assert apply_fill.read_back(browser_page, pf("#pw2")) == ""
+
+
+def test_a_combobox_list_whose_id_holds_a_quote_is_its_own_list(browser_page):
+    browser_page.set_content("""<body>
+      <input role=combobox id=c aria-controls='list"1'>
+      <ul role=listbox id='list"1'><li role=option>Yes</li><li role=option>No</li></ul>
+      <ul role=listbox><li role=option>Menu entry</li></ul></body>""")
+    frame = apply_form.frames(browser_page)[0]
+    got = apply_fill._options_locator(frame, browser_page.locator("#c"))
+    assert got.all_inner_texts() == ["Yes", "No"]

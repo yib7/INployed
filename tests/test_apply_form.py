@@ -467,3 +467,50 @@ def test_the_gate_reads_a_required_box_in_the_footer_beside_a_formless_submit(br
     invalid = apply_form.validity_report(browser_page, (0, "#go"), [(0, "#fn")])["invalid"]
     # the footer beside the button is read; the page's own footer is not
     assert [r["name"] for r in invalid] == ["agree"]
+
+
+def test_a_path_inside_a_shadow_root_names_only_its_own_control(browser_page):
+    browser_page.set_content("""<body><div id=host></div><script>
+      const r = document.getElementById('host').attachShadow({mode: 'open'});
+      r.innerHTML = '<div><div><label>Nickname <input data-k=c></label></div>'
+        + '<label>Email <input data-k=d type=email></label></div>';
+      </script></body>""")
+    d = apply_form.extract(browser_page)
+    for f, k in ((_by_label(d, "Nickname"), "c"), (_by_label(d, "Email"), "d")):
+        got = apply_form.resolve(browser_page, f.locator).evaluate_all(
+            "els => els.map((e) => e.dataset.k)")
+        assert got == [k], (f.locator, got)
+
+
+def test_a_required_box_whose_id_starts_with_hp_is_no_honeypot(browser_page):
+    browser_page.set_content("""<body><form>
+      <label for=hp-first>First name *</label><input id=hp-first name=hp-first>
+      <label for=hp_phone>Phone</label><input id=hp_phone name=hp_phone required>
+      <div style="position:absolute;left:-9999px"><input id=hp_trap name=hp_trap></div>
+      <label for=hp_note>Nickname</label><input id=hp_note name=hp_note>
+      <button>Submit</button></form></body>""")
+    d = apply_form.extract(browser_page)
+    # a required question is asked of a person; an optional hp- box stays a trap
+    assert sorted(f.id_or_name for f in d.fields) == ["hp-first", "hp_phone"]
+
+
+def test_an_unread_main_frame_is_a_warning_and_an_unread_title_is_empty(caplog):
+    class _Frame:
+        url = "https://jobs.example.com/apply"
+
+        def evaluate(self, *a, **k):
+            raise RuntimeError("Execution context was destroyed")
+
+    class _Page:
+        url = "https://jobs.example.com/apply"
+        main_frame = _Frame()
+        frames = [main_frame]
+
+        def title(self):
+            raise RuntimeError("Target page, context or browser has been closed")
+
+    with caplog.at_level("INFO", logger=apply_form.log.name):
+        d = apply_form.extract(_Page())
+    assert d.title == "" and d.fields == [] and d.buttons == []
+    assert any(r.levelname == "WARNING" and "frame 0 skipped" in r.getMessage()
+               for r in caplog.records)

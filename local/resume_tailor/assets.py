@@ -129,6 +129,12 @@ def letter_seed() -> str:
     return head.rstrip()
 
 
+# Atom keys no bullet prompt and no grounding check ever sees. `interview_notes`
+# holds detail that is true and worth saying in an interview but not worth page
+# space; every OTHER key on an atom reaches the bullet writer.
+INERT_ATOM_KEYS = ("interview_notes",)
+
+
 def atom_line(atom: Dict[str, Any]) -> str:
     """One achievement atom flattened to a single readable line: `what; how;
     scope; impact...`, blank fields dropped, a list impact joined in order."""

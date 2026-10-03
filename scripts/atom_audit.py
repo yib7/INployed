@@ -209,9 +209,12 @@ def atom_fields(atom: Dict[str, Any]) -> List[Tuple[str, str]]:
 
     This mirrors `local/resume_tailor/assets.py::atom_line()` exactly — joining
     the texts with "; " reproduces its output, which tests/test_atom_audit.py
-    pins against the real function. Every other key on the atom (`angles`,
-    `hardest_problem`, a relocated sibling key...) is inert: the compose payload
-    never carries it, so a repeat living there costs a bullet nothing.
+    pins against the real function. These are the fields the census and slop
+    passes judge. They are NOT the only fields the bullet writer reads:
+    `compose._atom_payload` sends every other key too (`angles`, a sibling key
+    such as `hardest_problem`...), and the grounding gate accepts facts from
+    them. Only `interview_notes` (`assets.INERT_ATOM_KEYS`) and `_`-prefixed
+    keys stay out of the bullet prompts.
     """
     out: List[Tuple[str, str]] = []
     for key in ("what", "how", "scope"):

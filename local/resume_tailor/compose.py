@@ -124,6 +124,8 @@ def _atom_payload(aid: str) -> Dict[str, Any]:
     atom = dict(assets.atoms_by_id()[aid])
     atom.pop("_section", None)
     atom.pop("_block", None)
+    for key in assets.INERT_ATOM_KEYS:
+        atom.pop(key, None)
     return atom
 
 

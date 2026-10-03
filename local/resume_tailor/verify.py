@@ -268,7 +268,9 @@ def unseen_tokens(text: str, source: str,
 
 def group_source_text(ids: Iterable[str], extra: str = "") -> str:
     """Everything a group's bullet may legitimately say: the concatenated string
-    and list fields of its own atoms, plus `extra` (entry/block names)."""
+    and list fields of its own atoms, plus `extra` (entry/block names). The
+    inert keys (`assets.INERT_ATOM_KEYS`) are left out: the bullet writer never
+    sees them, so a fact that lives only there cannot ground a bullet."""
     parts: List[str] = [extra or ""]
     catalog = assets.atoms_by_id()
 
@@ -291,7 +293,7 @@ def group_source_text(ids: Iterable[str], extra: str = "") -> str:
     for aid in ids:
         atom: Dict[str, Any] = catalog.get(aid) or {}
         for key, val in atom.items():
-            if key.startswith("_"):
+            if key.startswith("_") or key in assets.INERT_ATOM_KEYS:
                 continue
             _walk(val)
     return "\n".join(p for p in parts if p)

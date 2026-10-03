@@ -471,3 +471,29 @@ def test_prep_sheet_prompt_fences_the_jd(monkeypatch, tmp_path):
     assert "END UNTRUSTED JOB DESCRIPTION" in seen["user"]
     assert "IGNORE" in seen["user"].upper()
     assert "untrusted" in seen["system"].lower()
+
+
+# ── interview_notes is inert ─────────────────────────────────────────────────
+
+_NOTED_ATOMS = {
+    "i1": {"what": "Built an ETL pipeline in Python",
+           "interview_notes": ["the scheduler ran on Airflow 2.7"],
+           "_block": "Globex"},
+}
+
+
+def test_interview_notes_never_reach_the_bullet_payload(monkeypatch):
+    """Every bullet prompt builds its atoms through `_atom_payload`, so notes
+    stripped here never reach the writer and cannot seep onto the page."""
+    monkeypatch.setattr(compose.assets, "atoms_by_id", lambda: dict(_NOTED_ATOMS))
+    payload = compose._atom_payload("i1")
+    assert "interview_notes" not in payload
+    assert payload["what"] == "Built an ETL pipeline in Python"
+
+
+def test_interview_notes_cannot_ground_a_bullet(monkeypatch):
+    monkeypatch.setattr(verify.assets, "atoms_by_id", lambda: dict(_NOTED_ATOMS))
+    src = verify.group_source_text(["i1"], extra="Globex")
+    assert "Airflow" not in src
+    assert "Airflow" in verify.unseen_tokens(
+        "Built an ETL pipeline in Python on Airflow", src)

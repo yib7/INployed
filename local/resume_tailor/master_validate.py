@@ -8,12 +8,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List
 
-from . import apply_answers, assets
-
-try:
-    from . import verify as _verify   # no import cycle: verify only pulls in assets/compose
-except ImportError:                    # pragma: no cover - defensive only
-    _verify = None
+from . import apply_answers, assets, verify
 
 _SECTIONS = ("experience", "projects", "leadership")
 _NAME_KEY = {"experience": "org", "projects": "name", "leadership": "org"}
@@ -103,24 +98,6 @@ def validate_master(master: Dict[str, Any]) -> List[str]:
     return errors
 
 
-_CAP_WORD_RE = re.compile(r"\b[A-Z][a-zA-Z]*\b")
-_DIGIT_RUN_RE = re.compile(r"\d+")
-
-
-def _local_unseen_tokens(seed: str, source: str) -> List[str]:
-    """Small fallback for `verify.unseen_tokens` when that module is unavailable:
-    capitalised words and digit runs in `seed` with no trace anywhere in `source`
-    (case-insensitive substring). Coarser than the real grounding gate (no word
-    boundaries, no plural/abbreviation handling) but enough to flag a seed that
-    names something the master never mentions."""
-    low_source = source.lower()
-    bad: List[str] = []
-    for tok in _CAP_WORD_RE.findall(seed) + _DIGIT_RUN_RE.findall(seed):
-        if tok.lower() not in low_source and tok not in bad:
-            bad.append(tok)
-    return bad
-
-
 def _letter_warnings(letter: Any, master: Dict[str, Any]) -> List[str]:
     """Warnings for the optional top-level `letter:` block (`seed`: a string of at
     most assets.LETTER_SEED_CAP characters). Never an error: the cover letter
@@ -143,10 +120,7 @@ def _letter_warnings(letter: Any, master: Dict[str, Any]) -> List[str]:
                          f"{assets.LETTER_SEED_CAP} reach the cover letter")
 
     master_without_letter = {k: v for k, v in master.items() if k != "letter"}
-    if _verify is not None:
-        unseen = _verify.unseen_tokens(seed, str(master_without_letter))
-    else:
-        unseen = _local_unseen_tokens(seed, str(master_without_letter))
+    unseen = verify.unseen_tokens(seed, str(master_without_letter))
     if unseen:
         warnings.append(
             "warning: letter.seed names something the rest of the master does not: "

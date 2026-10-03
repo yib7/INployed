@@ -179,6 +179,42 @@ def _jev_off(monkeypatch):
     monkeypatch.setattr(jev_switch, "client", lambda area: None)
 
 
+def _stale(what: str, want, got) -> str:
+    """The failure text for a recording the tailor no longer matches."""
+    return (f"{PROMPTS.name} is out of date with the tailor's {what}. If the change "
+            f"was on purpose, re-record with {RECORD_ENV}=1 for one run of "
+            f"`python -m pytest \"tests/test_tailor_jev.py::"
+            f"test_jev_off_prompts_match_the_recording[options off]\"` and review the "
+            f"fixture's diff (the recording is free: the engine is pinned); if nobody "
+            f"meant it, the tailor's prompts regressed.\n  recorded: {want!r}\n  "
+            f"now:      {got!r}")
+
+
+def recorded_prompts() -> dict:
+    return json.loads(PROMPTS.read_text(encoding="utf-8"))
+
+
+def assert_matches_recording(got: dict, want: dict | None = None) -> None:
+    """`got` (`_record_jev_off`'s capture) against the recording, the stage list
+    first: a call added, dropped or moved names the stages, before any prompt's
+    wording is compared. Every failure names the fixture and the record switch."""
+    want = recorded_prompts() if want is None else want
+    stages = [c["stage"] for c in got["calls"]], [c["stage"] for c in want["calls"]]
+    assert stages[0] == stages[1], _stale("call stages", stages[1], stages[0])
+    assert list(got["prompts"]) == list(want["prompts"]), _stale(
+        "pinned prompt stages", list(want["prompts"]), list(got["prompts"]))
+    for i, (g, w) in enumerate(zip(got["calls"], want["calls"])):
+        assert g == w, _stale(f"call {i} ({w['stage']}) tier or options", w, g)
+    for stage in want["prompts"]:
+        for part in ("system", "user"):
+            assert got["prompts"][stage][part] == want["prompts"][stage][part], _stale(
+                f"{stage} {part} prompt", want["prompts"][stage][part],
+                got["prompts"][stage][part])
+    for key in ("skills_fallback_call", "reground_call"):
+        assert got[key] == want[key], _stale(key, want[key], got[key])
+    assert got == want, _stale("recorded calls", want, got)
+
+
 @pytest.mark.parametrize("options", ["0", "1"], ids=["options off", "options on"])
 def test_jev_off_prompts_match_the_recording(pinned_engine, stub_template_head,
                                              tmp_path, monkeypatch, options):
@@ -193,27 +229,22 @@ def test_jev_off_prompts_match_the_recording(pinned_engine, stub_template_head,
         PROMPTS.write_text(json.dumps(got, ensure_ascii=False, indent=1) + "\n",
                            encoding="utf-8")
         pytest.skip(f"recorded {PROMPTS.name}; run again without {RECORD_ENV}")
-    want = json.loads(PROMPTS.read_text(encoding="utf-8"))
-    assert [c["stage"] for c in got["calls"]] == [c["stage"] for c in want["calls"]]
-    assert got["calls"] == want["calls"]
-    assert list(got["prompts"]) == list(want["prompts"])
-    for stage in want["prompts"]:
-        assert got["prompts"][stage]["system"] == want["prompts"][stage]["system"], stage
-        assert got["prompts"][stage]["user"] == want["prompts"][stage]["user"], stage
-    assert got["skills_fallback_call"] == want["skills_fallback_call"]
-    assert got["reground_call"] == want["reground_call"]
-    assert got == want
+    assert_matches_recording(got)
 
 
 def test_the_recording_covers_every_gated_stage():
     """Every stage 4a, 4b and 4c gate has its prompt in the recording: select and
     the rephrase once, reverb twice, the sweep once per item, and the
     reground re-ask."""
-    want = json.loads(PROMPTS.read_text(encoding="utf-8"))
-    assert list(want["prompts"]) == [
-        "select", "rephrase", "reverb", "reverb #2", "aiwriting_sweep",
-        "aiwriting_sweep #2", "aiwriting_sweep #3", "aiwriting_sweep #4", "reground",
-        "skills_fallback"]
+    want = recorded_prompts()
+    gated = ["select", "rephrase", "reverb", "reverb #2", "aiwriting_sweep",
+             "aiwriting_sweep #2", "aiwriting_sweep #3", "aiwriting_sweep #4", "reground",
+             "skills_fallback"]
+    assert list(want["prompts"]) == gated, (
+        f"{PROMPTS.name} and this list of gated stages disagree. If the tailor's stages "
+        f"changed on purpose, re-record with {RECORD_ENV}=1 (see "
+        f"test_jev_off_prompts_match_the_recording) and update this list to match.\n"
+        f"  recorded: {list(want['prompts'])!r}\n  listed:   {gated!r}")
     assert "REJECTED BULLETS" in "\n".join(want["prompts"]["reground"]["user"])
 
 
@@ -757,7 +788,7 @@ def test_jev_down_from_the_start_makes_exactly_the_jev_off_calls(
     down = _DownAfter(answers=0)
     _jev_on(monkeypatch, down)
     got = _record_jev_off(monkeypatch, tmp_path)
-    assert got == json.loads(PROMPTS.read_text(encoding="utf-8"))
+    assert_matches_recording(got)
     assert down.calls == len(jev.RETRY_DELAYS_S) + 1
     report = _report(tmp_path)
     for step in ("skills", "shortlist", "verb", "sweep gate"):
@@ -855,3 +886,41 @@ def test_each_run_counts_its_own_jev_requests(pinned_engine, stub_template_head,
     assert "  jev verb: 4 requests, " in report
     assert "  jev sweep gate: 4 requests, " in report
     assert "  jev faithfulness: 7 requests, " in report
+
+
+# ── a stale recording names its cure ─────────────────────────────────────────
+
+def _drifted(change):
+    """The recording with one `change` applied, as a tailor whose prompts moved
+    would produce it."""
+    got = json.loads(PROMPTS.read_text(encoding="utf-8"))
+    change(got)
+    return got
+
+
+@pytest.mark.parametrize("change", [
+    lambda got: got["calls"].pop(),
+    lambda got: got["prompts"].pop("reground"),
+    lambda got: got["prompts"]["select"]["user"].append("one more line"),
+    lambda got: got["calls"][0].update(tier="pro"),
+], ids=["a call gone", "a stage gone", "a prompt reworded", "a tier moved"])
+def test_a_drifted_tailor_fails_naming_the_recording_and_the_record_switch(change):
+    """The recording drifting from the tailor reads as what it is: the fixture
+    file names itself, the stage list comes first, and the message says how to
+    re-record when the change was on purpose."""
+    with pytest.raises(AssertionError) as ei:
+        assert_matches_recording(_drifted(change))
+    msg = str(ei.value)
+    assert PROMPTS.name in msg and f"{RECORD_ENV}=1" in msg
+
+
+def test_the_stage_list_is_compared_before_the_prompts():
+    def both(got):
+        got["calls"].pop()
+        got["prompts"]["select"]["user"].append("one more line")
+    with pytest.raises(AssertionError, match="call stages"):
+        assert_matches_recording(_drifted(both))
+
+
+def test_the_recording_matches_itself():
+    assert_matches_recording(json.loads(PROMPTS.read_text(encoding="utf-8")))

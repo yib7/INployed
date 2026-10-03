@@ -242,9 +242,7 @@ def test_with_the_breaker_open_the_run_asks_for_one_draft(pinned_engine, stub_te
     down = tailor_jev._DownAfter(answers=0)
     tailor_jev._jev_on(monkeypatch, down)
     got = tailor_jev._record_jev_off(monkeypatch, tmp_path)
-    want = json.loads(tailor_jev.PROMPTS.read_text(encoding="utf-8"))
-    assert got["prompts"]["rephrase"] == want["prompts"]["rephrase"]
-    assert got == want
+    tailor_jev.assert_matches_recording(got)
     assert down.calls == len(jev.RETRY_DELAYS_S) + 1
     assert ("  jev best of three: 0 requests, 0 tokens (estimated), $0.000000; fell back "
             "to the LLM path (JudgeOutage ServiceDown 503)") in tailor_jev._report(tmp_path)

@@ -2002,6 +2002,19 @@ def _dispatched(frame, url0: str, page, requests: list, error: BaseException) ->
     return "navigation" in text or "navigating" in text
 
 
+UNREAD_LIVE = "its live text could not be read, so it was never checked"
+
+
+def checked_live(check: Callable[[str, dict], str], expected: str, live: dict) -> str:
+    """`check(expected, live)` on a live read (`apply_form.live_text`): "" to
+    go on, else the reason to refuse. A live read that came back empty (the
+    node detached, the frame gone, the evaluate failed) is refused: a check
+    that never ran never lets a click through."""
+    if not live:
+        return UNREAD_LIVE
+    return check(expected, live)
+
+
 def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20,
           check: Callable[[str, dict], str] | None = None, guard: bool = True) -> ClickResult:
     """Click button `n` of `digest` and wait, up to `timeout_s`, for a
@@ -2011,8 +2024,9 @@ def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20,
 
     `check(expected_text, live)` reads the live element just before the
     click (`apply_form.live_text`: its text, aria-label, type) and returns
-    "" to go on or the reason to refuse (INV-04). A control whose live text
-    differs from the digest's is found again by that text in its frame
+    "" to go on or the reason to refuse; a live text that cannot be read is
+    refused too (`checked_live`), here and on every read again below. A
+    control whose live text differs from the digest's is found again by that text in its frame
     (`apply_form.find_by_text`) and checked again; when no single control
     reads it, the click is refused. The checked element itself is clicked
     (an element handle), and with `guard` a change of its text into a send
@@ -2036,24 +2050,24 @@ def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20,
     want = None
     if check is not None:
         live = apply_form.live_text(loc)
+        why = checked_live(check, button.text, live)
         if live:
             want = _norm(live.get("text"))
-            why = check(button.text, live)
             if not why and _norm(live.get("text")) != _norm(button.text):
                 found = apply_form.find_by_text(page, button.locator[0], button.text)
                 if len(found) == 1:
                     loc = apply_form.resolve(page, (button.locator[0], found[0]))
                     live = apply_form.live_text(loc)
-                    why = check(button.text, live) if live else ""
+                    why = checked_live(check, button.text, live)
                     want = _norm(live.get("text")) if live else None
                     log.info("apply_fill: button %s (%r) moved; found again at %s", n,
                              button.text, found[0])
                 else:
                     why = (f"the control there now reads {_norm(live.get('text'))[:60]!r}, and "
                            f"{len(found)} controls read {_norm(button.text)[:60]!r}")
-            if why:
-                log.info("apply_fill: click on %r refused: %s", button.text, why)
-                return ClickResult(clicked=False, changed=False, refused=why)
+        if why:
+            log.info("apply_fill: click on %r refused: %s", button.text, why)
+            return ClickResult(clicked=False, changed=False, refused=why)
     landed: list[bool] = []
     late: list[str] = []
     try:
@@ -2126,7 +2140,7 @@ def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20,
                 raise _ClickStopped(blocked[-1])
             loc = apply_form.resolve(page, (button.locator[0], found[0]))
             live2 = apply_form.live_text(loc)
-        why = check(button.text, live2) if check is not None and live2 else ""
+        why = checked_live(check, button.text, live2) if check is not None else ""
         if why:
             blocked.append(why)
             raise _ClickStopped(why)

@@ -507,3 +507,98 @@ def test_a_list_that_shows_nothing_keeps_a_typed_place_and_takes_out_a_typed_yes
     apply_fill.apply(browser_page, FillPlan(fields=[pf]), errors=errors)
     assert [e["error"] for e in errors] == ["OptionsUnread"]
     assert browser_page.locator("#auth-input").input_value() == ""
+
+
+# --- a click whose live text cannot be read is refused when a check is given -----------
+
+class _ClickHandle:
+    def __init__(self, clicks, raise_first=False):
+        self.clicks = clicks
+        self.raise_first = raise_first
+
+    def evaluate(self, *a, **k):
+        return True
+
+    def click(self, **k):
+        if self.raise_first and not self.clicks:
+            self.clicks.append("detached")
+            raise RuntimeError("Element is not attached to the DOM")
+        self.clicks.append("clicked")
+
+    def dispose(self):
+        pass
+
+
+class _ClickLoc:
+    def __init__(self, handle):
+        self.first = self
+        self.handle = handle
+
+    def count(self):
+        return 1
+
+    def element_handle(self, **k):
+        return self.handle
+
+
+class _ClickPage:
+    url = "https://example.com/apply"
+    main_frame = None
+
+    def on(self, *a):
+        pass
+
+    def remove_listener(self, *a):
+        pass
+
+
+def _unreadable_click(monkeypatch, reads, *, raise_first=False, found=("#next",)):
+    """Click "Next" with `live_text` answering `reads` in turn ({} = unreadable)
+    and a check that refuses only a control that reads as a send."""
+    clicks: list[str] = []
+    handle = _ClickHandle(clicks, raise_first=raise_first)
+    reads = list(reads)
+    monkeypatch.setattr(apply_form, "resolve", lambda page, loc: _ClickLoc(handle))
+    monkeypatch.setattr(apply_form, "live_text", lambda loc: reads.pop(0) if reads else {})
+    monkeypatch.setattr(apply_form, "find_by_text", lambda page, i, text: list(found))
+    monkeypatch.setattr(apply_form, "frames", lambda page: (_ for _ in ()).throw(RuntimeError()))
+    monkeypatch.setattr(apply_fill, "_await_change", lambda page, act, t, **k: (act(), True)[1])
+    digest = apply_form.FormDigest(url_host="example.com", title="", text="", buttons=[
+        apply_form.Button(n=0, locator=(0, "#next"), text="Next")])
+
+    def check(expected, live):
+        return "it reads as a send" if "Submit" in str(live.get("text")) else ""
+
+    return apply_fill.click(_ClickPage(), digest, 0, check=check), clicks
+
+
+def test_a_checked_click_on_a_control_that_cannot_be_read_is_refused(monkeypatch):
+    r, clicks = _unreadable_click(monkeypatch, [{}])
+    assert clicks == [] and not r.clicked and r.refused
+
+
+def test_a_moved_control_that_cannot_be_read_again_is_refused(monkeypatch):
+    # the stored locator now reads otherwise; the one control reading "Next"
+    # is found again, and its live text cannot be read
+    r, clicks = _unreadable_click(monkeypatch, [{"text": "Back"}, {}])
+    assert clicks == [] and not r.clicked and r.refused
+
+
+def test_a_re_rendered_control_that_cannot_be_read_again_is_refused(monkeypatch):
+    # the check passes, the node is re-rendered under the click, and the
+    # control found again cannot be read: no second click
+    r, clicks = _unreadable_click(monkeypatch, [{"text": "Next"}, {}, {}], raise_first=True)
+    assert clicks == ["detached"] and not r.clicked and r.refused
+
+
+def test_an_unchecked_click_still_goes_ahead_without_a_live_read(monkeypatch):
+    clicks: list[str] = []
+    handle = _ClickHandle(clicks)
+    monkeypatch.setattr(apply_form, "resolve", lambda page, loc: _ClickLoc(handle))
+    monkeypatch.setattr(apply_form, "live_text", lambda loc: {})
+    monkeypatch.setattr(apply_form, "frames", lambda page: (_ for _ in ()).throw(RuntimeError()))
+    monkeypatch.setattr(apply_fill, "_await_change", lambda page, act, t, **k: (act(), True)[1])
+    digest = apply_form.FormDigest(url_host="example.com", title="", text="", buttons=[
+        apply_form.Button(n=0, locator=(0, "#next"), text="Next")])
+    r = apply_fill.click(_ClickPage(), digest, 0)
+    assert clicks == ["clicked"] and r.clicked

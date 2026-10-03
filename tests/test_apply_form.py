@@ -378,3 +378,92 @@ def test_only_short_apply_links_outside_site_chrome_join_the_buttons(browser_pag
       </main></body>""")
     d = apply_form.extract(browser_page)
     assert [b.text for b in d.buttons] == ["Apply for this job", "Go"]
+
+
+# --- a required control is never a posting widget or a cookie banner --------------------
+
+def test_a_required_question_naming_a_newsletter_is_kept(browser_page):
+    browser_page.set_content("""
+      <body><main><h1>Apply</h1><form>
+        <label for=fn>First name *</label><input id=fn name=fn required>
+        <label for=src>How did you hear about us (job board, newsletter, referral)? *</label>
+        <select id=src name=src><option value="">Select...</option><option>Job board</option>
+          <option>Newsletter</option><option>Referral</option></select>
+        <label for=alerts>Which job alerts brought you here?</label>
+        <input id=alerts name=alerts aria-required=true>
+        <label><input type=checkbox name=news> Subscribe to our newsletter</label>
+        <button type=submit>Submit application</button></form></main></body>""")
+    d = apply_form.extract(browser_page)
+    by = {f.id_or_name: f for f in d.fields}
+    assert by["src"].required and by["src"].type == "select"
+    assert by["alerts"].required
+    # an optional newsletter tick box is still the posting's widget
+    assert "news" not in by
+
+
+_GDPR_FORMLESS = """
+  <body><main><h1>Apply</h1><div id="app">
+    <label for=fn>First name *</label><input id=fn required>
+    <div class="gdpr-consent">__BOX__</div>
+    <button id=go>Submit application</button></div></main></body>"""
+
+
+@pytest.mark.parametrize("box, name", [
+    # required by its attribute
+    ("<label><input type=checkbox id=agree required> I agree to the processing of my data "
+     "and the use of cookies as described in the privacy notice *</label>", "agree"),
+    # starred only
+    ("<label><input type=checkbox id=agree> Data and cookies notice read and accepted *</label>",
+     "agree"),
+    # an agreement, no mark at all
+    ("<label><input type=checkbox id=agree> I consent to the processing of my data and the "
+     "use of cookies for this application</label>", "agree"),
+])
+def test_a_formless_consent_box_holding_the_applications_agreement_is_no_banner(
+        browser_page, box, name):
+    browser_page.set_content(_GDPR_FORMLESS.replace("__BOX__", box))
+    d = apply_form.extract(browser_page)
+    assert name in [f.id_or_name for f in d.fields]
+
+
+def test_the_gate_reads_a_required_agreement_in_a_formless_consent_box(browser_page):
+    browser_page.set_content(_GDPR_FORMLESS.replace(
+        "__BOX__", "<label><input type=checkbox id=agree required> I agree to the processing of "
+        "my data and the use of cookies as described in the privacy notice *</label>"
+        "<span role=checkbox id=terms aria-required=true aria-checked=false tabindex=0>"
+        "I accept the terms *</span>"))
+    browser_page.fill("#fn", "Jane")
+    invalid = apply_form.validity_report(browser_page)["invalid"]
+    assert "agree" in [r["name"] for r in invalid]
+    invalid = apply_form.validity_report(browser_page, (0, "#go"), [(0, "#fn")])["invalid"]
+    assert "agree" in [r["name"] for r in invalid]
+    scan = apply_form.control_scan(browser_page, required_only=True)
+    assert [r["kind"] for r in scan] == ["checkbox"]
+
+
+def test_a_cookie_banner_with_its_own_tick_boxes_is_still_a_banner(browser_page):
+    browser_page.set_content("""
+      <body><main><h1>Apply</h1><form>
+        <label for=fn>First name</label><input id=fn name=fn>
+        <button type=submit>Submit application</button></form></main>
+      <div class="cookie-banner" style="position:fixed;bottom:0">We use cookies.
+        <label><input type=checkbox name=analytics> Analytics cookies</label>
+        <label><input type=checkbox name=marketing checked> Marketing cookies</label>
+        <button>Reject all</button><button>Accept all</button></div></body>""")
+    d = apply_form.extract(browser_page)
+    assert [f.id_or_name for f in d.fields] == ["fn"]
+    assert [b.text for b in d.buttons] == ["Submit application"]
+
+
+def test_the_gate_reads_a_required_box_in_the_footer_beside_a_formless_submit(browser_page):
+    browser_page.set_content("""
+      <body><main><h1>Apply</h1><div id="app">
+        <label for=fn>First name</label><input id=fn required>
+        <footer><label><input type=checkbox id=agree required> I accept the terms *</label>
+          <button id=go>Submit application</button></footer></div></main>
+      <footer><label for=news>Newsletter email</label><input id=news type=email required></footer>
+      </body>""")
+    browser_page.fill("#fn", "Jane")
+    invalid = apply_form.validity_report(browser_page, (0, "#go"), [(0, "#fn")])["invalid"]
+    # the footer beside the button is read; the page's own footer is not
+    assert [r["name"] for r in invalid] == ["agree"]

@@ -348,8 +348,11 @@ RADIO_OPTION_LABEL_JS = r"""(el) => {
 # to..." block does not). The application's own content is never one: no box
 # inside a form, none holding a text, email, password or phone box or a
 # textarea (a sign-in dialog that mentions cookies), the page's main content,
-# its h1 or a file input; neither is the body, a control or a style or script
-# element. A banner is found whether or not its own box has a size (OneTrust's
+# its h1 or a file input, and none holding a question the application asks:
+# a control marked required (the attribute, aria-required, a star in its
+# label) or a tick box whose words state an agreement ("I agree to the
+# processing of my data and the use of cookies"); neither is the body, a
+# control or a style or script element. A banner is found whether or not its own box has a size (OneTrust's
 # wrapper has none: its banner inside is fixed); its controls are checked
 # for visibility one by one.
 CONSENT_ROOTS_JS = r"""() => {
@@ -360,13 +363,33 @@ CONSENT_ROOTS_JS = r"""() => {
   const TYPING = 'input:not([type]), input[type=text], input[type=email], input[type=password], '
     + 'input[type=tel], textarea';
   const head = (el) => (el.innerText || el.textContent || '').slice(0, 300);
+  const QUESTION = 'input:not([type=hidden]):not([type=submit]):not([type=button]), select, '
+    + 'textarea, [role=checkbox], [role=switch], [role=radio], [role=combobox], [role=textbox]';
+  const STAR = /^\s*[*✱＊]|[*✱＊]\s*(?:required\.?)?\s*$|\(\s*required\s*\)/i;
+  const AGREE = /\bI\s+(?:have\s+read\s+and\s+)?(?:hereby\s+)?(?:agree|consent|acknowledge|accept|certify|confirm|understand|authori[sz]e|attest)\b/i;
+  // the words that name a control: its labels, an enclosing label, its
+  // aria-label, and for a tick box drawn as an element its own text
+  const said = (c) => {
+    const labs = c.labels ? Array.from(c.labels).map((l) => l.textContent || '') : [];
+    const enc = c.closest('label');
+    if (enc && !labs.includes(enc.textContent)) labs.push(enc.textContent || '');
+    labs.push(c.getAttribute('aria-label') || '');
+    if (!/^(INPUT|SELECT|TEXTAREA)$/.test(c.tagName)) labs.push(c.textContent || '');
+    return labs.map((t) => t.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  };
+  const tick = (c) => (c.tagName === 'INPUT' && /^(checkbox|radio)$/i.test(c.type || ''))
+    || /^(checkbox|switch|radio)$/.test(c.getAttribute('role') || '');
+  const asks = (el) => Array.from(el.querySelectorAll(QUESTION)).some((c) =>
+    c.required === true || c.getAttribute('aria-required') === 'true'
+    || said(c).some((t) => STAR.test(t) || (tick(c) && AGREE.test(t))));
   const names = (el) => (el.id || '') + ' ' + (el.getAttribute('class') || '') + ' '
     + (el.getAttribute('data-automation-id') || '');
   const blocked = (el) => el === document.body || el === document.documentElement
     || el.matches('main, [role=main], form, input, select, textarea, button, label, option, a, '
                   + 'style, script, noscript, template, link, meta')
     || !!el.closest('form')
-    || !!el.querySelector('main, [role=main], h1, input[type=file], ' + TYPING);
+    || !!el.querySelector('main, [role=main], h1, input[type=file], ' + TYPING)
+    || asks(el);
   const found = new Set();
   const query = ['onetrust', 'cookie', 'consent', 'gdpr', 'cc-banner', 'privacy-banner',
                  'cookiebot', 'usercentrics', 'truste', 'trustarc', 'didomi', 'osano', 'termly',
@@ -1238,7 +1261,17 @@ _EXTRACT_JS = r"""
   const lone = (box, el) => Array.from(box.querySelectorAll(
     'input:not([type=hidden]), textarea, select, [contenteditable=""], [contenteditable=true], '
     + '[role=textbox], [role=combobox]')).every((c) => c === el);
-  const junk = (el, t, label) => {
+  // `el` shares a box below the body with another visible question
+  const amongQuestions = (el) => {
+    for (let p = up(el); p && p !== document.body && p !== document.documentElement; p = up(p)) {
+      if (p.nodeType !== 1) continue;
+      if (Array.from(p.querySelectorAll(QUESTION_CTRL)).some((c) => c !== el && !c.contains(el)
+          && !el.contains(c) && visible(c))) return true;
+    }
+    return false;
+  };
+  // `req`: the control's question is marked required (a star, "(required)")
+  const junk = (el, t, label, req) => {
     // a choice or a file box is often hidden behind its label or trigger
     const choice = t === 'checkbox' || t === 'radio' || t === 'file' || t === 'select';
     // a read-only box, never a picker that opens on a click (review M6:
@@ -1252,7 +1285,13 @@ _EXTRACT_JS = r"""
     }
     if (HONEY_ID.test(el.id || '') || HONEY_ID.test(el.getAttribute('name') || '')
         || HONEY.test(label)) return 'honeypot';
-    if (POSTING_WIDGET.test(label)) return 'posting widget';
+    // a required question among the application's other questions is the
+    // application's whatever its words name ("How did you hear about us (job
+    // board, newsletter, referral)? *"); a posting's lone required alert box
+    // beside its Apply stays the posting's
+    if (POSTING_WIDGET.test(label) && !((req || isRequired(el)) && amongQuestions(el))) {
+      return 'posting widget';
+    }
     if (choice) return '';
     // react-select's dummy input: a field through its face (review R2 Minor 2)
     if (comboFace(el) && !closestC(el, '[aria-hidden=true]')) return '';
@@ -1556,7 +1595,7 @@ _EXTRACT_JS = r"""
       const b = group[0];
       const marks = [];
       const [label, req] = labelFor(b, marks);
-      if (junk(b, 'checkbox', label)) continue;
+      if (junk(b, 'checkbox', label, req)) continue;
       if (!visible(b)) kept.add(b);
       push(b, describe(b, 'checkbox', label, req || isRequired(b), locatorFor(b), ['checked'],
                        { click: clickFor(b) }));
@@ -1772,7 +1811,7 @@ _EXTRACT_JS = r"""
           if (Array.from(p.querySelectorAll(QUESTION_CTRL)).some((c) => c !== el && visible(c))) break;
           parser = AUTOFILL.test(seen(p).slice(0, 300));
         }
-        if (junk(el, t, label)) continue;
+        if (junk(el, t, label, req)) continue;
         push(el, describe(el, 'file', label, parser ? false : (req || isRequired(el)), locatorFor(el),
                           [], { help: parser ? 'autofill parser' : '' }));
         continue;
@@ -1792,7 +1831,7 @@ _EXTRACT_JS = r"""
       const combo = (t === 'text' || t === 'search') && !role
         && !!closestC(up(el) || el, '[aria-haspopup=listbox]');
       const [label, req] = labelFor(el, marks);
-      if (junk(el, t, label)) continue;
+      if (junk(el, t, label, req)) continue;
       const type = typeahead || combo ? 'listbox' : typeOf(el);
       // react-select's dummy input takes its clicks through its face (R2 Minor 2)
       const face = hiddenish(el) ? comboFace(el) : null;
@@ -1807,7 +1846,7 @@ _EXTRACT_JS = r"""
       const proxy = proxied.get(el);
       if (!visible(el) && !proxy) continue;
       const [label, req] = labelFor(el, marks);
-      if (junk(el, 'select', label)) continue;
+      if (junk(el, 'select', label, req)) continue;
       const behind = !!proxy && hiddenish(el);
       if (behind) kept.add(el);
       push(el, describe(el, 'select', label, req || isRequired(el), locatorFor(el),
@@ -1818,7 +1857,7 @@ _EXTRACT_JS = r"""
     if (el.tagName === 'TEXTAREA') {
       if (!visible(el)) continue;
       const [label, req] = labelFor(el, marks);
-      if (junk(el, 'textarea', label)) continue;
+      if (junk(el, 'textarea', label, req)) continue;
       push(el, describe(el, 'textarea', label, req || isRequired(el), locatorFor(el), []));
       continue;
     }
@@ -1832,7 +1871,7 @@ _EXTRACT_JS = r"""
     if (role === 'checkbox' || role === 'switch') {
       // a custom tick box (EXT-04)
       const [label, req] = labelFor(el, marks);
-      if (junk(el, 'checkbox', label)) continue;
+      if (junk(el, 'checkbox', label, req)) continue;
       asButtons.add(el);
       push(el, describe(el, 'checkbox', label, req || isRequired(el), locatorFor(el), ['checked'],
                         { widget: 'aria_check' }));
@@ -2328,11 +2367,15 @@ _VALIDITY_JS = r"""({bcss, fcss}) => {
     let box = btn.parentElement;
     while (box && filled.length && !filled.some((f) => box.contains(f))) box = box.parentElement;
     if (!box || !filled.length) box = document.body;
+    // a required control in the box beside the button counts wherever it
+    // sits (a wizard's footer bar holding the terms box beside its Submit)
+    const near = (el) => !outside(el)
+      || (box !== document.body && (el.required === true || el.getAttribute('aria-required') === 'true'));
     const loose = Array.from(box.querySelectorAll('input, select, textarea'))
-      .filter((el) => !owner(el) && !outside(el));
+      .filter((el) => !owner(el) && near(el));
     controls = [...Array.from(forms).flatMap((f) => Array.from(f.elements)), ...loose];
     inScope = (el) => Array.from(forms).some((f) => f.contains(el))
-      || (box.contains(el) && !owner(el) && !outside(el));
+      || (box.contains(el) && !owner(el) && near(el));
   } else if (filled.some((f) => owner(f))) {
     const forms = new Set(filled.map(owner).filter(Boolean));
     controls = Array.from(forms).flatMap((f) => Array.from(f.elements));

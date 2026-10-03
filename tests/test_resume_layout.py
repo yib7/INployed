@@ -286,8 +286,8 @@ def test_enforce_fixed_counts_fallback_to_default_line_targets(monkeypatch):
         "projects": [],
     }
     compose._enforce_fixed_counts(sel)
-    octus = sel["experience"][0]
-    assert len(octus["groups"]) == len(config.DEFAULT_LINE_TARGETS)  # must be 3
+    first = sel["experience"][0]
+    assert len(first["groups"]) == len(config.DEFAULT_LINE_TARGETS)  # must be 3
 
 
 def test_length_hint_has_floor_and_ceiling():

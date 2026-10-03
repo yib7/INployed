@@ -60,7 +60,7 @@ def test_style_violations_spares_technical_terms():
 
 
 def test_style_violations_clean_bullet():
-    clean = ("Rebuilt the extraction model as LBR 2.0, raising accuracy from 80% "
+    clean = ("Rebuilt the extraction model as version 2.0, raising accuracy from 80% "
              "to 95% and cutting per-run cost by 65%")
     assert compose.style_violations(clean) == []
 

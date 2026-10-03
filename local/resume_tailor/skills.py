@@ -1,8 +1,8 @@
 """Stage 3: the four fixed skill lines + the optional Methods concepts line.
 
-Moved out of compose.py unchanged (cycle 9): the skills stage shares nothing with
-the bullet stages but the prompt-fencing helper, so it was 425 lines of unrelated
-code sitting in the middle of the bullet pipeline. `compose` re-exports every name
+Split out of compose.py: the skills stage shares nothing with the bullet stages
+but the prompt-fencing helper, so it would be 425 lines of unrelated code sitting
+in the middle of the bullet pipeline. `compose` re-exports every name
 below, so `compose.compress_skills` and friends still resolve.
 
 NOTE for monkeypatching: `call` is bound in THIS module's namespace, so a test that
@@ -124,7 +124,7 @@ def _finalize_skill_lines(out: Dict[str, Any], jd: str = "") -> List[Dict[str, s
         raw = out.get(label)
         # A common model shape drift returns the line as a JSON array instead of
         # a comma string ("Languages": ["Python","SQL"]); join it rather than
-        # discarding the model's relevance ranking (audit P2-2).
+        # discarding the model's relevance ranking.
         if isinstance(raw, list):
             raw = ", ".join(str(x) for x in raw if str(x).strip())
         picked = _complete_to_count(raw if isinstance(raw, str) else "",

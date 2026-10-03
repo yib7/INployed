@@ -23,7 +23,7 @@ cases the code had already named. The findings still ride in the payload, becaus
 they make the repair TARGETED. A free rewrite is how a grounded bullet drifts off
 its atoms, and every guard below exists to make that drift impossible to commit.
 
-**With Jev on, a judge gate (TL-5).** Before the first call,
+**With Jev on, a judge gate.** Before the first call,
 ``jev_assist.sweep_flags`` reads every bullet the sweep may rewrite for the tells of
 the user's banned patterns (contrast framing, stacked adjectives, filler or vague
 impact, hype words, a list padded out to three), one request per item. An item then
@@ -62,7 +62,7 @@ Anything else keeps the original, which was already clean and already fitting.
   1. it is non-empty
   2. ``measure.line_count(new) <= target_lines`` for that bullet
   3. it adds no ``compose.style_violations`` and no ``aiwriting.resume_violations``
-     (the two name lists are disjoint by SP1's design, so they concatenate)
+     (the two name lists are disjoint by design, so they concatenate)
   4. ``itemcheck.leading_verb`` is unchanged
   5. it loses no number and no distinctive token the original carried
 
@@ -161,7 +161,7 @@ class Lingering(NamedTuple):
 
 
 class JudgeFlag(NamedTuple):
-    """A bullet Jev read one or more banned-pattern tells in (TL-5), by name
+    """A bullet Jev read one or more banned-pattern tells in (the judge gate), by name
     (`jev_assist.SWEEP_QUESTIONS`). The flag bought its item a call, and the names
     rode in that call's payload."""
     gkey: str
@@ -170,7 +170,7 @@ class JudgeFlag(NamedTuple):
 
 
 class SweepResult(NamedTuple):
-    """What SP4's run report is written from.
+    """What the run report is written from.
 
     ``changed`` and ``rejected`` are the outcome per bullet AFTER the re-ask, so a
     bullet that overflowed and was then shortened successfully appears in
@@ -178,7 +178,7 @@ class SweepResult(NamedTuple):
     the sweep leaves behind, which is the honest list: a P1 repair occasionally
     clears a P2 tell on its way past.
 
-    ``skipped`` and ``judge_flags`` come from the judge gate (TL-5): the items whose
+    ``skipped`` and ``judge_flags`` come from the judge gate: the items whose
     call it skipped, and the bullets whose tells sent theirs. Both stay empty with
     Jev off. ``items`` and ``calls`` count only the items that made a call.
     """
@@ -206,8 +206,8 @@ class SweepResult(NamedTuple):
 # tailors toward the posting, so the untrusted JD would add tokens, cost and
 # injection surface for nothing. `jd` is still a parameter of `sweep_items`,
 # unused, because every other bullet stage in this package takes it (including
-# `compose.enforce_style`, which ignores it for the same reason) and SP4's pass
-# wiring hands the whole context to each stage uniformly.
+# `compose.enforce_style`, which ignores it for the same reason) and the pass
+# wiring in run.py hands the whole context to each stage uniformly.
 _SWEEP_SYSTEM = (
     "You clean AI-writing tells out of the bullets of ONE resume entry. You get "
     "the entry and all of its bullets together, because the tells worth catching "
@@ -235,7 +235,7 @@ _SWEEP_SYSTEM = (
     + aiwriting.RESUME_RULES_PROMPT + "\n" + _PRINCIPLE
 )
 
-# TL-5: appended to the system prompt above for an item whose bullets carry Jev's
+# Appended to the system prompt above for an item whose bullets carry Jev's
 # flags, so the call the flags bought knows what to repair. The SCOPE rule hands back
 # a bullet with no finding and no phrasing hit untouched, so without this rule a call
 # made for a flag alone would change nothing. Held to the same rules as the prompts
@@ -292,7 +292,7 @@ def _fitting_prefix_len(text: str, target_lines: int) -> int:
 def _violations(text: str) -> List[str]:
     """Every deterministic style name a bullet trips, from both arms.
 
-    The two lists are disjoint by SP1's design (nothing ``compose._STYLE_BANS``
+    The two lists are disjoint by design (nothing ``compose._STYLE_BANS``
     matches is repeated in ``aiwriting.RESUME_EXTRA_BANS``), so concatenating
     them cannot double-count a single tell.
     """
@@ -389,7 +389,7 @@ def _sweep_body(item: str, specs: Sequence[_Spec],
     finding's whole `detail` under every bullet it spans would triple the prompt
     for one sentence of content.
 
-    `marks` is {gkey: the tells Jev read} for an item Jev flagged (TL-5). Each of its
+    `marks` is {gkey: the tells Jev read} for an item Jev flagged. Each of its
     bullets then carries a `judge_flags` list, empty for a bullet Jev read as clean,
     so the model can tell the two apart. With no mark the key is absent, and the
     payload is the one the sweep sends with Jev off.
@@ -446,7 +446,7 @@ _SWEEP_CLOSING = (
     "every fact and number, keep each opening verb, and stay within each bullet's "
     "'max_chars'."
 )
-# TL-5: the closing for an item whose bullets carry Jev's flags (see _SWEEP_FLAG_RULE).
+# The closing for an item whose bullets carry Jev's flags (see _SWEEP_FLAG_RULE).
 _SWEEP_FLAG_CLOSING = (
     _SWEEP_CLOSING + " Repair the tells named in each bullet's 'judge_flags' too."
 )
@@ -472,8 +472,8 @@ Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<bullet>"}}, ...]}}
 # `llm.call`, so a system prompt handed in as a parameter is invisible to it: the
 # trace has no way back from a parameter to the constant a caller passed. Naming
 # the constant at the call site is what keeps both prompts inside that scan, and
-# the scan passing vacuously is the exact failure a prior cycle already found once
-# (aiwriting.RULES_PROMPT, invisible for the same reason). TL-5's flag variants are
+# the scan passing vacuously is a real failure mode (aiwriting.RULES_PROMPT was
+# once invisible for the same reason). The judge gate's flag variants are
 # chosen inside the call's own arguments for the same reason.
 def _ask_sweep(job_title: str, body: Dict[str, Any], flagged: bool = False) -> Dict[str, Any]:
     return as_dict(call((_SWEEP_SYSTEM + _SWEEP_FLAG_RULE) if flagged else _SWEEP_SYSTEM,
@@ -488,7 +488,7 @@ def _ask_reask(job_title: str, body: Dict[str, Any]) -> Dict[str, Any]:
                         config.TIER_FLASH, json_out=True, temperature=0.2), "bullets")
 
 
-# ── the judge gate (TL-5) ────────────────────────────────────────────────────
+# ── the judge gate ───────────────────────────────────────────────────────────
 def _judge_flags(sel: Dict[str, Any], bullets: Dict[str, str],
                  judge: Any) -> Optional[Dict[str, Tuple[str, ...]]]:
     """Jev's read of every bullet the sweep may rewrite, one request per item
@@ -527,7 +527,7 @@ def sweep_items(jd: str, job_title: str, sel: Dict[str, Any],
 
     `judge` is the run's Jev judge, None with Jev off. With one, Jev reads every
     bullet first and an item makes its call only for a tell or a detector finding
-    (TL-5, "With Jev on, a judge gate" above).
+    ("With Jev on, a judge gate" above).
     """
     targets = compose.bullet_line_targets(sel)
     gm = compose.group_map(sel)

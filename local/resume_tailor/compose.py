@@ -32,8 +32,8 @@ from . import jev_assist
 from .common import _PRINCIPLE, _gkey, fence_jd
 from .itemcheck import leading_verb
 from .llm import as_dict, call
-# Re-exports. The two seams below moved to their own modules in cycle 9; every
-# historical `compose.X` call site (run.py, prep.py, verify.py, the Qt layer, the
+# Re-exports. The two seams below live in their own modules; every
+# `compose.X` call site (run.py, prep.py, verify.py, the Qt layer, the
 # tests) keeps resolving through this module. `selection` and `skills` import from
 # `common`, never from `compose`, so this edge stays one-way.
 #
@@ -332,8 +332,8 @@ Return ONLY JSON: {{"briefs": [{{"block": "<block name>", "brief": "<1-2 sentenc
     return result
 
 
-# TL-7's additions to the rephrase prompt, sent only when the run asks for drafts
-# (Settings: "Best of 3 bullet drafts", with Jev on). Without them the prompt is
+# The best-of-3 bullet drafts' additions to the rephrase prompt, sent only when the
+# run asks for drafts (Settings: "Best of 3 bullet drafts", with Jev on). Without them the prompt is
 # today's, word for word, which keeps its prompt cache.
 REPHRASE_DRAFTS = 3
 REPHRASE_DRAFTS_RULE = (
@@ -368,7 +368,7 @@ def rephrase(jd: str, job_title: str, sel: Dict[str, Any],
 
 def rephrase_drafts(jd: str, job_title: str, sel: Dict[str, Any],
                     briefs: Optional[Dict[str, str]] = None) -> Dict[str, List[str]]:
-    """TL-7: {gkey: up to REPHRASE_DRAFTS distinct drafts}, from one rephrase call
+    """Best-of-3 bullet drafts: {gkey: up to REPHRASE_DRAFTS distinct drafts}, from one rephrase call
     whose prompt is `rephrase`'s with REPHRASE_DRAFTS_RULE and REPHRASE_DRAFTS_SHAPE
     appended. A bullet answered in the single-text shape reads as one draft. The run
     keeps one draft per bullet (`run._resolve_best_of`)."""
@@ -391,7 +391,7 @@ def rephrase_drafts(jd: str, job_title: str, sel: Dict[str, Any],
 
 def _rephrase_answer(jd: str, job_title: str, sel: Dict[str, Any],
                      briefs: Optional[Dict[str, str]], *, drafts: bool) -> Dict[str, Any]:
-    """The rephrase call's JSON answer. `drafts` appends TL-7's rule and shape; left
+    """The rephrase call's JSON answer. `drafts` appends the drafts rule and shape; left
     off, the prompt is today's, byte for byte."""
     briefs = briefs or {}
     gm = group_map(sel)
@@ -487,7 +487,8 @@ Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<one bullet>"}}, ..
                    "bullets")
 
 
-# TL-4's addition to the reground prompt, sent only when a bullet carries a finding.
+# The Jev faithfulness check's addition to the reground prompt, sent only when a
+# bullet carries a finding.
 REGROUND_FINDING_RULE = (
     "A bullet whose item carries a 'finding' failed a faithfulness check for the reason "
     "that finding names, and its 'banned_tokens' list may be empty. Rewrite that bullet so "
@@ -519,13 +520,13 @@ def reground(jd: str, job_title: str, sel: Dict[str, Any],
     narrower. The CALLER re-runs the gate over whatever returns, so a re-ask that fails
     again simply stays dropped. Advisory, never fatal: {} on any failure.
 
-    TL-4 (the Jev faithfulness check, `run._check_faithfulness`) sends a bullet it flags
+    The Jev faithfulness check (`run._check_faithfulness`) sends a bullet it flags
     through this same call, at any stage, with no banned tokens and its finding in
     `findings`. A finding rides in its bullet's item with the bullet's `role` in its
     block, and REGROUND_FINDING_RULE explains both once in the system prompt, so a
-    flagged detail bullet stays a detail. `printed` holds the gkeys that print (TL-4
-    passes the run's bullets): a block's opener is its first group in that set, since
-    a group the prologue dropped for good stays in `sel`. With no finding the prompt
+    flagged detail bullet stays a detail. `printed` holds the gkeys that print (the
+    faithfulness check passes the run's bullets): a block's opener is its first
+    group in that set, since a group the prologue dropped for good stays in `sel`. With no finding the prompt
     is the one above, word for word."""
     gm = group_map(sel)
     targets = bullet_line_targets(sel)
@@ -670,7 +671,7 @@ def dedupe_leading_verbs(bullets: Dict[str, str], gm: Dict[str, List[str]], jd: 
     in-category swap from `active_verbs()` makes the opener unique. Verbatim gkeys are skipped.
     Mutates and returns `bullets`.
 
-    With `judge` (TL-6: `run.tailor()` passes the run's Jev judge), a collision is first
+    With `judge` (`run.tailor()` passes the run's Jev judge), a collision is first
     asked of Jev (`jev_assist.pick_verb`): the palette category the bullet's action fits,
     then a verb in it that no other bullet opens with, earlier or later, and no
     verbatim block either. A pick at

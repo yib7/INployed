@@ -5,7 +5,7 @@ asks (work authorization, sponsorship, EEO self-identification, "how did you
 hear about us"). The defaults reflect the candidate's reality: a US citizen /
 green-card holder who never needs visa sponsorship.
 
-DEFAULTS is now only a SEED: on first run apply_answers.seed_defaults() turns it
+DEFAULTS is only a SEED: on first run apply_answers.seed_defaults() turns it
 into the master answer store (apply_answers.json), and a pre-existing
 apply_config.json migrates its overrides in once. After that, the Apply Answers
 tab + apply_answers.json are the source of truth, and apply_data.write() renders

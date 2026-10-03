@@ -20,7 +20,7 @@ lexical belongs here.
 from this package pulls live credentials into the process and a scratch script can
 place a billed API request. Depending on nothing but ``re`` and ``statistics`` means
 these detectors can be exercised standalone, the way ``measure.py`` already is. That
-property earns its keep: SP1's hedge regex was checked that way and three false
+property earns its keep: the hedge regex was checked that way and three false
 negatives fell out of it that the suite had not covered.
 
 ── what every threshold here is fighting ────────────────────────────────────────

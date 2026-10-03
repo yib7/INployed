@@ -83,7 +83,7 @@ def _load_doc(path: Path):
     A hand-edited master that is no longer valid YAML raises ruamel's own
     `YAMLError`, which is not a `ValueError` and so slips past every write
     handler's `except (ValueError, OSError)`: the add dialogs lose what the
-    user typed, and Save appears to do nothing (I6). Re-raised here as a
+    user typed, and Save appears to do nothing. Re-raised here as a
     `ValueError` naming the line and column, one fix covers every caller below.
     """
     y = _yaml()

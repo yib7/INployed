@@ -1,6 +1,6 @@
 """Stage 1: select -- choose the blocks, the bullet groups and the skill focus.
 
-Moved out of compose.py unchanged (cycle 9), together with the prompt helpers that
+Split out of compose.py, together with the prompt helpers that
 only `select` uses (`_catalog`, the two guidance builders, `_required_blocks`) and
 the deterministic post-processing that shapes the model's answer (`_normalize_selection`
 -> required blocks -> fixed order -> fixed counts -> project cap). `compose` re-exports
@@ -35,7 +35,7 @@ def _first_atom(section: str, name: str) -> List[str]:
 
 def _catalog(shortlist: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> str:
     """Compact id/what/angles catalog of every atom, grouped by block, for select().
-    Given the TL-2 `shortlist` (`_shortlist`), it lists only those blocks and atoms,
+    Given the Jev `shortlist` (`_shortlist`), it lists only those blocks and atoms,
     in that order."""
     bl = assets.blocks() if shortlist is None else shortlist
     idx = assets.atoms_by_id()
@@ -125,7 +125,7 @@ def _project_guidance(names: Optional[List[str]] = None) -> str:
     tiers, an unconfigured project uses the global `PROJECT_BULLETS_MAX`.
 
     `names` lists the projects to guide, in order; left None it is every project in the
-    master, in file order. The TL-2 shortlist passes its own ranked projects."""
+    master, in file order. The Jev shortlist passes its own ranked projects."""
     if names is None:
         names = [b["name"] for b in assets.blocks().get("projects", [])]
     lines: List[str] = [
@@ -137,7 +137,7 @@ def _project_guidance(names: Optional[List[str]] = None) -> str:
     return "\n".join(lines)
 
 
-# ── TL-2: the Jev shortlist (cycle 19) ───────────────────────────────────────
+# ── the Jev shortlist ────────────────────────────────────────────────────────
 # With Jev on, `jev_assist.atom_relevance` rates every atom against the job and
 # select() sees a trimmed catalog in relevance order: fewer tokens, sharper focus.
 # Jev only orders; the counts below are code.
@@ -203,9 +203,9 @@ def select(jd: str, job_title: str, company: str, *,
     """Stage 1: the model picks the blocks, the bullet groups and the skills; code
     makes the answer safe (`_normalize_selection`).
 
-    With Jev on, `run.tailor()` passes what Jev answered. `atom_relevance` (TL-2,
-    `jev_assist.atom_relevance`) trims the catalog the model sees to `_shortlist`'s
-    blocks, in relevance order. `skill_pick` (TL-1, `jev_assist.skills_pick`)
+    With Jev on, `run.tailor()` passes what Jev answered. `atom_relevance`
+    (`jev_assist.atom_relevance`) trims the catalog the model sees to `_shortlist`'s
+    blocks, in relevance order. `skill_pick` (`jev_assist.skills_pick`)
     supplies the skills lines and the skill focus, so the prompt asks the model for
     neither. Left None, each part of the request is today's."""
     _check_required_blocks()
@@ -250,7 +250,7 @@ def select(jd: str, job_title: str, company: str, *,
         if lead_lines else
         "Choose the number of groups per entry that best fits."
     )
-    # The skills part of the request, dropped whole when Jev picked the skills (TL-1).
+    # The skills part of the request, dropped whole when Jev picked the skills.
     skill_pools = f"""SKILL POOLS (for the "skills" output only). Pick each line's items only from its pool, ranked most-relevant-first; aim ~7 Languages, ~7 Frameworks, ~10 Developer Tools, ~10 Libraries, or all of a smaller pool. JD matches first, then complementary skills; don't pad to hit the count:
 Languages: {json.dumps(pools["Languages"], ensure_ascii=False)}
 Frameworks: {json.dumps(pools["Frameworks"], ensure_ascii=False)}
@@ -303,7 +303,7 @@ JOB: {job_title} at {company}
     out = call(system, user, config.TIER_FLASH, json_out=True, temperature=0.1)
     sel = _normalize_selection(as_dict(out, "experience"))
     if skill_pick:
-        # TL-1: each line is its pool in Jev's probability order; compress_skills
+        # Each line is its pool in Jev's probability order; compress_skills
         # cuts it to the line's count and printed width.
         sel["skills"] = {label: ", ".join(ranked)
                          for label, ranked in skill_pick["lines"].items() if ranked}
@@ -450,7 +450,7 @@ def _resize_to_count(entry: Dict[str, Any], section: str, name: str, n: int,
     the largest fused group (its last atom becomes the next bullet, in place)
     until the count is met or every group is a single atom. Without the split a
     block whose atoms select fused two-to-a-bullet shipped short of its
-    configured count (an entry with 3 atoms and 3 targets rendered 2 on 2026-09-20).
+    configured count (an entry with 3 atoms and 3 targets rendered 2).
     With singles=True every bullet is one atom (splitting any fused group),
     matching the leadership "one tight bullet per atom" plan."""
     avail = _block_atoms(section, name)

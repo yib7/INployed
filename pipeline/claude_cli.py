@@ -109,8 +109,8 @@ def is_cli_too_old_message(text: str | None) -> bool:
 
 
 # A model the installed CLI may be too old for, mapped to the model a run uses
-# instead until the user runs `claude update` (VL-5). One hop only: a fallback
-# is never itself swapped. claude-sonnet-5-5 joined in cycle 21 (2026-09-29).
+# instead until the user runs `claude update`. One hop only: a fallback is
+# never itself swapped.
 MODEL_FALLBACKS: dict[str, str] = {
     "claude-opus-5-5": "claude-opus-5",
     "claude-sonnet-5-5": "claude-sonnet-5",
@@ -252,7 +252,7 @@ def run_claude(
     prompt-cache breakpoint -- see the module docstring's caching note.
     Runs in a temp cwd so no project files are visible to the child process.
 
-    The model fallback (VL-5): when the installed CLI is too old for `model`
+    The model fallback: when the installed CLI is too old for `model`
     (kind 'cli_too_old') and MODEL_FALLBACKS names a fallback, the call runs
     once more on the fallback. The swap is remembered for the rest of the
     process, so later calls for `model` go straight to the fallback, and one
@@ -302,13 +302,13 @@ def _run_once(
     # argv. On Windows `claude` is usually npm's claude.cmd shim, which runs
     # through cmd.exe, and cmd.exe refuses any command line over 8,191
     # characters ("The command line is too long."). The file also keeps the
-    # résumé out of process listings (audit P2-17).
+    # résumé out of process listings.
     sys_path = _write_system_prompt(sys_prompt)
     # A bare completion: no built-in tools (WebSearch alone, and only on request),
     # no skills and no MCP servers. With the CLI's full toolset the cover letter's
     # repair prompt, which credits its rules to "avoid-ai-writing v3.18.0", made
     # the model run the user's installed skill of that name, and the skill's audit
-    # text reached the letter (2026-09-28). The tool schemas also cost ~30k
+    # text reached the letter. The tool schemas also cost ~30k
     # cache-write tokens on every call. An empty `--tools` argument survives the
     # claude.CMD shim.
     argv = [

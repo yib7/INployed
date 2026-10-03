@@ -13,7 +13,7 @@ both, and a second copy is how the two would drift apart.
   * The **cover-letter arm** (``RULES_PROMPT`` / ``EXTRA_BANS`` /
     ``violations()``, plus the two letter-level detectors ``bullet_echo()`` and
     ``uniform_rhythm()``). The prompt rules ride in every letter prompt; the
-    Settings toggle (default ON since cycle 15) decides whether ``violations()``
+    Settings toggle (default ON) decides whether ``violations()``
     joins the deterministic gate, and the two detectors join it either way.
   * The **résumé arm** (``RESUME_PROFILE`` / ``RESUME_RULES_PROMPT`` /
     ``RESUME_EXTRA_BANS`` / ``resume_violations()``), which serves the

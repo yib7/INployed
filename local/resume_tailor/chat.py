@@ -132,9 +132,9 @@ def _read_sheet(folder: Optional[Path]) -> str:
         return ""
 
 
-# The atom and entry flattening moved to assets (cycle 15) so the cover letter's
-# background block and this digest are built by one copy; the names stay so the
-# callers below read as before.
+# The atom and entry flattening lives in assets so the cover letter's background
+# block and this digest are built by one copy; these aliases keep the short names
+# the callers below use.
 _atom_line = assets.atom_line
 _entries = assets.entry_lines
 

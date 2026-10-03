@@ -1,16 +1,15 @@
 """Width-aware line measurement for resume body bullets.
 
-The pipeline used to approximate a bullet's printed line count as
-``len(text) / <chars per line>`` — a flat character count that can't tell a wide word
-('cross-encoder') from a narrow one ('it'), so a bullet sitting at the 2-line boundary
-could silently wrap to a 3rd line. This models the ACTUAL render instead: each
+A flat ``len(text) / <chars per line>`` estimate of a bullet's printed line count
+can't tell a wide word ('cross-encoder') from a narrow one ('it'), so a bullet sitting
+at the 2-line boundary could silently wrap to a 3rd line. This models the ACTUAL render instead: each
 character's advance width (standard Times-Roman metrics, in 1/1000 em — close to the
 template's Latin Modern serif after the column is calibrated) summed per word, greedily
 wrapped against the body text-column's capacity, exactly as LaTeX breaks lines.
 
 The capacity was first calibrated against a real compiled PDF: from the true line breaks of
 14 bullets the feasible window was [53410, 53518) units, and 53464 reproduced every
-bullet's real line count. The template's 2026-09-22 layout pass moved the columns (bullets
+bullet's real line count. A later template layout pass moved the columns (bullets
 now start at \\resumeEntryIndent + \\resumeBulletIndent = 0.25in instead of 0.15in, the
 skills block at 0.1in), so both capacities were recalibrated the same way at scale:
 ~3,500 bullet prefixes of real atom text and 300 skills rows, compiled with the template,

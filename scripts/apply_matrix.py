@@ -23,11 +23,11 @@ browser, one server, run through every flow and judge in turn. A worker
 that crashes or outlives its flow's timeout (`--flow-timeout`, default 2x the
 slowest flow's time for the judge count) becomes a "failed" row per judge of its flow,
 each naming the cause, instead of stalling the batch: every run the flow
-owed counts as a miss (SP6 review R2-M3). The combined rows are put back in
+owed counts as a miss. The combined rows are put back in
 the same order the serial run produces: the registry's flow order, each
 flow's own judge order.
 
-`--real` adds the real judge's column (SP8b): one run per flow under the
+`--real` adds the real judge's column: one run per flow under the
 live model's answers, kept in their own cache (`--real-cache`, default
 `tests/fixtures/jev_cache/matrix_cache.json`). `--real replay` runs it
 beside the fake and noisy runs, from the cache alone (a miss ends that run
@@ -39,13 +39,13 @@ same run with the fake answering at each request's estimated size into a
 temp copy of the cache: the request count and the spend a recording would
 make, with no key.
 
-`--real-prune` (SP8, only with `--real replay`) rewrites `--real-cache` to
+`--real-prune` (only with `--real replay`) rewrites `--real-cache` to
 keep only the keys this run served (`jev.prune_cache`), once the run had 0
 replay misses in the real column, 0 failures and every real row at its
 expected end (`_real_short`); otherwise it refuses and
 names the reason, leaving the cache as it was. The keys a parallel run's
 workers used are folded together in `main` before the prune runs. A `--flows`
-run never prunes (SP8 review): the flows left out never got a chance to use
+run never prunes: the flows left out never got a chance to use
 their keys, so a stale key one of them still needs would look unused and be
 dropped. `--real-prune` refuses outright, before anything runs, unless
 `--flows` names the whole registry (`_flows_narrowed`).
@@ -84,7 +84,7 @@ _BASELINE_FLOW_S = 200.0
 _BASELINE_JUDGES = 21          # 1 fake + 20 noisy seeds, the script's own default
 _TIMEOUT_FACTOR = 2.0
 # a floor for a run of few judges: the slowest flow (slow_signup, about 21s
-# alone) with a slow Chromium start on a busy machine (final review C N5)
+# alone) with a slow Chromium start on a busy machine
 _MIN_FLOW_TIMEOUT_S = 120.0
 
 
@@ -133,8 +133,8 @@ def _run_flow_worker(flow_name: str, seeds: tuple, fast: bool, workdir: str, out
     ("error", flow_name, cause). With `real_cache`, the real judge's replay
     over that cache runs last (`apply_harness.real_judge("replay", ...)`:
     read-only, so workers may share the file); the done message's third item
-    is that replay's own `used_keys` (SP8: a worker's own process, so its
-    used keys never reach `main` any other way), sorted, or [] with no real
+    is that replay's own `used_keys` (the replay runs in the worker's own
+    process, so its used keys never reach `main` any other way), sorted, or [] with no real
     judge."""
     try:
         tmp = Path(workdir)
@@ -190,11 +190,11 @@ def _crashed(results) -> int:
 
 
 def _failures(h, results, *, whole: bool) -> list[str]:
-    """What fails the run (final review C-I2): an invariant break, a crashed
+    """What fails the run: an invariant break, a crashed
     or hung worker, a park outside the user's policy that missed its flow's
     end, the fake judge under `FAKE_SUCCESS_FLOOR`, on a run of the whole
     registry (`whole`) the noisy seeds under `SUCCESS_FLOOR`, and a request
-    the real column's replay did not find in its cache (final review C N4);
+    the real column's replay did not find in its cache;
     [] when the run passes."""
     rt = h.rates(results)
     out = []
@@ -240,7 +240,7 @@ def _run_one_flow(name: str, seeds: tuple, fast: bool, workdir: Path, timeout: f
                   real_used: set | None = None) -> list:
     """`name` in its own worker process, bounded by `timeout`: the worker's
     own results, or a "failed" row per judge naming a crash or a timeout.
-    With `real_used` given, the worker's real-column `used_keys` (SP8) are
+    With `real_used` given, the worker's real-column `used_keys` are
     added to it on a clean finish; a crash or a timeout adds none, since no
     replay is known to have run to completion."""
     out_q = ctx.Queue()
@@ -288,7 +288,7 @@ def _run_parallel(flows, seeds: tuple, fast: bool, jobs: int, flow_timeout: floa
     once; the combined rows put back in `flows`' own order (each flow's own
     rows already come back in judge order from `run_matrix`), so the output
     matches the serial run's regardless of which worker finishes first. With
-    `real_used` given, every worker's real-column used keys (SP8) are folded
+    `real_used` given, every worker's real-column used keys are folded
     into it as they finish."""
     ctx = mp.get_context("spawn")
     names = [f.name for f in flows]
@@ -325,8 +325,7 @@ def _apart_flows(flows) -> list[str]:
     anything in a replay, on any run, so no key of its could ever land in
     `used_keys`. A `--real-prune` run may drop a stale key left over for one
     of these safely, no matter what the cache still holds for that flow
-    name, because a future replay could never claim it either (SP8 fix
-    round 2)."""
+    name, because a future replay could never claim it either."""
     return [f.name for f in flows if not f.replayable]
 
 
@@ -335,7 +334,7 @@ def _unrecorded_flows(flows) -> list[str]:
     because the registry still marks them `recorded=False`
     (`apply_harness.Flow`). The flag is bookkeeping, so a prior recording
     can cache fresh keys for one of these and leave the flag unflipped
-    (the SP8 fix round 2 incident: a74890d recorded 11 pause flows, but
+    (commit a74890d recorded 11 pause flows, but
     their `recorded=False` flags never flipped, so a `--real-prune` run
     right after kept only the keys the replay had touched and deleted the
     fresh recordings). `main` refuses `--real-prune` outright when this list
@@ -346,7 +345,7 @@ def _unrecorded_flows(flows) -> list[str]:
 
 def _real_short(h, results) -> list[str]:
     """The real-judge flows whose replay row did not reach the flow's
-    expected end (final review D I1): a run that stopped early (a timeout
+    expected end: a run that stopped early (a timeout
     under --jobs, a flaky load) has no miss, break or crash, and it never
     asked the requests after where it stopped. `main` refuses
     `--real-prune` when this list is not empty."""
@@ -417,7 +416,7 @@ def _record_real(h, flows, mode: str, cache: Path, workdir: Path, *, fast: bool,
     flip = _recorded_now(h, col.results) if mode == "record" else []
     if flip:
         # the replay leaves a `recorded=False` flow out until its flag is
-        # flipped (final review C N4)
+        # flipped
         print(f"apply_matrix: recorded now, still marked recorded=False in "
               f"tests/apply_harness.py (flip each to recorded=True): {', '.join(flip)}")
     if json_out:

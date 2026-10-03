@@ -40,7 +40,7 @@ KIND_GROUNDING = "grounding"
 KIND_PAGE_LIMIT = "page limit"
 KIND_ADVISORY = "advisory"
 # KIND_MODEL: the installed claude CLI refused the chosen Claude model, so the run
-# used claude_cli's fallback for it (VL-5). A warning the first time a process sees
+# used claude_cli's fallback for it. A warning the first time a process sees
 # the swap, a note on every later run (_report_model_swaps).
 KIND_MODEL = "model"
 
@@ -49,7 +49,7 @@ KIND_MODEL = "model"
 # correct, shippable résumé, so it is written to the report and NOT streamed to
 # `on_warning`. That callback is what the dashboard's batch summary calls a
 # degraded run; putting cosmetic findings on it would make "finished with
-# warnings" mean nothing (see DECISIONS, SP4).
+# warnings" mean nothing (see DECISIONS).
 #   UNDERFULL — a bullet the underfull fill rewrote is still underfull after the
 #               re-trim: the fill was paid for and the trim took it back.
 #   AI WRITING — what the item-level AI-writing sweep did and did not do: how many
@@ -259,7 +259,7 @@ def _letter_inputs(sel: Optional[Dict[str, Any]], bullets: Dict[str, str],
     `sel` None means the standalone letter (no selection to filter by), which
     gets every entry; the tailor run gets the entries that printed, each in
     full. Advisory: a master the flattening cannot read leaves the letter to run
-    from the bullets alone, as it did before cycle 15, and says so."""
+    from the bullets alone, and says so."""
     try:
         master = assets.load_master()
         ids = None if sel is None else _letter_atom_ids(sel, bullets, master)
@@ -366,19 +366,20 @@ def _resolve_bullets(jd: str, job_title: str, sel: dict, log: Callable[[str], No
 
 def _resolve_best_of(jd: str, job_title: str, sel: dict, log: Callable[[str], None], *,
                      briefs: Optional[Dict[str, str]], judge: Any) -> Dict[str, str]:
-    """TL-7 (Settings: "Best of 3 bullet drafts", with Jev on): one rephrase call
-    for three drafts of every bullet, and one draft kept per bullet.
+    """Best of three (Settings: "Best of 3 bullet drafts", with Jev on): one rephrase
+    call for three drafts of every bullet, and one draft kept per bullet.
 
     A draft is a candidate when it passes the grounding gate's check
-    (`verify.group_unseen`) and TL-4 (`jev_assist.faithfulness`, every draft in one
-    check); a TL-4 check that cannot run leaves the gate alone, as it does for every
-    bullet. Jev picks among a bullet's candidates (`jev_assist.best_variant`); a
-    bullet with one candidate keeps it, and a pick that fails keeps the first. A
-    bullet with no candidate keeps its first draft the grounding gate passes, else
-    its first draft, which is what the rephrase gave before TL-7; the prologue gate
-    and TL-4 then treat it as any bullet. The caller skips this with the breaker
-    open, since nothing could judge the drafts. A drafts
-    answer with no bullet in it falls back to today's rephrase call. Every text kept
+    (`verify.group_unseen`) and the faithfulness check (`jev_assist.faithfulness`,
+    every draft in one check); a faithfulness check that cannot run leaves the gate
+    alone, as it does for every bullet. Jev picks among a bullet's candidates
+    (`jev_assist.best_variant`); a bullet with one candidate keeps it, and a pick
+    that fails keeps the first. A bullet with no candidate keeps its first draft the
+    grounding gate passes, else its first draft, the text the single rephrase call
+    gives; the prologue gate and the faithfulness check then treat it as any bullet.
+    The caller skips this with the breaker open, since nothing could judge the
+    drafts. A drafts answer with no bullet in it falls back to the single rephrase
+    call. Every text kept
     is one the rephrase wrote."""
     drafts = compose.rephrase_drafts(jd, job_title, sel, briefs=briefs)
     if not drafts:
@@ -619,7 +620,7 @@ class PassCtx:
     into it.
 
     `judge` is the run's Jev judge (`jev_assist.default_judge()`), None when Jev is
-    off for the tailor. With it, the faithfulness check (TL-4, `_check_faithfulness`)
+    off for the tailor. With it, the faithfulness check (`_check_faithfulness`)
     runs after the prologue gate and after every verified pass.
     """
     jd: str
@@ -641,11 +642,11 @@ def _always() -> bool:
 class Pass:
     """One bullet-mutating stage, plus how the driver has to bracket it.
 
-    name    — human-readable stage label (SP3 keys its per-run report off this).
-    run     — mutates `ctx.bullets` in place.
-    enabled — consulted once per run, so a config toggle stays live.
-    retrim  — re-run `_trim_to_caps` after the pass (for a pass that lengthens text).
-    verify  — snapshot before the pass and re-run the grounding gate after it, with
+    name    : human-readable stage label (the per-run report keys off this).
+    run     : mutates `ctx.bullets` in place.
+    enabled : consulted once per run, so a config toggle stays live.
+    retrim  : re-run `_trim_to_caps` after the pass (for a pass that lengthens text).
+    verify  : snapshot before the pass and re-run the grounding gate after it, with
               that snapshot as the revert target. False only for a pass that cannot
               un-ground anything (the verbatim merge folds in the user's own text).
               A pass that RE-KEYS a bullet must gate its OWN change before committing it (as
@@ -865,15 +866,16 @@ def _note_still_underfull(ctx: PassCtx, before: Dict[str, str], *,
 
 def _jev_kw(ctx: PassCtx) -> Dict[str, Any]:
     """`judge=` for a stage a Jev step sits in, or nothing with Jev off. Off, the stage
-    is called as it was before cycle 19, so a caller or a test double written against
-    that signature keeps working."""
+    is called with no `judge` keyword, so a caller or a test double written without
+    one keeps working."""
     return {"judge": ctx.judge} if ctx.judge is not None else {}
 
 
 def _pass_dedupe_verbs(ctx: PassCtx) -> None:
     """Guarantee every tailored bullet opens with a DISTINCT action verb — none reused,
     none colliding with a verbatim block's opener (verbatim text is reserved, never
-    modified). With Jev on, Jev picks each repeated opener's new verb first (TL-6)."""
+    modified). With Jev on, Jev picks each repeated opener's new verb first
+    (`jev_assist.pick_verb`)."""
     compose.dedupe_leading_verbs(ctx.bullets, compose.group_map(ctx.sel), ctx.jd,
                                  reserved=ctx.reserved, **_jev_kw(ctx))
     if ctx.judge is not None and ctx.report is not None:
@@ -923,8 +925,8 @@ def _pass_enforce_style(ctx: PassCtx) -> None:
     `retrim=True` because the repair REWRITES a bullet: the prompt asks it to stay
     within `max_chars`, but nothing verified that, and this is the LAST bullet pass —
     downstream `compile.enforce_one_page` only drops whole bullets, it never re-trims
-    text. So a repair that came back longer than the text it replaced used to ship
-    over its line budget and silently wrap onto an extra line."""
+    text. Without it, a repair that came back longer than the text it replaced would
+    ship over its line budget and silently wrap onto an extra line."""
     fixed = compose.enforce_style(ctx.jd, ctx.job_title, ctx.sel, ctx.bullets)
     if fixed:
         ctx.log(f"style gate: repaired {fixed} bullet(s).")
@@ -947,7 +949,7 @@ def _report_sweep(ctx: PassCtx, result: sweep.SweepResult, *, stage: str) -> Non
     A NOTE for everything else. A refused rewrite keeps the original bullet, and the
     original was already grounded, already within its line budget and already past the
     deterministic style gate, so nothing about it is degraded. The P2 findings are the
-    same: this cycle repairs P0 and P1 and reports P2 by decision, so a P2 line is the
+    same: the sweep repairs P0 and P1 and reports P2 by decision, so a P2 line is the
     record of a policy, and putting it on `on_warning` would tell the dashboard a correct
     résumé finished degraded. Each line says so in its own words, because a line is read
     out of context once it is in a Qt dialog.
@@ -965,8 +967,8 @@ def _report_sweep(ctx: PassCtx, result: sweep.SweepResult, *, stage: str) -> Non
     rep.note(KIND_AIWRITING,
              f"[{stage}] swept {result.items} item(s) in {result.calls} call(s) and "
              f"rewrote {len(result.changed)} bullet(s){reask}")
-    # TL-5, with Jev on. Notes: a skipped call is the gate doing its job, and a flag
-    # only says why a call was made.
+    # The sweep gate (`jev_assist.sweep_flags`), with Jev on. Notes: a skipped call is
+    # the gate doing its job, and a flag only says why a call was made.
     if result.skipped:
         rep.note(KIND_AIWRITING,
                  f"[{stage}] Jev's sweep gate skipped the call for "
@@ -1009,9 +1011,10 @@ def _pass_aiwriting_sweep(ctx: PassCtx) -> None:
 
     `retrim=True` is a BACKSTOP ONLY, and it should never do anything. The sweep's own
     acceptance check refuses any rewrite that renders past its per-bullet line budget, so
-    every committed bullet already fits and `_trim_to_caps` has nothing to cut (SP5
-    asserts exactly that). The flag is set anyway because the alternative is trusting one
-    check with the page-fit guarantee and nothing behind it. So a trim FIRING here is not
+    every committed bullet already fits and `_trim_to_caps` has nothing to cut
+    (`tests/test_sweep_layout_invariant.py` asserts exactly that). The flag is set
+    anyway because the alternative is trusting one check with the page-fit guarantee
+    and nothing behind it. So a trim FIRING here is not
     the backstop working, it is the report that the acceptance check has a hole: the
     whole design is fit-or-revert, and a silent trim would quietly convert a rejected
     rewrite into a mid-sentence bullet, which is the exact outcome the fit-or-revert rule
@@ -1023,8 +1026,9 @@ def _pass_aiwriting_sweep(ctx: PassCtx) -> None:
     original carried. Neither implies the other, so both run.
 
     With Jev on, the run's judge reads every bullet first, and an item makes its call
-    only for a tell Jev reads or a detector finding (TL-5, the judge gate in
-    `sweep.py`). The gate's usage line is recorded whichever way the pass ends.
+    only for a tell Jev reads or a detector finding (`jev_assist.sweep_flags`, the
+    judge gate in `sweep.py`). The gate's usage line is recorded whichever way the
+    pass ends.
     """
     ctx.log("sweeping each résumé item for AI-writing tells…")
     try:
@@ -1050,13 +1054,14 @@ def _pass_aiwriting_sweep(ctx: PassCtx) -> None:
     _report_sweep(ctx, result, stage=AIWRITING_SWEEP_STAGE)
 
 
-# ── TL-4: the faithfulness check ─────────────────────────────────────────────
+# ── The faithfulness check ───────────────────────────────────────────────────
 # The grounding gate traces distinctive tokens only, so a claim written in lowercase
 # common words passes it: "Led the team" over an atom that says the candidate helped
-# (verify.py's docstring states the gap). With Jev on, TL-4 asks the judge about every
-# bullet a stage wrote, against the atoms it was written from, after the prologue gate
-# and after every verified pass. It may only reject, revert or drop a bullet: the
-# reground call writes any new text, and the grounding gate runs exactly as before.
+# (verify.py's docstring states the gap). With Jev on, the check asks the judge about
+# every bullet a stage wrote, against the atoms it was written from, after the
+# prologue gate and after every verified pass. It may only reject, revert or drop a
+# bullet: the reground call writes any new text, and the grounding gate runs
+# unchanged.
 FAITHFULNESS_REGROUND_STAGE = "faithfulness reground"
 
 # The check after these stages runs once the style gate has repaired banned phrasing
@@ -1171,7 +1176,7 @@ def _fresh_opener(ctx: PassCtx, gk: str, flagged_text: str) -> Optional[str]:
 
     Returns the faithful text a swap replaced, "" when the opener was unique already,
     and None when every palette verb is taken (the faithful text then stays). The
-    swapped text is written after TL-4's verdict, so the caller checks it
+    swapped text is written after the faithfulness verdict, so the caller checks it
     (`_check_fresh_openers`)."""
     text = ctx.bullets[gk]
     verb = compose.leading_verb(text)
@@ -1209,10 +1214,10 @@ def _check_fresh_openers(ctx: PassCtx, swapped: Dict[str, str]) -> Set[str]:
 def _check_faithfulness(ctx: PassCtx, *, stage: str,
                         snapshot: Optional[Dict[str, str]] = None,
                         retrim: bool = False) -> Dict[str, str]:
-    """TL-4: ask Jev whether each bullet `stage` wrote says only what its atoms say,
-    and act on the verdict. Returns {gkey: finding} for the bullets it flagged: empty
-    when Jev is off or failed (the grounding gate then stands alone, as it did before
-    cycle 19) or when every bullet passed.
+    """Ask Jev whether each bullet `stage` wrote says only what its atoms say, and
+    act on the verdict. Returns {gkey: finding} for the bullets it flagged: empty
+    when Jev is off or failed (the grounding gate then stands alone) or when every
+    bullet passed.
 
     `snapshot` is the stage's pre-pass copy, None at the prologue. It picks which
     bullets are asked about (`_faith_texts`) and is the revert target. `retrim` says
@@ -1354,7 +1359,7 @@ def _check_faithfulness(ctx: PassCtx, *, stage: str,
 # when that rewrite fits its own printed-line budget, which makes the pass's total line
 # count non-increasing; a stage placed after it could re-lengthen a bullet and take that
 # guarantee away, so no pass follows it. The one step after the sweep is its own
-# faithfulness check (TL-4, with Jev on), and it keeps the guarantee: at the sweep it
+# faithfulness check (with Jev on), and it keeps the guarantee: at the sweep it
 # refuses a regrounded text that runs past the bullet's pre-sweep printed lines, and a
 # revert goes back to that pre-sweep text.
 _BULLET_PASSES = (
@@ -1373,7 +1378,7 @@ def _run_bullet_passes(ctx: PassCtx,
     """Run each enabled pass under the snapshot -> mutate -> re-trim -> re-verify ->
     (optionally) re-measure discipline. Nobody writes a snapshot by hand, so nobody can
     forget one. Re-verifying is the grounding gate and then, with Jev on, the
-    faithfulness check (TL-4) over the bullets the pass changed, against the same
+    faithfulness check over the bullets the pass changed, against the same
     snapshot."""
     for p in passes:
         if not p.enabled():
@@ -1419,17 +1424,19 @@ def tailor(
     it cannot mark the run degraded.
 
     When Jev is on for the tailor (`jev_switch.client("tailor")`), one judge serves
-    the whole run: it rates the skills and the atoms before `select` (TL-1, TL-2),
-    picks the new verb for each repeated
-    opener (TL-6), reads each bullet for the banned-pattern tells that gate the
-    AI-writing sweep's calls (TL-5), and checks each bullet the rephrase and every
-    later rewrite wrote against its atoms (TL-4, `_check_faithfulness`). Three
-    Settings options, off by default, add a step each: best of three keeps one of
-    three rephrase drafts per bullet (TL-7, `_resolve_best_of`), the cover letter
-    check reads each letter sentence against its sources (TL-8), and the ATS meaning
-    line counts the keywords the résumé shows by meaning (TL-9). A step
-    whose request fails keeps its LLM path (TL-4 leaves the grounding gate to stand
-    alone), and once the judge's breaker opens every later step does too. Each step's
+    the whole run: it rates the skills and the atoms before `select`
+    (`jev_assist.skills_pick`, `jev_assist.atom_relevance`), picks the new verb for
+    each repeated opener (`jev_assist.pick_verb`), reads each bullet for the
+    banned-pattern tells that gate the AI-writing sweep's calls
+    (`jev_assist.sweep_flags`), and checks each bullet the rephrase and every later
+    rewrite wrote against its atoms (`_check_faithfulness`). Three Settings options,
+    off by default, add a step each: best of three keeps one of three rephrase
+    drafts per bullet (`_resolve_best_of`), the cover-letter claims check reads each
+    letter sentence against its sources (`jev_assist.letter_unsupported`), and the
+    ATS meaning line counts the keywords the résumé shows by meaning
+    (`jev_assist.keyword_meaning`). A step whose request fails keeps its LLM path
+    (the faithfulness check leaves the grounding gate to stand alone), and once the
+    judge's breaker opens every later step does too. Each step's
     usage line goes to `tailor_report.txt` and to the status log.
     """
     log = on_status or _noop
@@ -1482,8 +1489,8 @@ def tailor(
     briefs = compose.block_briefs(jd, job_title, sel)
     report.stage("rephrase")
     if judge is not None and config.best_of_n():
-        # TL-7 pays for three drafts before Jev's first request, so an open breaker
-        # (an earlier step met an outage) keeps the single rephrase call (JS-3).
+        # Best of three pays for three drafts before Jev's first request, so an open
+        # breaker (an earlier step met an outage) keeps the single rephrase call.
         if jev_assist.breaker_open(jev_assist.STEP_BEST_OF, judge):
             bullets = _resolve_bullets(jd, job_title, sel, log, briefs=briefs)
         else:
@@ -1498,7 +1505,7 @@ def tailor(
         reserved=frozenset(compose.leading_verb(t) for t in verbatim.values()),
         log=log, report=report, judge=judge,
     )
-    # Deterministic grounding gate (audit P1-2): every bullet's distinctive tokens
+    # Deterministic grounding gate: every bullet's distinctive tokens
     # must trace to its own group's atoms — a hallucinated or JD-injected fact is
     # dropped here, never printed. This first call is the prologue and the only
     # fallback-less one: there is no earlier grounded text to revert to yet. Every
@@ -1507,9 +1514,10 @@ def tailor(
     # provisional, not final, while reground can still recover it — see
     # _prologue_gate for how that changes its severity.
     _prologue_gate(ctx)
-    # TL-4, with Jev on: the judge reads every surviving bullet against its atoms for
-    # the claims the gate cannot trace. A bullet still flagged after one reground has
-    # no earlier text to go back to here, so it is dropped as the gate drops one.
+    # The faithfulness check, with Jev on: the judge reads every surviving bullet
+    # against its atoms for the claims the gate cannot trace. A bullet still flagged
+    # after one reground has no earlier text to go back to here, so it is dropped as
+    # the gate drops one.
     _check_faithfulness(ctx, stage="rephrase")
     if not bullets and not verbatim:
         raise RuntimeError("No grounded bullets survived selection/rephrase.")
@@ -1564,7 +1572,7 @@ def tailor(
 
         if ats_report:
             report.stage("ats report")
-            # TL-9: the meaning check only with the option on, handed in as a
+            # The ATS meaning check only with the option on, handed in as a
             # function so the report module stays free of Jev.
             ats_kw: Dict[str, Any] = {}
             if judge is not None and config.ats_meaning():
@@ -1585,8 +1593,9 @@ def tailor(
         if cover_letter:
             log("writing cover letter…")
             report.stage("cover letter")
-            # TL-8: the letter gets the run's judge only with the check on, so a
-            # letter writer that takes no judge keeps working with it off.
+            # The cover-letter claims check: the letter gets the run's judge only
+            # with the check on, so a letter writer that takes no judge keeps
+            # working with it off.
             letter_kw = ({"judge": judge}
                          if judge is not None and config.cover_letter_jev_check() else {})
             try:
@@ -1712,7 +1721,8 @@ def generate_cover_letter(
     # No selection survives here (the bullets came off the sheet), so the
     # background is the whole master, bounded, and the seed rides as always.
     background, seed = _letter_inputs(None, bullets, log)
-    # TL-8, as in tailor(): the judge only with the check on, built only then.
+    # The cover-letter claims check, as in tailor(): the judge only with the check
+    # on, built only then.
     judge = jev_assist.default_judge() if config.cover_letter_jev_check() else None
     letter_kw = {"judge": judge} if judge is not None else {}
     body = coverletter.generate_body(jd, job_title, company, bullets,

@@ -329,11 +329,10 @@ def exclude_window_days() -> int:
     """Recency window (in days) for pruning the exclude-id set.
 
     Resolution order is env > search_config.json > DEFAULT_EXCLUDE_WINDOW_DAYS,
-    matching every other override in this module. The file leg was missing until
-    2026-08-26: the dashboard's Settings tab has always written
-    `exclude_window_days` into search_config.json, but nothing read it back, so a
-    user who set 14 still got the 90-day default and shipped their whole master in
-    every trigger POST.
+    matching every other override in this module. The dashboard's Settings tab
+    writes `exclude_window_days` into search_config.json; without the file leg a
+    user who set 14 would still get the 90-day default and ship their whole master
+    in every trigger POST.
 
     A missing, non-integer, or non-positive value falls THROUGH to the next leg,
     rather than skipping to the built-in default: an env var someone fat-fingered
@@ -508,11 +507,11 @@ def load_exclude_ids() -> list[str]:
     missing/unreadable.
 
     ORDER IS A CONTRACT, not an accident: cap_exclude_ids() keeps the TAIL, so
-    this host's own ids go LAST, newest last. They were appended first until
-    2026-08-27, which put the other machines' ids in the tail and evicted our own
-    -- and on the VM, where the pushed file routinely carries more than
-    MAX_EXCLUDE_IDS entries, the cap then kept 100% foreign ids and 0% of the VM's
-    own master, so every run re-collected what it had collected the day before.
+    this host's own ids go LAST, newest last. Appended first, they put the other
+    machines' ids in the tail and evicted our own -- and on the VM, where the
+    pushed file routinely carries more than MAX_EXCLUDE_IDS entries, the cap then
+    kept 100% foreign ids and 0% of the VM's own master, so every run re-collected
+    what it had collected the day before.
     Ours are the ids that can actually resurface in a "Past 24 hours" search, so
     ours are the ones that must survive the cap."""
     own = _master_ids()                       # dated, oldest-first (see _window_ids)
@@ -656,7 +655,7 @@ def append_to_master(df: pd.DataFrame) -> int:
     total = 0
     wrote_header = False
     try:
-        # dtype=str + keep_default_na=False (audit P2-26): byte-stable master
+        # dtype=str + keep_default_na=False: byte-stable master
         # round-trip — matches prune_master.py's reader.
         for chunk in pd.read_csv(MASTER_CSV, dtype=str, keep_default_na=False,
                                  chunksize=CHUNK):
@@ -979,9 +978,9 @@ def _parse_collection_body(body: str, status: int | None = None) -> Collection:
 
 async def trigger(session: aiohttp.ClientSession, payload: dict,
                   limit_per_input: int = LIMIT_PER_INPUT) -> Collection:
-    # quote() every interpolated value (audit P2-20 for dataset_id, P2-5 for the
-    # limit): a malformed value then fails as a clean API error instead of
-    # silently rewriting the query string of a billed collection.
+    # quote() every interpolated value (dataset_id and the limit): a malformed
+    # value then fails as a clean API error and never rewrites the query
+    # string of a billed collection.
     limit = _positive_int(limit_per_input, LIMIT_PER_INPUT)
     url = (
         "https://api.brightdata.com/datasets/v3/scrape"
@@ -1004,12 +1003,11 @@ async def trigger(session: aiohttp.ClientSession, payload: dict,
 def _assert_collected_something(progress: dict, snapshot_id: str) -> None:
     """Refuse to call a 100%-rejected collection a successful empty run.
 
-    This is the guard that would have caught the 2026-08-26 outage on day one.
     When Bright Data refuses every input, the snapshot still finishes with
     status="ready" and just carries records=0 alongside a non-zero error count.
-    download() then returned [], main() printed "No new jobs returned this run"
-    and exited 0 -- so the VM cron logged a clean success twice a day for weeks
-    while collecting nothing at all. A run that collected NOTHING while reporting
+    download() returns [], and without this guard main() prints "No new jobs
+    returned this run" and exits 0, so the VM cron logs a clean success twice a
+    day while collecting nothing at all. A run that collected NOTHING while reporting
     errors is a failure, and it has to be loud enough for the cron log and the
     dashboard's error dialog to show it.
 

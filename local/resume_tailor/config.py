@@ -325,7 +325,7 @@ def avoid_ai_writing_enabled() -> bool:
     The rule text itself (aiwriting.RULES_PROMPT) rides in every letter prompt whatever
     this says, and the two structural checks (bullet echo, uniform rhythm) run whatever
     this says; the toggle governs enforcement only. Letter only -- the résumé bullets
-    keep their own gate untouched. Defaults ON since cycle 15. Precedence:
+    keep their own gate untouched. Defaults ON. Precedence:
     RESUME_TAILOR_AVOID_AI_WRITING env > config.json 'cover_letter_avoid_ai_writing' >
     True."""
     env = os.getenv("RESUME_TAILOR_AVOID_AI_WRITING")
@@ -381,7 +381,7 @@ def sweep_p2_enabled() -> bool:
     return bool(_config_json().get("resume_sweep_p2", False))
 
 
-# ── Jev options for the tailor (cycle 19's TL-7 to TL-9) ──────────────────────
+# ── Jev options for the tailor ───────────────────────────────────────────────
 # Three Settings > Resume toggles, on screen while Jev runs for the résumé tailor
 # (settings.py gates them on `jev_tailor`). Each defaults OFF and each spends more
 # per run, so the file arm reads `is True`: a stray string in config.json (an
@@ -399,24 +399,24 @@ def _jev_option(env_name: str, key: str) -> bool:
 
 
 def best_of_n() -> bool:
-    """TL-7: whether the rephrase call asks for 3 drafts of each bullet and Jev keeps,
-    among the drafts that pass the faithfulness check, the one that shows the most of
-    what the job asks for. About three times the output tokens of that call.
+    """Best-of-3 bullet drafts: whether the rephrase call asks for 3 drafts of each
+    bullet and Jev keeps, among the drafts that pass the faithfulness check, the one
+    that shows the most of what the job asks for. About three times the output tokens of that call.
     Precedence: RESUME_TAILOR_BEST_OF_N env > config.json 'tailor_best_of_n' > False."""
     return _jev_option("RESUME_TAILOR_BEST_OF_N", "tailor_best_of_n")
 
 
 def cover_letter_jev_check() -> bool:
-    """TL-8: whether Jev reads each cover-letter sentence against the selected atoms
-    and background notes, and a sentence claiming something they do not state goes to
-    the letter's existing repair step. Precedence: RESUME_TAILOR_COVER_LETTER_JEV_CHECK
+    """The cover-letter claims check: whether Jev reads each cover-letter sentence
+    against the selected atoms and background notes, and a sentence claiming
+    something they do not state goes to the letter's existing repair step. Precedence: RESUME_TAILOR_COVER_LETTER_JEV_CHECK
     env > config.json 'cover_letter_jev_check' > False."""
     return _jev_option("RESUME_TAILOR_COVER_LETTER_JEV_CHECK", "cover_letter_jev_check")
 
 
 def ats_meaning() -> bool:
-    """TL-9: whether ats_report.txt gains a line counting the job's keywords the résumé
-    shows by meaning (a direct equivalent counts), beside the literal coverage, with
+    """The meaning-level keyword line: whether ats_report.txt gains a line counting
+    the job's keywords the résumé shows by meaning (a direct equivalent counts), beside the literal coverage, with
     Jev judging each keyword. Precedence: RESUME_TAILOR_ATS_MEANING env > config.json
     'tailor_ats_meaning' > False."""
     return _jev_option("RESUME_TAILOR_ATS_MEANING", "tailor_ats_meaning")
@@ -654,9 +654,9 @@ def tailor_provider() -> str:
 
 CLAUDE_MODEL_FLASH_LITE = os.getenv("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "claude-haiku-4-5")
 CLAUDE_MODEL_FLASH      = os.getenv("RESUME_TAILOR_CLAUDE_MODEL_FLASH", "claude-sonnet-5")
-# Opus 5.5 has been the deep tier's default since cycle 19 (ST-4); claude-opus-5
-# stays selectable in Settings. settings.py's RESUME_TAILOR_CLAUDE_MODEL_PRO default
-# carries the same id (test_each_claude_tier_default_matches_its_settings_default).
+# Opus 5.5 is the deep tier's default; claude-opus-5 stays selectable in
+# Settings. settings.py's RESUME_TAILOR_CLAUDE_MODEL_PRO default carries the same id
+# (test_each_claude_tier_default_matches_its_settings_default).
 CLAUDE_MODEL_PRO        = os.getenv("RESUME_TAILOR_CLAUDE_MODEL_PRO", "claude-opus-5-5")
 
 _CLAUDE_TIER_ENV = {

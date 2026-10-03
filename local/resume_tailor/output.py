@@ -29,7 +29,7 @@ def sanitize(name: str, *, max_len: int = 80) -> str:
     name = re.sub(r"\s+", " ", name).rstrip(". ")
     if len(name) > max_len:
         # Two distinct names sharing the first max_len chars must not collide
-        # into one folder (audit P2-13) — suffix a short hash of the FULL name.
+        # into one folder, so suffix a short hash of the FULL name.
         import hashlib
         digest = hashlib.sha1(name.encode("utf-8", "replace")).hexdigest()[:6]
         name = name[:max_len - 7].rstrip(". ") + "~" + digest
@@ -94,9 +94,9 @@ def resolve_dir(company: str, job_title: str) -> Path:
                 n += 1
         _claimed.add(target)
         target.mkdir(parents=True, exist_ok=True)
-        # Prune entries the on-disk resume now covers — the claimed set only
+        # Prune entries the on-disk resume now covers: the claimed set only
         # needs to guard the gap between hand-out and the résumé landing, so a
-        # long-lived dashboard process must not grow it unboundedly (audit P2-28).
+        # long-lived dashboard process must not grow it unboundedly.
         for d in list(_claimed):
             if d != target and (d / fname).exists():
                 _claimed.discard(d)

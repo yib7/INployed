@@ -45,7 +45,7 @@ def _aged_mask(chunk: pd.DataFrame, cutoff) -> pd.Series:
     cutoff_ts = pd.Timestamp(cutoff, tz="UTC")
     return dt.notna() & (dt < cutoff_ts)
 
-# MA-3: a hand-added job (local/manual_add.py) keeps blank score columns on
+# A hand-added job (local/manual_add.py) keeps blank score columns on
 # purpose, so its blank score never reads as "needs scoring", and it keeps its
 # description: the user may tailor it again, and the pasted text has no url to
 # fetch it back from. Keep IDENTICAL to score_jobs.MANUAL_ID_PREFIX.

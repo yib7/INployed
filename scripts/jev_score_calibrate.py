@@ -1,4 +1,4 @@
-"""Calibrate the Jev scorer against the Gemini scores already in the master (VL-2).
+"""Calibrate the Jev scorer against the Gemini scores already in the master.
 
     python scripts/jev_score_calibrate.py --live [--cap-usd 1.00] [--sample 400]
                                           [--seed 19] [--master PATH] [--resume PATH]

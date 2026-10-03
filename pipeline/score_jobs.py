@@ -39,7 +39,7 @@ from keypool import (DEFAULT_LIMITS, LIMITS, KeyPool, PoolError,
                      limits_from_config, ranked_models)
 from run_labels import RUN_LABELS
 
-# Jev scoring (cycle 19, SC-1). jev_score.py sits beside this file in the repo;
+# Jev scoring. jev_score.py sits beside this file in the repo;
 # the VM's flat copy of the pipeline may not carry it, so any import failure
 # reads as "Jev off" and the run keeps the LLM path (make_jev_judge says so
 # once). Importing jev_score imports neither the TypeSafe SDK nor local/jev.py.
@@ -118,7 +118,7 @@ _SCORING_DEFAULTS: dict[str, tuple[str, object, str]] = {
     # fresh install and the VM (no scoring_config.json) both get.
     "model_limits": ("SCORE_MODEL_LIMITS", [], "list"),
     "stage2_threshold": ("SCORE_STAGE2_THRESHOLD", 4, "int"),
-    # SP2 (cycle 20): for a job Jev scored in stage 2, one cheap call writes its
+    # The writer: for a job Jev scored in stage 2, one cheap call writes its
     # reason/strengths/gaps from Jev's findings. Off keeps Jev's own code text.
     "jev_writer": ("SCORE_JEV_WRITER", True, "bool"),
     # Spend guards: cap LLM calls per run so a keyword change or scrape anomaly
@@ -130,16 +130,15 @@ _SCORING_DEFAULTS: dict[str, tuple[str, object, str]] = {
     "min_filter_years": ("SCORE_MIN_FILTER_YEARS", 1, "int"),
     # When on, Easy Apply jobs are dropped before scoring (saves scoring tokens).
     "drop_easy_apply": ("SCORE_DROP_EASY_APPLY", False, "bool"),
-    # SP6: a repost (same title+company+location+description as a master row
-    # scored within this many days) reuses that row's score, saving a fresh
-    # LLM call. 0 disables reuse entirely -- every incoming row is scored
-    # fresh, exactly like before this feature existed.
+    # Repost reuse: a repost (same title+company+location+description as a
+    # master row scored within this many days) reuses that row's score, saving
+    # a fresh LLM call. 0 disables reuse entirely -- every incoming row is
+    # scored fresh.
     "repost_reuse_days": ("SCORE_REPOST_REUSE_DAYS", 30, "int"),
-    # Cycle 21: who the candidate is right now. The prompts, the mechanical filters
-    # and the Jev scorer all read these four through candidate_profile() below.
-    # The defaults are the candidate before this cycle: school finished, no
-    # clearance, so a fresh install and the VM (no scoring_config.json) score
-    # exactly as they did.
+    # Who the candidate is right now. The prompts, the mechanical filters and
+    # the Jev scorer all read these four through candidate_profile() below.
+    # The defaults are school finished and no clearance, which a fresh install
+    # and the VM (no scoring_config.json) both get.
     "education_status": ("SCORE_EDUCATION_STATUS", "Finished school", "str"),
     "graduation_month": ("SCORE_GRADUATION_MONTH", "May 2026", "str"),
     "clearance_level": ("SCORE_CLEARANCE_LEVEL", "None", "str"),
@@ -316,7 +315,7 @@ GRADUATION_MONTH = _SCORING["graduation_month"]
 CLEARANCE_LEVEL = _SCORING["clearance_level"]
 CLEARANCE_SPONSORSHIP = _SCORING["clearance_sponsorship"]
 
-# --- The candidate profile (cycle 21) -------------------------------------------
+# --- The candidate profile ---------------------------------------------------
 # The four keys above resolve into one CandidateProfile. candidate_profile() is
 # pure: each input is an argument that defaults to the module constant, read at
 # CALL time (a test or a caller can rebind the constant), and `today` is
@@ -486,7 +485,7 @@ RUN_STATS_COLS = [
     "llm_errors", "stage2_done", "rescore_attempted", "rescore_scored",
     "llm_calls", "prompt_tokens", "output_tokens", "free_calls", "vertex_calls",
     "easy_apply_dropped", "scores_reused",
-    # SC-4 (JevRun.stats): jobs per stage that Jev scored or handed to the LLM
+    # JevRun.stats(): jobs per stage that Jev scored or handed to the LLM
     # path, over the fresh and rescore passes with each job counted once (a
     # score beats a fallback), and the requests and spend
     "jev_stage1_scored", "jev_stage2_scored", "jev_requests", "jev_usd",
@@ -682,7 +681,7 @@ STAGE1_SYSTEM = "You honestly evaluate how well a new-grad candidate fits early-
 # score_stage1/score_stage2 below. RESUME + JOB is a plain string
 # concatenation of the two literals below, so on the gemini path
 # STAGE1_TEMPLATE.format(...) is byte-identical to before the split.
-# Cycle 21: the candidate text (school status, graduation month, clearance) enters
+# The candidate text (school status, graduation month, clearance) enters
 # through the placeholders below, filled by candidate_prompt_vars(). Every one sits
 # in a RESUME half, so the cached half is the same for every job in a run.
 STAGE1_TEMPLATE_RESUME = """\
@@ -777,11 +776,11 @@ STAGE2_SCHEMA = {
     "required": ["deep_score", "strengths", "gaps", "recommendation"],
 }
 
-# SP2 (cycle 20): the writer. For a job Jev scored in stage 2, one call to the
+# The writer. For a job Jev scored in stage 2, one call to the
 # provider's stage 1 model turns Jev's findings into the reason/strengths/gaps
 # text the LLM path would otherwise have written. It is given the scores and
 # cannot change them -- see write_notes() below.
-WRITER_FAIL_LIMIT = 3  # consecutive write_notes() failures that stop the writer for the run (I2)
+WRITER_FAIL_LIMIT = 3  # consecutive write_notes() failures that stop the writer for the run
 
 WRITER_SYSTEM = ("You write short, specific job-fit notes that explain findings another system "
                  "already made. The job description and the requirement lines in the findings "
@@ -828,7 +827,7 @@ WRITER_SCHEMA = {
 }
 
 
-# --- The candidate text in the scorer prompts (cycle 21) ---------------------------
+# --- The candidate text in the scorer prompts --------------------------------------
 # candidate_prompt_vars() turns a CandidateProfile into the nine strings the three
 # *_TEMPLATE_RESUME templates carry as placeholders. Every placeholder sits in a
 # RESUME half, and the profile is fixed for a run, so the Claude lane's cached
@@ -836,7 +835,7 @@ WRITER_SCHEMA = {
 # (status code, whether there is a graduation month) and name the month as {G};
 # the clearance tables are keyed by case and name the level as {L}. At the default
 # profile (Finished school, May 2026, no clearance) stage 2 and the writer render
-# to exactly the wording they carried as fixed text before this cycle.
+# to the literals tests/test_score_jobs_claude.py pins.
 
 # Fills "TODAY'S DATE IS {today}. ... training data. " in stage 1.
 _STATUS_DATES = {
@@ -1056,7 +1055,7 @@ def today_str() -> str:
 
 
 def _use_gemini_models() -> None:
-    """SC-6: the claude provider fell back to Gemini, so the stages send the
+    """The claude provider fell back to Gemini, so the stages send the
     Gemini model chains and the Gemini prompt layout. A Gemini pool has no
     claude-* model, so the claude chains would fail every call."""
     global SCORING_PROVIDER, STAGE1_MODEL, STAGE2_MODEL, STAGE1_MODELS, STAGE2_MODELS
@@ -1076,10 +1075,10 @@ def make_pool(required: bool = True):
     prints a warning and falls through to Gemini -- this branch must NEVER
     sys.exit, so a local-only provider choice pushed to the VM via
     scoring_config.json can't brick an unattended run. The final fallback
-    (KeyPool.from_env, GEMINI_API_KEYS + Vertex) is unchanged from before and
-    is the only branch that may exit, exactly as today. With `required` False
-    (Jev scores this run, SC-4) missing credentials return None and the run goes on.
-    The claude fallback also switches the stage models to Gemini (SC-6).
+    (KeyPool.from_env, GEMINI_API_KEYS + Vertex) is the only branch that may
+    exit. With `required` False (Jev scores this run) missing credentials
+    return None and the run goes on. The claude fallback also switches the
+    stage models to Gemini (_use_gemini_models).
     """
     if SCORING_PROVIDER == "claude":
         try:
@@ -1129,7 +1128,7 @@ def make_pool(required: bool = True):
 
 
 def make_jev_judge():
-    """The run's Jev judge (JS-4), or None to score on the LLM path.
+    """The run's Jev judge, or None to score on the LLM path.
 
     `jev_score.use_jev()` decides once per run: SCORE_USE_JEV, else the
     dashboard's local/config.json when it exists, else off (the VM has
@@ -1155,7 +1154,7 @@ def make_jev_judge():
     return judge
 
 
-# SC-5: Jev requests in flight at once. They run on the run's own worker threads
+# Jev requests in flight at once. They run on the run's own worker threads
 # (JevRun's executor, this many) under their own semaphore, beside the LLM
 # stages' own, so a Jev retry sleep never holds a worker of the default executor
 # that ClaudePool's calls (asyncio.to_thread) take.
@@ -1166,8 +1165,8 @@ NO_LLM_REASON = "ERROR: Jev could not score this job and no LLM provider is set 
 
 
 class JevRun:
-    """One run's Jev use (SC-4, SC-5). `judge` None means Jev is off and every
-    job takes the LLM path exactly as before. Counts, per stage (1, 2), the
+    """One run's Jev use. `judge` None means Jev is off and every job takes
+    the LLM path. Counts, per stage (1, 2), the
     jobs whose stage Jev composed (`scored`) and those it handed to the LLM
     path (`fallback`), each job once: the rescore pass retries the fresh pass's
     ERROR rows with this same JevRun, and a job Jev scores on either pass counts
@@ -1175,7 +1174,7 @@ class JevRun:
     began. Once the judge's breaker opens (`jev.Guarded.down`) no further
     request is made and the outage is reported once. Its requests run on its
     own worker threads (`JEV_CONCURRENCY`), built on the first request and let
-    go by `close()`. SP2: also tallies the writer's attempts on Jev-scored
+    go by `close()`. Also tallies the writer's attempts on Jev-scored
     stage 2 jobs (`writer`), covering the same fresh + rescore passes as every
     other count here."""
 
@@ -1190,7 +1189,7 @@ class JevRun:
         self._raised: set[str] = set()
         self._workers: ThreadPoolExecutor | None = None
         self._start = self._usage()
-        # SP2: writer attempts on Jev-scored stage 2 jobs -- one of the two per
+        # The writer's attempts on Jev-scored stage 2 jobs -- one of the two per
         # attempt, never both. Not part of stats()/RUN_STATS_COLS (no new
         # run-stats column); summary_line() reads these two directly.
         self._writer_written = 0
@@ -1341,7 +1340,7 @@ class JevRun:
 
 
 def jev_facts(job_md: str, profile: CandidateProfile | None = None) -> dict:
-    """The code facts Jev's stage 1 composes with (SC-2): the same detectors
+    """The code facts Jev's stage 1 composes with: the same detectors
     the mechanical filter runs. `clearance` is the filter's verdict for
     `profile` (None reads candidate_profile()); `advanced_degree` is always False
     for a graduate student, whose own degree is the one the posting asks for;
@@ -1364,7 +1363,7 @@ def latest_input_csv() -> Path | None:
     _scored.csv.gz output already exists are skipped so a no-new-jobs run never
     rescores an old file.
 
-    INTENDED drain rate (audit P2-14): ONE pending input per invocation. A
+    INTENDED drain rate: ONE pending input per invocation. A
     multi-day backlog (VM down, then restored) drains at the twice-daily run
     cadence; meanwhile the master rescore pass picks up the older runs' rows once
     they reach the master, so nothing is stranded — only delayed. A backlog is
@@ -1801,7 +1800,7 @@ def _strip_em_dashes(text: str) -> str:
     return re.sub(r"\s*—\s*|\s--\s", ", ", text)
 
 
-# M9: writer failure reasons already reported this run, one line per reason --
+# Writer failure reasons already reported this run, one line per reason --
 # an exception's class name, or one of the fixed words below. Mirrors
 # jev_score._WARNED. The message itself is never printed: a service error can
 # quote the request, which carries the resume and the job text.
@@ -1816,7 +1815,7 @@ def _warn_writer_once(reason: str) -> None:
 
 async def write_notes(pool, sem: asyncio.Semaphore, resume: str, job_id: str, job_md: str,
                       findings_block: str) -> dict | None:
-    """For a job Jev scored in stage 2 (SP2): one call to the provider's stage 1
+    """For a job Jev scored in stage 2: one call to the provider's stage 1
     model rewrites `reason`, `strengths` and `gaps` from `findings_block`. It is
     given the scores and the recommendation and cannot change them -- the
     prompt only asks for the explanatory text. Shaped like score_stage1: on
@@ -1829,7 +1828,7 @@ async def write_notes(pool, sem: asyncio.Semaphore, resume: str, job_id: str, jo
     exception, unreadable JSON, a blank reason or no strengths -- this never
     raises and never produces an ERROR row; the caller keeps Jev's own
     code-written text on None. The first such failure of each kind this run
-    prints one line (M9): the exception's class name once per class, or a
+    prints one line: the exception's class name once per class, or a
     fixed word for bad JSON, a blank reason or no strengths, once each."""
     async with sem:
         today = today_str()
@@ -1961,7 +1960,7 @@ def update_master_scores(scored: pd.DataFrame) -> None:
         # READ (next(reader)) to the same fix-or-restore OSError. Write-side errors
         # (to_csv/os.replace OSError, update TypeError) are raised in the loop
         # body, are NOT parse errors, and still propagate unrelabelled.
-        # dtype=object + keep_default_na=False (audit P2-26): the master must
+        # dtype=object + keep_default_na=False: the master must
         # round-trip byte-stable through rewrites — inferred dtypes reformat
         # values (1 -> "1.0") and risk id-like leading-zero loss. object (not
         # pandas' strict `str`) because chunk.update(s) below writes the scored
@@ -2078,7 +2077,7 @@ def add_filter_columns(df: pd.DataFrame, desc_col: str, title_col: str | None,
     return df
 
 
-# --- SP6: score-side repost reuse ----------------------------------------------
+# --- Score-side repost reuse ---------------------------------------------------
 # score_jobs.py is copied standalone to the VM (no local/ package -- see the
 # _atomic_to_csv note above for the same constraint), so this is a private,
 # self-contained copy of local/jobsdata.py's repost_key. Reference:
@@ -2153,8 +2152,7 @@ def reuse_repost_scores(df: pd.DataFrame, master: pd.DataFrame | None, reuse_day
 
     `reuse_days <= 0` disables reuse (0 = off, matching the config's
     documented meaning); a missing/empty master yields no reuse. Neither case
-    is an error -- both leave `df` scored fresh, exactly like before this
-    feature existed.
+    is an error -- both leave `df` to be scored fresh.
     """
     df = df.copy()
     if "score_reused" not in df.columns:
@@ -2556,7 +2554,7 @@ _S2_COLUMNS = ["job_posting_id", "deep_score", "strengths", "gaps", "recommendat
 def _pop_jev_findings(result: dict) -> tuple[dict, dict | None]:
     """(Jev's stage 2 result without `findings`, the findings it carried, or
     None when Jev did not score this job). The row never carries a `findings`
-    column; run_scoring's stage2_one (SP2) reads the findings side of this
+    column; run_scoring's stage2_one reads the findings side of this
     split to build the writer's findings block, so writer_findings() never has
     to rebuild it from the row."""
     result = dict(result)
@@ -2576,12 +2574,12 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame, *,
     merge's left join -- which has no row for an id that was never scored --
     can never blank them back to NaN.
 
-    With `jev_run` on (SC-4), Jev scores each job's stage first and a job it
+    With `jev_run` on, Jev scores each job's stage first and a job it
     cannot score takes that stage's LLM path; the output columns are the same
     either way. `pool` is None only when Jev is on and no LLM provider is set
     up: such a job keeps an ERROR row (stage 1) or its stage-1 score alone.
 
-    SP2: for a job whose stage 2 Jev scored, when JEV_WRITER is on and `pool`
+    The writer: for a job whose stage 2 Jev scored, when JEV_WRITER is on and `pool`
     is not None, one write_notes() call turns Jev's findings into that job's
     reason/strengths/gaps; a failure leaves Jev's own composed text in place,
     and so does a job with no matching stage 1 row.
@@ -2667,7 +2665,7 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame, *,
                 got = await jev_run.ask(jsem, 2, job_id,
                                         {"md": job_md, "profile": jev_profile}, resume)
                 if got is not None:
-                    # `findings` is for the writer (SP2); the row never carries it.
+                    # `findings` is for the writer; the row never carries it.
                     row, findings = _pop_jev_findings(got)
                     if findings is not None and JEV_WRITER and pool is not None:
                         s1_row = s1_df.loc[s1_df["job_posting_id"] == job_id]
@@ -2677,7 +2675,7 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame, *,
                             # text rather than guess a score.
                             jev_run.note_writer(written=False)
                         elif jev_run.writer_stopped:
-                            # I2: the writer already latched off after
+                            # The writer already latched off after
                             # WRITER_FAIL_LIMIT failures in a row this run;
                             # skip the call and keep Jev's own composed text.
                             jev_run.note_writer(written=False)
@@ -2685,7 +2683,7 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame, *,
                             score = int(s1_row["score"].iloc[0])
                             try:
                                 block = writer_findings(score, got)
-                            except Exception as e:  # noqa: BLE001  (M2: never crash the gather)
+                            except Exception as e:  # noqa: BLE001  (never crash the gather)
                                 # A local error that cost no call: keep Jev's
                                 # text, and leave the streak to provider failures.
                                 _warn_writer_once(f"findings error ({type(e).__name__})")
@@ -2715,7 +2713,7 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame, *,
     return _restore_reused_scores(merged, reused_snapshot)
 
 
-# MA-3: a hand-added job (local/manual_add.py) keeps blank score columns on
+# A hand-added job (local/manual_add.py) keeps blank score columns on
 # purpose, so the rescore pass skips it. Keep IDENTICAL to
 # prune_master.MANUAL_ID_PREFIX.
 MANUAL_ID_PREFIX = "manual-"
@@ -2728,7 +2726,7 @@ def rows_needing_rescore(master: pd.DataFrame) -> pd.DataFrame:
     a swallowed Stage-1 exception); reason/recommendation starting with ERROR:
     = an explicit failed call. Without this, one transient 429 permanently
     hides a job from the High-Score tab. A hand-added row (MANUAL_ID_PREFIX)
-    is never picked, even with an ERROR marker (MA-3).
+    is never picked, even with an ERROR marker.
     """
     if "score" in master.columns:
         score = pd.to_numeric(master["score"], errors="coerce")
@@ -2769,7 +2767,7 @@ def _load_rows_by_id(master_csv, ids) -> pd.DataFrame:
 async def rescore_master_failures(pool, resume: str, *,
                                   jev_run: JevRun | None = None) -> tuple[int, int]:
     """Retry failed/missing master rows. Returns (attempted, newly_scored).
-    `jev_run` is run_scoring's (SC-4)."""
+    `jev_run` is run_scoring's."""
     if not MASTER_CSV.exists():
         return 0, 0
     # A malformed master must produce the same fix-or-restore message the fold path
@@ -2808,7 +2806,7 @@ async def rescore_master_failures(pool, resume: str, *,
     todo_ids = light["job_posting_id"].astype(str)   # already filtered per chunk above
     if todo_ids.empty:
         return 0, 0
-    todo_ids = todo_ids.tail(RESCORE_CAP).tolist()  # newest-first cap, same as before
+    todo_ids = todo_ids.tail(RESCORE_CAP).tolist()  # newest-first cap
     print(f"Rescore pass: retrying {len(todo_ids)} master row(s) with missing/failed scores")
 
     master = _load_rows_by_id(MASTER_CSV, todo_ids)  # <= RESCORE_CAP full rows only
@@ -2843,8 +2841,8 @@ async def main() -> None:
         run_heal_reused(dry_run=args.dry_run)
         return
     resume = load_resume()
-    # SC-4: Jev scores first when its switch is on (make_jev_judge); the LLM
-    # provider is then optional, so missing credentials no longer end the run.
+    # Jev scores first when its switch is on (make_jev_judge); the LLM
+    # provider is then optional, so missing credentials do not end the run.
     jev_run = JevRun(make_jev_judge())
     pool = make_pool(required=not jev_run.on)
     print(describe_profile(candidate_profile()))
@@ -2872,7 +2870,7 @@ async def main() -> None:
             df = pd.DataFrame()
         except (pd.errors.ParserError, OSError, UnicodeDecodeError, ValueError) as e:
             # An unreadable input must not kill the whole run: the rescore pass
-            # below is the self-heal for rows that never got scored (audit P2-7).
+            # below is the self-heal for rows that never got scored.
             print(f"WARNING: could not read {csv_path.name} ({e}); "
                   "skipping fresh scoring, continuing to the rescore pass.")
             df = pd.DataFrame()
@@ -2916,7 +2914,7 @@ async def main() -> None:
             stats["easy_apply_dropped"] = int(merged["filter_easy_apply"].sum())
             stats["llm_scored"] = int(n_scored)     # either path's (RUN_STATS_COLS)
             # Stage-1 failures land in `reason`, Stage-2 failures in
-            # `recommendation` (audit P2-8) — count both, else deep-analysis
+            # `recommendation`: count both, else deep-analysis
             # errors are invisible in run stats.
             stats["llm_errors"] = int(
                 merged["reason"].fillna("").astype(str).str.startswith("ERROR:").sum()

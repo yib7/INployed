@@ -51,9 +51,9 @@ RATE_LIMIT_MAX_SLEEP = 300.0
 POOL_MAX_ROTATIONS = 12
 
 # A 503 UNAVAILABLE ("this model is currently experiencing high demand") is
-# neither a timeout nor a quota error, and used to fall through to the generic
-# transient branch: three attempts, 1.5s and 3s apart, every one of them against
-# the model Google had just said it was short of capacity for. In pool mode the
+# neither a timeout nor a quota error. The generic transient branch would spend
+# three attempts, 1.5s and 3s apart, every one of them against the model Google
+# had just said it was short of capacity for. In pool mode the
 # real remedy is a different model, so the first overload rotates with no sleep
 # at all; the backoff below only starts once rotating has already failed, which
 # means either the whole chain is busy or there is nothing to rotate to (a
@@ -146,8 +146,8 @@ def as_dict(out: Any, key: str = "") -> dict:
     Gemini occasionally roots the answer at an ARRAY: either the object wrapped
     in a one-element array ([{...}]) or the bare array that belonged under `key`
     (the {"key": [...]} wrapper dropped). Both recover losslessly here. Any other
-    root coerces to {} so the caller degrades to its no-result path — one
-    bad-shape response used to kill a whole tailor job with
+    root coerces to {} so the caller degrades to its no-result path; one
+    bad-shape response would otherwise kill a whole tailor job with
     "'list' object has no attribute 'get'"."""
     if isinstance(out, dict):
         return out
@@ -648,7 +648,7 @@ def _claude_cli():
 
 def claude_model_swaps() -> dict:
     """{requested model: model that runs instead} for each Claude model the
-    installed CLI refused this process (claude_cli.active_swaps, VL-5).
+    installed CLI refused this process (claude_cli.active_swaps).
 
     {} off the Claude lane, without loading the transport, and {} when the
     transport cannot load: a lookup that fails has found no swap."""
@@ -729,7 +729,7 @@ def _call_claude(
                 system, user, model,
                 json_out=json_out, tools=tools, timeout_s=timeout_s, tier=tier,
             )
-            # The model that answered: after a VL-5 swap the CLI ran the fallback,
+            # The model that answered: after a model swap the CLI ran the fallback,
             # and booking it under the requested model would misstate the run.
             ran = getattr(res, "model", "") or model
             USAGE.append({

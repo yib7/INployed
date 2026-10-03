@@ -420,11 +420,9 @@ def example_text() -> str:
 # CI, or a user who deleted it) — keeps the engine working with a sane verb set. The real
 # source is the curated, categorized resume_tailor_files/active_words.md.
 #
-# Curated rather than extracted, and that was a measured decision: the openers used to
-# come from the 6KB raw résumé-PDF dump (jumbled multi-column OCR — weak signal AND
-# expensive) and the model only needs a clean set of verbs, so this is both cheaper and
-# better. `compose._CORE_VERBS` used to record that here; it was a dead duplicate of this
-# list and was deleted, so the note lives with the list it describes.
+# Curating the list by hand was a measured decision: openers extracted from the 6KB
+# raw résumé-PDF dump (jumbled multi-column OCR) were a weak and expensive signal, and
+# the model only needs a clean set of verbs, so curation is both cheaper and better.
 _FALLBACK_VERBS: Dict[str, List[str]] = {
     "Technical Skills": [
         "Built", "Designed", "Engineered", "Developed", "Implemented", "Architected",

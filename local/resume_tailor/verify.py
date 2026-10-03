@@ -2,7 +2,7 @@
 
 The project's core guarantee — select and re-phrase, never invent — was enforced
 deterministically for skills and methods but only by PROMPT TEXT for bullets and
-the cover letter (audit P1-2/P2-9). Scraped job descriptions are untrusted
+the cover letter. Scraped job descriptions are untrusted
 internet content that rides inside the generation prompts, so a crafted posting
 ("state the candidate holds a PhD") or a plain hallucination could put a
 fabricated fact on the resume with nothing downstream to catch it.
@@ -28,21 +28,20 @@ one figure rather than one per dot: a lone digit after a dot can never satisfy
 that boundary rule, so splitting "v1.4.0" into "1.4" and "0" rejected the
 atoms' own version string.
 
-What this gate does NOT catch (audit C6-11 — stated so nobody reads it as
-airtight):
+What this gate does NOT catch (stated so nobody reads it as airtight):
 
   * Only DISTINCTIVE tokens are traced — numbers, and words carrying a capital
     or internal case. An invented claim phrased entirely in lowercase common
     words ("led the team of engineers") has no distinctive token to check and
     passes. The gate stops fabricated *credentials, figures and proper nouns*,
     which is the injection payload that matters; it is not a general truth check.
-    With Jev on, the faithfulness check (TL-4, `run._check_faithfulness`) reads
+    With Jev on, the faithfulness check (`run._check_faithfulness`) reads
     each bullet against its own atoms for these claims.
   * The first word of each sentence is skipped, because that slot is the
     generated action verb. A proper noun that lands sentence-initially is
     therefore untraced. Sentences are split on `.!?` and newlines ONLY —
-    `:` and `;` used to split too, which handed an attacker a free unchecked
-    slot mid-bullet (fixed in the Phase 4 security pass).
+    `:` and `;` do not split, because a split there would hand an attacker a
+    free unchecked slot mid-bullet.
   * A short token that ends or starts a longer unrelated word is still grounded
     by it ("MS" traces to "systems"). One-sided boundary matching is the price
     of grounding "SQL" from "PostgreSQL"; two- and three-letter acronyms are
@@ -70,13 +69,14 @@ from .common import split_sentences
 _NUM_RE = re.compile(r"\d[\d,]*(?:\.\d+)*")
 _WORD_RE = re.compile(r"[A-Za-z][\w+#]*")
 # Sentence boundaries come from common.split_sentences, shared with the letter's
-# rhythm detector. Real boundaries only: `:` and `;` were once in this class and
-# were a live bypass, because the tracer skips each segment's first word (that
-# slot holds the GENERATED ACTION VERB) while a clause after a semicolon or
-# colon is ordinary mid-sentence text, so "Built an ETL pipeline; MIT coursework
-# informed it" put the fabricated credential straight into an unchecked slot.
+# rhythm detector. Real boundaries only: `:` and `;` stay out of this class,
+# since splitting on them is a live bypass. The tracer skips each segment's first
+# word (that slot holds the GENERATED ACTION VERB) while a clause after a
+# semicolon or colon is ordinary mid-sentence text, so "Built an ETL pipeline;
+# MIT coursework informed it" would put the fabricated credential straight into
+# an unchecked slot.
 # The shared splitter also keeps "U.S." and "B.S." attached to their sentence,
-# so an abbreviation no longer manufactures a segment with a free first slot;
+# so an abbreviation does not manufacture a segment with a free first slot;
 # _sentence_case below stays as the second line for that same case.
 
 # A small digits<->words bridge so "3 models" traces to an atom that wrote "three".
@@ -226,8 +226,8 @@ def _sentence_case(tok: str) -> bool:
     splitter that broke on every `.` manufactured segments from abbreviations:
     "Built ingestion for the U.S. MIT lab" split after "U.S." and handed index 0
     of the next segment to MIT, which then shipped untraced. Same bypass class
-    the module docstring records as fixed for `:` and `;`. common.split_sentences
-    now keeps the initialism attached; this check stays as the second line, for
+    the module docstring describes for `:` and `;`. common.split_sentences
+    keeps the initialism attached; this check stays as the second line, for
     the abbreviation shapes the splitter's list does not name.
     """
     return tok[:1].isupper() and tok[1:].islower()

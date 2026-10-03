@@ -7,7 +7,7 @@ The report flags JD terms missing from the tailored PDF so the user can decide
 whether a missing term is true of them (select-and-rephrase rule:
 never add a skill just because the JD wants it).
 
-With the ATS meaning line on (TL-9, Settings, with Jev on) the caller hands
+With the ATS meaning line on (Settings, with Jev on) the caller hands
 write_report a `meaning` check, and the report gains a meaning-level coverage line
 beside the literal one. This module stays free of Jev: the check is the caller's.
 """
@@ -209,7 +209,7 @@ def _pdf_text(pdf_path: Path) -> str:
     return "\n".join((pg.extract_text() or "") for pg in reader.pages)
 
 
-# What a TL-9 meaning check is: (keywords, the résumé's text) -> the keywords the
+# What a meaning-level keyword check is: (keywords, the résumé's text) -> the keywords the
 # résumé shows in words or by a direct equivalent, or None when it could not run.
 MeaningFn = Callable[[Sequence[str], str], Optional[List[str]]]
 
@@ -218,7 +218,7 @@ def write_report(jd_text: str, pdf_path: Path, out_dir: Path,
                  meaning: Optional[MeaningFn] = None) -> float:
     """Write ats_report.txt next to the tailored PDF; return coverage fraction.
 
-    With `meaning` (TL-9) the report adds a meaning-level coverage line under the
+    With `meaning` the report adds a meaning-level coverage line under the
     literal one, counting every literal match with the keywords Jev reads as shown,
     and lists the keywords shown by meaning that no word matched, when there are any. A
     check that returns None leaves the report as it was; the fraction returned is

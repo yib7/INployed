@@ -1,45 +1,46 @@
-"""The tailor's Jev requests (TL-1 to TL-9).
+"""The tailor's Jev requests.
 
 Jev (`local/jev.py`) answers typed questions about a state and writes no text, so
 each helper here asks one kind of question and hands the answers back as data for
 code to compose. The LLM still writes every bullet.
 
-  skills_pick     TL-1  one noul per skill in the user's pools and the skill focus
+  skills_pick           one noul per skill in the user's pools and the skill focus
                         (a choice over select's enum), in one request. Each skills
                         line comes back as its pool in probability order;
                         compress_skills cuts it to the line's count and width.
-  atom_relevance  TL-2  one noul per atom's `what`, batched to fit: the
+  atom_relevance        one noul per atom's `what`, batched to fit: the
                         probabilities select() shortlists its catalog by.
-  (TL-3, the lead-bullet pick, is retired: lead_with_overview puts each entry's
-                        first master atom first by rule, so there is nothing to ask.)
-  faithfulness    TL-4  one request per résumé entry, three questions per bullet
+  (No step picks the lead bullet: lead_with_overview puts each entry's first
+                        master atom first by rule, so there is nothing to ask.)
+  faithfulness          one request per résumé entry, three questions per bullet
                         against the atoms it was written from: `supported` (a
                         choice), `inflates` and `adds_claim` (nouls). A bullet is
                         flagged by a sure "unsupported" or "contradicted" or by
                         `inflates`; `adds_claim` only joins a flagged bullet's
-                        finding (VL-3: the live judge reads it high on nearly
-                        every faithful rephrase). A flagged bullet comes back with
-                        its finding, which the run hands to one reground call
-                        before it reverts or drops the bullet.
-  sweep_flags     TL-5  one request per résumé entry, one noul per bullet for each
+                        finding (a live check found the judge reads it high
+                        on nearly every faithful rephrase). A flagged bullet
+                        comes back with its finding, which the run hands to one
+                        reground call before it reverts or drops the bullet.
+  sweep_flags           one request per résumé entry, one noul per bullet for each
                         tell of the user's banned patterns (SWEEP_QUESTIONS): the
                         AI-writing sweep calls the model only for an entry with a
                         tell at SWEEP_FLAG or more or a detector finding, and names
                         the tells in that call's payload.
-  pick_verb       TL-6  two choices per repeated opening verb: the palette category
+  pick_verb             two choices per repeated opening verb: the palette category
                         (the kind of action the bullet describes), then a verb
                         among that category's unused ones. dedupe_leading_verbs
                         swaps the bullet's first word for a sure pick and keeps
                         its reverb call otherwise.
-  best_variant    TL-7  one choice per bullet over its rephrase drafts that pass
-                        the grounding gate and TL-4 (Settings: "Best of 3 bullet
-                        drafts", off by default): the draft the run keeps.
+  best_variant          one choice per bullet over its rephrase drafts that pass
+                        the grounding gate and `faithfulness` (Settings: "Best
+                        of 3 bullet drafts", off by default): the draft the run
+                        keeps.
   letter_unsupported
-                  TL-8  one noul per cover-letter sentence against the letter's
+                        one noul per cover-letter sentence against the letter's
                         sources, never the job description (Settings: "Jev
                         checks the cover letter's claims", off by default): a
                         flagged sentence goes to the letter's repair call.
-  keyword_meaning TL-9  one noul per ATS keyword against the résumé's text
+  keyword_meaning       one noul per ATS keyword against the résumé's text
                         (Settings: "ATS report: coverage by meaning (Jev)", off by
                         default): the keywords the report's meaning-level coverage
                         line counts.
@@ -47,20 +48,19 @@ code to compose. The LLM still writes every bullet.
 Every helper takes `judge=`. Left out, it is `jev_switch.client("tailor")`, which is
 None when Jev is off for the tailor. A helper returns None when Jev is off, when
 there is nothing to ask, when a request fails or an answer comes back unusable, and
-once `jev.Guarded`'s breaker is open; its caller then keeps the LLM path it had
-before cycle 19. `run.tailor()` builds one judge per run and hands it to every
-step, so one outage moves the rest of that run to the LLM path (JS-3). TL-4 has no
-LLM path of its own: without it, the deterministic grounding gate runs alone, as it
-did before cycle 19. Without TL-5, the sweep calls the model for every item, as it
-did before.
+once `jev.Guarded`'s breaker is open; its caller then takes its LLM path.
+`run.tailor()` builds one judge per run and hands it to every step, so one outage
+moves the rest of that run to the LLM path. `faithfulness` has no LLM path of its
+own: without it, the deterministic grounding gate runs alone. Without
+`sweep_flags`, the sweep calls the model for every item.
 
 `usage_line(step)` is a step's line in the run report: its requests, their tokens
 and what those cost. The tokens are estimated (`jev.request_size`): the live client
 counts real tokens only for the whole process (`jev.usage()`), and the dashboard
 tailors several jobs at once, one worker thread each. The counts here are kept per
 thread for the same reason, and `run.tailor()` clears them with `reset_usage()` as
-a run starts. A step can be asked several times in one run (TL-4 after every
-rewrite), and its line sums every request.
+a run starts. A step can be asked several times in one run (`faithfulness` after
+every rewrite), and its line sums every request.
 
 `jev` and `jev_switch` live one directory up, in `local/`; they are imported on
 first use, the way `run.py` reaches `jobsdata`.
@@ -92,7 +92,7 @@ STEP_ATS_MEANING = "ats meaning"
 
 # What a step's note says its caller fell back to when the step fails.
 LLM_PATH = "the LLM path"
-GATE_ALONE = "the deterministic gate alone"     # TL-4: no LLM path to fall back to
+GATE_ALONE = "the deterministic gate alone"     # faithfulness has no LLM path
 NOTHING_TO_ASK = "nothing to ask"
 
 # What a helper's `judge` is when the caller passes none: `default_judge()`.
@@ -102,26 +102,28 @@ _DEFAULT: Any = object()
 # state, and a long posting ends in benefits and legal text.
 JD_CHARS = 12_000
 
-# TL-6: a verb Jev picks with a confidence under this keeps the LLM `reverb` call.
+# pick_verb: a verb Jev picks with a confidence under this keeps the LLM `reverb`
+# call.
 VERB_MIN_CONFIDENCE = 0.5
-# TL-6 stage 1: a category Jev picks with a confidence under this is set aside for
-# the repeated verb's own category. active_words.md's categories share verbs (558
-# entries, 368 verbs), so an unsure pick is a bullet between two kinds of action,
-# and the category the writer's verb sits in is then the safer ground. 0.5 is the
-# floor the tailor's other choices use: the pick outweighs every other option
-# together.
+# pick_verb stage 1: a category Jev picks with a confidence under this is set aside
+# for the repeated verb's own category. active_words.md's categories share verbs
+# (558 entries, 368 verbs), so an unsure pick is a bullet between two kinds of
+# action, and the category the writer's verb sits in is then the safer ground. 0.5
+# is the floor the tailor's other choices use: the pick outweighs every other
+# option together.
 CATEGORY_MIN_CONFIDENCE = 0.5
-# TL-6: a verb longer than this many characters is no verb and is left out of the
-# options (the palette's longest is 14). VL-3: one choice over every unused verb,
-# about 360, went past the 255 options Jev takes (`jev.CHOICE_OPTIONS_MAX`) and came
-# back 400; one category's verbs (43 to 83 in active_words.md) stay well under it.
+# pick_verb: a verb longer than this many characters is no verb and is left out of
+# the options (the palette's longest is 14). In a live check, one choice over every
+# unused verb, about 360, went past the 255 options Jev takes
+# (`jev.CHOICE_OPTIONS_MAX`) and came back 400; one category's verbs (43 to 83 in
+# active_words.md) stay well under it.
 VERB_ID_MAX = 40
 
-# TL-5: a tell Jev reads at this P(yes) or more flags its bullet, and the AI-writing
-# sweep calls the model for the item that holds it.
+# sweep_flags: a tell Jev reads at this P(yes) or more flags its bullet, and the
+# AI-writing sweep calls the model for the item that holds it.
 SWEEP_FLAG = 0.6
 
-# TL-4 (the rule is from VL-3, the live check over 54 real bullets and 8 planted
+# faithfulness (the rule is from a live check over 54 real bullets and 8 planted
 # ones): a bullet is flagged when Jev picks "unsupported" or "contradicted" at
 # SUPPORTED_MIN_CONFIDENCE or more, or `inflates` reaches FAITHFULNESS_FLAG.
 # `adds_claim` flags nothing alone: it read 0.5 to 0.95 on nearly every faithful
@@ -135,11 +137,12 @@ SWEEP_FLAG = 0.6
 SUPPORTED_MIN_CONFIDENCE = 0.6
 FAITHFULNESS_FLAG = 0.7
 
-# TL-8: a letter sentence Jev reads at this P(yes) or more claims more than the
-# letter's sources state, and goes to the letter's repair call.
+# letter_unsupported: a letter sentence Jev reads at this P(yes) or more claims
+# more than the letter's sources state, and goes to the letter's repair call.
 LETTER_CLAIM_FLAG = 0.7
 
-# TL-9: a keyword Jev reads at this P(yes) or more counts in the meaning-level line.
+# keyword_meaning: a keyword Jev reads at this P(yes) or more counts in the
+# meaning-level line.
 KEYWORD_MEANING_MIN = 0.5
 
 # The judge questions. A backticked path names a part of the request's state;
@@ -147,11 +150,11 @@ KEYWORD_MEANING_MIN = 0.5
 SKILL_QUESTION = "Does `job` ask for `skills[{i}]` or a direct equivalent?"
 ATOM_QUESTION = "Does `atoms[{i}]` show experience `job` asks for?"
 FOCUS_QUESTION = "Which focus fits the work `job` describes?"
-# TL-6, asked of a bullet whose opening verb another bullet already uses.
+# pick_verb, asked of a bullet whose opening verb another bullet already uses.
 PICK_VERB_QUESTION = "Which verb best names the action in `bullet`?"
-# TL-6 stage 1, over the palette's categories.
+# pick_verb stage 1, over the palette's categories.
 PICK_CATEGORY_QUESTION = "Which kind of action does `bullet` describe?"
-# TL-6 stage 1: each category's description names this many of its verbs.
+# pick_verb stage 1: each category's description names this many of its verbs.
 CATEGORY_SAMPLE_VERBS = 8
 # select()'s skill_focus enum, each value with the description Jev reads.
 SKILL_FOCUS = {
@@ -160,7 +163,7 @@ SKILL_FOCUS = {
     "data_analytics": "Data analytics: SQL, dashboards and reporting",
     "general": "General software or data work with no single focus",
 }
-# TL-4, asked of each bullet against the atoms it was written from.
+# faithfulness, asked of each bullet against the atoms it was written from.
 SUPPORTED_QUESTION = "Do `atoms[{i}]` state every claim `bullets[{i}]` makes?"
 SUPPORTED_OPTIONS = {
     "verified": "The atoms state every claim the bullet makes.",
@@ -171,9 +174,9 @@ INFLATES_QUESTION = ('Does `bullets[{i}]` give the candidate a bigger role, scop
                      'than `atoms[{i}]` state, such as "led" for "helped"?')
 ADDS_CLAIM_QUESTION = ("Does `bullets[{i}]` state a tool, number, outcome or scope that "
                        "`atoms[{i}]` do not state?")
-# TL-5, asked of each bullet before the AI-writing sweep: one question per tell of
-# the user's banned patterns, keyed by the name the sweep payload and the report
-# give it.
+# sweep_flags, asked of each bullet before the AI-writing sweep: one question per
+# tell of the user's banned patterns, keyed by the name the sweep payload and the
+# report give it.
 SWEEP_QUESTIONS = {
     "contrast framing": ("Does `bullets[{i}]` use contrast framing, which defines a thing "
                          "by what it is not?"),
@@ -182,12 +185,13 @@ SWEEP_QUESTIONS = {
     "hype words": "Does `bullets[{i}]` use hype words or self-praise?",
     "padded list of three": "Does `bullets[{i}]` pad a list out to three items?",
 }
-# TL-7, asked of each bullet's rephrase drafts, each draft as an option.
+# best_variant, asked of each bullet's rephrase drafts, each draft as an option.
 BEST_DRAFT_QUESTION = "Which draft shows the most of what `job` asks for?"
-# TL-8, asked of each cover-letter sentence against the letter's sources.
+# letter_unsupported, asked of each cover-letter sentence against the letter's
+# sources.
 LETTER_CLAIM_QUESTION = ("Does `sentences[{i}]` claim something about the candidate that "
                          "`sources` do not state?")
-# TL-9, asked of each ATS keyword against the résumé's text.
+# keyword_meaning, asked of each ATS keyword against the résumé's text.
 KEYWORD_MEANING_QUESTION = "Does `resume` show `keywords[{i}]` or a direct equivalent?"
 # Each tell's question id in a request: `<id>_<i>` for the bullet at index i.
 _SWEEP_IDS = {"contrast framing": "contrast", "stacked adjectives": "stacked",
@@ -262,9 +266,9 @@ def usage(step: str) -> Dict[str, Any]:
 
 def breaker_open(step: str, judge: Any, *, fallback: str = LLM_PATH) -> bool:
     """True when `judge`'s breaker is open (`jev.Guarded.down`), for a step whose
-    caller pays for work before Jev's first request (TL-7's drafts). The step's note
-    then names the outage as a request that met it would, and the caller keeps the
-    path it has without Jev (JS-3)."""
+    caller pays for work before Jev's first request (best_variant's drafts). The
+    step's note then names the outage as a request that met it would, and the
+    caller keeps the path it has without Jev."""
     down = getattr(judge, "down", "") if judge is not None else ""
     if not isinstance(down, str) or not down:
         return False
@@ -302,8 +306,8 @@ def _run_step(step: str, judge: Any, ask: Callable[[Any], Any], *,
     what the caller runs without Jev, for the note and the log.
 
     The note outlives a later call: the first failure stays put, so a line for a
-    step asked after every rewrite (TL-4) still says a check fell back when a later
-    request went through."""
+    step asked after every rewrite (`faithfulness`) still says a check fell back
+    when a later request went through."""
     counts = _step_counts(step)
     if counts["note"] == NOTHING_TO_ASK:
         counts["note"] = ""
@@ -366,8 +370,8 @@ def _noul_prob(answer: Any) -> float:
 
 def _choice_pick(answer: Any, names: Sequence[str], where: str) -> Tuple[str, float]:
     """(the option picked, its confidence). A missing confidence reads as 0.0 and is
-    logged with `where` (the step and the question id): a TL-4 "unsupported" pick
-    with none would otherwise pass as unsure, unseen."""
+    logged with `where` (the step and the question id): a `faithfulness`
+    "unsupported" pick with none would otherwise pass as unsure, unseen."""
     choice = getattr(answer, "choice", None)
     if choice not in names:
         raise _Unusable("choice")
@@ -413,7 +417,7 @@ def _ask_nouls(step: str, judge: Any, job: Dict[str, str], key: str, items: Sequ
 # ── the helpers ──────────────────────────────────────────────────────────────
 def skills_pick(jd: str, job_title: str, *, judge: Any = _DEFAULT
                 ) -> Optional[Dict[str, Any]]:
-    """TL-1: how strongly the job asks for each skill in the user's pools, and the
+    """How strongly the job asks for each skill in the user's pools, and the
     skill focus.
 
     One noul per distinct skill ("Does `job` ask for `skills[i]` or a direct
@@ -442,7 +446,7 @@ def skills_pick(jd: str, job_title: str, *, judge: Any = _DEFAULT
 
 def atom_relevance(jd: str, job_title: str, *, judge: Any = _DEFAULT
                    ) -> Optional[Dict[str, float]]:
-    """TL-2: {atom id: P(yes)} for every atom in the master, in file order.
+    """{atom id: P(yes)} for every atom in the master, in file order.
 
     One noul per atom ("Does `atoms[i]` show experience `job` asks for?") over the
     atom's `what`, batched to fit Jev's limits. select() keeps each block's most
@@ -461,11 +465,12 @@ def atom_relevance(jd: str, job_title: str, *, judge: Any = _DEFAULT
 
 
 def _finding(supported: str, confidence: float, inflates: float, adds_claim: float) -> str:
-    """TL-4's finding for one bullet: "" when it passes, else one FINDINGS clause per
-    check that failed, joined with "; ". A sure "unsupported" or "contradicted"
-    (SUPPORTED_MIN_CONFIDENCE) or `inflates` at FAITHFULNESS_FLAG flags the bullet;
-    `adds_claim` at FAITHFULNESS_FLAG is named only beside one of them, since VL-3
-    read it high on nearly every faithful rephrase (see SUPPORTED_MIN_CONFIDENCE)."""
+    """The faithfulness finding for one bullet: "" when it passes, else one FINDINGS
+    clause per check that failed, joined with "; ". A sure "unsupported" or
+    "contradicted" (SUPPORTED_MIN_CONFIDENCE) or `inflates` at FAITHFULNESS_FLAG
+    flags the bullet; `adds_claim` at FAITHFULNESS_FLAG is named only beside one of
+    them, since a live check read it high on nearly every faithful rephrase (see
+    SUPPORTED_MIN_CONFIDENCE)."""
     parts: List[str] = []
     if supported != "verified" and confidence >= SUPPORTED_MIN_CONFIDENCE:
         parts.append(FINDINGS[supported])
@@ -478,7 +483,7 @@ def _finding(supported: str, confidence: float, inflates: float, adds_claim: flo
 
 def faithfulness(entries: Sequence[Mapping[str, Any]], *, judge: Any = _DEFAULT
                  ) -> Optional[Dict[str, str]]:
-    """TL-4: does each bullet say only what the atoms it was written from say?
+    """Does each bullet say only what the atoms it was written from say?
 
     `entries` is [{"entry": name, "bullets": [{"gkey", "text", "atoms"}]}], one per
     résumé entry, where `atoms` is the bullet's own atoms as the writer saw them. One
@@ -489,10 +494,10 @@ def faithfulness(entries: Sequence[Mapping[str, Any]], *, judge: Any = _DEFAULT
     "unsupported" or "contradicted" at SUPPORTED_MIN_CONFIDENCE or more, or
     `inflates` reaches FAITHFULNESS_FLAG. `adds_claim` flags nothing alone; at
     FAITHFULNESS_FLAG it joins the finding of a bullet flagged otherwise, so the
-    reground hears it. The rule is VL-3's: over real bullets the judge read
-    `adds_claim` high on nearly every faithful rephrase and picked "verified" and
-    "unsupported" at low confidence, while the planted inflations and added claims
-    read a sure "unsupported" or "contradicted" (see SUPPORTED_MIN_CONFIDENCE).
+    reground hears it. The rule is from a live check: over real bullets the judge
+    read `adds_claim` high on nearly every faithful rephrase and picked "verified"
+    and "unsupported" at low confidence, while the planted inflations and added
+    claims read a sure "unsupported" or "contradicted" (see SUPPORTED_MIN_CONFIDENCE).
 
     Returns {gkey: finding}, "" for a bullet that passes (see `_finding`). The check
     judges and names; it never writes text. None when Jev is off or fails, or no
@@ -538,7 +543,7 @@ def faithfulness(entries: Sequence[Mapping[str, Any]], *, judge: Any = _DEFAULT
 
 def sweep_flags(entries: Sequence[Mapping[str, Any]], *, judge: Any = _DEFAULT
                 ) -> Optional[Dict[str, Tuple[str, ...]]]:
-    """TL-5: which of the user's banned patterns Jev reads in each bullet, asked
+    """Which of the user's banned patterns Jev reads in each bullet, asked
     before the AI-writing sweep.
 
     `entries` is [{"entry": name, "bullets": [{"gkey", "text"}]}], one per résumé
@@ -584,7 +589,7 @@ def _option_id(text: Any) -> str:
 
 
 def _category_ids(palette: Mapping[str, Sequence[str]]) -> Dict[str, str]:
-    """TL-6 stage 1's option ids: {id: the palette's own key}, one per category,
+    """pick_verb stage 1's option ids: {id: the palette's own key}, one per category,
     in palette order, left out when empty or alike (whatever the case) an earlier one."""
     out: Dict[str, str] = {}
     seen: set = set()
@@ -597,9 +602,10 @@ def _category_ids(palette: Mapping[str, Sequence[str]]) -> Dict[str, str]:
 
 
 def _verb_ids(verbs: Sequence[str], cat: str, taken: Collection[str]) -> Dict[str, str]:
-    """TL-6 stage 2's option ids, in palette order: {verb: `cat`} for each verb as its
-    trimmed text, left out when empty, longer than VERB_ID_MAX, alike (whatever the
-    case) an earlier one, or already an opener (its lowercase in `taken`)."""
+    """pick_verb stage 2's option ids, in palette order: {verb: `cat`} for each verb
+    as its trimmed text, left out when empty, longer than VERB_ID_MAX, alike
+    (whatever the case) an earlier one, or already an opener (its lowercase in
+    `taken`)."""
     out: Dict[str, str] = {}
     seen: set = set()
     for verb in verbs:
@@ -625,9 +631,9 @@ def _own_category(cats: Mapping[str, str], palette: Mapping[str, Sequence[str]],
 
 def _pick_category(j: Any, state: Dict[str, str], cats: Mapping[str, str],
                    palette: Mapping[str, Sequence[str]]) -> Tuple[str, str]:
-    """TL-6 stage 1: (the category Jev picks for the bullet at CATEGORY_MIN_CONFIDENCE
-    or more, else ""; the failure's kind when the request failed, else ""). An
-    outage is raised: the second request would meet it too."""
+    """pick_verb stage 1: (the category Jev picks for the bullet at
+    CATEGORY_MIN_CONFIDENCE or more, else ""; the failure's kind when the request
+    failed, else ""). An outage is raised: the second request would meet it too."""
     jev, _switch = _jev_modules()
     criteria = {cid: "Verbs such as " + ", ".join(
         list(dict.fromkeys(_option_id(v) for v in palette[key] if _option_id(v)))
@@ -652,7 +658,7 @@ def _pick_category(j: Any, state: Dict[str, str], cats: Mapping[str, str],
 def pick_verb(bullet: str, palette: Mapping[str, Sequence[str]], current: str,
               taken: Collection[str] = frozenset(), *, judge: Any = _DEFAULT
               ) -> Optional[Tuple[str, float]]:
-    """TL-6: the verb that best names the action in `bullet`, a bullet whose opening
+    """The verb that best names the action in `bullet`, a bullet whose opening
     verb `current` another bullet already uses.
 
     `palette` is {category: verbs} (`assets.active_verbs()`, grouped by the kind of
@@ -661,7 +667,7 @@ def pick_verb(bullet: str, palette: Mapping[str, Sequence[str]], current: str,
 
     1. one choice over the categories (PICK_CATEGORY_QUESTION, `_pick_category`);
     2. one choice over the picked category's unused verbs (PICK_VERB_QUESTION,
-       `_verb_ids`), which stays under Jev's 255 options (VL-3). One question cannot
+       `_verb_ids`), which stays under Jev's 255 options. One question cannot
        be split, so past Jev's limits the options are halved from the end until the
        request fits.
 
@@ -706,12 +712,12 @@ def pick_verb(bullet: str, palette: Mapping[str, Sequence[str]], current: str,
 
 def best_variant(jd: str, job_title: str, groups: Sequence[Mapping[str, Any]], *,
                  judge: Any = _DEFAULT) -> Optional[Dict[str, Tuple[int, float]]]:
-    """TL-7: which of each bullet's drafts shows the most of what the job asks for.
+    """Which of each bullet's drafts shows the most of what the job asks for.
 
     `groups` is [{"gkey", "drafts": [text, ...]}], the drafts that passed the
-    grounding gate and TL-4, in the order the rephrase wrote them. One choice per
-    bullet over its numbered drafts (BEST_DRAFT_QUESTION), with the job as the
-    state, every bullet in one request (split only when it would not fit). Returns
+    grounding gate and `faithfulness`, in the order the rephrase wrote them. One
+    choice per bullet over its numbered drafts (BEST_DRAFT_QUESTION), with the job as
+    the state, every bullet in one request (split only when it would not fit). Returns
     {gkey: (draft number counting from 1, confidence)}. A bullet with one draft has
     nothing to choose and is left out. The pick only chooses among texts the
     rephrase wrote. None when Jev is off or fails, or no bullet has two drafts."""
@@ -745,7 +751,7 @@ def best_variant(jd: str, job_title: str, groups: Sequence[Mapping[str, Any]], *
 
 def letter_unsupported(sentences: Sequence[str], sources: Mapping[str, Any], *,
                        judge: Any = _DEFAULT) -> Optional[List[str]]:
-    """TL-8: the cover-letter sentences that claim more about the candidate than the
+    """The cover-letter sentences that claim more about the candidate than the
     letter's sources state.
 
     `sources` is what the letter may draw on about the candidate: the résumé
@@ -781,7 +787,7 @@ def letter_unsupported(sentences: Sequence[str], sources: Mapping[str, Any], *,
 
 def keyword_meaning(keywords: Sequence[str], resume_text: str, *,
                     judge: Any = _DEFAULT) -> Optional[List[str]]:
-    """TL-9: the ATS keywords the résumé shows, in words or by a direct equivalent.
+    """The ATS keywords the résumé shows, in words or by a direct equivalent.
 
     One noul per keyword (KEYWORD_MEANING_QUESTION) with the résumé's text as the
     state (cut to JD_CHARS), batched to fit Jev's limits. Returns the keywords at

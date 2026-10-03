@@ -10,7 +10,7 @@ subject bolted on, and the deterministic style gate runs last
 letter-level bullet-echo and uniform-rhythm checks), so banned AI-tell phrasing
 and a copied bullet never reach the letter. The grounding gate has the final
 word: a fact from nowhere fails the letter.
-With the cover letter check on (TL-8, Settings, with Jev on) the caller passes a
+With the cover letter check on (Settings, with Jev on) the caller passes a
 Jev judge, which reads each sentence against the letter's sources; a sentence it
 flags goes to the same repair call as the gate's findings.
 Template is self-contained (ported from Resume_Tailor) so there's no file dep.
@@ -151,7 +151,7 @@ def _strip_trailing_signoff(body: str) -> str:
 
 
 # A letter reply is the letter and nothing else, but a model can still wrap it in a
-# note about its own task. On 2026-09-28 a letter opened with one ("Using
+# note about its own task. One real reply opened with such a note ("Using
 # avoid-ai-writing's own review output already provided, I'll finalize the repaired
 # body as-is..."). drop_task_notes removes that kind of text before the letter uses
 # a reply. Markdown goes wherever it sits, since the letter is plain prose: fence
@@ -255,9 +255,8 @@ def tone_directive(tone: str) -> str:
 def _with_ai_writing_rules(system: str) -> str:
     """Append the vendored avoid-AI-writing rules, always and strictly last.
 
-    Every letter prompt (generation, humanizer, both repairs) carries them since
-    cycle 15. The Settings toggle no longer touches the prompts; it decides
-    only whether aiwriting.violations joins the deterministic gate below."""
+    Every letter prompt (generation, humanizer, both repairs) carries them. The
+    Settings toggle leaves the prompts alone; it decides only whether aiwriting.violations joins the deterministic gate below."""
     return system + "\n" + aiwriting.RULES_PROMPT
 
 
@@ -320,7 +319,8 @@ _STRUCTURAL_NOTES = {
 }
 
 
-# TL-8's section of the repair prompt, sent only when the check flagged a sentence.
+# The cover-letter claims check's section of the repair prompt, sent only when the
+# check flagged a sentence.
 LETTER_CLAIMS_NOTE = (
     "SENTENCES THAT CLAIM MORE THAN THE SOURCES STATE (a check found each one saying "
     "something about the candidate that the resume bullets and BACKGROUND notes do "
@@ -355,7 +355,7 @@ def _letter_sentences(body: str) -> List[str]:
 
 
 def _letter_sources(bullets: Dict[str, str], background: str, seed: str) -> Dict[str, Any]:
-    """What TL-8 reads a letter sentence against: what the letter may say about the
+    """What the claims check reads a letter sentence against: what the letter may say about the
     candidate. The job description and the company research stay out."""
     location = assets.load_master().get("basics", {}).get("location", "")
     return {"resume bullets": list(bullets.values()), "background": background or "",
@@ -380,7 +380,7 @@ def generate_body(jd: str, job_title: str, company: str, bullets: Dict[str, str]
     `seed` their own words on what they want next (assets.letter_seed). Both
     are optional; blank means the letter is written from the bullets alone.
 
-    `judge` (TL-8) is the run's Jev judge when the cover letter check is on. Jev
+    `judge` is the run's Jev judge when the cover letter check is on. Jev
     reads each sentence against the letter's sources (`_letter_sources`, never the
     job or the research), and a flagged sentence goes to the grounding repair call
     beside the gate's findings; the deterministic re-check still decides. None, or
@@ -468,7 +468,7 @@ Write the body now."""
                        background=background)
     body = enforce_body_style(job_title, company, body, bullets, tone=tone,
                               background=background)
-    # Deterministic grounding gate (audit P2-9, the letter arm of P1-2): every
+    # Deterministic grounding gate (the letter arm of verify's gate): every
     # distinctive token in the body must trace to the candidate's own facts (the
     # whole master, which is where the background and the seed come from), the
     # bullets, the research blurb, or the posting itself. One repair attempt for
@@ -502,9 +502,9 @@ def _repair_ungrounded_body(job_title: str, company: str, body: str,
                             bullets: Dict[str, str], bad: list, tone: str,
                             background: str = "", claims: Sequence[str] = ()) -> str:
     """One flash repair pass removing the named ungrounded tokens (same letter,
-    same paragraphs, no new facts). `claims` are the sentences TL-8 flagged; they
-    ride in a section of their own (LETTER_CLAIMS_NOTE), and with none the prompt
-    is the one this pass always sent. Best-effort: a failed call returns the body
+    same paragraphs, no new facts). `claims` are the sentences the claims check
+    flagged; they ride in a section of their own (LETTER_CLAIMS_NOTE), and with none
+    the prompt is the one this pass always sent. Best-effort: a failed call returns the body
     unchanged and the caller's re-check decides."""
     system = (
         "You repair a cover-letter body that mentions facts with NO SOURCE. Rewrite "

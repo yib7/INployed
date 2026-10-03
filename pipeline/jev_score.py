@@ -1,4 +1,4 @@
-"""Jev scoring for score_jobs.py (cycle 20: the scorer mirrors the LLM prompts).
+"""Jev scoring for score_jobs.py: the scorer mirrors the LLM prompts.
 
 Jev (TypeSafe System One) answers typed questions about a state and cannot
 write text, so the split is: Jev decides, code composes. `score_jobs.py` calls
@@ -7,17 +7,14 @@ one request about the state `{candidate, resume, job}` and composes the
 columns the LLM path writes today. `None` from either means "use the LLM path"
 for that job.
 
-Cycle 20 rebuilt stage 1 and stage 2 to ask Jev the same rubric the LLM stage
-prompts use, on Jev's own answer types (a Score for the 1-5 and the deep
-score, a Choice for the main factor). Cycle 19's narrow reads and fitted
-weights are gone. SP3 tuned the deep score's map against Gemini's own deep
-score and moved the recommendation to a code read of the composed deep
-score (`recommend`): Jev no longer picks it as a Choice. See
-`docs/superpowers/specs/2026-09-28-jev-scorer-mirror-design.md` for the
-rubric text this module copies verbatim.
+Stage 1 and stage 2 ask Jev the same rubric the LLM stage prompts use, on
+Jev's own answer types (a Score for the 1-5 and the deep score, a Choice for
+the main factor). The deep score's map is tuned against Gemini's own deep
+score, and the recommendation is a code read of the composed deep score
+(`recommend`), so Jev does not pick it.
 
 The scorer runs as its own process and on the VM, so it decides Jev use by
-itself (JS-4): `SCORE_USE_JEV` in the environment, else the dashboard's
+itself: `SCORE_USE_JEV` in the environment, else the dashboard's
 `local/config.json` beside the repo when that file exists (`jev_enabled` and
 `jev_scoring`, read the way `local/jev_switch.py` reads them), else off. The VM
 has neither, so it stays on Gemini by construction.
@@ -38,15 +35,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-# --- composition constants (cycle 20: the scorer mirrors the LLM prompts) -----------
+# --- composition constants ----------------------------------------------------------
 #
 # Stage 1 asks Jev the stage 1 rubric directly (`fit`, a five-level Score) plus a
 # `main_factor` Choice for the reason. `fit`'s value (Jev's probability-weighted
 # level, 0-4) maps to the 1-5 score by `floor(value + 0.5) + 1`; code caps then
 # apply the hard rules the rubric states (years, an advanced degree, a security
-# clearance), as cycle 19 did. The cycle 19 calibration history that used to sit
-# here (skills-fit thresholds, domain weighting) no longer applies: this module
-# no longer builds the score from those narrow reads.
+# clearance).
 YEARS_CAPS: tuple[tuple[int, int], ...] = ((5, 1), (3, 2), (1, 3))  # min_years -> score cap
 CLEARANCE_CAP = 1               # a clearance the candidate does not hold
 NOT_ELIGIBLE_CAP = 1            # an enrollment or graduation-date rule that excludes the candidate
@@ -81,7 +76,7 @@ LINE_CHARS = 90                 # a strength or gap is cut to this length
 REQ_TEXT_CHARS = 300            # a requirement line is cut to this length in its question
 PLAIN_LINE_CHARS = 250          # an unbulleted line under a requirement heading, at most
 
-# The request (SC-1): the job text is cut from its end until the request fits
+# The request: the job text is cut from its end until the request fits
 # `jev.request_fits` (which keeps its own margin under Jev's limits); a job that
 # would have to shrink below MIN_JOB_CHARS goes to the LLM path.
 MIN_JOB_CHARS = 1_000
@@ -116,7 +111,7 @@ REASON_NO_CONFIG = f"no {ENV_SWITCH} and no dashboard config beside the scorer"
 WARNED_REASONS = (REASON_KEY, REASON_SDK, REASON_MODULE)
 
 
-# --- JS-4: does this run use Jev? -------------------------------------------------
+# --- does this run use Jev? -------------------------------------------------------
 
 def _read_config(path: Path) -> dict[str, Any]:
     """The dashboard config as a dict; {} when it is unreadable or holds no JSON
@@ -158,7 +153,7 @@ def _jev_module() -> Any:
 
 def use_jev(env: Any = None) -> tuple[bool, str]:
     """(True, where the switch came from) when this run scores with Jev, else
-    (False, the reason). Order (JS-4): `SCORE_USE_JEV`, else the dashboard
+    (False, the reason). Order: `SCORE_USE_JEV`, else the dashboard
     config when it exists (`jev_enabled`, `jev_scoring`, both default on),
     else off. When the switch is on but the key, the SDK or `local/jev.py` is
     missing, one warning is printed and the answer is off: the run falls back
@@ -198,7 +193,7 @@ def make_judge() -> Any:
     """The run's judge: a `jev.Guarded` TypeSafe judge with the short retries
     `jev_switch.client` gives the tailor (`jev.QUICK_RETRY_DELAYS_S`), so an
     outage reaches the LLM path in seconds, and whose breaker opens after it so
-    the rest of the run takes that path (SC-5). The scorer builds it here: it
+    the rest of the run takes that path. The scorer builds it here: it
     reads its own switch (`use_jev`) and also runs on the VM, which has no
     `jev_switch` and no dashboard config. None, with one warning
     naming the error's class only, when it cannot be built."""
@@ -220,7 +215,7 @@ def usage() -> dict[str, Any]:
         return {"requests": 0, "input_tokens": 0, "usd": 0.0}
 
 
-# --- the state (SC-1) -----------------------------------------------------------------
+# --- the state -----------------------------------------------------------------------
 
 # The candidate context the scorer prompts carry (score_jobs.candidate_prompt_vars),
 # rendered from the four profile settings. jev_score never imports score_jobs, so
@@ -601,7 +596,7 @@ def stage1(judge: Any, job: Any, resume: str) -> dict | None:
     return {"score": score, "reason": reason}
 
 
-# --- SC-3: requirement lines -------------------------------------------------------------
+# --- requirement lines -------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class Req:
@@ -751,7 +746,7 @@ def _sections(desc: str) -> list[tuple[str, bool | None, list[str], list[str]]]:
 
 
 def requirement_lines(desc: Any, limit: int = MAX_REQUIREMENT_LINES) -> list[Req]:
-    """Up to `limit` requirement lines from a job description's markdown (SC-3).
+    """Up to `limit` requirement lines from a job description's markdown.
 
     Bullet and numbered lines under requirement or qualification headings come
     first (a heading with no bullets lends its short plain lines); when those
@@ -850,7 +845,7 @@ def stage2_questions(reqs: Sequence[Req], status: str = "finished") -> dict[str,
     """A met noul per requirement line, a must noul for each line the code gives
     no cue, and `deep_fit` (a Score on DEEP_FIT_LEVELS), asked in one request.
     `reqs` may be empty: `deep_fit` needs no requirement lines. The
-    recommendation is no longer asked of Jev as a Choice; `compose_stage2`
+    recommendation is not asked of Jev; `compose_stage2`
     reads it off the composed deep score (`recommend`). `status` is the
     candidate's status code: "undergrad" and "grad" get the in-school
     `deep_fit` wording (DEEP_FIT_INSTRUCTIONS_IN_SCHOOL, DEEP_FIT_LEVELS_IN_SCHOOL);

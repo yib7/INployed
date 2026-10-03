@@ -1006,4 +1006,15 @@ flowchart LR
   and resume, the difficulty check, the profile lock and the `apply.md` parser.
 - `tests/test_jev_prune.py`, `tests/test_claude_cli_fallback.py`: the replay-cache prune and its
   refusals, and the Opus 5.5 fallback on an old CLI.
+- `tests/test_hermetic_network.py`: `tests/conftest.py` refuses every connection off the
+  machine (loopback stays open for the fixture servers and Chromium; a Jev recording turns
+  the guard off) and leaves no cloud credentials in reach (no tailor Gemini key, an empty
+  gcloud config dir, a credentials file name that does not exist).
+- `scripts/replay_check.py` (`tests/test_replay_check.py`): the release gate over the Jev
+  replay cache. The default suite and CI run the runner tests with the fake judge, so
+  `python scripts/replay_check.py` runs `RUNNER_TESTS` once, serially, with
+  `AUTO_APPLY_TEST_JEV=replay` over a temp copy of `cache.json`, and exits 1 on any cache
+  miss, divergence from the fake or failed test. It never records and never spends: the
+  record, capture, prune and dry-run switches and the judge's key are dropped from its child.
+  Run it before tagging a release; a miss names the tests to re-record.
 - `tests/smoke_qt.py`: Qt dashboard smoke (run directly with `QT_QPA_PLATFORM=offscreen`, not under pytest).

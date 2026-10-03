@@ -120,6 +120,7 @@ import apply_verify  # noqa: E402
 import ats_accounts  # noqa: E402
 import jev  # noqa: E402
 import jev_switch  # noqa: E402
+import jsonutil  # noqa: E402
 import profile_lock  # noqa: E402
 from apply_judge import FillPlan, VerifyResult  # noqa: E402
 
@@ -349,9 +350,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "auto_apply_jev_mode": "typesafe",
     "auto_apply_batch_cap": 10,
     "auto_apply_generate": True,
-    "auto_apply_pause_minutes": 10,     # the pause's wait for the user (cycle 19)
-    "auto_apply_check_parallel": 10,    # difficulty checks at once (cycle 22, assess_pool)
+    "auto_apply_pause_minutes": 10,     # the pause's wait for the user
+    "auto_apply_check_parallel": 10,    # difficulty checks at once (assess_pool)
 }
+SUBMIT_KEY = "auto_apply_submit"
+# Set by `guard_submit` when the submit switch could not be trusted: the
+# sentence the drain logs and writes at the top of its report.
+PARK_MODE_KEY = "auto_apply_park_mode_why"
 _ACTED = ("fill", "select", "upload")     # the actions that put a value on the page
 _PARK_STATES = {
     "captcha_or_bot_check": "captcha or bot check on the page",
@@ -504,16 +509,47 @@ def default_profile_dir() -> Path:
     return appdata / "linkedin_watcher" / "browser_profile"
 
 
+def submit_on(settings: Mapping[str, Any]) -> bool:
+    """Does the run send applications? Only a stored `auto_apply_submit` that
+    is the boolean True says yes: a string ("false", "true"), a number, null
+    or a missing key all park at the submit."""
+    return settings.get(SUBMIT_KEY) is True
+
+
+def guard_submit(cfg: dict[str, Any], problem: str = "") -> dict[str, Any]:
+    """`cfg` with the submit switch failing closed: when the config file
+    could not be read (`problem`, `settings.read_problem`) or its
+    `auto_apply_submit` is not a boolean, the switch is False and
+    `PARK_MODE_KEY` says why, for the log and the drain report. A switch
+    the user turned off stays off with no note."""
+    value = cfg.get(SUBMIT_KEY)
+    if problem:
+        why = f"{problem}, so the submit switch could not be read"
+    elif not isinstance(value, bool):
+        why = f"{SUBMIT_KEY} holds {type(value).__name__} {_cap(repr(value), 40)}, not true or false"
+    else:
+        return cfg
+    cfg[SUBMIT_KEY] = False
+    cfg[PARK_MODE_KEY] = f"Park mode: {why}. Nothing is submitted; fix it in Settings."
+    return cfg
+
+
 def load_settings() -> dict[str, Any]:
     """The auto-apply keys from the dashboard's config (`settings.load`), with
-    the defaults for anything unset or unreadable."""
+    the defaults for anything unset. A config file that exists and cannot be
+    read, or a settings module that fails, keeps the other defaults and turns
+    the submit switch off (`guard_submit`): a user who switched submitting
+    off and then broke the file never gets an application sent."""
     try:
         import settings
+        problem = settings.read_problem("config")
         stored = settings.load()
     except Exception as e:      # noqa: BLE001  (a bad config file is not a reason to stop)
-        log.warning("settings unreadable (%s); using defaults", e)
-        stored = {}
-    return {k: stored.get(k, d) for k, d in DEFAULT_SETTINGS.items()}
+        log.warning("settings unreadable (%s); using defaults in park mode", type(e).__name__)
+        stored, problem = {}, f"the settings could not be loaded ({type(e).__name__})"
+    if problem:
+        log.warning("config unreadable: park mode (%s)", problem)
+    return guard_submit({k: stored.get(k, d) for k, d in DEFAULT_SETTINGS.items()}, problem)
 
 
 # --- hooks SP5 / SP6 implement -----------------------------------------------------
@@ -1276,9 +1312,11 @@ class _Accounts:
         try:
             went = self._signup_link(page, digest, host)
             if went is None:
-                went = self._signup_button(page, digest, host)
-        except (_Parked, _AsForm, jev.JudgeOutage):
+                went = self._signup_button(page, digest)
+        except (_Parked, _AsForm, jev.JudgeOutage, jev.JevUnavailable):
             raise
+        except jev.RequestRejected as e:
+            raise self._judge_refused("accounts.login", e) from None
         except Exception as e:  # noqa: BLE001  (account details stay out of errors)
             self._failed("accounts.login", e)
             return False
@@ -1362,13 +1400,13 @@ class _Accounts:
         return bool(result.changed)
 
     def _click(self, page, digest, n: int) -> apply_fill.ClickResult:
-        """An account step's click (ACC-09), through the live click guard:
-        its wait is the loop's click budget (at least the five seconds an
-        action gets); a quiet click that set a request going (a slow
-        sign-up) is waited on `STEP_SETTLE_S` more, never made again; a
-        loading indicator after it is waited on (`_wait_while_busy`)."""
-        timeout = max(1.0, min(max(5.0, CLICK_TIMEOUT_S),
-                               self.run.deadline - self.run.r.clock()))
+        """An account step's click, through the live click guard: its wait
+        is the loop's click budget (`CLICK_TIMEOUT_S`), cut to the time the
+        job has left and never under one second; a quiet click that set a
+        request going (a slow sign-up) is waited on `STEP_SETTLE_S` more,
+        never made again; a loading indicator after it is waited on
+        (`_wait_while_busy`)."""
+        timeout = max(1.0, min(CLICK_TIMEOUT_S, self.run.deadline - self.run.r.clock()))
         text = next((b.text for b in digest.buttons if b.n == n), "")
         result = apply_fill.click(page, digest, n, timeout_s=timeout,
                                   check=self.run._live_check("advance", account=True))
@@ -1394,6 +1432,14 @@ class _Accounts:
             self.run._wait_while_busy(text)
         return result
 
+    def _judge_refused(self, step: str, e: BaseException) -> _Parked:
+        """The judge refused the account screen's request whatever the moment
+        (`jev.RequestRejected`, a choice with too many options): the job
+        parks with that reason, never as a login wall."""
+        self._failed(step, e)
+        return _Parked("needs_human", f"the judge refused to read the account screen "
+                                      f"({type(e).__name__} at {step})", LOGIN_NOTE)
+
     def _failed(self, step: str, e: BaseException) -> None:
         """An account step that raised (ACC-10): its step and the exception's
         type in the trace and in `last_error`, which the park's reason
@@ -1401,7 +1447,7 @@ class _Accounts:
         self.last_error = f"{type(e).__name__} at {step}"
         self.run._trace("error", step=step, error=type(e).__name__)
 
-    def _signup_button(self, page, digest, host: str) -> bool | None:
+    def _signup_button(self, page, digest) -> bool | None:
         """ACC-01: a sign-in screen's one create-account BUTTON (Workday's
         `createAccountLink`, SuccessFactors, Oracle), never one in the
         site's header, a disabled one, a sign-up with another site, or one
@@ -1481,7 +1527,8 @@ class _Accounts:
         come next."""
         # Expose account-creation links as buttons to the same role judge.
         links = page.get_by_role("link").filter(has_text=re.compile(r"create.*account|sign up|register", re.I))
-        found: list[tuple[str, str, bool]] = []     # (text, target, in the site's chrome)
+        # (text, target, in the site's chrome, the link's index)
+        found: list[tuple[str, str, bool, int]] = []
         for i in range(links.count()):
             link = links.nth(i)
             text = " ".join((link.inner_text(timeout=apply_fill.ACTION_TIMEOUT_MS) or "").split())
@@ -1489,7 +1536,8 @@ class _Accounts:
             if not href or _NOT_AN_ACCOUNT.search(text) or _THIRD_PARTY.search(text) \
                     or apply_judge.DECLINE_WORDS.search(text):
                 continue
-            found.append((text, urljoin(page.url, href), bool(link.evaluate(_LINK_CHROME_JS))))
+            found.append((text, urljoin(page.url, href), bool(link.evaluate(_LINK_CHROME_JS)),
+                          i))
         found = [f for f in found if not f[2]] or found
         if not found:
             return None
@@ -1497,13 +1545,18 @@ class _Accounts:
         # offer; two different destinations are a choice nobody made. The
         # hrefs are resolved against the page first, so an absolute link
         # and a relative one to the same target count once.
-        targets = {target for _, target, _ in found}
+        targets = {f[1] for f in found}
         if len(targets) != 1:
             self.run._decide("signup_link", f"the sign-in page's create-account links lead to "
                                             f"{len(targets)} pages; none is followed")
             return None
         target = targets.pop()
-        self.run._check_host(target)
+        # "#", "#signup" or "javascript:void(0)": the page's own script opens
+        # the sign-up, so the link is clicked through the live click guard
+        # where a real address is loaded
+        scripted = _scripted_link(target, str(page.url))
+        if not scripted:
+            self.run._check_host(target)
         link_digest = apply_form.FormDigest(
             url_host=host, title=digest.title, text=digest.text,
             buttons=[apply_form.Button(0, (0, "a"), found[0][0], "")])
@@ -1515,7 +1568,11 @@ class _Accounts:
                          target=target, advance=advance_conf)
         if advance_conf < apply_judge.BUTTON_ADVANCE_MIN_CONF:
             return None
-        page.goto(target, timeout=self._nav_timeout())
+        if scripted:
+            if not self._click_link(page, links.nth(found[0][3]), found[0][0]):
+                return False
+        else:
+            page.goto(target, timeout=self._nav_timeout())
         self.run._check_host(page.url)
         # the sign-up page renders like any other: it is read once it
         # holds still (NAV-03)
@@ -1554,6 +1611,26 @@ class _Accounts:
                                                 f"link led to {_cap(page.url, 120)}: "
                                                 f"{self.run._account_evidence(state, fresh)})")
         return True
+
+    def _click_link(self, page, link, text: str) -> bool:
+        """A create-account link whose address the page's script handles
+        (`_scripted_link`), clicked through the account step's guarded
+        click (`_click`): True when the page changed. A click the live
+        check refused parks; one that changed nothing is False."""
+        link.evaluate(_MARK_LINK_JS)
+        one = apply_form.FormDigest(url_host=_host(page.url), title="", text="",
+                                    buttons=[apply_form.Button(0, (0, _MARKED_LINK), text,
+                                                               "link")])
+        rec = self.run.pages[-1] if self.run.pages else None
+        if rec is not None:
+            rec["clicked"].append(f"{text} (to the sign-up)")
+        self.run._last_click = (text, "advance")
+        result = self._click(page, one, 0)
+        if result.refused:
+            raise _Parked("needs_human", f"the account step's link ({_cap(text, 60)}) changed "
+                                         f"before the click: {result.refused}; nothing was "
+                                         f"clicked", LOGIN_NOTE)
+        return bool(result.clicked and result.changed)
 
     def signup(self, page, digest, host: str) -> bool:
         self.last_error = ""
@@ -1615,7 +1692,7 @@ class _Accounts:
             self.exists.add(site)
             self.run._decide("account_exists", f"the sign-up says {exists!r}; the sign-in is "
                                                "the step")
-            return self._to_sign_in(page, digest, host, exists)
+            return self._to_sign_in(page, digest, host, _page_words(exists, 120))
         groups = account_forms(page, digest)
         if groups:
             # ADV-08: a sign-in and a sign-up side by side: the sign-in when
@@ -1758,34 +1835,45 @@ class _Accounts:
                 # so the note for the human names the page before the click
                 before = f"{page.url} | {page.title()}"
                 result = self._click(page, digest, advance[0])
+                if result.refused:
+                    text = next((b.text for b in digest.buttons if b.n == advance[0]), "")
+                    raise _Parked("needs_human", f"the account step's button ({_cap(text, 60)}) "
+                                                 f"changed before the click: {result.refused}; "
+                                                 f"nothing was clicked", LOGIN_NOTE)
+                if signup and passwords and result.clicked:
+                    # the click landed, so the account may already exist whatever
+                    # the page did next; a ledger entry for an account that was
+                    # never created costs one failed login, a missing one costs a
+                    # second signup with the same address
+                    self.run._record_account(host, email)
+                challenge = (not guard.blocked and not result.changed
+                             and self.run._human_check_showing())
+                if challenge:
+                    # the credentials are still on the page while the person
+                    # solves the challenge, and the page may post them once it
+                    # clears: the guard stays on through the wait
+                    try:
+                        self.run._wait_for_human_check("a CAPTCHA challenge appeared at sign-in")
+                    except _Parked:
+                        if not guard.blocked:
+                            raise
             finally:
                 guard.stop()
-            if result.refused:
-                text = next((b.text for b in digest.buttons if b.n == advance[0]), "")
-                raise _Parked("needs_human", f"the account step's button ({_cap(text, 60)}) "
-                                             f"changed before the click: {result.refused}; "
-                                             f"nothing was clicked", LOGIN_NOTE)
-            if signup and passwords and result.clicked:
-                # the click landed, so the account may already exist whatever
-                # the page did next; a ledger entry for an account that was
-                # never created costs one failed login, a missing one costs a
-                # second signup with the same address
-                self.run._record_account(host, email)
             if guard.blocked:
                 raise _Parked("needs_human", f"left the allowed sites: {guard.blocked[0]}", before)
             if emails:
                 self.email_sites.add(site)
-            if not result.changed:
-                if not self.run._human_check_showing():
-                    return False
-                self.run._wait_for_human_check("a CAPTCHA challenge appeared at sign-in")
+            if not result.changed and not challenge:
+                return False
             self.run._check_host(page.url)
             # the loop judges whatever comes next: the password screen, the
             # form, a code gate, or the same screen with an error (which the
             # per-site step cap ends)
             return True
-        except (_Parked, _AsForm, jev.JudgeOutage):
+        except (_Parked, _AsForm, jev.JudgeOutage, jev.JevUnavailable):
             raise
+        except jev.RequestRejected as e:
+            raise self._judge_refused("accounts.fill", e) from None
         except Exception as e:  # noqa: BLE001  (Playwright may include filled values)
             self._failed("accounts.fill", e)
             return False
@@ -1946,17 +2034,75 @@ def _host(url_or_netloc: str) -> str:
     return raw.split("/")[0].rsplit("@", 1)[-1].split(":")[0].lower()
 
 
+# the one create-account link `_Accounts._click_link` clicks, marked for its
+# locator; the mark moves to the link it is set on
+_MARKED_LINK = "[data-apply-signup-link='1']"
+_MARK_LINK_JS = """el => {
+  document.querySelectorAll('[data-apply-signup-link]')
+    .forEach((n) => n.removeAttribute('data-apply-signup-link'));
+  el.setAttribute('data-apply-signup-link', '1');
+}"""
+
+
+def _scripted_link(target: str, page_url: str) -> bool:
+    """Is a link's resolved `target` no address of its own: a scheme other
+    than http(s) (`javascript:void(0)`), or the page itself with only a
+    fragment added ("#", "#signup")? Such a link is the page's script's to
+    follow."""
+    parts = urlsplit(str(target or ""))
+    if parts.scheme.lower() not in ("http", "https"):
+        return True
+    here = urlsplit(str(page_url or ""))
+    return (bool(parts.fragment) or str(target).endswith("#")) and \
+        parts._replace(fragment="") == here._replace(fragment="")
+
+
+def _known_sites() -> frozenset[str]:
+    """Every site the module names in a list (ATS, tracker, aggregator,
+    bot-check and analytics hosts): `_site` reads a host under one of them
+    as that site."""
+    global _KNOWN_SITES
+    if _KNOWN_SITES is None:
+        _KNOWN_SITES = (ATS_SITES | TRACKER_SITES | AGGREGATOR_SITES | CAPTCHA_SITES
+                        | _TRACKING_SITES)
+    return _KNOWN_SITES
+
+
+_KNOWN_SITES: frozenset[str] | None = None
+
+
 def _site(url_or_host: str) -> str:
-    """The registrable domain of a URL or host, near enough without a public
-    suffix list: the last two labels, three under a two-letter country code
-    whose second level is generic (`jobs.example.co.uk` -> `example.co.uk`)."""
+    """The site a URL or host belongs to, for every same-site rule (the
+    master password, the allowed hosts, a send's destination), read with no
+    public suffix list and so leaning to the narrower answer:
+    - a host under a site the module lists (`_known_sites`) is that site
+      (`jobs.lever.co` -> `lever.co`);
+    - a host on shared hosting (`_SHARED_HOSTING`) is its own name there
+      (`careers.acme.github.io` -> `acme.github.io`), since every name has
+      its own owner; on Amazon's, whose names nest (`bucket.s3.amazonaws.com`),
+      the whole host;
+    - under a two-letter country code, three labels when the second level
+      is generic (`jobs.example.co.uk` -> `example.co.uk`), else the whole
+      host: `ltd.uk`, `gc.ca`, `gouv.fr` or `tx.us` are suffixes that
+      hold many owners, and a host there is never grouped with another;
+    - else the last two labels."""
     host = _host(url_or_host)
     if not host or host.replace(".", "").isdigit() or "." not in host:
         return host             # an IP address, `localhost`
     labels = [p for p in host.split(".") if p]
-    if len(labels) >= 3 and (len(labels[-1]) == 2 and labels[-2] in _SECOND_LEVEL
-                             or ".".join(labels[-2:]) in _SHARED_HOSTING):
+    known = _known_sites()
+    for i in range(len(labels) - 1):
+        tail = ".".join(labels[i:])
+        if tail in known:
+            return tail
+    if len(labels) >= 3 and ".".join(labels[-2:]) in _SHARED_HOSTING:
+        if ".".join(labels[-2:]) == "amazonaws.com":
+            return ".".join(labels)
         return ".".join(labels[-3:])
+    if len(labels) >= 3 and len(labels[-1]) == 2:
+        if labels[-2] in _SECOND_LEVEL:
+            return ".".join(labels[-3:])
+        return ".".join(labels)
     return ".".join(labels[-2:])
 
 
@@ -2943,31 +3089,51 @@ def step_only(text: str) -> bool:
             and not SUBMIT_WORDS.search(t) and not FINAL_WORDS.search(t))
 
 
+# the "send" of a sign-in's code or link ("Send code", "Send me a link"),
+# the part of `apply_judge.SIGN_IN_WORDS` that holds a submit word
+_SEND_CODE = re.compile(r"\bsend\s+(me\s+)?(an?\s+|the\s+)?(verification\s+|sign[\s-]*in\s+)?"
+                        r"(code|link)\b", re.I)
+
+
+def _sign_in_only(text: str) -> bool:
+    """Does a submit-worded control name a sign-in and nothing more? It
+    holds a sign-in's words (`apply_judge.SIGN_IN_WORDS`) and its only
+    submit words are "apply" ("Sign in to apply") or the "send" of a code
+    or link ("Send code"). "Log in and submit application" and "Sign in and
+    finish" still send."""
+    t = text or ""
+    if not apply_judge.SIGN_IN_WORDS.search(t):
+        return False
+    words = {w.lower() for w in SUBMIT_WORDS.findall(_SEND_CODE.sub(" ", t))}
+    return not (words - {"apply"})
+
+
 def _sends_application(digest: apply_form.FormDigest, n: int, *,
                        account_only: bool = True) -> bool:
     """A button the account step may not click: its text reads as sending the
-    application (`_submit_shaped`), unless it names a sign-in on a screen of
-    the address and the password alone (`account_only`: "Sign in to apply"
-    signs in, "Send code" mails one), or as a last step (`_final_shaped`)
-    unless it names the account ("Complete registration"). "Create account
-    and apply" counts as a send: the sign-up may carry the application. Only
-    the submit gate sends an application."""
+    application (`_submit_shaped`), unless it names a sign-in and nothing
+    more on a screen of the address and the password alone (`account_only`,
+    `_sign_in_only`: "Sign in to apply" signs in, "Send code" mails one), or
+    as a last step (`_final_shaped`) unless it names the account ("Complete
+    registration"). "Create account and apply" counts as a send: the sign-up
+    may carry the application. Only the submit gate sends an application."""
     button = next((b for b in digest.buttons if b.n == n), None)
     text = button.text if button else ""
     if _submit_shaped(digest, n):
-        return not (account_only and apply_judge.SIGN_IN_WORDS.search(text))
+        return not (account_only and _sign_in_only(text))
     return _final_shaped(digest, n) and not _ACCOUNT_STEP_WORDS.search(text)
 
 
 def _send_worded(text: str, *, entry: bool = False, account: bool = False) -> bool:
     """A control's text reads as sending the application or as a last step:
     a submit word ("apply" too, unless the click is an Apply entry), unless
-    an account step's text names a sign-in; or a final word, unless it names
-    the account ("Complete registration")."""
+    an account step's text names a sign-in and nothing more
+    (`_sign_in_only`); or a final word, unless it names the account
+    ("Complete registration")."""
     words = {w.lower() for w in SUBMIT_WORDS.findall(text or "")}
     if entry:
         words.discard("apply")
-    if words and not (account and apply_judge.SIGN_IN_WORDS.search(text or "")):
+    if words and not (account and _sign_in_only(text)):
         return True
     return bool(FINAL_WORDS.search(text or "")) and not _ACCOUNT_STEP_WORDS.search(text or "")
 
@@ -3017,8 +3183,9 @@ def linkedin_step(url: str, decision: apply_linkedin.Decision | None) -> str | N
     return f"park: {apply_linkedin.NO_APPLY_REASON}"
 
 
-def linkedin_view(page, *, wait_s: float, job_title: str = "",
-                  company: str = "") -> tuple[apply_linkedin.View, int]:
+def linkedin_view(page, *, wait_s: float, job_title: str = "", company: str = "",
+                  clock: Callable[[], float] = time.monotonic,
+                  deadline: float | None = None) -> tuple[apply_linkedin.View, int]:
     """The LinkedIn page's `View`, read again every `LINKEDIN_POLL_MS` for up
     to `wait_s` until it decides something waiting cannot change (a top card
     rendered late, 2.5 s after `load` in the fixture); (the view, the ms
@@ -3026,8 +3193,12 @@ def linkedin_view(page, *, wait_s: float, job_title: str = "",
     (`Decision.tentative`), count only once they hold after
     `LINKEDIN_EASY_RECHECK_S` and a settle: a list's or a filter's control
     can show before the job's own top card renders. `job_title` and
-    `company` are the queued job's (`apply_linkedin.read`)."""
-    start = time.monotonic()
+    `company` are the queued job's (`apply_linkedin.read`). With a
+    `deadline` on `clock` (the job's), the polling ends with the job's
+    time; an unsure read is still held once more."""
+    start = clock()
+    if deadline is not None:
+        wait_s = min(wait_s, deadline - start)
 
     def _read() -> apply_linkedin.View:
         return apply_linkedin.read(page, job_title=job_title, company=company)
@@ -3039,7 +3210,7 @@ def linkedin_view(page, *, wait_s: float, job_title: str = "",
 
     view = _read()
     checked = wait_s <= 0
-    while time.monotonic() - start < wait_s:
+    while clock() - start < wait_s:
         d = apply_linkedin.decide(view)
         unsure = d.kind == "easy_apply" or d.tentative
         if (d.final or d.tentative) and (checked or not unsure):
@@ -3053,7 +3224,7 @@ def linkedin_view(page, *, wait_s: float, job_title: str = "",
     d = apply_linkedin.decide(view)
     if not checked and (d.kind == "easy_apply" or d.tentative):
         view = _recheck()       # the wait ran out on a read that is held once more
-    return view, int((time.monotonic() - start) * 1000)
+    return view, int((clock() - start) * 1000)
 
 
 def remaps_to_form(state: str, digest: apply_form.FormDigest, url: str) -> bool:
@@ -3130,41 +3301,50 @@ def _runner_up(answers: Mapping[str, Any], exclude: str) -> tuple[str, float]:
 
 
 def confirmation_step(digest: apply_form.FormDigest, answers: Mapping[str, Any], conf: float, *,
-                      submit_clicked: bool, code_sent: bool = False) -> tuple[str, str, float]:
+                      submit_clicked: bool, code_sent: bool = False,
+                      before: str | None = None) -> tuple[str, str, float]:
     """What a page read as a confirmation means: ("submitted", the reason,
     conf), ("go_on", the read to act on, its probability) or ("park", the
     reason, conf).
 
     After the submit gate's click (`submit_clicked`; the code step never
-    sets it, SP8b review I1): received words on the page
-    (`CONFIRMATION_WORDS`), or the read at `CONFIRMATION_MIN_CONF` on a page
-    with no form field and no send button, is the confirmation; else the
-    person checks. After a code step's click alone (`code_sent`: a
-    sign-up's email "Verify" is one, whatever role it was judged in) only
-    received words make it the confirmation; else the person checks.
-    Before any submit click a
-    confirmation is never the run's own send: a page with a form field, a
-    submit button, a Next, a Continue or an accept and no received words is
-    a form or a review misread, and goes on as its next read when the loop
-    acts on that one (`_UNSURE_ACTS`); any other parks (the job may have
-    been applied to before)."""
+    sets it): received words on the page (`CONFIRMATION_WORDS`), or the
+    read at `CONFIRMATION_MIN_CONF` on a page with no form field and no send
+    button, is the confirmation; else the person checks. On a page that
+    still shows a form field or a send button, the received words count
+    only when they are new since `before` (the page's text just before the
+    click, `new_confirmation`): a form that said "we received your
+    application" before the click and still stands may have refused it.
+    After a code step's click alone (`code_sent`: a sign-up's email "Verify"
+    is one, whatever role it was judged in) only received words on a page
+    with no form make it the confirmation; else the person checks. Before
+    any submit click a confirmation is never the run's own send: a page
+    with a form field, a submit button, a Next, a Continue or an accept and
+    no received words is a form or a review misread, and goes on as its
+    next read when the loop acts on that one (`_UNSURE_ACTS`); any other
+    parks (the job may have been applied to before)."""
     words = confirmation_words(digest.text)
     form = bool(digest.fields) or any(apply_judge.SEND_WORDS.search(b.text) for b in digest.buttons)
-    # before any submit, a Next or a Continue asks for more too (SP4: a
-    # wizard's summary step read as a confirmation)
+    # before any submit, a Next or a Continue asks for more too (a wizard's
+    # summary step read as a confirmation)
     step_button = any(apply_judge.ADVANCE_WORDS.search(b.text) for b in digest.buttons)
     if submit_clicked:
+        if form and before is not None:
+            words = words - confirmation_words(before)
         if words or (conf >= apply_judge.CONFIRMATION_MIN_CONF and not form):
             return "submitted", "confirmation page", conf
         return "park", (f"{CHECK_SENT_REASON}: the page after the submit click reads as "
                         f"confirmation ({conf:.2f}) with a form or a send button and no "
-                        f"received words"), conf
+                        f"received words it did not show before the click"), conf
     if code_sent and not form:
         if words:
             return "submitted", "confirmation page after the emailed code", conf
         return "park", (f"{CHECK_SENT_REASON}: after the emailed code the page reads as "
                         f"confirmation ({conf:.2f}) with no received words (an email "
                         f"verification thanks the same way)"), conf
+    if code_sent and words:
+        return "park", (f"{CHECK_SENT_REASON}: after the emailed code the page shows received "
+                        f"words with a form or a send button still on it ({conf:.2f})"), conf
     if (form or step_button) and not words:
         second, p = _runner_up(answers, "confirmation")
         if second in _UNSURE_ACTS and not (second == "code_gate"
@@ -3438,7 +3618,9 @@ def loop_step(url: str, digest: apply_form.FormDigest, plan: FillPlan, state: st
     was applied to (`apply_judge.already_applied`), the remap of a sign-in
     read of form boxes, a confirmation read before any submit
     (`confirmation_step`, over the judge's `answers`), a form step on
-    LinkedIn, the unsure-read rule (`unsure_step`, over the page's `facts`),
+    LinkedIn, a sign-in with another site's account only (`sso_only`), the
+    unsure-read rule (`unsure_step`, over the page's `facts`), a page that
+    says a verification link was emailed (the link step),
     the posting's entry (with the live page's `apart` and `unclassified`,
     `posting_context`), a form step's Apply entry (`form_entry`, the shared
     `form_entry_choice`), the form's route to an advance or the submit gate,
@@ -3458,7 +3640,7 @@ def loop_step(url: str, digest: apply_form.FormDigest, plan: FillPlan, state: st
     if remaps_to_form(state, digest, url):
         lead = f"read as {state} with no account boxes: it is the form; "
         state = "application_form"
-    if state == "confirmation":
+    if state == "confirmation" and not facts.link_sent:
         step, detail, then = confirmation_step(digest, answers or {}, conf, submit_clicked=False)
         if step == "park" and unsure:
             pass                # the unsure rule below decides, as the loop's does
@@ -3471,6 +3653,11 @@ def loop_step(url: str, digest: apply_form.FormDigest, plan: FillPlan, state: st
     on_linkedin = apply_linkedin.is_linkedin(url)
     if on_linkedin and state in _LINKEDIN_FORM_STATES:
         return lead + f"park: {EASY_APPLY_REASON}"
+    if state != "confirmation" and not on_linkedin:
+        sites = sso_only(digest)
+        if sites:
+            return lead + (f"park: {SSO_REASON} ({', '.join(sites)}); the run never signs "
+                           "in with another site")
     if unsure:
         step, how = unsure_step(state, digest, facts)
         if step is None:
@@ -3490,6 +3677,10 @@ def loop_step(url: str, digest: apply_form.FormDigest, plan: FillPlan, state: st
             state = settled
             if on_linkedin and state in _LINKEDIN_FORM_STATES:
                 return lead + f"park: {EASY_APPLY_REASON}"
+    if state in _LINK_REMAPS and facts.link_sent:
+        lead += (f"read as {state}; the page says {facts.link_sent!r} and has no box to "
+                 "fill: an account check by an emailed link; ")
+        state = "code_gate"
     if state == "job_posting" and on_linkedin:
         if digest.fields and posting_entry_choice(digest, plan)[0] is None:
             return lead + f"park: {EASY_APPLY_REASON}"
@@ -3998,23 +4189,41 @@ def _record_head(path: Path) -> tuple[str, str, str]:
     return found["Status"], found["Reason"], found["Written"]
 
 
+def _write_text_atomic(path: Path, text: str) -> None:
+    """`text` into `path` through a temp file beside it and a replace, so
+    a run that dies mid-write leaves the earlier file whole."""
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        jsonutil.replace_with_retry(tmp, path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
 def _keep_untraced_record(folder: Path) -> None:
     """A record about to be replaced that no attempt folder holds (one
-    written before the trace, or by a run whose trace could not start) is
-    kept as `apply_trace/earlier-<k>.md`."""
+    written before the trace, by a run whose trace could not start, or one
+    whose copy into its attempt folder failed) is kept as
+    `apply_trace/earlier-<k>.md`."""
     path = folder / RECORD_NAME
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return
-    if any(line.startswith(_TRACE_LINE) for line in text.splitlines()):
+    traced = next((line for line in text.splitlines() if line.startswith(_TRACE_LINE)), "")
+    link = _TRACE_LINK.search(traced)
+    if link and (folder / link.group(1).rstrip("/") / RECORD_NAME).is_file():
         return      # its attempt folder has its copy
     keep = folder / apply_trace.TRACE_DIR
     try:
         keep.mkdir(parents=True, exist_ok=True)
         k = 1 + max((int(m.group(1)) for p in keep.glob("earlier-*.md")
                      if (m := re.match(r"earlier-(\d+)\.md$", p.name))), default=0)
-        (keep / f"earlier-{k}.md").write_text(text, encoding="utf-8")
+        _write_text_atomic(keep / f"earlier-{k}.md", text)
     except OSError as e:
         log.warning("the earlier record in %s was not kept: %s", folder, type(e).__name__)
 
@@ -4150,7 +4359,7 @@ def write_record(folder: Path, entry: dict, outcome_status: str, reason: str,
         lines += ["## Earlier attempts", *earlier, ""]
     text = "\n".join(lines)
     path = folder / RECORD_NAME
-    path.write_text(text, encoding="utf-8")
+    _write_text_atomic(path, text)
     if trace_dir:
         # the copy sits in the attempt folder: its links point from there
         copy = _TRACE_LINK.sub(lambda m: f"]({_link_from(m.group(1), trace_dir)})", text)
@@ -4207,9 +4416,10 @@ def can_submit(plan: FillPlan, verification: list[VerifyResult],
     it sends the finished application), `step_button` (in submit mode, a
     submit whose words are only a step's: `step_only`), `invalid` (the
     submit's form holds a control that would not validate, or one marked
-    `aria-invalid`) and `required_empty` (a required control the extractor
-    leaves out is empty); each fails the gate with its evidence."""
-    if not settings.get("auto_apply_submit", True):
+    `aria-invalid`), `required_empty` (a required control the extractor
+    leaves out is empty) and `unreadable` (the page could not answer those
+    two checks); each fails the gate with its evidence."""
+    if not submit_on(settings):
         return False, "auto_apply_submit is off"
     if plan.park_reason:
         return False, plan.park_reason
@@ -4234,6 +4444,8 @@ def can_submit(plan: FillPlan, verification: list[VerifyResult],
         return False, (f"submit button confidence {submit[1]:.2f} below "
                        f"{apply_judge.BUTTON_SUBMIT_MIN_CONF:.2f}")
     live = live or {}
+    if live.get("unreadable"):
+        return False, str(live["unreadable"])
     if live.get("no_application"):
         return False, f"no application on the page ({live['no_application']})"
     if live.get("apply_button"):
@@ -4331,7 +4543,7 @@ class Runner:
         self.jev = jev
         self.queue_path = Path(queue_path) if queue_path else None
         self.profile_dir = Path(profile_dir) if profile_dir else default_profile_dir()
-        self.settings = {**DEFAULT_SETTINGS, **(settings or {})}
+        self.settings = guard_submit({**DEFAULT_SETTINGS, **(settings or {})})
         self.clock = clock
         default = NotConfigured()
         self.accounts = accounts
@@ -4343,6 +4555,9 @@ class Runner:
         self.parked_pages: list = []
         self.answers: list[dict] | None = None
         self.answers_header = ""
+        # set once a job's run begins (`_run_job`): `main`'s `one` gives a
+        # claimed job back only when its browser never opened
+        self.job_started = False
 
     @property
     def jev(self) -> jev.Guarded:
@@ -4421,6 +4636,26 @@ class Runner:
                 self.log.info(self.answers_header)
         return answers
 
+    @property
+    def park_mode_why(self) -> str:
+        """Why the run parks at every submit although nobody asked it to
+        (`guard_submit`): "" when the submit switch read as a boolean."""
+        return str(self.settings.get(PARK_MODE_KEY) or "")
+
+    def announce_park_mode(self) -> None:
+        """Say `park_mode_why` once, before anything is claimed: logged as a
+        warning, and printed when the drain reports."""
+        if not self.park_mode_why:
+            return
+        self.log.warning(self.park_mode_why)
+        if self.drain_report:
+            _say(self.park_mode_why)
+
+    def report_header(self) -> str:
+        """The lines above the drain report's table: the park-mode reason,
+        then the answers not confirmed."""
+        return "\n\n".join(t for t in (self.park_mode_why, self.answers_header) if t)
+
     # -- the drain ----------------------------------------------------------------------
 
     def drain(self, cap: int | None = None) -> list[Outcome]:
@@ -4435,8 +4670,9 @@ class Runner:
         a damaged store raises `apply_answers.AnswerStoreError` and nothing
         is claimed."""
         limit = int(cap if cap is not None else self.settings["auto_apply_batch_cap"])
-        # FL-4: the store is read before anything is claimed; a damaged one
-        # raises here and the queue stays as it was
+        self.announce_park_mode()
+        # the store is read before anything is claimed; a damaged one raises
+        # here and the queue stays as it was
         self.load_answers()
         # a new drain tries the judge again and counts its answers from 0 (R2-I1)
         self.jev.down, self.jev.refused, self.jev.answers = "", False, 0
@@ -4482,7 +4718,7 @@ class Runner:
             return
         try:
             _say(drain_table(outcomes))
-            path = write_drain_report(outcomes, self.queue_path, header=self.answers_header)
+            path = write_drain_report(outcomes, self.queue_path, header=self.report_header())
         except Exception as e:      # noqa: BLE001  (a report is never the drain's end)
             self.log.warning("the drain report was not written (%s)", type(e).__name__)
             return
@@ -4497,6 +4733,7 @@ class Runner:
         return self._with_browser(lambda ctx: self._run_job(ctx, entry))
 
     def _run_job(self, ctx, entry: dict) -> Outcome:
+        self.job_started = True
         try:
             job = _JobRun(self, ctx, entry)
         except Exception as e:      # noqa: BLE001  (RES-09: one entry never ends the drain)
@@ -4575,7 +4812,7 @@ class _JobRun:
         self._aggregator_left = False     # its company-site link was followed
         self._boards: list[str] = []      # the boards read in this job, in order
         self.last_sig: tuple | None = None
-        self.usage_before = jev.usage()
+        self.usage_before = jev.total_usage()
         self.start = runner.clock()
         # the wall-clock start: mail from before it is never the job's (ACC-07)
         self.started_at = datetime.now()
@@ -4603,13 +4840,17 @@ class _JobRun:
         # emailed code went into: every later screenshot masks them
         self._secret_boxes: list[tuple[Any, Any, Any]] = []
         self._secret_locators: set[tuple[int, str]] = set()     # the same boxes' digest locators
+        # the sensitive boxes and the person's own, masked in the screenshots
+        self._masked_boxes: list[tuple[Any, Any, Any]] = []
+        self._masked_keys: set[tuple[int, int, str]] = set()
         # decisions taken before the page they belong to is recorded (a
         # settle, a consent banner, a re-read): `_new_page_record` writes them
         self._pending: list[dict[str, Any]] = []
         self._consent_clicks = 0
         self._linkedin_clicks: dict[str, int] = {}    # a LinkedIn job id -> the handler's clicks
         self._late_watch: LateWatch | None = None     # tabs the last entry click opens late
-        self._job_pages: list = []      # the job's own tabs, in the order they opened (RES-07)
+        self._job_pages: list = []      # the job's own tabs, in the order they opened
+        self._watched: list = []        # the tabs `_watch` listens on
         # (a tab the run left for another it opened, its print then): the
         # page a closed tab's flow may go on in (RES-06)
         self._left_pages: list[tuple[Any, str, str]] = []   # (the tab, its print, its text)
@@ -4698,9 +4939,13 @@ class _JobRun:
 
     def _watch(self, page) -> None:
         """Keep `page`'s main-frame navigations (redirects included) in the
-        trace's URL chain, and `page` among the job's tabs."""
+        trace's URL chain, and `page` among the job's tabs. A page already
+        watched keeps the listeners it has."""
         if not any(page is p for p in self._job_pages):
             self._job_pages.append(page)
+        if any(page is p for p in self._watched):
+            return
+        self._watched.append(page)
         try:
             main = page.main_frame
             page.on("framenavigated",
@@ -4761,10 +5006,33 @@ class _JobRun:
         except Exception:       # noqa: BLE001  (a page double, a frame that went away)
             pass
 
+    def _mask_box(self, locator: tuple[int, str]) -> None:
+        """Note a box the screenshots mask that is no secret of the run's:
+        a sensitive question (a government ID, a birthdate, bank or card
+        details), or a box the person filled in themselves."""
+        key = (id(self.page), int(locator[0]), str(locator[1]))
+        if key in self._masked_keys:
+            return
+        try:
+            frame = apply_form.frames(self.page)[int(locator[0])]
+            self._masked_boxes.append((self.page, frame, frame.locator(str(locator[1]))))
+            self._masked_keys.add(key)
+        except Exception:       # noqa: BLE001  (a page double, a frame that went away)
+            pass
+
+    def _mask_sensitive(self, digest: apply_form.FormDigest) -> None:
+        """Every box of `digest` that asks a sensitive question
+        (`apply_judge.is_sensitive_field`), for the screenshots' masks:
+        whatever the page or the person put in it stays out of them."""
+        for f in digest.fields:
+            if apply_judge.is_sensitive_field(f.label, f.id_or_name):
+                self._mask_box(f.locator)
+
     def _secret_masks(self, page) -> list:
-        """The noted secret boxes on `page` whose frames are still there."""
+        """The noted secret and masked boxes on `page` whose frames are still
+        there."""
         out = []
-        for owner, frame, loc in self._secret_boxes:
+        for owner, frame, loc in [*self._secret_boxes, *self._masked_boxes]:
             try:
                 if owner is page and not frame.is_detached():
                     out.append(loc)
@@ -4953,6 +5221,14 @@ class _JobRun:
         if self.submit_clicked and carried:
             raise _Parked("needs_human", f"{ERROR_PAGE_REASON}: {what}; that load carried the "
                                          f"send, so it is never loaded again")
+        if not self.submit_clicked and (self._final_advance or self._code_may_send
+                                        or self._link_may_send or self._pause_sent):
+            # a last-worded step, a code or link the site may have held the
+            # application for, or a pause the person may have sent it in:
+            # the load may carry that send, so it is never made again
+            raise _Parked("needs_human", f"{CHECK_SENT_REASON}: {what} after a step that may "
+                                         f"have sent the application; it is never loaded "
+                                         f"again", CHECK_SENT_NOTE)
         if url in self._error_retried:
             raise _Parked("needs_human", f"{ERROR_PAGE_REASON}: {what} again after one retry")
         self._error_retried.add(url)
@@ -5002,17 +5278,18 @@ class _JobRun:
         """ACC-04: before the master password makes an account, the rules
         the screen states (`password_rules`) against the stored password,
         counted in `ats_accounts` (never the value here): one it misses
-        parks, nothing typed."""
+        parks, nothing typed. The park and the trace give how many rules it
+        misses, never which: those would describe the stored password."""
         rules, said = password_rules(digest)
         if not rules:
             return
         unmet = ats_accounts.unmet_rules(rules) or []
         self._decide("password_rules", f"the screen's password rules: {_cap(said, 160)}",
-                     rules=sorted(rules), unmet=unmet)
+                     rules=sorted(rules), unmet=len(unmet))
         if unmet:
-            raise _Parked("needs_human", f"{PASSWORD_RULE_REASON} on {host}: it needs "
-                                         f"{', '.join(unmet)} (the site asks: {_cap(said, 160)})",
-                          PASSWORD_RULE_NOTE)
+            raise _Parked("needs_human", f"{PASSWORD_RULE_REASON} on {host}: it misses "
+                                         f"{len(unmet)} of the rules the site states (the site "
+                                         f"asks: {_cap(said, 160)})", PASSWORD_RULE_NOTE)
 
     def _password_ok(self, host: str) -> bool:
         """May the master password be typed on `host`? Only on the application
@@ -5174,8 +5451,12 @@ class _JobRun:
             if from_board:
                 self._aggregator_left = True
         inferred = apply_queue.infer_ats(url)
-        apply_queue.update(self.job_id, path=self.r.queue_path,
-                           ats={"domain": host, "system": inferred["system"]})
+        # a queue lock held past its wait, or an entry deleted meanwhile,
+        # costs the queue its note of the site; the job goes on
+        self.r._queue_write(self.job_id, "ats update", lambda: apply_queue.update(
+            self.job_id, path=self.r.queue_path,
+            ats={"domain": host, "system": inferred["system"]}),
+            "the entry keeps its earlier site")
         ats = self.entry.get("ats") or {}
         self.entry["ats"] = {**ats, "domain": host, "system": inferred["system"]}
         self.allowed.add(host)
@@ -5261,8 +5542,7 @@ class _JobRun:
                     self._decide("easy_apply", "the queue entry is an Easy Apply job")
                     raise _Parked("needs_human", EASY_APPLY_REASON, EASY_APPLY_NOTE)
                 url = self._prepare()
-                self._trace("start", url=url, submit=bool(self.r.settings.get("auto_apply_submit",
-                                                                              True)))
+                self._trace("start", url=url, submit=submit_on(self.r.settings))
                 self._check_host(url)
                 self.page = self.ctx.new_page()
                 self._watch(self.page)
@@ -5486,7 +5766,7 @@ class _JobRun:
         if counted and apply_queue.outages(self.entry) + 1 >= OUTAGES_MAX:
             return self._finish("needs_human", f"{down}; {OUTAGES_PARKED}", OUTAGES_NOTE)
         reason = f"{down}; {KEY_REFUSED_NOTE if refused else REQUEUED_NOTE}"
-        usage = _usage_delta(self.usage_before, jev.usage())
+        usage = _usage_delta(self.usage_before, jev.total_usage())
         usage["generated"] = generated_count(self.pages)
         self._stop_late_watch()
         self._flush_decisions()
@@ -5754,7 +6034,9 @@ class _JobRun:
             if state == "confirmation" and not facts.link_sent:
                 step, detail, then = confirmation_step(
                     digest, answers, conf, submit_clicked=self.submit_clicked,
-                    code_sent=self._code_sent)
+                    code_sent=self._code_sent,
+                    before=str((self._before_submit or {}).get("text") or "")
+                    if self.submit_clicked else None)
                 if step == "park" and unsure:
                     pass                # the unsure read parks below with its own words
                 elif step == "go_on":
@@ -6067,7 +6349,8 @@ class _JobRun:
             return True
         view, waited = linkedin_view(self.page, wait_s=LINKEDIN_READY_S if kind == "job" else 0,
                                      job_title=str(self.entry.get("title") or ""),
-                                     company=str(self.entry.get("company") or ""))
+                                     company=str(self.entry.get("company") or ""),
+                                     clock=self.r.clock, deadline=self.deadline)
         d = apply_linkedin.decide(view)
         if kind == "other" and d.kind not in ("form_dialog", "signed_out"):
             self._decide_next("linkedin_handler", "a LinkedIn page other than a job page, "
@@ -6292,10 +6575,15 @@ class _JobRun:
         clock. Headless, an open challenge parks at once and a whole-page
         check gets `HUMAN_CHECK_AUTO_S` to clear itself, as does a Turnstile
         checkbox (its managed mode ticks itself). `checkbox`: an unticked
-        checkbox counts as the check (`_human_check_showing`)."""
+        checkbox counts as the check (`_human_check_showing`). A caller
+        with no `before` has just seen the challenge: one gone by now closed
+        in between, and the check is done."""
         framed = self._human_check_showing(checkbox=checkbox)
         if not framed and before is None:
-            before = self._page_marker()
+            self.last_sig = None
+            self.log.info("job %s: the check closed before the wait; going on", self.job_id)
+            apply_fill.settle(self.page, CLICK_TIMEOUT_S)
+            return
         headless = bool(self.r.settings.get("auto_apply_headless"))
         clears_itself = (checkbox and framed and not self._human_check_showing()
                          and apply_form.unsolved_checkbox(self.page) == "turnstile")
@@ -6404,6 +6692,7 @@ class _JobRun:
             self.trace.page(n, self.page.url, digest, answers or {}, state, conf,
                             dropped=self._last_dropped, timings=timings)
             self._flush_decisions()
+            self._mask_sensitive(digest)
             self.trace.screenshot(self.page, f"page-{n}",
                                   extra_mask=self._secret_masks(self.page))
         return rec
@@ -6462,7 +6751,7 @@ class _JobRun:
             raise _Parked("needs_human", f"{apply_linkedin.NO_APPLY_REASON} (read as a posting "
                                          f"at {_cap(self.page.url, 120)}; buttons: "
                                          f"{self._buttons_seen(digest)})")
-        park_mode = not self.r.settings.get("auto_apply_submit", True)
+        park_mode = not submit_on(self.r.settings)
         if self.form_filled or (park_mode and self.form_had_password):
             self.log.info("job %s: a posting read after a filled form; treating it as the "
                           "form's next page", self.job_id)
@@ -6502,7 +6791,9 @@ class _JobRun:
         checked. With no popup yet, a tab the click opens later is watched
         for until the next page is read (`_take_late_popup`)."""
         live = apply_form.live_text(loc)
-        why = live_refusal("apply_entry", text, live) if live else ""
+        # a control that cannot be read just before the click is never
+        # clicked: what it would do is not known
+        why = live_refusal("apply_entry", text, live) if live else             "its text could not be read just before the click"
         if why:
             self._refused_click("apply_entry", text, why)
         address = mailto_address(loc)
@@ -6557,11 +6848,14 @@ class _JobRun:
         source = source_url or self.page.url
         left = self.page
         watched: list = []
+
+        def _watched(tab) -> None:
+            if tab is not self.page and not any(tab is w for w in watched):
+                self.trace.nav(str(getattr(tab, "url", "")))  # its first load came before the watch
+                self._watch(tab)
+                watched.append(tab)
         for _ in range(3):
-            if popup is not self.page and not any(popup is w for w in watched):
-                self.trace.nav(str(getattr(popup, "url", "")))  # its first load came before the watch
-                self._watch(popup)
-                watched.append(popup)
+            _watched(popup)
             dest, info = self._await_destination(popup)
             if info.get("trackers"):
                 self._decide_next("tracker_hops", "waited out an ad tracker's hop to the "
@@ -6569,11 +6863,19 @@ class _JobRun:
             if dest is not popup:
                 popup = dest
                 continue
-            # Chrome's error page: its one retry, then the retry's destination (SP8a)
+            # Chrome's error page: its one retry, then the retry's destination
             if not self._recover_error_page(popup, transition=True):
                 break
-        self._admit_ats_transition(popup.url, source)
-        self._check_host(popup.url)
+        _watched(popup)         # a third hop's tab is the job's too
+        try:
+            self._admit_ats_transition(popup.url, source)
+            self._check_host(popup.url)
+        except _Parked:
+            # the park names the destination: that tab is the one kept open
+            if popup is not left:
+                self.page = popup
+                self._leave(left, popup)
+            raise
         self.page = popup
         self.last_sig = None
         self._leave(left, popup)
@@ -6643,12 +6945,12 @@ class _JobRun:
         """The filled page's way on: a submit role, a submit-shaped advance
         (a final-shaped one in park mode) or a form's own Apply goes to the
         submit gate; otherwise a confident advance is clicked."""
-        park_mode = not self.r.settings.get("auto_apply_submit", True)
+        park_mode = not submit_on(self.r.settings)
         plan = self._own_submit(digest, plan)
         step, button, why = form_route(digest, plan, park_mode=park_mode,
                                        submit_apart=self._submit_apart(digest, plan),
                                        judged=self._judged_roles(digest))
-        b = self._form_entry(digest, plan, step, button)
+        b = self._form_entry(digest, plan, step)
         if b is not None:
             self._click_entry(rec, apply_form.resolve(self.page, b.locator), b.text,
                               how="judged_apply_entry", n=b.n)
@@ -7242,6 +7544,18 @@ class _JobRun:
         text = _button_text(digest, n)
         carried: set[str] = set()
         for round_no in range(REPAIR_ROUNDS + 1):
+            # submit mode clicks a final-worded advance ("Confirm",
+            # "Complete", "Done") as a step (park mode sends it to the gate);
+            # once the application's answers are on the site it may send, so
+            # the gate's live checks run first (`_final_step_checks`) and it
+            # is marked before the click. Before them there is nothing to
+            # send: an address screen's "Confirm"
+            final_worded = submit_on(self.r.settings) and self.form_filled \
+                and _final_shaped(digest, n)
+            if final_worded:
+                digest, plan, verification, n = self._final_step_checks(
+                    digest, plan, verification, rec, n)
+                text = _button_text(digest, n)
             who = self._button_identity(digest, n)
             before = self._form_state(digest, n)
             # the messages the last round's repair answered are no baseline:
@@ -7253,13 +7567,7 @@ class _JobRun:
             def _check(d=digest, b=before, out=problems) -> bool:
                 out[:] = self._form_problems(d, n, b)
                 return bool(out)
-            # final review A-M3: submit mode clicks a final-worded advance
-            # ("Confirm", "Complete", "Done") as a step (park mode sends it to
-            # the gate); once the application's answers are on the site it
-            # may send, so it is marked before the click. Before them there
-            # is nothing to send: an address screen's "Confirm" (A R2-M2)
-            final = self.r.settings.get("auto_apply_submit", True) and self.form_filled \
-                and _final_shaped(digest, n) and not self._final_advance
+            final = final_worded and not self._final_advance
             if final:
                 self._final_advance = True
             try:
@@ -7305,8 +7613,8 @@ class _JobRun:
         raise _Parked("needs_human", f"the form refused the {_cap(text, 40)} step after "
                                      f"{REPAIR_ROUNDS} repair(s): {said}")
 
-    def _form_entry(self, digest: apply_form.FormDigest, plan: FillPlan, step: str,
-                    button: tuple[int, float] | None) -> apply_form.Button | None:
+    def _form_entry(self, digest: apply_form.FormDigest, plan: FillPlan,
+                    step: str) -> apply_form.Button | None:
         """The Apply entry a form step clicks instead of the gate (INV-01),
         or None. With nothing of the application on this page or before it,
         an Apply opens the form (Workday's "Apply Manually" in the start
@@ -7318,7 +7626,7 @@ class _JobRun:
         fields would send outside the gate."""
         if step == "advance":
             return None
-        park_mode = not self.r.settings.get("auto_apply_submit", True)
+        park_mode = not submit_on(self.r.settings)
         b = form_entry_choice(self.page, digest, plan, park_mode=park_mode,
                               filled=bool(self._filled_here or self._filled_any
                                           or self.form_filled))
@@ -7355,8 +7663,7 @@ class _JobRun:
         """The saved answers the own-question gate held back, asked in one
         request whether each settles its field's question as worded there
         (`apply_judge.settle_questions`); the plan made again fills the sure
-        ones (`apply_judge.settled_pick`). Work authorization and sponsorship
-        are never asked."""
+        ones (`apply_judge.settled_pick`)."""
         s, q = apply_judge.settle_questions(digest, plan, answers, self.catalog,
                                             company=self._company())
         if not q:
@@ -7456,6 +7763,8 @@ class _JobRun:
         self._filled_here += [locators[f.n] for f in filled
                               if f.n in locators and str(f.value or "").strip()]
         self._filled_here += apply_pause.kept_locators(plan)
+        for locator in apply_pause.kept_locators(plan):
+            self._mask_box(locator)     # the person's own value stays out of the screenshots
         self._filled_any = self._filled_any or bool(self._filled_here)
         if _fills_the_application(digest, plan, filled):
             self.form_filled = True
@@ -8053,8 +8362,11 @@ class _JobRun:
                      "type": apply_facts.answer_type(f.type, f.options)}
         self.missing.append({"question": question, "context": context, "suggestion": "",
                              **extra})
-        apply_queue.add_missing(self.job_id, question, context=context, path=self.r.queue_path,
-                                **extra)
+        # a queue lock held past its wait leaves the question in the record
+        # and the drain report; the job goes on
+        self.r._queue_write(self.job_id, "missing answer", lambda: apply_queue.add_missing(
+            self.job_id, question, context=context, path=self.r.queue_path, **extra),
+            "the question is in the record only")
 
     def _pause_moved(self, before: tuple | None, text: str, reason: str,
                      buttons: tuple = ()) -> _Parked | None:
@@ -8460,7 +8772,7 @@ class _JobRun:
             out["apply_button"] = self._apply_button_why(digest, button)
         account = self.handed_off \
             or any(pf.action == apply_judge.PASSWORD_ACTION for pf in plan.fields)
-        if self.r.settings.get("auto_apply_submit", True) and step_only(button.text) \
+        if submit_on(self.r.settings) and step_only(button.text) \
                 and not (account and _ACCOUNT_OWN_WORDS.search(button.text)):
             # final review B Known Minor 4: in submit mode a submit whose
             # words are only a step's is never clicked as the send. An
@@ -8470,16 +8782,76 @@ class _JobRun:
             # only that one: its "Next" is a step as anywhere (R2 KM4)
             out["step_button"] = (f"the submit button ({_cap(button.text, 60)}) holds only a "
                                   f"step's words; it is never clicked as the send")
-        try:
-            out["invalid"] = apply_form.validity_report(self.page, button.locator,
-                                                        self._filled_here)["invalid"]
-            out["required_empty"] = [
-                r for r in apply_form.control_scan(self.page, [int(button.locator[0])],
-                                                   required_only=True)
-                if r.get("required") and r.get("empty")]
-        except Exception as e:      # noqa: BLE001  (a page double; a real page answers)
-            self._trace("error", step="gate_read", error=type(e).__name__)
+        out.update(self._form_live(button))
         return out
+
+    def _form_live(self, button: apply_form.Button) -> dict[str, Any]:
+        """The checks of `button`'s form the gate reads just before a send:
+        `invalid` (a control that would not validate, or one marked
+        `aria-invalid`, `apply_form.validity_report`) and `required_empty`
+        (a required control the extractor leaves out, still empty,
+        `apply_form.control_scan`). A page that cannot answer them gives
+        `unreadable`, which fails the gate: a form never reads as valid
+        because it could not be read."""
+        try:
+            invalid = apply_form.validity_report(self.page, button.locator,
+                                                 self._filled_here)["invalid"]
+            empty = [r for r in apply_form.control_scan(self.page, [int(button.locator[0])],
+                                                        required_only=True)
+                     if r.get("required") and r.get("empty")]
+        except Exception as e:      # noqa: BLE001  (a page mid-navigation, a closed frame)
+            self._trace("error", step="gate_read", error=type(e).__name__)
+            return {"unreadable": (f"the form's validity could not be read before "
+                                   f"{_cap(button.text, 60)} ({type(e).__name__})")}
+        return {"invalid": invalid, "required_empty": empty}
+
+    def _final_step_checks(self, digest: apply_form.FormDigest, plan: FillPlan,
+                           verification: list[VerifyResult], rec: dict, n: int
+                           ) -> tuple[apply_form.FormDigest, FillPlan, list[VerifyResult], int]:
+        """The gate's live checks before a final-worded advance ("Confirm",
+        "Complete", "Done") in submit mode once the application is filled,
+        since that click may be the send: a control that would not validate
+        is repaired as at the gate (`REPAIR_ROUNDS` in all), and one still
+        invalid, a required control still empty, a form that cannot be read
+        or an unticked CAPTCHA checkbox parks the job before the click.
+        Returns the page and the button's number as they stand after any
+        repair."""
+        text = _button_text(digest, n)
+        while True:
+            button = next((b for b in digest.buttons if b.n == n), None)
+            if button is None:
+                return digest, plan, verification, n
+            live = self._form_live(button)
+            invalid = live.get("invalid") or []
+            if not invalid or self._gate_repairs >= REPAIR_ROUNDS:
+                break
+            self._gate_repairs += 1
+            who = self._button_identity(digest, n)
+            problems = [{**r, "text": r.get("message") or "", "kind": "invalid"}
+                        for r in invalid]
+            digest, plan, verification = self._repair(
+                digest, plan, verification, problems, rec,
+                why=f"read before the {_cap(text, 40)} step")
+            if not self._repaired:
+                break
+            same = self._same_button(digest, who)
+            if same is None:
+                raise self._button_lost(who)
+            n = same
+        why = live.get("unreadable") or ""
+        for row in invalid:
+            why = why or _invalid_words(row)
+        for row in live.get("required_empty") or []:
+            why = why or _control_words(row)
+        if not why and self._human_check_showing(checkbox=True):
+            why = "a CAPTCHA checkbox on the page is unticked: tick it, then Re-queue"
+        if why:
+            self._decide("final_step_refused", f"the {_cap(text, 40)} step may send the "
+                                               f"application and the gate's checks refuse it: "
+                                               f"{why}")
+            raise _Parked("needs_human", f"{why} (before the {_cap(text, 40)} step, which may "
+                                         f"send the application; nothing was clicked)")
+        return digest, plan, verification, n
 
     def _apply_button_why(self, digest: apply_form.FormDigest, button: apply_form.Button) -> str:
         """"" when an Apply-worded button is the submit (INV-01): it sits in
@@ -8602,14 +8974,19 @@ class _JobRun:
                 # it; the job never reads as unsent (R3)
                 self.submit_clicked = True
                 raise self._send_evidence(p, watch, when="during the wait") from None
-            if watch.any() or self._moved_during_wait(digest):
+            if watch.any() or self._moved_during_wait():
                 # the person may have sent it while the run waited
                 self.submit_clicked = True
                 self._decide("gate_moved", "the page moved on while the run waited for the "
                                            "CAPTCHA check; it is read as after a submit",
                              sent=watch.first())
                 rec["clicked"].append("the page moved on during the CAPTCHA wait")
-                self._after_submit(handoff=self.handed_off, during_wait=True)
+                try:
+                    self._after_submit(handoff=self.handed_off, during_wait=True)
+                except _Refused as refused:
+                    # the form refused it as typed and nothing left: the
+                    # run made no click to repair after, so the refusal parks
+                    raise refused.park from None
                 return
         self.log.info("job %s: clicking submit", self.job_id)
         self.submit_clicked = True    # set before the click so a crash after it reads as unconfirmed (no resend)
@@ -8661,7 +9038,7 @@ class _JobRun:
             rec["clicked"].append("the form refused the submit; repaired")
             self._submit_gate(digest, plan, verification, rec)
 
-    def _moved_during_wait(self, digest: apply_form.FormDigest) -> bool:
+    def _moved_during_wait(self) -> bool:
         """After the gate's wait for the person: did the page move on (a new
         URL, received words it did not show before, or the submit button
         gone or hidden)? M8."""
@@ -9140,7 +9517,7 @@ class _JobRun:
         else:
             raise _Parked("needs_human", "code entered; no button to continue", CODE_NOTE)
         text = _cap(_button_text(digest, button[0]), 60)
-        if not self.r.settings.get("auto_apply_submit", True) and self.form_filled \
+        if not submit_on(self.r.settings) and self.form_filled \
                 and not self.submit_clicked:
             # final review A-I2 and A Known Minor 10: the application's
             # answers are on the site, so the code may finish a send the site
@@ -9293,7 +9670,7 @@ class _JobRun:
         the person to check."""
         host = digest.url_host or _host(self.page.url)
         site = _site(host)
-        if not self.r.settings.get("auto_apply_submit", True) and self.form_filled \
+        if not submit_on(self.r.settings) and self.form_filled \
                 and not self.submit_clicked:
             self._decide("link_step_park", f"the page on {host} says a link was emailed after "
                                            "the application's answers went on the site; the "
@@ -9567,7 +9944,7 @@ class _JobRun:
         # page a method=get form reached carries the answers there, and the
         # reason goes to the queue, the record and the trace (final review C-M1)
         reason = apply_trace.scrub_urls(reason)
-        usage = _usage_delta(self.usage_before, jev.usage())
+        usage = _usage_delta(self.usage_before, jev.total_usage())
         usage["generated"] = generated_count(self.pages)
         self._stop_late_watch()
         self._flush_decisions()
@@ -9717,6 +10094,29 @@ def _say(text: str) -> None:
         print(text.encode(enc, "replace").decode(enc), flush=True)
 
 
+def _line(text: str, *, out=None) -> None:
+    """`text` as one line on `out` (stdout by default), in whatever that
+    stream can show (`_say`'s rule for a piped cp1252 console)."""
+    out = sys.stdout if out is None else out
+    try:
+        print(text, file=out, flush=True)
+    except UnicodeEncodeError:
+        enc = getattr(out, "encoding", None) or "ascii"
+        print(text.encode(enc, "replace").decode(enc), file=out, flush=True)
+
+
+def _positive_int(text: str) -> int:
+    """`--cap`'s value: a whole number of 1 or more (a drain of 0 jobs, or
+    fewer, would run and do nothing)."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a whole number") from None
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"{value} is under 1")
+    return value
+
+
 def _load_env() -> None:
     try:
         from dotenv import load_dotenv
@@ -9779,17 +10179,16 @@ def doctor(profile_dir: Path | None = None, out=None) -> int:
             ("playwright", playwright_found),
             ("browser: Google Chrome" if chrome else "chromium (Google Chrome not found)",
              browser)]
-    chromium = browser
     for name, ok in rows:
-        print(f"{'ok     ' if ok else 'MISSING'}  {name}", file=out)
-    print(f"{'ok     ' if profile.is_dir() else 'absent '}  browser profile: {profile}"
-          + ("" if profile.is_dir() else " (created by the first run or `login`)"), file=out)
-    print(f"judge mode: {mode}", file=out)
-    print(f"Jev switch: {'on' if jev_on else 'off (Settings > Jev)'}", file=out)
-    warnings = setup_check.auto_apply_warnings(has_key, mode, sdk, playwright_found, chromium,
+        _line(f"{'ok     ' if ok else 'MISSING'}  {name}", out=out)
+    _line(f"{'ok     ' if profile.is_dir() else 'absent '}  browser profile: {profile}"
+          + ("" if profile.is_dir() else " (created by the first run or `login`)"), out=out)
+    _line(f"judge mode: {mode}", out=out)
+    _line(f"Jev switch: {'on' if jev_on else 'off (Settings > Jev)'}", out=out)
+    warnings = setup_check.auto_apply_warnings(has_key, mode, sdk, playwright_found, browser,
                                                jev_enabled=jev_on)
     for w in warnings:
-        print(f"  {w}", file=out)
+        _line(f"  {w}", out=out)
     return 0 if not warnings else 2
 
 
@@ -9851,20 +10250,20 @@ def _probe_page(page, n: int, judge: Any, out, *,
     linkedin, linkedin_line = _probe_linkedin(page)
     digest = apply_form.extract(page, content_site=lambda url: content_frame_site(
         url, str(page.url)))
-    print(f"page {n}: {page.url}", file=out)
-    print(f"  title: {_one_line(digest.title, 120)}", file=out)
-    print(f"  fields ({len(digest.fields)}):", file=out)
+    _line(f"page {n}: {page.url}", out=out)
+    _line(f"  title: {_one_line(digest.title, 120)}", out=out)
+    _line(f"  fields ({len(digest.fields)}):", out=out)
     for f in digest.fields:
         extra = f" ({len(f.options)} options)" if f.options else ""
         frame = f" [frame {f.locator[0]}]" if f.locator[0] else ""
-        print(f"  field [{f.n}] {f.type}{' required' if f.required else ''} "
-              f"{_one_line(f.label, 80)!r}{extra}{frame}", file=out)
-    print(f"  buttons ({len(digest.buttons)}):", file=out)
+        _line(f"  field [{f.n}] {f.type}{' required' if f.required else ''} "
+              f"{_one_line(f.label, 80)!r}{extra}{frame}", out=out)
+    _line(f"  buttons ({len(digest.buttons)}):", out=out)
     for b in digest.buttons:
         frame = f" [frame {b.locator[0]}]" if b.locator[0] else ""
-        print(f"  button [{b.n}] {_one_line(b.text, 60)!r} ({b.kind_hint or 'control'}){frame}",
-              file=out)
-    print(f"  text: {_one_line(digest.text, 400)}", file=out)
+        _line(f"  button [{b.n}] {_one_line(b.text, 60)!r} ({b.kind_hint or 'control'}){frame}",
+              out=out)
+    _line(f"  text: {_one_line(digest.text, 400)}", out=out)
     plan = None
     if judge is not None:
         catalog = _probe_catalog()
@@ -9884,14 +10283,14 @@ def _probe_page(page, n: int, judge: Any, out, *,
             {k: v for k, v in judge.judge(s2, q2).items() if k in q2}
             for s2, q2 in apply_judge.page_requests(digest, catalog, {}, fields=with_fields)
             if q2]))
-        print(f"  judge: page_state {read} {conf:.2f} "
+        _line(f"  judge: page_state {read} {conf:.2f} "
               f"({apply_trace.page_state_reads(answers, top=5)}; the judge read "
-              f"{combined.judged} {combined.judged_conf:.2f})", file=out)
+              f"{combined.judged} {combined.judged_conf:.2f})", out=out)
         if combined.why:
-            print(f"  judge: {combined.why}", file=out)
+            _line(f"  judge: {combined.why}", out=out)
         for b in digest.buttons:
             role, rconf = apply_judge._choice_of(answers, f"button_{b.n}_role")
-            print(f"  judge: button [{b.n}] {role} {rconf:.2f}", file=out)
+            _line(f"  judge: button [{b.n}] {role} {rconf:.2f}", out=out)
         plan = apply_judge.plan(digest, catalog, answers)
         apart, unclassified, _ = posting_context(page, digest, plan)
         entry = form_entry_choice(page, digest, plan, park_mode=park_mode,
@@ -9903,15 +10302,15 @@ def _probe_page(page, n: int, judge: Any, out, *,
                          linkedin=linkedin, answers=answers, apart=apart,
                          unclassified=unclassified,
                          form_entry=entry.n if entry is not None else None, facts=facts)
-    print(f"  linkedin handler: {linkedin_line}", file=out)
+    _line(f"  linkedin handler: {linkedin_line}", out=out)
     n_fl = fieldless_apply_choice(digest)
-    print("  fieldless posting: " + (f"would click [{n_fl}] {_button_text(digest, n_fl)!r}"
+    _line("  fieldless posting: " + (f"would click [{n_fl}] {_button_text(digest, n_fl)!r}"
                                      if n_fl is not None else
                                      f"no ({len(digest.fields)} form field(s))" if digest.fields
-                                     else "no button says apply"), file=out)
-    print(f"  account screen: {'yes' if _credential_form(digest) else 'no'}", file=out)
+                                     else "no button says apply"), out=out)
+    _line(f"  account screen: {'yes' if _credential_form(digest) else 'no'}", out=out)
     if judge is not None:
-        print(f"  the loop would: {step}", file=out)
+        _line(f"  the loop would: {step}", out=out)
     return digest, plan, linkedin
 
 
@@ -9951,27 +10350,27 @@ def _probe_entry(page, digest: apply_form.FormDigest, plan: FillPlan | None,
 def _probe(ctx, url: str, *, follow_apply: bool, judge: Any, out, settle_s: float,
            park_mode: bool = False) -> int:
     page = ctx.new_page()
-    print(f"probe: {url}", file=out)
+    _line(f"probe: {url}", out=out)
     try:
         # the run's own first load (`open_page`): domcontentloaded, one retry
         # of a dropped load, then the settle
         for row in open_page(page, url, timeout_ms=PROBE_GOTO_MS, settle_s=settle_s):
-            print(f"  load: {row['why']}", file=out)
+            _line(f"  load: {row['why']}", out=out)
     except Exception as e:      # noqa: BLE001  (a dead or slow page is the answer)
-        print(f"probe: the page did not load ({type(e).__name__})", file=out)
+        _line(f"probe: the page did not load ({type(e).__name__})", out=out)
         return 1
     digest, plan, linkedin = _probe_page(page, 1, judge, out, park_mode=park_mode)
     if not follow_apply:
         return 0
     loc, label, why = _probe_entry(page, digest, plan, linkedin)
     if loc is None:
-        print(f"follow-apply: nothing clicked ({why})", file=out)
+        _line(f"follow-apply: nothing clicked ({why})", out=out)
         return 0
     popup, signal, _ = click_entry(page, loc)
     target, _info = await_destination(popup or page)
-    print(f"follow-apply: clicked {label}; "
+    _line(f"follow-apply: clicked {label}; "
           f"{'a new tab' if popup or target is not page else 'the same tab'} at {target.url}",
-          file=out)
+          out=out)
     _probe_page(target, 2, judge, out, park_mode=park_mode)
     return 0
 
@@ -10030,7 +10429,7 @@ def main(argv: list[str] | None = None) -> int:
 
     def _run_flags(p):
         _verbose(p)
-        p.add_argument("--cap", type=int, default=None, help="jobs per drain")
+        p.add_argument("--cap", type=_positive_int, default=None, help="jobs per drain (1 or more)")
         p.add_argument("--no-submit", action="store_true", dest="no_submit",
                        help="park every application at its review page")
         p.add_argument("--headless", action="store_true", help="no browser window")
@@ -10124,17 +10523,23 @@ def main(argv: list[str] | None = None) -> int:
         from resume_tailor import apply_answers
         try:
             if args.verb == "one":
-                runner.load_answers()       # FL-4: before the claim
+                runner.announce_park_mode()
+                runner.load_answers()       # before the claim
                 entry = apply_queue.claim("apply_run", path=queue, job_id=args.job_id)
                 if entry is None:
                     print(f"apply_run: job {args.job_id} is not queued", file=sys.stderr)
                     return 2
                 try:
                     outcomes = [runner.run_job(entry)]
-                except profile_lock.ProfileBusy:
-                    # a check opened the profile after the busy read: the
-                    # job goes back to the queue with its attempt not counted
-                    apply_queue.unclaim(args.job_id, give_back=True, outage=False, path=queue)
+                except Exception:
+                    # the browser never opened (a check took the profile after
+                    # the busy read, Playwright or Chromium missing): the job
+                    # goes back to the queue with its attempt not counted. A
+                    # job whose run began keeps its claim, since its page may
+                    # have sent something.
+                    if not getattr(runner, "job_started", False):
+                        apply_queue.unclaim(args.job_id, give_back=True, outage=False,
+                                            path=queue)
                     raise
             else:
                 outcomes = runner.drain(cfg["auto_apply_batch_cap"])
@@ -10142,7 +10547,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"The Apply Answers file is damaged ({e.path}): {e.reason}. Open the "
                   f"dashboard's Apply Answers tab to restore the backup.", file=sys.stderr)
             return 2
-        print(summary_line(outcomes))
+        _say(summary_line(outcomes))
         return 0
     except profile_lock.ProfileBusy as e:
         print(e, file=sys.stderr)       # another browser opened the profile first

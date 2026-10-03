@@ -1131,6 +1131,31 @@ def _read_file(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def read_problem(target_id: str, targets: dict[str, Path] | None = None) -> str:
+    """Why the JSON file behind `target_id` exists and still reads as {}
+    (`_read_file` says nothing): "" when the file is absent or parses to an
+    object. A reader whose default is the riskier choice (the auto-apply
+    submit switch) asks this before it trusts a default, since a file the
+    user saved and then broke reads the same as no file at all."""
+    if target_id in ENV_TARGETS:
+        return ""
+    path = _resolve_targets(targets).get(target_id)
+    if path is None:
+        return ""
+    path = Path(path)
+    try:
+        if not path.exists():
+            return ""
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except OSError as e:
+        return f"{path.name} could not be opened ({type(e).__name__})"
+    except ValueError:
+        return f"{path.name} is not valid JSON"
+    if not isinstance(data, dict):
+        return f"{path.name} does not hold a settings object"
+    return ""
+
+
 def _read_target(target_id: str, path: Path | None) -> dict[str, Any]:
     """Read a backing store as a {key: value} dict, picking the right parser for
     its target (env files vs JSON). {} when the path is unset/missing."""

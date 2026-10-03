@@ -260,6 +260,17 @@ def has_password() -> bool:
     return bool(_get_master_password())
 
 
+def _count(value: Any) -> int:
+    """A rule's number as the page or the judge gave it: an int, a float,
+    or the first run of digits in a string ("12 characters"); 0 when none."""
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        return max(0, int(value))
+    m = re.search(r"\d+", str(value or ""))
+    return int(m.group()) if m else 0
+
+
 def unmet_rules(rules: Dict[str, Any]) -> Optional[List[str]]:
     """The password rules a site states (ACC-04: `min_length`, `max_length`,
     `upper`, `lower`, `digit`, `special`, `classes_needed` of those when the
@@ -273,17 +284,17 @@ def unmet_rules(rules: Dict[str, Any]) -> Optional[List[str]]:
     if not password:
         return None
     out: List[str] = []
-    low, high = rules.get("min_length"), rules.get("max_length")
-    if low and len(password) < int(low):
-        out.append(f"at least {int(low)} characters")
-    if high and len(password) > int(high):
-        out.append(f"at most {int(high)} characters")
+    low, high = _count(rules.get("min_length")), _count(rules.get("max_length"))
+    if low and len(password) < low:
+        out.append(f"at least {low} characters")
+    if high and len(password) > high:
+        out.append(f"at most {high} characters")
     classes = [(words, any(test(c) for c in password)) for key, words, test in (
         ("upper", "an uppercase letter", str.isupper),
         ("lower", "a lowercase letter", str.islower),
         ("digit", "a digit", str.isdigit),
         ("special", "a special character", lambda c: not c.isalnum())) if rules.get(key)]
-    need = int(rules.get("classes_needed") or 0)
+    need = _count(rules.get("classes_needed"))
     if 0 < need < len(classes):
         # "3 of the following": a count of the classes named
         if sum(1 for _, held in classes if held) < need:
@@ -301,11 +312,13 @@ def fill_password(page_or_frame, locator) -> bool:
 
     The read-back compares lengths, so the value is never read back into
     Python. A field that truncated or ignored the fill (a maxlength, a widget
-    that rewrites what it was given) reports False, so no half password is left
-    behind."""
+    that rewrites what it was given), or a fill that raised, reports False
+    and the box is emptied, so no half password is left behind. The log
+    never gives the password's length."""
     password = _get_master_password()
     if not password:
         return False
+    target = None
     try:
         target = page_or_frame.locator(locator) if isinstance(locator, str) else locator
         target.fill(password, timeout=5_000)
@@ -313,13 +326,18 @@ def fill_password(page_or_frame, locator) -> bool:
         # back into this process (`input_value()` would hand it over)
         landed = int(target.evaluate("el => (el.value || '').length"))
     except Exception:  # noqa: BLE001  (Playwright errors may include the fill value)
-        return False
+        landed = -1
     if landed != len(password):
         logging.getLogger(__name__).warning(
-            "password field kept %d of %d characters; treating the fill as failed",
-            landed, len(password))
+            "the password field did not keep the whole password; the fill failed and the "
+            "box is emptied")
+        if target is not None:
+            try:
+                target.fill("", timeout=5_000)
+            except Exception:  # noqa: BLE001  (a box gone: nothing of it is left to clear)
+                pass
         return False
-    logging.getLogger(__name__).info("password filled (%d chars hidden)", len(password))
+    logging.getLogger(__name__).info("password filled (hidden)")
     return True
 
 

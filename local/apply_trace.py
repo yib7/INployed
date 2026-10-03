@@ -25,8 +25,11 @@ emailed code. The digest carries labels, types and options; a fill event
 says which boxes hold something. A page's URL is kept as its scheme, host
 and path (`bare_url`): a form sent with method=get puts its answers in the
 query. The screenshots show the page as a person
-would see it, with every password and code box masked, and every box the
-run typed the password or a code into (`extra_mask`).
+would see it, with every password and code box masked, every box whose
+name, id or autocomplete says a birthdate, a card or a government ID, and
+the boxes the run names (`extra_mask`): the ones it typed the password or a
+code into, every box that asks a sensitive question and every box the
+person filled in themselves.
 
 `Trace.off()` is the disabled trace: every call is a no-op, so a `_JobRun`
 built by a test without `run()` needs no folder. A trace that cannot write
@@ -119,11 +122,15 @@ JPEG_QUALITY = 60
 SCREENSHOT_TIMEOUT_MS = 3_000
 TOP_PROBABILITIES = 3              # per answer, beside the page state's full distribution
 # The boxes a screenshot masks: every password input, the one-time-code
-# autocomplete, and any box whose name or id says code, OTP or passcode.
+# autocomplete, any box whose name or id says code, OTP or passcode, and any
+# whose autocomplete, name or id says a birthdate, a card or a Social
+# Security number (the runner adds the boxes whose labels say so).
 MASK_CSS = ("input[type=password], input[autocomplete=one-time-code], "
             "input[autocomplete=current-password], input[autocomplete=new-password], "
             "input[name*=code i], input[id*=code i], input[name*=otp i], input[id*=otp i], "
-            "input[name*=passcode i], input[id*=passcode i]")
+            "input[name*=passcode i], input[id*=passcode i], "
+            "input[autocomplete^=bday], input[autocomplete^=cc-], "
+            "input[name*=ssn i], input[id*=ssn i], input[name*=birth i], input[id*=birth i]")
 # The loggers whose lines land in `job.log` (the runner's own logger joins them).
 LOGGERS = ("apply_run", "apply_fill", "apply_form", "apply_judge", "apply_inbox",
            "apply_answergen", "apply_verify", "ats_accounts", "jev", "apply_trace")
@@ -364,7 +371,7 @@ class Trace:
 
     def add_answers(self, answers: Mapping[str, Any]) -> None:
         """More answers for the current page: its mapping, asked after the
-        page read (SP4), joins the read's answers in `page-<n>.json`."""
+        page read, joins the read's answers in `page-<n>.json`."""
         if not self.enabled or not self.pages:
             return
         self.pages[-1]["answers"].update(answers_json(answers))

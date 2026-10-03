@@ -64,7 +64,7 @@ TERMINAL = frozenset(("ready_to_submit", "submitted", "needs_human", "failed"))
 ARTIFACT_KEYS = ("folder", "resume_pdf", "cover_letter_pdf",
                  "apply_md", "application_record")
 ATS_KEYS = ("domain", "system", "account_status")
-# The difficulty check's result on an entry (`set_difficulty`, DF-4); {} until
+# The difficulty check's result on an entry (`set_difficulty`); {} until
 # `local/apply_assess.py` has checked the job.
 DIFFICULTY_KEYS = ("score", "band", "checked_at", "system", "reasons", "questions",
                    "jev_usd")
@@ -73,7 +73,7 @@ DIFFICULTY_KEYS = ("score", "band", "checked_at", "system", "reasons", "question
 FAILED_KEYS = ("last_failed_at", "last_failed_why")
 
 # Sidecar-lock tuning. Module-level (not baked into signatures) so tests can
-# monkeypatch LOCK_TIMEOUT down instead of waiting out the real 5 s.
+# monkeypatch LOCK_TIMEOUT down and skip waiting out the real 5 s.
 LOCK_TIMEOUT = 5.0    # seconds until QueueLockTimeout
 LOCK_RETRY = 0.025    # seconds between lock attempts
 
@@ -273,8 +273,8 @@ def infer_ats(apply_url: str) -> Dict[str, str]:
 # signed-in Chrome. A newline in a company name forges a line in that brief; a
 # non-http(s) apply_url is a scheme nothing downstream should ever navigate to.
 # local/chrome_launch.py:102 already refuses a non-http(s) URL at the "Open posting"
-# button -- this is the same rule at the other entry point, applied on the way
-# IN so a stored entry is clean for every later reader rather than at each one.
+# button; this is the same rule at the other entry point, applied on the way
+# IN so a stored entry is clean for every later reader.
 _WS_RUN_RE = re.compile(r"\s+")
 
 
@@ -444,7 +444,7 @@ def add_missing(job_id: str, question: str, context: str = "",
     """Append one missing-answer item ({question, context, suggestion}): the
     agent's "this form asked something the answer store can't cover" report.
     The field's `help`, live `options` and answer `type` go with it when the
-    run knows them (SP7, PR-7): Answer now opens Add answer prefilled with
+    run knows them: Answer now opens Add answer prefilled with
     them."""
     item: Dict[str, Any] = {"question": str(question), "context": str(context or ""),
                             "suggestion": str(suggestion or "")}
@@ -466,7 +466,7 @@ def add_missing(job_id: str, question: str, context: str = "",
 
 def set_difficulty(job_id: str, difficulty: Dict[str, Any],
                    path: Optional[Path] = None) -> Dict[str, Any]:
-    """Store the difficulty check's result on the entry (DF-4), replacing the
+    """Store the difficulty check's result on the entry, replacing the
     last one: the DIFFICULTY_KEYS of `difficulty`, anything else dropped. The
     status and the run's fields are left alone, and a requeue keeps it."""
     with locked(path):
@@ -546,14 +546,13 @@ def unclaim(job_id: str, *, notes: Optional[str] = None, give_back: bool = True,
     `started_at` and the run's `missing_answers` are cleared, and the job
     goes to the back of the FIFO (`queued_at` re-stamped and the entry moved
     last in the list, so a job queued in the same second is claimed first):
-    the next drain starts on another job (SP8a review R2-I1). The runner
-    calls it when the judge went down under the job before anything could
-    be sent (RES-02). With `give_back` (the judge's service could not
+    the next drain starts on another job. The runner calls it when the
+    judge went down under the job before anything could be sent. With `give_back` (the judge's service could not
     answer: a busy status, a 5xx, a timeout, a dropped connection) the
     attempt the claim counted is taken back, and with `outage` as well the
     outage is counted in `outages` (the runner counts one only when the
-    judge answered earlier in the drain and parks a job at its second, SP8a
-    review M1); without `give_back` (the judge refused the key) the attempt
+    judge answered earlier in the drain and parks a job at its second);
+    without `give_back` (the judge refused the key) the attempt
     stays counted and no outage is. An entry in any other status (moved from
     the dashboard meanwhile) is left as it is."""
     with locked(path):
@@ -590,9 +589,9 @@ CHECK_SENT_WORDS = "check whether the application went through"
 def possibly_sent(entry: Dict[str, Any]) -> bool:
     """Was the entry's application sent, or may it have been: a submitted
     entry, or a park whose reason or tab note carries the run's "check
-    whether" words. Answer now never offers such an entry a Re-queue (SP7
-    review I4); the Re-queue button stays the person's call once they checked,
-    as the note says."""
+    whether" words. Answer now never offers such an entry a Re-queue; the
+    Re-queue button stays the person's call once they checked, as the note
+    says."""
     if str(entry.get("status") or "") == "submitted":
         return True
     return any(str(entry.get(k) or "").startswith(CHECK_SENT_WORDS)

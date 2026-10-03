@@ -1,4 +1,4 @@
-"""Park and resume (cycle 19, SP7: PR-1 to PR-8).
+"""Park and resume.
 
 A run that meets a question it can ask the person pauses there. A required
 field with no saved answer, an option tie, a required sensitive field (the
@@ -19,8 +19,8 @@ apply_pause`, read at call time):
 The run waits for the answer (`wait_for_answer`) up to
 `auto_apply_pause_minutes`, polling through the page so a closed window is
 seen at once. The wait stays off the job clock, as the CAPTCHA wait does. No
-answer in time, or "Park it", parks the job with the reason it had before
-SP7.
+answer in time, or "Park it", parks the job with the reason it would have
+parked with at once.
 
 `Pauser` holds one job's pauses. A "fill" answer on the same page puts each
 value in its own field (source `USER_SOURCE`, the exact value, a choice only
@@ -28,11 +28,11 @@ as one of the live options); a field the person filled in the browser stays
 as it is (`KEPT`). A page that changed meanwhile, and every "browser"
 answer, reads and plans the page again (`Replan`), and the answers apply on
 that plan, on the page the run paused on only: a page that moved on during
-the wait drops them. A sensitive field is never typed by code: its value in an answer
-file is ignored.
+the wait drops them. A sensitive field is never typed by code: its value in
+an answer file is ignored.
 
 A value whose "save" flag is set goes to the answer store as a confirmed
-custom answer (`save_answer`, PR-6), refused as Add answer refuses it: a
+custom answer (`save_answer`), refused as Add answer refuses it: a
 question a built-in answers (`builtin_answering`) or one already saved
 (`apply_answers.find_collision`).
 
@@ -145,7 +145,7 @@ def write_request(job: Mapping[str, Any], page_url: str, reason: str,
         "headless": bool(headless),
         "pause_id": str(pause_id or ""),
         "asked_at": datetime.now().isoformat(timespec="seconds"),     # for display
-        "asked_epoch": time.time(),     # the age `_stale` reads (review N3)
+        "asked_epoch": time.time(),     # the age `_stale` reads
         "pid": os.getpid(),
         "minutes": minutes,
         "questions": [dict(q) for q in questions],
@@ -202,7 +202,7 @@ def _stale(data: Mapping[str, Any]) -> bool:
     """A request whose run is gone: its process no longer runs, or it is
     older than the minutes it waits plus `STALE_MARGIN_S`. The age is
     counted in epoch seconds (`asked_epoch`), so a DST change never moves
-    it; the local `asked_at` is for display only (review N3). A request
+    it; the local `asked_at` is for display only. A request
     with no epoch is aged by its process alone."""
     pid = data.get("pid")
     if pid not in (None, "") and not pid_alive(pid):
@@ -237,7 +237,7 @@ def pending_requests() -> list[dict]:
 
 
 def _asked_order(data: Mapping[str, Any]) -> tuple[float, str]:
-    """Oldest first by epoch seconds (review N3), then by the local time."""
+    """Oldest first by epoch seconds, then by the local time."""
     try:
         epoch = float(data.get("asked_epoch") or 0.0)
     except (TypeError, ValueError):
@@ -464,7 +464,7 @@ def recompute_park(plan, fields: Mapping[int, Any]) -> None:
     plan.park_reason = sensitive or required
 
 
-# -- the save (PR-6) -----------------------------------------------------------------------
+# -- the save ------------------------------------------------------------------------------
 
 def builtin_answering(question: str) -> str:
     """The question text of the built-in answer the run fills `question` from,
@@ -546,14 +546,14 @@ def _save_answer(question: Mapping[str, Any], text: str, value: str, company: st
                     "answer": answer, "note": note, "confirmed": True, "status": "active"})
     try:
         # the store's review list goes back as read: a version 1 file
-        # migrated in memory keeps its migration review (final review A I-3)
+        # migrated in memory keeps its migration review
         apply_answers.save(answers, path, review=store["review"])
     except (ValueError, apply_answers.AnswerStoreError, OSError) as e:
         return str(e) if isinstance(e, ValueError) else type(e).__name__
     return ""
 
 
-# -- the notice (PR-3) ---------------------------------------------------------------------
+# -- the notice ----------------------------------------------------------------------------
 
 # the outline goes on the element's style; the element object keeps the
 # outline it had and the one set (the browser's own spelling of it), so the
@@ -601,8 +601,8 @@ def _path_of(url: str) -> str:
 def field_keys(fields: Iterable[Any], path: str) -> dict[int, tuple]:
     """n -> the field's key across a replan: the page's path, its id (else
     name), its label, and its place among the page's fields with the same
-    id and label. Two fields labelled alike keep their own answers (review
-    I2): by id, else by their order on the page."""
+    id and label. Two fields labelled alike keep their own answers: by id,
+    else by their order on the page."""
     seen: dict[tuple[str, str], int] = {}
     out: dict[int, tuple] = {}
     for f in fields:
@@ -675,9 +675,9 @@ class Pauser:
         page that changed during a pause, a disabled way on) go in their
         fields, and the fields asked on it that the person filled in the
         browser stay as they are (`KEPT`), and so does a box the run filled
-        that the person changed in the browser (review I3). Each field is
-        found by its own key (`field_keys`), and what was kept applies to
-        this plan only (review M7)."""
+        that the person changed in the browser. Each field is found by its
+        own key (`field_keys`), and what was kept applies to this plan
+        only."""
         if not self.pending and not self.asked and not self.typed:
             return
         pending, asked, typed = self.pending, self.asked, self.typed
@@ -720,7 +720,7 @@ class Pauser:
     def _typed_now(self, digest, plan) -> dict[tuple, str]:
         """Key -> what each labelled box the run filled on this page reads
         now, before a pause after the fill: a box that reads otherwise on the
-        replan is the person's (review I3)."""
+        replan is the person's."""
         import apply_fill
         keys = field_keys(digest.fields, _path_of(self._url()))
         out: dict[tuple, str] = {}
@@ -734,7 +734,7 @@ class Pauser:
         return out
 
     def at_plan(self, digest, plan) -> None:
-        """PR-1: a page whose plan parks on a required field with no answer,
+        """A page whose plan parks on a required field with no answer,
         or a required sensitive field, pauses before the fill. Returns with
         the plan as it was when no answer came (the caller parks as before)."""
         if not answerable(plan.park_reason) or not self.can_pause():
@@ -750,7 +750,7 @@ class Pauser:
         self._resume_same_page(digest, plan, asked, answer, before)
 
     def at_tie(self, digest, plan, tied: dict) -> list:
-        """PR-1: a required field left with no option chosen (a tie, a list
+        """A required field left with no option chosen (a tie, a list
         never read) pauses after the fill. The person's pick goes in on the
         spot; the `apply_fill.Filled` of each pick comes back, and each
         answered field leaves `tied`."""
@@ -780,7 +780,7 @@ class Pauser:
         return [f for f in filled if f.n not in failed]
 
     def at_disabled(self, digest, plan, reason: str) -> None:
-        """PR-1: a way on still disabled after the fill pauses: the person
+        """A way on still disabled after the fill pauses: the person
         fixes the page in the browser (or answers its blank fields in the
         card), then the page is read and planned again (`Replan`). Every
         labelled box the run filled is read before the wait, so a value the
@@ -807,13 +807,13 @@ class Pauser:
         once it ends, raises the run's park (`_closed`): the person may have
         clicked through and sent it, from any page.
 
-        A headless run whose questions only the browser takes parks at once
-        (review M4). After the wait the run reads the page against its print,
+        A headless run whose questions only the browser takes parks at
+        once. After the wait the run reads the page against its print,
         buttons and text from before (`_pause_moved`): a page that moved on
         (the person may have sent it) raises the run's park, whatever the
-        answer (reviews I1, N2). Each value is checked against its question
-        (`valid_value`) before anything is saved or filled (review M5), and
-        every resume reads the answer store again (review M2)."""
+        answer. Each value is checked against its question (`valid_value`)
+        before anything is saved or filled, and every resume reads the
+        answer store again."""
         jr = self.jr
         minutes = self.minutes()
         questions = [question_for(f) for f in asked]
@@ -853,7 +853,7 @@ class Pauser:
             jr.deadline += max(0.0, jr.r.clock() - start)
         clear(jr.job_id)
         if _page_closed(jr.page):
-            # a close after the wait's last poll (final fix review Minor 2)
+            # a close after the wait's last poll
             raise self._closed(buttons, reason)
         outline(jr.page, asked, False)
         moved = getattr(jr, "_pause_moved", None)
@@ -879,8 +879,7 @@ class Pauser:
     def _closed(self, buttons: tuple, reason: str) -> Exception:
         """The park for a window or tab closed during the wait, before or
         after its last poll. The person had the browser and may have clicked
-        through and sent it before the close (final review A I-2, final fix
-        review Important 2): the run's own park (`_pause_closed`, the
+        through and sent it before the close: the run's own park (`_pause_closed`, the
         check-whether end) when it gives one, else the plain park with
         `reason`."""
         hook = getattr(self.jr, "_pause_closed", None)
@@ -897,7 +896,7 @@ class Pauser:
     def _checked(self, questions: list[dict], answer: dict) -> dict:
         """The answer less each value its question does not take
         (`valid_value`): a choice that names no live option is never saved
-        or filled (review M5)."""
+        or filled."""
         by_key = {q["key"]: q for q in questions}
         values = {}
         for key, value in answer["values"].items():
@@ -911,7 +910,7 @@ class Pauser:
         return {**answer, "values": values}
 
     def _save(self, questions: list[dict], answer: dict) -> None:
-        """PR-6: each value flagged "save" kept as a custom answer (the run
+        """Each value flagged "save" kept as a custom answer (the run
         reads the store again after every resume, `_wait`)."""
         if answer["mode"] != "fill":
             return
@@ -935,8 +934,8 @@ class Pauser:
         `#/step2` too), any of its labelled fields is gone, or it cannot be
         read (then or now). On a single-page app whose address never
         changes, a next step that lacks any of the paused step's labelled
-        fields reads as moved, even when it repeats the asked field (final
-        fix review Important 1). A next step that re-shows every one of them
+        fields reads as moved, even when it repeats the asked field. A next
+        step that re-shows every one of them
         (the same labels and types, more added) does not: its box with the
         asked field's id and label takes the answer, which is the person's
         answer to that same question (an accepted residual). A field the
@@ -954,7 +953,7 @@ class Pauser:
         the asked fields by their own keys (`field_keys`) on the page the run
         paused on (`before`, its print), and what each box the run filled
         read before the wait. The card's values go only into the fields they
-        answer on that page (final review A I-1): a page that moved on during
+        answer on that page: a page that moved on during
         the wait (`_moved_on`, a wizard's Next the person clicked) drops them,
         and the asked fields are still read back there."""
         url = before[0] if before is not None else self._url()

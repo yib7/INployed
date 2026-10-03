@@ -20,7 +20,7 @@ shape:
   flow matrix and the invariant harness run on it; nothing in production does.
 - `Guarded(inner)` is how the runner holds its judge: a request the service
   could not answer is tried again for about a minute, and then a circuit
-  breaker opens and raises `JudgeOutage` (RES-02).
+  breaker opens and raises `JudgeOutage`.
 
 `get(mode)` is the factory the runner and the dashboard call. Raw question
 dicts in the HTTP shape (`{"type": ..., "instructions": ..., "criteria": ...}`)
@@ -175,7 +175,7 @@ def usd_for(tokens: int | float) -> float:
     return float(tokens) / 1_000_000 * PRICE_USD_PER_MTOK
 
 
-# --- the request's size (RES-03) ----------------------------------------------------
+# --- the request's size ----------------------------------------------------------
 
 # Jev's limits (docs/superpowers/jev-complete-guide.md, "Limits & price"): 32k
 # tokens for the state and the single longest question, 64k for the state and
@@ -209,8 +209,8 @@ def _sized_to_fit(longest: int, whole: int) -> bool:
 
 # Jev takes at most this many options in one choice (the guide, "Choice"); the
 # service answers a longer one with a 400 and the SDK checks nothing before it
-# sends. VL-3: TL-6 asked one choice over about 360 palette verbs, well under
-# the token limits, and every such request came back 400.
+# sends. A choice over about 360 options, well under the token limits, came
+# back 400 every time.
 CHOICE_OPTIONS_MAX = 255
 
 
@@ -238,7 +238,7 @@ def request_fits(state: Any, questions: Mapping[str, Any]) -> bool:
     return _sized_to_fit(*request_size(state, questions)) and not _long_choices(questions)
 
 
-# --- the outage guard (RES-02) ------------------------------------------------------
+# --- the outage guard -------------------------------------------------------------
 
 # The retries of a judge request the service could not answer (the SDK's own
 # are off, `TypeSafeJev`): about a minute over three more attempts.
@@ -280,9 +280,9 @@ def _transient(e: BaseException) -> bool:
 def request_fault(e: BaseException) -> bool:
     """Could the request itself have caused the error: a 5xx other than
     503 and 529, or a timeout (408 too; a large request can time out)? A
-    busy or overloaded service (409, 425, 429, 503, 529) never did (SP8a
-    review R3-M1), and a dropped connection is most often the network's (a
-    laptop off its Wi-Fi, R4-M2)."""
+    busy or overloaded service (409, 425, 429, 503, 529) never did, and a
+    dropped connection is most often the network's (a laptop off its
+    Wi-Fi)."""
     status = getattr(e, "status", None)
     if isinstance(status, int):
         return status == 408 or (status >= 500 and status not in _OVERLOADED_STATUS)
@@ -310,7 +310,7 @@ def retry_after_s(e: BaseException) -> float | None:
 
 
 class Guarded:
-    """A judge with the run's retries and a circuit breaker (RES-02).
+    """A judge with the run's retries and a circuit breaker.
 
     A request the service could not answer (a status of 408, 409, 425, 429
     or 5xx, a dropped connection, a timeout) is tried again after each of
@@ -323,13 +323,14 @@ class Guarded:
     raises `JudgeOutage` at once, so the run can hand its job back to the
     queue and stop the drain. Any other error (a request the service
     rejected, a bug) passes through as it was, and a choice past
-    `CHOICE_OPTIONS_MAX` options raises `RequestRejected` before it is sent
-    (VL-3), as its 400 would. `answers` counts the requests answered (the
-    runner sets it to 0 at each drain's start: an outage counts toward a job's cap only after the judge answered in the
-    drain, SP8a review R2-I1). `request_fault` says the request itself may
-    have caused the outage (`request_fault(e)` on every try, with no
-    Retry-After over the cap): only such an outage counts toward the cap
-    (R3-M1). Attributes other than `judge` are the wrapped judge's."""
+    `CHOICE_OPTIONS_MAX` options raises `RequestRejected` before it is sent,
+    as its 400 would. `answers` counts the requests answered (the runner
+    sets it to 0 at each drain's start: an outage counts toward a job's cap
+    only after the judge answered in the drain). `request_fault` says the
+    request itself may have caused the outage (`request_fault(e)` on every
+    try, with no Retry-After over the cap): only such an outage counts
+    toward the cap. Attributes other than `judge` are the wrapped
+    judge's."""
 
     def __init__(self, inner: Any, *, sleep: Callable[[float], None] = time.sleep,
                  delays: tuple[float, ...] = RETRY_DELAYS_S,
@@ -349,13 +350,13 @@ class Guarded:
         longest, whole = request_size(state, questions)
         if not _sized_to_fit(longest, whole):
             # the mapping is sized before it is asked (`apply_judge.page_requests`);
-            # any other request this large is named in the job's log (RES-03)
+            # any other request this large is named in the job's log
             self.log.warning("jev request estimated at %d tokens (the state and its longest "
                              "question) and %d in all, past %d%% of the %d and %d limits",
                              longest, whole, round(SIZE_MARGIN * 100), STATE_TOKENS_MAX,
                              REQUEST_TOKENS_MAX)
         for qid, n in _long_choices(questions):
-            # the service answers it with a 400 every time (VL-3), so it is refused
+            # the service answers it with a 400 every time, so it is refused
             # unsent, the way a 400 passes through below: no retry, the breaker shut
             why = f"jev choice {qid} has {n} options, past the {CHOICE_OPTIONS_MAX} a choice takes"
             self.log.warning("%s", why)
@@ -427,7 +428,7 @@ class TypeSafeJev:
         extra = {"transport": transport} if transport is not None else {}
         # `Guarded` owns the retries (`RETRY_DELAYS_S`): the SDK's own are off,
         # so a judge that stays down costs four requests over about a minute,
-        # never the SDK's three inside each of them (SP8a review M2)
+        # never the SDK's three inside each of them
         self._client = typesafe_sdk.TypeSafeClient(
             api_key=key, model=model, retry=typesafe_sdk.RetryPolicy(max_retries=0), **extra)
 
@@ -783,14 +784,13 @@ _COHERENT_NO = (0.15, 0.40)
 CONFIRM_MISREADS = frozenset(("application_form", "review_page"))
 _CONFIRM_MISREAD_CONF = (0.40, 0.80)
 # the answers a drop may remove: a field's mapping, and a validation
-# message's field (`apply_judge.error_questions`, SP6)
+# message's field (`apply_judge.error_questions`)
 _DROPPED_PREFIXES = ("field_", "error_")
-# A validation message's field (SP6) is misread like a page state: with
+# A validation message's field is misread like a page state: with
 # chance `swap_p` it points at another option (another field, or `none`),
 # the true one second; a share of those flips (`error_sure_p`) lands at 0.70
 # to 0.90, above the field floor (`apply_judge.FIELD_MAP_MIN_CONF`), as a
-# confident wrong mapping the run acts on; the rest at 0.30 to 0.60 (SP6
-# review M1).
+# confident wrong mapping the run acts on; the rest at 0.30 to 0.60.
 _ERROR_PREFIX = "error_"
 _SURE_ERROR_CONF = (0.70, 0.90)
 
@@ -813,9 +813,9 @@ class NoisyJev:
       Noul (a verification, a flag) is left alone: it carries no confidence.
     - `drop_p` (default 0.05): each field answer (`field_{n}_source`,
       `field_{n}_option`, `field_{n}_pick`) and each validation message's
-      field (`error_{i}_field`, SP6) is dropped with this chance, as a
+      field (`error_{i}_field`) is dropped with this chance, as a
       misread that leaves the box or the message without a mapping.
-    - A validation message's field (`error_{i}_field`, SP6) is misread as
+    - A validation message's field (`error_{i}_field`) is misread as
       a page state is: with chance `swap_p` it names another option
       (another field, or `none`), the true answer second; with chance
       `error_sure_p` (default 0.5) such a flip is read at 0.70 to 0.90,
@@ -942,10 +942,10 @@ class NoisyJev:
                       confidence=conf)
 
     def _error_field(self, a: Answer, rng) -> Answer:
-        """A validation message's field (SP6): with chance `swap_p` another
+        """A validation message's field: with chance `swap_p` another
         option (a field, or `none`), the true answer second: with chance
         `error_sure_p` at 0.70 to 0.90 (above the field floor: a confident
-        wrong mapping, SP6 review M1), else at 0.30 to 0.60; else the answer
+        wrong mapping), else at 0.30 to 0.60; else the answer
         with its confidence scaled."""
         names = list(a.probabilities) or [str(a.choice)]
         truth = str(a.choice)
@@ -1037,7 +1037,7 @@ class ReplayJev:
     any change to a question does. The cache is one JSON object
     `{key: {question_id: answer}}` written atomically after every miss.
 
-    `used_keys` (SP8) is every key this instance served: a hit's key, and a
+    `used_keys` is every key this instance served: a hit's key, and a
     miss's key once it is recorded. It is the run's own record of what it
     needed, so a cache carrying a stale key no test asks for any more can be
     told apart from one every key of which still earns its place
@@ -1113,16 +1113,16 @@ def prune_cache(cache_path: Path, used_keys: set[str], *, misses: int = 0,
     return before, len(kept)
 
 
-# --- a recording's spend cap (SP8b) ------------------------------------------------------
+# --- a recording's spend cap ------------------------------------------------------------
 
 RECORD_CAP_ENV = "AUTO_APPLY_RECORD_USD_CAP"
 # A live recording names its cap (`AUTO_APPLY_RECORD_USD_CAP`, which
 # `scripts/jev_record.ps1 -Cap` sets): at most what the spend ledger has left
 # under the approval's limit, and only the person reading the ledger knows
 # that, so `record_cap` refuses a live recording without it. A dry run spends
-# nothing and takes this cap when it names none: what cycle 17's approval had
-# left under its 0.95 USD limit after SP8b's 0.0694 USD (rounded down), so its
-# estimate stops where such a recording would have to.
+# nothing and takes this cap when it names none: what a 0.95 USD approval had
+# left after a first recording's 0.0694 USD (rounded down), so its estimate
+# stops where such a recording would have to.
 DRY_RECORD_CAP_USD = 0.88
 
 

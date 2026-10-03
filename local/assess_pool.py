@@ -1,4 +1,4 @@
-"""The parallel difficulty check's profile copies (cycle 22, SP1).
+"""The parallel difficulty check's profile copies.
 
 Two browsers on one profile can lose its saved sign-ins, so a check of several
 jobs at once gives each worker its own temporary copy of the auto-apply
@@ -17,7 +17,7 @@ touched.
 only a running browser's own copy may hold (its lock files). The sign-ins are
 in what stays: the cookies, Local State, Preferences and the storage folders.
 
-`run_pool` (SP2) is the coordinator: it holds the real profile for the whole
+`run_pool` is the coordinator: it holds the real profile for the whole
 run, copies it into one slot per concurrent worker, and runs each job as its
 own `apply_assess.py --worker` process on a free slot, printing one line per
 job as each one finishes.
@@ -47,7 +47,7 @@ LEFT_BEHIND = ("The profile copy {folder} was not deleted (a browser still had i
                "holds your sign-ins, and it is deleted the next time the auto-apply browser "
                "opens or the dashboard starts.")
 
-# --- SP2: the pool ---------------------------------------------------------------------
+# --- the pool --------------------------------------------------------------------------
 PARALLEL_DEFAULT = 10       # `auto_apply_check_parallel`'s default
 PARALLEL_MAX = 10
 SCRIPT = Path(__file__).resolve().parent / "apply_assess.py"
@@ -220,7 +220,7 @@ def sweep_if_free(*, wait_s: float = 0.0) -> list[Path] | None:
         guard.release()
 
 
-# --- SP2: the coordinator -------------------------------------------------------------------
+# --- the coordinator ------------------------------------------------------------------------
 
 def parallel_setting(value: Any, default: int = PARALLEL_DEFAULT) -> int:
     """How many checks run at once: `value` (the `--parallel` flag or the

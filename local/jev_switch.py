@@ -1,5 +1,5 @@
 """One switch for every Jev use: scoring, the resume tailor, the auto-apply
-difficulty check and the auto-apply run itself (JS-1, JS-2).
+difficulty check and the auto-apply run itself.
 
 `jev_on(area)` is True when every check below passes, read at call time, so
 flipping a switch in Settings needs no restart (a new key still does, as
@@ -28,7 +28,7 @@ the one `apply_run.py` drain, one and probe --judge print and Test my answers
 shows; the two probes name a mode `jev.get` does not build first
 (`unknown_mode`). `start_blocked()` is the Auto-apply panel's Start gate: it gives the
 drain's refusal of the judge mode first (`mode_refusal`: a test judge is
-`FIXTURE_ONLY`, cycle 16, and a mode `jev.get` does not build is
+`FIXTURE_ONLY`, and a mode `jev.get` does not build is
 `UNKNOWN_MODE`), then `apply_blocked()`, the order the drain checks them in,
 so Start predicts the drain it launches. `difficulty_blocked()` is the
 difficulty check's Jev gate, the sentence `apply_assess.py` prints and the
@@ -45,7 +45,7 @@ scorer builds its own judge (`jev_score.make_judge`, since the VM has no
 `jev.get`.
 
 A switch reads by `settings.switch_on`, the rule the Settings checkbox
-shows it by (SP1 follow-up 3): a missing key is on (the default), a bool is
+shows it by: a missing key is on (the default), a bool is
 itself, and any other value is on only as "true", "yes", "on" or "1", any
 case, spaces stripped. A hand-edited null, 0, "", "false" or "off" reads off
 here and in Settings alike, so a stray value spends no TypeSafe credit.
@@ -89,15 +89,15 @@ _FIXES = {
     "key": "Add the TypeSafe API key in Settings > Jev.",
     "sdk": "Install typesafe-sdk (pip install -r requirements.txt).",
 }
-# `apply_run.py drain` and `one` refuse a test judge before their Jev gate
-# (cycle 16), and a mode `jev.get` does not build (a hand-edited Auto-apply
-# judge setting, SP1 follow-up 2) with it. The panel's Start gate
+# `apply_run.py drain` and `one` refuse a test judge before their Jev gate,
+# and a mode `jev.get` does not build (a hand-edited Auto-apply judge
+# setting) with it. The panel's Start gate
 # (`start_blocked`), Check setup and the doctor (`setup_check.auto_apply_warnings`)
 # give the same sentences, through `mode_refusal`. Test my answers and
 # `probe --judge` give UNKNOWN_MODE (`unknown_mode`) and run the test judges,
-# since they are probes (SP1 follow-up 3). The Auto-apply judge row is
+# since they are probes. The Auto-apply judge row is
 # advanced, so UNKNOWN_MODE names the disclosure that shows it, in the Settings
-# tab's own words (SP1 follow-up 3).
+# tab's own words.
 FIXTURE_ONLY = "Fake and replay judges are fixture-only; use typesafe for a production queue."
 UNKNOWN_MODE = ("Unknown Auto-apply judge {mode!r}; tick \"Show advanced settings\" and pick "
                 "typesafe in Settings > Auto-apply.")
@@ -268,8 +268,8 @@ def difficulty_blocked(*, config: Mapping[str, Any] | None = None,
                        saved_key: bool = False) -> str:
     """Why the difficulty check cannot run on Jev, in the sentence
     `apply_assess.py` prints; "" when it can. Shaped like `apply_blocked`, for
-    the "difficulty" area: the master switch off gives the drain's sentence
-    (JS-5), the check's own switch off gives `DIFFICULTY_OFF`, and a missing
+    the "difficulty" area: the master switch off gives the drain's sentence,
+    the check's own switch off gives `DIFFICULTY_OFF`, and a missing
     key or SDK gives the drain's sentence for it. The key and SDK checks follow
     the judge mode as they do for the drain (`mode` as in `apply_blocked`), and
     `saved_key` counts a key saved in Settings (`key_saved`), since
@@ -283,7 +283,7 @@ def difficulty_blocked(*, config: Mapping[str, Any] | None = None,
 
 def fixture_only(mode: str) -> str:
     """The refusal `apply_run.py drain` and `one` print for a test judge before
-    their Jev gate (cycle 16), `FIXTURE_ONLY`; "" for the live judge. `mode` is
+    their Jev gate, `FIXTURE_ONLY`; "" for the live judge. `mode` is
     a mode `apply_mode` resolved."""
     return FIXTURE_ONLY if mode in TEST_MODES else ""
 

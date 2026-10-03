@@ -1,7 +1,7 @@
-"""The auto-apply difficulty check (cycle 19, DF-1 to DF-6): a 1-10 score per
+"""The auto-apply difficulty check: a 1-10 score per
 queued job, so the user knows which jobs to leave to the drain.
 
-DF-3's score is code: a base by application system plus fixed steps for what
+The score is code: a base by application system plus fixed steps for what
 the first application page asks, rounded half up and clamped to 1-10. Easy
 Apply, a closed or dead posting and a payment page are 10 at once. Jev reads
 the page; the counting and the arithmetic stay here, with the constants below.
@@ -28,7 +28,7 @@ import apply_queue  # noqa: E402
 import jev_switch  # noqa: E402
 import profile_lock  # noqa: E402
 
-# --- DF-3: the score -------------------------------------------------------------------
+# --- the score ------------------------------------------------------------------------
 
 # The base by application system (the `apply_queue.infer_ats` names, plus
 # "bamboohr"); a system missing here scores UNKNOWN_BASE.
@@ -101,7 +101,7 @@ def _plural(count: int, one: str, many: str) -> str:
 def score(*, system: str = "", unanswered: int = 0, essays: int = 0,
           sensitive: bool = False, captcha: bool = False, account_wall: bool = False,
           past_submits: int = 0, past_parks: int = 0, stop: str = "") -> dict:
-    """DF-3: {"score", "band", "reasons"} for what the check read.
+    """{"score", "band", "reasons"} for what the check read.
 
     `system` is the application system (a SYSTEM_BASE key; anything else is
     unknown). `unanswered` counts the required questions the user's confirmed
@@ -153,7 +153,7 @@ def score(*, system: str = "", unanswered: int = 0, essays: int = 0,
     return {"score": value, "band": band_for(value), "reasons": reasons}
 
 
-# --- DF-1: the gate and the profile --------------------------------------------------------
+# --- the gate and the profile -------------------------------------------------------------
 
 ENTRY_HOPS_MAX = 4          # Apply entry clicks per job: LinkedIn's, two job boards', the posting's
 PAGES_MAX = ENTRY_HOPS_MAX + 2
@@ -173,11 +173,11 @@ SSO_NOTE = "Its only way on signs in with {sites}; the run signs in with no othe
 
 
 def account_worded(text: str) -> bool:
-    """Does a posting's control read as a way into an account (DF-2: the
-    walk never clicks a sign-in or a sign-up): a
-    sign-in or log-in (`apply_judge.SIGN_IN_WORDS`), a sign-up or a new
-    account (`apply_run._CREATE_ACCOUNT`), or a Next or Continue with no Apply
-    word (`apply_judge.entry_worded`). "Sign in to apply" is one; "Continue
+    """Does a posting's control read as a way into an account (the walk
+    never clicks a sign-in or a sign-up): a sign-in or log-in
+    (`apply_judge.SIGN_IN_WORDS`), a sign-up or a new account
+    (`apply_run._CREATE_ACCOUNT`), or a Next or Continue with no Apply word
+    (`apply_judge.entry_worded`). "Sign in to apply" is one; "Continue
     to apply" is not."""
     import apply_judge
     import apply_run
@@ -222,7 +222,7 @@ def profile_busy(profile_dir: Path | None = None) -> bool:
     return profile_lock.busy(profile_dir)
 
 
-# --- DF-4: what the queue table shows -----------------------------------------------------
+# --- what the queue table shows ----------------------------------------------------------
 
 _FAMILIES = ((1, 3, "success"), (4, 6, "warning"), (7, 10, "danger"))
 
@@ -326,7 +326,7 @@ def past_runs(entries: list[Mapping[str, Any]], system: str, job_id: str = "") -
     return ends, parks
 
 
-# --- DF-2: the walk to the first application page ----------------------------------------
+# --- the walk to the first application page ---------------------------------------------
 
 @dataclass
 class Walk:
@@ -683,8 +683,8 @@ class _Walker:
         on LinkedIn, a sign-in with another site as the only way on, the
         unsure and `other` rules, the emailed-link remap, then the page's
         kind. A posting's Apply entry is chosen over the buttons' mapped
-        roles (`_posting_plan`), as the drain chooses it, with one exception
-        for DF-2: an entry that reads as a sign-in or a sign-up
+        roles (`_posting_plan`), as the drain chooses it, with one exception:
+        an entry that reads as a sign-in or a sign-up
         (`account_worded`) is never clicked. A judged one gives way to the
         text choice, and a text choice that reads so is an account step."""
         import apply_fill
@@ -899,7 +899,7 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
-# --- DF-2 and DF-3: the screening and the result ------------------------------------------
+# --- the screening and the result --------------------------------------------------------
 
 def catalog_for(entry: Mapping[str, Any], answers: list[dict]):
     """The job's fact catalog, as the drain builds it: the job folder's sheet
@@ -1035,7 +1035,7 @@ def check_job(entry: Mapping[str, Any], *, context, judge, answers: list[dict],
                        settings=settings, entries=entries), ""
 
 
-# --- DF-1 and DF-6: the console ------------------------------------------------------------
+# --- the console -----------------------------------------------------------------------
 
 class _Counting:
     """The judge with a count of the requests it answered."""
@@ -1067,7 +1067,7 @@ def _say(text: str) -> None:
         print(text.encode(enc, "replace").decode(enc), flush=True)
 
 
-# --- the worker's result line (cycle 22) ---------------------------------------------------
+# --- the worker's result line ----------------------------------------------------------
 
 RESULT_PREFIX = "@@assess-result "
 OUTCOMES = ("scored", "unread", "outage", "closed", "error")

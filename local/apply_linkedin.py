@@ -30,7 +30,7 @@ DOM, so the answer never rests on a page-state read:
 - `continue_control(page)`: the visible "Continue" of the job-search safety
   interstitial, which does not send the tab on by itself.
 
-The Easy Apply rule (the user's, 2026-09-23): an Easy Apply job is applied to
+The Easy Apply rule: an Easy Apply job is applied to
 on LinkedIn by the user, so the run stops with `EASY_APPLY_REASON` and never
 clicks, fills, ticks, picks or uploads anything on LinkedIn.
 

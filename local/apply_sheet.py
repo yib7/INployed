@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Tuple
 
-# `- **Label:** value` — the shape every Candidate/Address/Standard-answer line uses.
+# `- **Label:** value`: the shape every Candidate/Address/Standard-answer line uses.
 # The bold label may hold escaped stars (`\*`, written by apply_data._md_text);
 # a lone backslash is allowed anywhere else, so the label ends at the first
 # unescaped `**`.
@@ -55,14 +55,14 @@ def parse_apply_md(text: str) -> Dict[str, Any]:
         h = _HEADING_RE.match(line)
         if h:
             section = h.group("name").strip().lower()
-            # A REPEATED section heading is ignored, not honoured. apply_data
-            # writes each section exactly once, so a second `## Candidate` can
-            # only come from something that got INTO the file -- and this parser
-            # used to let the later copy overwrite the earlier one, which meant a
-            # forged block decided the email address typed into a real
-            # application. apply_data._defuse_structure escapes that shape out of
-            # the free-text sections on the writing side; this is the same rule
-            # on the reading side, which is also where a hand-edited file arrives.
+            # A REPEATED section heading is ignored. apply_data writes each
+            # section exactly once, so a second `## Candidate` can only come
+            # from something that got INTO the file; letting the later copy
+            # overwrite the earlier one would let a forged block decide the
+            # email address typed into a real application.
+            # apply_data._defuse_structure escapes that shape out of the
+            # free-text sections on the writing side; this is the same rule on
+            # the reading side, which is also where a hand-edited file arrives.
             if section in seen:
                 section = ""
                 continue

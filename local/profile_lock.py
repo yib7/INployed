@@ -1,4 +1,4 @@
-"""Who holds the auto-apply browser profile (cycle 19, SP6 fix round 1).
+"""Who holds the auto-apply browser profile.
 
 One browser at a time may open the profile: two browsers on one profile can
 lose its saved sign-ins. Two signs say a browser holds it:

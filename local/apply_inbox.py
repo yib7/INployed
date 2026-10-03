@@ -38,8 +38,8 @@ PROVIDER_HOSTS = {
                 "outlook.com"),
 }
 TIMEOUT_MS = 5_000
-GOTO_TIMEOUT_MS = 20_000     # the inbox page's load (ACC-08: a webmail slower than 5 s)
-ROWS_WAIT_MS = 10_000        # for its message rows to render once it loaded (ACC-08)
+GOTO_TIMEOUT_MS = 20_000     # the inbox page's load (a webmail can take over 5 s)
+ROWS_WAIT_MS = 10_000        # for its message rows to render once it loaded
 SENDER_SCAN = 4              # elements checked for a sender address attribute
 CANDIDATES_CAP = 15          # code-shaped tokens read out of one message
 LINKS_CAP = 12               # verification links offered to the judge from one message
@@ -70,11 +70,11 @@ class Message:
     subject: str
     preview: str
     open_locator: str
-    when: str = ""           # the row's time as the provider shows it (ACC-07)
+    when: str = ""           # the row's time as the provider shows it
 
 
 def code_hash(code: str) -> str:
-    """A code the run used, as it is remembered (ACC-07): never the code."""
+    """A code the run used, as it is remembered: never the code."""
     return hashlib.sha256(str(code).strip().encode("utf-8")).hexdigest()
 
 
@@ -161,7 +161,7 @@ def parse_when(text: str, now: datetime | None = None) -> datetime | None:
 
 
 def _stale(message: Message, since: datetime | None, now: datetime | None = None) -> bool:
-    """A message from before `since` (the job's start, ACC-07): its day
+    """A message from before `since` (the job's start): its day
     before `since`'s day, or with a clock time, its minute before `since`'s
     minute. The row's words are read against `now` (the clock when None).
     A row whose time cannot be read is not stale."""
@@ -216,9 +216,9 @@ def list_messages(page, inbox_url: str, limit: int = 15) -> list[Message]:
     matches the Outlook row selector) yields nothing and the next shape gets
     its turn; a row that names a sender is kept when the subject hook alone
     has drifted. A webmail is given `GOTO_TIMEOUT_MS` to load and
-    `ROWS_WAIT_MS` more for its rows to render (ACC-08: an inbox slower than
-    5 s read as empty); an inbox that shows no row by then is read as it
-    is. Each row keeps the time it shows (`Message.when`, ACC-07)."""
+    `ROWS_WAIT_MS` more for its rows to render (an inbox slower than 5 s
+    read as empty without them); an inbox that shows no row by then is
+    read as it is. Each row keeps the time it shows (`Message.when`)."""
     page.goto(inbox_url, wait_until="domcontentloaded", timeout=GOTO_TIMEOUT_MS)
     try:
         page.wait_for_selector(ROW_SELECTOR, state="attached", timeout=ROWS_WAIT_MS)
@@ -370,7 +370,7 @@ def _main_frame(request) -> bool:
 def _message(tab, inbox_url: str, site: str, *, jev, ats: str, company: str, want: str,
              since: datetime | None) -> Message | None:
     """The message the judge takes for the site's, carrying a `want` ("code"
-    or "link"), among the rows no older than `since` (ACC-07); None when no
+    or "link"), among the rows no older than `since`; None when no
     row qualifies."""
     messages = [m for m in list_messages(tab, inbox_url) if not _stale(m, since)]
     rows = [asdict(message) for message in messages]
@@ -487,7 +487,7 @@ def _polling(page, inbox_url: str, one_poll: Callable, *, polls: int, wait_s: fl
             request = route.request
             if request.is_navigation_request() and urlsplit(request.url).hostname != parsed.hostname:
                 # the inbox itself leaving its host (a sign-in redirect), never a
-                # frame of it on another host (a token renewal, review round 4, M3)
+                # frame of it on another host (a token renewal)
                 if _main_frame(request):
                     stopped.append("off the inbox host")
                 route.abort()
@@ -503,7 +503,7 @@ def _polling(page, inbox_url: str, one_poll: Callable, *, polls: int, wait_s: fl
             try:
                 got = one_poll(tab)
             except JudgeOutage:
-                raise           # the run hands the job back to the queue (RES-02)
+                raise           # the run hands the job back to the queue
             except Exception as e:  # noqa: BLE001  (browser and judge errors may include private mail)
                 _noted(e)
                 if stopped or type(e).__name__ == last:
@@ -544,9 +544,9 @@ def fetch_code(page, site: str, inbox_url: str, *, jev, polls: int = 3,
     judge error) is that poll's error: the next poll runs after its wait,
     unless the same error came back (a provider outage) or the tab tried to
     leave the inbox host and the guard stopped it (a signed-out inbox's
-    sign-in redirect): the polls end there (review round 3, M3). Each error
+    sign-in redirect): the polls end there. Each error
     is appended to `errors` by its type name alone (its message may quote the
-    mail). ACC-07: a message whose time is before `since` (the job's start)
+    mail). A message whose time is before `since` (the job's start)
     is never read, and a code in `used` (by `code_hash`: the run typed it
     already) is never picked.
     """
@@ -562,7 +562,7 @@ def fetch_link(page, site: str, inbox_url: str, *, jev, allowed: Callable[[str],
                deadline: float | None = None, ats: str = "", company: str = "",
                errors: list | None = None, since: datetime | None = None,
                refused: list | None = None) -> str | None:
-    """ACC-05: the verification link of the site's account check, polled
+    """The verification link of the site's account check, polled
     as `fetch_code` polls: the message the judge takes for the site's and
     for an account check by link, then its one verification link whose
     host `allowed` takes (the application's own site, a known ATS). A

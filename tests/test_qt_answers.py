@@ -1929,3 +1929,61 @@ def test_answer_now_cancelled_or_damaged_writes_nothing(qtbot, tmp_path, monkeyp
     ed.reload()
     assert ed.answer_now(_CDL) is False
     assert store.read_text(encoding="utf-8") == "{not json"
+
+
+# --- the dashboard's saves take the store's lock ------------------------------------------
+
+def test_answer_now_keeps_an_answer_a_paused_run_saved_while_the_dialog_was_open(
+        qtbot, tmp_path, monkeypatch):
+    import apply_pause
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    ed = _editor(qtbot, store)
+    _accepting(monkeypatch, "Yes")
+    accept = AddAnswerDialog.exec
+
+    def exec_while_a_run_saves(dlg):
+        # the run saves its answer while the person is still in the dialog
+        assert apply_pause.save_answer({"label": "Do you hold a forklift license?"},
+                                       "Yes", "Fabrikam", path=store) == ""
+        return accept(dlg)
+    monkeypatch.setattr(AddAnswerDialog, "exec", exec_while_a_run_saves)
+    assert ed.answer_now(_CDL) is True
+    questions = [e["question"] for e in apply_answers.load(store)]
+    assert any("forklift" in q for q in questions), questions
+    assert any("CDL" in q for q in questions), questions
+
+
+def test_answer_now_waits_for_the_store_lock_and_says_so_when_it_stays_held(
+        qtbot, tmp_path, monkeypatch):
+    import apply_pause
+    from locks import file_lock
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    before = store.read_bytes()
+    ed = _editor(qtbot, store)
+    _accepting(monkeypatch, "Yes")
+    monkeypatch.setattr(apply_pause, "SAVE_LOCK_TIMEOUT", 0.3)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "critical", lambda *a, **k: None)
+    with file_lock(store, timeout=2):
+        assert ed.answer_now(_CDL) is False
+    assert store.read_bytes() == before
+    assert "locked" in ed.status.text()
+
+
+def test_save_changes_waits_for_the_store_lock_and_says_so_when_it_stays_held(
+        qtbot, tmp_path, monkeypatch):
+    import apply_pause
+    from locks import file_lock
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    before = store.read_bytes()
+    ed = _editor(qtbot, store)
+    _row(ed, "work_authorized")["answer_widget"].setCurrentText("No")
+    monkeypatch.setattr(apply_pause, "SAVE_LOCK_TIMEOUT", 0.3)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "critical", lambda *a, **k: None)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", lambda *a, **k: None)
+    with file_lock(store, timeout=2):
+        assert ed.save() is False
+    assert store.read_bytes() == before
+    assert "locked" in ed.status.text()

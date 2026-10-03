@@ -55,11 +55,13 @@ from typing import Callable
 from PySide6 import QtCore, QtGui, QtWidgets
 
 import apply_facts
+import apply_pause
 import errmsg
 import jev
 import jev_switch
 from qt import theme, workers
 from apply_pause import builtin_answering
+from locks import FileLockTimeout, file_lock
 from resume_tailor import apply_answers
 
 # The built-in's own text is authoritative for the address rules. It is
@@ -116,6 +118,8 @@ DISK_POLL_MS = 5000
 
 _DISK_CHANGED = ("The answers file changed on disk (a paused run may have saved an "
                  "answer). Reload to see it; your unsaved edits here are dropped then.")
+_STORE_LOCKED = ("Not saved: a run was saving to the answers file and it stayed locked. "
+                 "Try again in a moment.")
 _SAVE_CLASH = ("Not saved: the answers file changed on disk in a way that overlaps your "
                "edits. Reload, then make your edits again.")
 _SAVED_MERGED = "Saved, with the answers a paused run added on disk."
@@ -957,11 +961,21 @@ class AnswersEditor(QtWidgets.QWidget):
         if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return False
         entry = dialog.result_entry()
-        taken = {str(e.get("id", "")).strip() for e in disk} | {r["id"] for r in self.rows}
-        if entry["id"] in taken:
-            entry["id"] = apply_answers.new_id(entry["question"] or "answer", taken)
         try:
-            apply_answers.save(disk + [entry], self.store_path, review=store["review"])
+            # the store's lock, as a paused run's save takes it; the file is
+            # read again under it, since a run may have saved while the
+            # dialog was open
+            with file_lock(self.store_path, timeout=apply_pause.SAVE_LOCK_TIMEOUT):
+                store = apply_answers.load_store(self.store_path)
+                disk = list(store["answers"])
+                taken = ({str(e.get("id", "")).strip() for e in disk}
+                         | {r["id"] for r in self.rows})
+                if entry["id"] in taken:
+                    entry["id"] = apply_answers.new_id(entry["question"] or "answer", taken)
+                apply_answers.save(disk + [entry], self.store_path, review=store["review"])
+        except FileLockTimeout:
+            self.status.setText(_STORE_LOCKED)
+            return False
         except (ValueError, OSError, apply_answers.AnswerStoreError) as exc:
             self.status.setText("Save failed.")
             QtWidgets.QMessageBox.critical(self, "Apply answers", errmsg.for_user(exc))
@@ -1018,18 +1032,25 @@ class AnswersEditor(QtWidgets.QWidget):
                                            "Problems found:\n\n- " + "\n- ".join(errs))
             return False
         merged = False
-        if self._store_sig() != self._rows_sig:
-            # the file changed since the rows were read (a paused run saved
-            # an answer): its new entries join the rows, or nothing is saved
-            joined = self._merged_with_disk(answers)
-            if joined is None:
-                self.status.setText(_SAVE_CLASH)
-                self.disk_banner.setVisible(True)
-                return False
-            merged = len(joined) > len(answers)
-            answers = joined
         try:
-            apply_answers.save(answers, self.store_path, review=self.review)
+            # the store's lock, as a paused run's save takes it, over the
+            # check of the file and the write
+            with file_lock(self.store_path, timeout=apply_pause.SAVE_LOCK_TIMEOUT):
+                if self._store_sig() != self._rows_sig:
+                    # the file changed since the rows were read (a paused run
+                    # saved an answer): its new entries join the rows, or
+                    # nothing is saved
+                    joined = self._merged_with_disk(answers)
+                    if joined is None:
+                        self.status.setText(_SAVE_CLASH)
+                        self.disk_banner.setVisible(True)
+                        return False
+                    merged = len(joined) > len(answers)
+                    answers = joined
+                apply_answers.save(answers, self.store_path, review=self.review)
+        except FileLockTimeout:
+            self.status.setText(_STORE_LOCKED)
+            return False
         except (ValueError, OSError, apply_answers.AnswerStoreError) as exc:
             self.status.setText("Save failed.")
             QtWidgets.QMessageBox.critical(self, "Apply answers", errmsg.for_user(exc))

@@ -1325,16 +1325,16 @@ def test_a_run_that_recorded_nothing_is_an_error_result():
 def test_a_worker_crash_is_a_failed_job_with_its_traceback_logged(worker, capsys, caplog):
     import apply_queue
 
-    def locked(*a, **kw):
-        raise apply_queue.QueueLockTimeout("the queue lock is held")
+    def broken(*a, **kw):
+        raise OSError("the queue file could not be written")
     worker.check(_scored)
-    worker.monkeypatch.setattr(apply_queue, "set_difficulty", locked)
+    worker.monkeypatch.setattr(apply_queue, "set_difficulty", broken)
     with caplog.at_level("ERROR", logger="apply_assess"):
         assert aa.main(worker.argv(), context=_FakeCtx()) == 1
     got = worker.result(capsys)
-    assert got["outcome"] == "error" and got["why"] == "the worker failed (QueueLockTimeout)"
+    assert got["outcome"] == "error" and got["why"] == "the worker failed (OSError)"
     assert got["failed"] is True and "refusal" not in got
-    assert "Traceback" in caplog.text and "QueueLockTimeout" in caplog.text
+    assert "Traceback" in caplog.text and "OSError" in caplog.text
 
 
 def test_a_worker_that_crashes_is_marked_failed(worker, capsys):
@@ -1442,3 +1442,86 @@ def test_a_worker_never_sweeps_the_other_slots(worker, capsys):
     argv = ["--worker", "--profile", str(worker_slot), "--queue", str(worker.queue), "42"]
     assert aa.main(argv) == 0
     assert other.exists() and worker_slot.exists()
+
+
+# --- hardening: a hand-edited queue, a missing Playwright, a locked queue, a crash ---------
+
+def test_past_runs_read_an_attempt_count_that_is_no_number_as_none():
+    # one hand-edited entry used to fail every difficulty check with a ValueError
+    entries = [_ran("1", "submitted"), _ran("2", "submitted", attempts="two"),
+               _ran("3", "needs_human", attempts=None), _ran("4", "submitted", attempts="3")]
+    assert aa.past_runs(entries, "lever", "42") == (2, 0)
+
+
+def test_the_queue_reads_an_attempt_count_tolerantly():
+    import apply_queue
+    assert apply_queue.attempts({"attempts": "2"}) == 2
+    assert apply_queue.attempts({"attempts": "two"}) == 0
+    assert apply_queue.attempts({"attempts": -3}) == 0
+    assert apply_queue.attempts({}) == 0
+
+
+def _no_playwright(monkeypatch):
+    import sys as _sys
+    monkeypatch.setitem(_sys.modules, "playwright", None)
+    monkeypatch.setitem(_sys.modules, "playwright.sync_api", None)
+
+
+def test_a_check_without_playwright_names_the_install_command(browser_cli, capsys):
+    _no_playwright(browser_cli)
+    assert aa.main(["42"]) == 1
+    err = capsys.readouterr().err
+    assert aa.NO_PLAYWRIGHT in err and "Traceback" not in err
+
+
+def test_a_worker_without_playwright_marks_a_refusal_so_the_pool_stops(worker, capsys):
+    _no_playwright(worker.monkeypatch)
+    assert aa.main(worker.argv()) == 1
+    got = worker.result(capsys)
+    assert got["outcome"] == "error" and got["why"] == aa.NO_PLAYWRIGHT
+    assert got["refusal"] is True
+
+
+def _locked(*a, **kw):
+    import apply_queue
+    raise apply_queue.QueueLockTimeout("the queue lock stayed taken")
+
+
+def test_a_locked_queue_on_the_score_is_a_clear_error_after_jev_paid(worker, capsys):
+    import apply_queue
+    worker.check(_scored)
+    worker.monkeypatch.setattr(apply_queue, "set_difficulty", _locked)
+    code, got = worker.run(capsys)
+    assert got["outcome"] == "error" and got["why"] == aa.QUEUE_LOCKED
+    assert got["requests"] == 2 and got["failed"] is True, "the pool notes the failure"
+    assert code == 1
+
+
+def test_a_locked_queue_on_a_failure_note_is_a_clear_error(worker, capsys):
+    import apply_queue
+    worker.check(lambda entry, **kw: (None, "the page did not load"))
+    worker.monkeypatch.setattr(apply_queue, "note_difficulty_failure", _locked)
+    assert aa.main(worker.argv(), context=_FakeCtx()) == 0
+    out = capsys.readouterr().out
+    assert aa.QUEUE_LOCKED in out and "Traceback" not in out
+    got = json.loads(out.strip().splitlines()[-1][len(aa.RESULT_PREFIX):])
+    assert got["outcome"] == "unread" and got["why"] == "the page did not load"
+
+
+def test_a_worker_that_crashes_after_jev_paid_keeps_the_spend(worker, capsys):
+    import apply_queue
+
+    def billed(entry, **kw):
+        jev.count_usage(1_000_000)
+        return _scored(entry, **kw)
+
+    def disk_full(*a, **kw):
+        raise OSError("disk full")
+    worker.monkeypatch.setattr(jev, "_TOTAL", dict(jev._TOTAL))
+    worker.check(billed)
+    worker.monkeypatch.setattr(apply_queue, "set_difficulty", disk_full)
+    assert aa.main(worker.argv(), context=_FakeCtx()) == 1
+    got = worker.result(capsys)
+    assert got["failed"] is True and got["why"] == "the worker failed (OSError)"
+    assert got["usd"] == pytest.approx(jev.usd_for(1_000_000), rel=1e-3)
+    assert got["requests"] >= 1

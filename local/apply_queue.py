@@ -400,11 +400,7 @@ def claim(claimed_by: str = "agent", path: Optional[Path] = None, *,
             return None
         _normalize(best)                     # hand-edited entries: full schema
         best["status"] = "in_progress"
-        try:
-            prior = int(best.get("attempts") or 0)
-        except (TypeError, ValueError):
-            prior = 0       # a hand-edited count that is no number starts over (RES-09)
-        best["attempts"] = prior + 1
+        best["attempts"] = attempts(best) + 1
         best["claimed_by"] = str(claimed_by or "")
         best["started_at"] = _now()
         best["updated_at"] = _now()
@@ -524,6 +520,15 @@ def finish(job_id: str, status: str, *, tab_note: str = "", record: str = "",
         e["updated_at"] = _now()
         _save(data, path)
         return dict(e)
+
+
+def attempts(entry: Dict[str, Any]) -> int:
+    """The runs the drain started on `entry`, 0 when none were or the count
+    is no number (a hand edit, which starts the count over)."""
+    try:
+        return max(0, int(entry.get("attempts") or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def outages(entry: Dict[str, Any]) -> int:

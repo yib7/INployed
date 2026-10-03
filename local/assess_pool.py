@@ -536,10 +536,17 @@ def run_pool(chosen: list[Mapping[str, Any]], *, parallel: int, profile: Path,
     try:
         at_once = max(1, min(int(parallel), len(chosen)))
         apply_assess._say(START_LINE.format(jobs=len(chosen), at_once=at_once))
-        say_left(sweep_slots(root))
+        left = sweep_slots(root)
+        say_left(left)
+        # a copy the sweep could not delete is held by a browser from an
+        # earlier run: a worker there finds its slot busy, so its number is
+        # skipped and the next free one taken
+        held = {folder.name for folder in left}
         profile.mkdir(parents=True, exist_ok=True)      # as the one-job check opens it
         slots = []
-        for k in range(1, at_once + 1):
+        numbers = (k for k in range(1, at_once + len(held) + 1)
+                   if slot_dir(k, root).name not in held)
+        for k in numbers:
             slot = slot_dir(k, root)
             try:
                 missed = snapshot_profile(profile, slot)

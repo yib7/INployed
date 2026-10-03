@@ -1101,3 +1101,31 @@ def test_main_passes_verbose_to_the_pool(main_env):
     assert main_env.calls["pool"][0][1]["verbose"] is True
     assert aa.main(main_env.argv("1", "2")) == 0
     assert main_env.calls["pool"][1][1]["verbose"] is False
+
+
+def test_a_slot_the_start_sweep_could_not_delete_is_never_used(pool, capsys, monkeypatch):
+    # an orphan browser from an earlier run still holds slot-1: the run used
+    # to copy into it anyway, and every job there failed with SLOT_BUSY
+    _write(pool.root, "slot-1/Default/Network/Cookies", "old")
+    real = ap.shutil.rmtree
+    state = {"started": False}
+
+    def rmtree(path, *a, **kw):
+        if not state["started"] and Path(path).name == "slot-1":
+            raise PermissionError("an orphan browser still has it open")
+        return real(path, *a, **kw)
+    monkeypatch.setattr(ap.shutil, "rmtree", rmtree)
+    monkeypatch.setattr(ap, "SWEEP_WAIT_S", 0)
+
+    held = []
+
+    def behave(jid, proc):
+        held.append((pool.root / "slot-1" / "Default" / "Network" / "Cookies").read_text(
+            encoding="utf-8"))
+        state["started"] = True
+        return _result(jid), ""
+    spawner = FakeSpawner(behave, hold_s=0.1)
+    assert pool.run(spawner, parallel=2, ids={"1", "2", "3"}) == 0
+    assert {c[1].name for c in spawner.calls} == {"slot-2", "slot-3"}
+    assert held and set(held) == {"old"}, "no copy is written into the held slot"
+    assert list(pool.root.iterdir()) == [], "the end sweep deletes it once it is free"

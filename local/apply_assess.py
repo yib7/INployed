@@ -161,6 +161,11 @@ STALE_DAYS = 7              # a result older than this shows its age
 PROFILE_BUSY = profile_lock.BUSY_LEAD + " Check difficulty once that window closes."
 NO_BROWSER = ("The browser did not start ({why}): Google Chrome and the bundled Chromium both "
               "failed to open the auto-apply profile, so the difficulty check stops here.")
+NO_PLAYWRIGHT = ("Playwright is not installed, so the difficulty check cannot open a browser. "
+                 "Run: pip install playwright==1.61.0, then python -m playwright install "
+                 "chromium.")
+QUEUE_LOCKED = ("the queue file stayed locked (the dashboard or a drain was writing it), so "
+                "the result was not saved")
 ACCOUNT_NOTE = "An account step comes first: its questions show once you sign in"
 CHECK_NOTE = "A bot check comes first: its questions show once it clears"
 MAILTO_NOTE = "The Apply opens an email to {address}"
@@ -303,7 +308,7 @@ def past_runs(entries: list[Mapping[str, Any]], system: str, job_id: str = "") -
         return 0, 0
     ends = parks = 0
     for e in entries:
-        if str(e.get("job_posting_id")) == str(job_id) or int(e.get("attempts") or 0) < 1:
+        if str(e.get("job_posting_id")) == str(job_id) or apply_queue.attempts(e) < 1:
             continue
         ats = e.get("ats") or {}
         own = system_for(str(ats.get("domain") or "")) or str(ats.get("system") or "")
@@ -1045,7 +1050,16 @@ class _Counting:
         return answers
 
 
+@dataclass(frozen=True)
+class _Spent:
+    """A request count for `_note` when no `_Counting` judge is left to read."""
+    requests: int
+
+
 def _say(text: str) -> None:
+    """`text` on stdout, in whatever the console can show. `apply_run._say`
+    does the same; importing `apply_run` for it would add its import time to
+    the dashboard's, which imports this module."""
     try:
         print(text, flush=True)
     except UnicodeEncodeError:
@@ -1173,25 +1187,26 @@ def run(job_ids: list[str], *, all_queued: bool = False, judge,
             _note(report, "error", "no job to check")
         return 0 if all_queued and not unknown else 2
     counted = _Counting(judge)
-    usd0 = jev.usage()["usd"]
+    # the lifetime counter: a reset of usage() elsewhere never hides this spend
+    usd0 = jev.total_usage()["usd"]
     code = 0
     for i, entry in enumerate(chosen, 1):
         jid = str(entry.get("job_posting_id") or "")
         name = f"{entry.get('company') or '?'} / {entry.get('title') or '?'}"
-        usd_before = jev.usage()["usd"]
+        usd_before = jev.total_usage()["usd"]
         unread = False
         try:
             result, why = check_job(entry, context=context, judge=counted, answers=answers,
                                     settings=settings, entries=entries, log=log)
         except jev.JudgeOutage as e:
             _note(report, "outage", f"Jev is down ({e})", job_id=jid, counted=counted,
-                  usd=jev.usage()["usd"] - usd0)
+                  usd=jev.total_usage()["usd"] - usd0)
             _say(f"[{i}/{len(chosen)}] {name}: Jev is down ({e}); the check stops here")
             return 1
         except Exception as e:      # noqa: BLE001  (one line; the frames go to the log)
             if apply_run._closed_error(e):
                 _note(report, "closed", "the browser window was closed", job_id=jid,
-                      counted=counted, usd=jev.usage()["usd"] - usd0)
+                      counted=counted, usd=jev.total_usage()["usd"] - usd0)
                 _say(f"[{i}/{len(chosen)}] {name}: the browser window was closed; the check "
                      f"stops here")
                 return 1
@@ -1200,8 +1215,8 @@ def run(job_ids: list[str], *, all_queued: bool = False, judge,
                       "\n  ".join(apply_run.error_frames(e)))
         else:
             unread = result is None
-        spent = jev.usage()["usd"] - usd_before
-        total = jev.usage()["usd"] - usd0
+        spent = jev.total_usage()["usd"] - usd_before
+        total = jev.total_usage()["usd"] - usd0
         running = f"Jev so far: {counted.requests} request(s), ${total:.4f}"
         if result is None:
             _note(report, "unread" if unread else "error", why, job_id=jid, counted=counted,
@@ -1212,6 +1227,8 @@ def run(job_ids: list[str], *, all_queued: bool = False, judge,
                 apply_queue.note_difficulty_failure(jid, why, path=queue_path)
             except apply_queue.UnknownJobError:
                 pass
+            except apply_queue.QueueLockTimeout:
+                _say(f"[{i}/{len(chosen)}] {name}: {QUEUE_LOCKED}.")
             continue
         result["jev_usd"] = round(spent, 6)
         try:
@@ -1220,6 +1237,14 @@ def run(job_ids: list[str], *, all_queued: bool = False, judge,
             _note(report, "error", "left the queue while it was checked", job_id=jid,
                   counted=counted, usd=total)
             _say(f"[{i}/{len(chosen)}] {name}: left the queue while it was checked. {running}")
+            continue
+        except apply_queue.QueueLockTimeout:
+            # nothing is noted on the queue: `failed` has the pool note it
+            _note(report, "error", QUEUE_LOCKED, job_id=jid, counted=counted, usd=total,
+                  failed=True)
+            _say(f"[{i}/{len(chosen)}] {name}: {result['score']}/10, but {QUEUE_LOCKED}. "
+                 f"{running}")
+            code = 1
             continue
         _note(report, "scored", "", job_id=jid, counted=counted, usd=total,
               score=result["score"], band=result["band"])
@@ -1292,8 +1317,10 @@ def main(argv: list[str] | None = None, *, context=None) -> int:
     args = ap.parse_args(argv)
     if not args.worker:
         return _main(args, ap, context, None)
+    import jev
     report: dict = {}
     job_id = str(args.job_ids[0]) if args.job_ids else ""
+    start = jev.total_usage()
     try:
         if args.all_queued or len(args.job_ids) != 1 or not args.profile:
             code = _refuse(report, WORKER_USAGE, 2, job_id=job_id)
@@ -1302,8 +1329,14 @@ def main(argv: list[str] | None = None, *, context=None) -> int:
     except Exception as e:      # noqa: BLE001  (the coordinator reads the line; the log keeps the frames)
         code = 1
         logging.getLogger("apply_assess").exception("job %s: the worker failed", job_id)
+        # what Jev was paid before the crash still counts toward the pool's
+        # "Jev so far": the larger of the job's last note and the lifetime
+        # counter's delta since the worker began
+        now = jev.total_usage()
+        requests = max(int(report.get("requests") or 0), now["requests"] - start["requests"])
+        usd = max(float(report.get("usd") or 0.0), now["usd"] - start["usd"])
         _note(report, "error", f"the worker failed ({type(e).__name__})", job_id=job_id,
-              failed=True)
+              counted=_Spent(requests), usd=usd, failed=True)
     _say(result_line(worker_result(report, job_id=job_id)))
     return code
 
@@ -1371,7 +1404,11 @@ def _main(args, ap, context, report: dict | None) -> int:
         pooled = _pool(args, settings, profile, queue, log)
         if pooled is not None:
             return pooled
-    from playwright.sync_api import sync_playwright
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        # a refusal: the pool stops at the first worker that says so
+        return _refuse(report, NO_PLAYWRIGHT, 1, job_id=job_id)
     with sync_playwright() as pw:
         profile.mkdir(parents=True, exist_ok=True)
         try:

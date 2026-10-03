@@ -14,10 +14,11 @@ finished school, no clearance) whatever the user's settings say, so the code
 facts and the request text describe the same candidate and the replay cache
 keeps its keys.
 
-A row Jev itself scored is left out of the sample: by its reason's old
-"Skills fit " prefix, and by an `extracted_date` on or after 2026-09-28 (the
-day Jev scoring began) when the column is present and the date parses; a
-missing or unparseable date stays eligible.
+A row Jev itself scored is left out of the sample: by its reason's prefix (a
+`jev_score.SCORE_LABELS` label and a colon, or the earlier "Skills fit "), and
+by an `extracted_date` on or after 2026-09-28 (the day Jev scoring began) when
+the column is present and the date parses; a missing or unparseable date stays
+eligible.
 
 Every live request goes through `jev.SpendCap` under --cap-usd, and each answer
 lands in a replay cache under %LOCALAPPDATA%\\INployed\\jev_calibration\\ (keyed
@@ -74,10 +75,13 @@ MIN_TEXT_CHARS = 200            # a shorter description or summary is no job tex
 CHUNK = 2000
 SCORES = (1, 2, 3, 4, 5)
 RECOMMENDATIONS = ("apply", "consider", "skip")
-# A row whose reason Jev composed (jev_score.compose_stage1): Jev against Jev says nothing.
-JEV_REASON_PREFIX = "Skills fit "
+# A row whose reason Jev composed: Jev against Jev says nothing. `jev_score.compose_stage1`
+# writes "<SCORE_LABELS label>: <text>."; "Skills fit " is the prefix the earlier Jev
+# scorer wrote, and rows carrying it are still in the master.
+JEV_REASON_PREFIXES: tuple[str, ...] = ("Skills fit ", *(
+    f"{label}: " for label in jev_score.SCORE_LABELS.values()))
 # The day Jev scoring began; a row scored on or after this date is Jev against Jev too,
-# even once the reason has been through the writer and no longer carries the prefix above.
+# even once the reason has been through the writer and no longer carries a prefix above.
 JEV_START_DATE = "2026-09-28"
 _TRUE = ("true", "1", "1.0", "yes")
 _TITLE_COLS = ("job_title", "job_posting_title", "title")
@@ -152,14 +156,14 @@ def _jev_scored_by_date(row: dict) -> bool:
 def eligible(row: dict) -> tuple[int, str] | None:
     """(the Gemini stage 1 score, the text source) for a scraped job Gemini
     scored that still has job text, else None. Hand-added rows, filtered rows,
-    reused scores and rows Jev itself scored (by the old reason prefix or by
+    reused scores and rows Jev itself scored (by a JEV_REASON_PREFIXES prefix or by
     an extracted_date on or after JEV_START_DATE) are left out."""
     job_id = str(row.get("job_posting_id", "") or "").strip()
     if not job_id or job_id.startswith(score_jobs.MANUAL_ID_PREFIX):
         return None
     if _flag(row.get("filtered_out", "")) or _flag(row.get("score_reused", "")):
         return None
-    if str(row.get("reason", "") or "").startswith(("ERROR:", JEV_REASON_PREFIX)):
+    if str(row.get("reason", "") or "").startswith(("ERROR:", *JEV_REASON_PREFIXES)):
         return None
     if _jev_scored_by_date(row):
         return None

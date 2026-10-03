@@ -252,6 +252,11 @@ def test_load_jobs_reads_the_text_score_jobs_reads(tmp_path):
     ({"filtered_out": "true "}, None),
     ({"score_reused": "True"}, None),
     ({"reason": "Skills fit good (0.60); domain data science or ML"}, None),
+    # jev_score.compose_stage1 writes "<SCORE_LABELS label>: <text>."
+    ({"reason": "Good match: SQL and Python."}, None),
+    ({"reason": "No match: needs 5+ years."}, None),
+    ({"reason": "Borderline: some tools missing."}, None),
+    ({"reason": "Good match - skills align"}, (3, "formatted")),  # Gemini's own wording
     ({"job_description_formatted": "<p>short</p>", "job_summary": "short"}, None),
     ({"extracted_date": "2026-09-28"}, None),               # on JEV_START_DATE: excluded
     ({"extracted_date": "2026-09-29"}, None),                # after: excluded

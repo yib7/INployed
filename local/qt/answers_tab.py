@@ -59,7 +59,7 @@ import errmsg
 import jev
 import jev_switch
 from qt import theme, workers
-from apply_pause import builtin_answering  # noqa: F401  (re-exported for the tests)
+from apply_pause import builtin_answering
 from resume_tailor import apply_answers
 
 # The built-in's own text is authoritative for the address rules. It is
@@ -73,10 +73,6 @@ _OWN_TICK = {"work_authorized": "work authorization",
              "requires_sponsorship": "sponsorship",
              "years_experience": "years of experience",
              "authorization_statement": "work-authorization statement"}
-
-
-# `builtin_answering` lives in `apply_pause` (the run's "save for future runs"
-# refuses the same questions, PR-6); the dialog and Save read it from there.
 
 
 # "The <this>." in the Add answer dialog, "the <this>; ..." in a Save message.
@@ -401,7 +397,10 @@ class AnswersEditor(QtWidgets.QWidget):
         # pass an explicit store_path get an exact read of that file.
         self._merge_defaults = store_path is None
         self.store_path = Path(store_path) if store_path is not None else apply_answers.STORE_PATH
-        self.snapshot = self.store_path.read_bytes() if self.store_path.exists() else b""
+        # The store's bytes as last read, kept so "Drop unsaved edits" can put
+        # the file back if it went missing since. Every read moves it on, so it
+        # never holds an answer older than one saved since (here or by a run).
+        self.snapshot = b""
         self.rows: list[dict] = []
         self.load_error = ""
         self.review: list[dict] = []
@@ -488,7 +487,7 @@ class AnswersEditor(QtWidgets.QWidget):
         self.confirm_all_btn = QtWidgets.QPushButton("Confirm all")
         self.confirm_all_btn.clicked.connect(self._confirm_all_clicked)
         bar.addWidget(self.confirm_all_btn)
-        self.revert_btn = QtWidgets.QPushButton("Revert to opening state")
+        self.revert_btn = QtWidgets.QPushButton("Drop unsaved edits")
         self.revert_btn.clicked.connect(self._revert_clicked)
         bar.addWidget(self.revert_btn)
         self.restore_backup_btn = QtWidgets.QPushButton("Restore backup")
@@ -506,6 +505,7 @@ class AnswersEditor(QtWidgets.QWidget):
     def reload(self) -> None:
         for row in self.rows:
             row["frame"].setParent(None)
+            row["frame"].deleteLater()
         self.rows.clear()
         self.load_error = ""
         self.review = []
@@ -528,6 +528,10 @@ class AnswersEditor(QtWidgets.QWidget):
         if self._merge_defaults:
             entries = apply_answers.with_missing_builtins(entries)
         self._read_entries = [dict(e) for e in entries]
+        try:
+            self.snapshot = self.store_path.read_bytes() if self.store_path.exists() else b""
+        except OSError:
+            pass
         self.review = store["review"]          # kept for the next save
         country_answer = next(
             (str(e.get("answer", "") or "").strip() for e in entries
@@ -931,17 +935,71 @@ class AnswersEditor(QtWidgets.QWidget):
         self.status.setText("Added '%s'. Click Save changes to keep it." % entry["question"])
         return True
 
+    def answer_now(self, prefill: dict | None) -> bool:
+        """A parked job's Answer now: Add answer prefilled with the form's
+        question, and on OK only the new answer is written to the store, next
+        to what the file holds. The rows' own unsaved edits stay unsaved here
+        (a half-typed or invalid edit neither blocks the answer nor rides along
+        with it); with none, the tab reads the file again and shows the row.
+        True once the answer is on disk."""
+        if self.load_error:
+            self.status.setText(self.load_error)
+            return False
+        try:
+            store = apply_answers.load_store(self.store_path)
+        except apply_answers.AnswerStoreError as exc:
+            self.status.setText("Not saved: the answers file is damaged.")
+            QtWidgets.QMessageBox.critical(self, "Apply answers", errmsg.for_user(exc))
+            return False
+        disk = list(store["answers"])
+        known = apply_answers.with_missing_builtins(disk) if self._merge_defaults else disk
+        dialog = AddAnswerDialog(known, parent=self, prefill=prefill)
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return False
+        entry = dialog.result_entry()
+        taken = {str(e.get("id", "")).strip() for e in disk} | {r["id"] for r in self.rows}
+        if entry["id"] in taken:
+            entry["id"] = apply_answers.new_id(entry["question"] or "answer", taken)
+        try:
+            apply_answers.save(disk + [entry], self.store_path, review=store["review"])
+        except (ValueError, OSError, apply_answers.AnswerStoreError) as exc:
+            self.status.setText("Save failed.")
+            QtWidgets.QMessageBox.critical(self, "Apply answers", errmsg.for_user(exc))
+            return False
+        if self.has_unsaved_edits():
+            # the banner offers Reload; Save changes merges the new answer in
+            self.check_disk()
+            self.status.setText("Saved '%s'. Your other edits here are not saved yet."
+                                % entry["question"])
+        else:
+            self.reload()
+            self.status.setText("Saved '%s'." % entry["question"])
+        if self.on_saved:
+            self.on_saved()
+        return True
+
     def _delete_clicked(self, row: dict) -> None:
-        question = row["entry"].get("question", "") or row["id"]
+        eid = row["id"]
+        question = row["entry"].get("question", "") or eid
         if isinstance(row["question_widget"], QtWidgets.QLineEdit):
             question = row["question_widget"].text().strip() or question
-        if QtWidgets.QMessageBox.question(
-                self, "Delete answer", "Delete '%s'?" % question
-        ) != QtWidgets.QMessageBox.StandardButton.Yes:
+        # The disk poll can reload the rows while the question is open, which
+        # would leave `row` pointing at a dropped frame: hold the poll, and look
+        # the row up again by its id once the person answers.
+        self._disk_timer.stop()
+        try:
+            answer = QtWidgets.QMessageBox.question(
+                self, "Delete answer", "Delete '%s'?" % question)
+        finally:
+            self._disk_timer.start()
+        if answer != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        row = self._row_by_id(eid)
+        if row is None:
             return
         row["frame"].setParent(None)
-        if row in self.rows:
-            self.rows.remove(row)
+        row["frame"].deleteLater()
+        self.rows.remove(row)
         self._refresh_counts()
 
     def validate(self) -> list[str]:
@@ -986,22 +1044,28 @@ class AnswersEditor(QtWidgets.QWidget):
         return True
 
     def revert(self) -> None:
-        # A damaged store has no good snapshot to go back to (self.snapshot is
-        # the damaged bytes); reverting would overwrite the file's own .bak with
-        # them. Do nothing and say so; the user restores the .bak by hand.
+        """Drop the unsaved edits and read the store again. The file is never
+        written over or removed: what is on disk now holds every answer saved
+        since the tab opened, by this tab or by a paused run. Only a file that
+        went missing since the last read is put back from that read. A damaged
+        store is left alone (the user restores its .bak)."""
         if self.load_error:
             self.status.setText("Not reverted: the answers file is damaged.")
             return
-        if self.snapshot:
-            apply_answers.restore_bytes(self.snapshot, self.store_path)
-        elif self.store_path.exists():
-            self.store_path.unlink()
+        if self.snapshot and not self.store_path.exists():
+            try:
+                apply_answers.restore_bytes(self.snapshot, self.store_path)
+            except OSError as exc:
+                self.status.setText("Could not put the answers file back.")
+                QtWidgets.QMessageBox.critical(self, "Apply answers", errmsg.for_user(exc))
+                return
         self.reload()
-        self.status.setText("Reverted to opening state.")
+        self.status.setText("Dropped your unsaved edits.")
 
     def _revert_clicked(self) -> None:
         if QtWidgets.QMessageBox.question(
-                self, "Revert", "Undo every change since you opened this tab?"
+                self, "Drop unsaved edits",
+                "Drop every edit you have not saved? Saved answers stay as they are."
         ) == QtWidgets.QMessageBox.StandardButton.Yes:
             self.revert()
 
@@ -1043,14 +1107,15 @@ class AnswersEditor(QtWidgets.QWidget):
         try:
             # The damaged bytes may hold the newest answers; keep them first.
             shutil.copyfile(str(self.store_path), str(damaged))
-            shutil.copy2(str(bak), str(self.store_path))
+            # the store's own atomic write; it leaves the .bak alone because
+            # the file it replaces is the damaged one
+            apply_answers.restore_bytes(bak.read_bytes(), self.store_path)
             restored = self.store_path.read_bytes()
         except OSError as exc:
             self.status.setText("Restore failed.")
             QtWidgets.QMessageBox.critical(self, "Restore backup", errmsg.for_user(exc))
             return
         self.reload()
-        # Revert now goes back to the restored answers.
         self.snapshot = restored
         self.status.setText("Restored %s. The damaged file is kept as %s."
                             % (bak.name, damaged.name))

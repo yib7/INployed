@@ -27,7 +27,7 @@ from collections import namedtuple
 import jev
 import jev_switch
 import pytest
-from PySide6 import QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from qt import answers_tab as at
 from qt.answers_tab import AddAnswerDialog, AnswersEditor
@@ -1004,15 +1004,16 @@ def test_save_persists(qtbot, tmp_path, monkeypatch):
     assert any(e["answer"] == "No" for e in reloaded)
 
 
-def test_revert_restores_snapshot(qtbot, tmp_path, monkeypatch):
+def test_revert_drops_the_unsaved_edits(qtbot, tmp_path, monkeypatch):
     store = tmp_path / "apply_answers.json"
     _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    before = store.read_bytes()
     ed = _editor(qtbot, store)
-    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", lambda *a, **k: None)
     _row(ed, "work_authorized")["answer_widget"].setCurrentText("No")
-    ed.save()
     ed.revert()
     assert _row(ed, "work_authorized")["answer_widget"].currentText() == "Yes"
+    assert store.read_bytes() == before
+    assert ed.status.text() == "Dropped your unsaved edits."
 
 
 def test_revert_does_nothing_on_a_damaged_store_and_keeps_the_bak(qtbot, tmp_path):
@@ -1561,9 +1562,9 @@ def test_revert_after_a_restore_goes_back_to_the_restored_answers(qtbot, tmp_pat
     assert ed.snapshot == restored
     monkeypatch.setattr(QtWidgets.QMessageBox, "warning", lambda *a, **k: None)
     _row(ed, "work_authorized")["answer_widget"].setCurrentText("No")
-    assert ed.save() is True
     ed.revert()
     assert store.read_bytes() == restored
+    assert _row(ed, "work_authorized")["answer_widget"].currentText() == "Yes"
     assert not ed.load_error
 
 
@@ -1763,3 +1764,168 @@ def test_the_disk_check_rides_a_five_second_timer(qtbot, tmp_path):
     ed = _editor(qtbot, tmp_path / "apply_answers.json")
     assert at.DISK_POLL_MS == 5000
     assert ed._disk_timer.interval() == 5000 and ed._disk_timer.isActive()
+
+
+# --- Revert never erases an answer saved since the tab opened ----------------------------
+
+def _yes(monkeypatch):
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question",
+                        lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", lambda *a, **k: None)
+
+
+def test_revert_keeps_an_answer_a_paused_run_saved_after_the_tab_opened(
+        qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    ed = _editor(qtbot, store)
+    _yes(monkeypatch)
+    _run_saves(store)
+    assert ed.check_disk() == "reloaded"
+    ed._revert_clicked()
+    saved = {e["question"]: e["answer"] for e in apply_answers.load(store)}
+    assert saved.get("Preferred team") == "Platform"
+
+
+def test_revert_keeps_an_answer_a_paused_run_saved_before_the_poll_saw_it(
+        qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    ed = _editor(qtbot, store)
+    _yes(monkeypatch)
+    _row(ed, "work_authorized")["answer_widget"].setCurrentText("No")
+    _run_saves(store)                         # the 5 s poll has not run yet
+    ed._revert_clicked()
+    saved = {e["question"]: e["answer"] for e in apply_answers.load(store)}
+    assert saved.get("Preferred team") == "Platform"
+    assert _row(ed, "work_authorized")["answer_widget"].currentText() == "Yes"
+
+
+def test_revert_with_no_file_at_launch_keeps_the_file_a_paused_run_made(
+        qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    ed = _editor(qtbot, store)              # no file yet
+    _yes(monkeypatch)
+    _run_saves(store)
+    ed._revert_clicked()
+    assert store.exists()
+    saved = {e["question"]: e["answer"] for e in apply_answers.load(store)}
+    assert saved.get("Preferred team") == "Platform"
+
+
+def test_revert_keeps_the_tabs_own_save(qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    ed = _editor(qtbot, store)
+    _yes(monkeypatch)
+    _row(ed, "work_authorized")["answer_widget"].setCurrentText("No")
+    assert ed.save() is True
+    ed._revert_clicked()
+    (entry,) = [e for e in apply_answers.load(store) if e["id"] == "work_authorized"]
+    assert entry["answer"] == "No"
+
+
+# --- Delete survives a disk reload while its confirmation is open -------------------------
+
+def test_delete_confirmed_after_a_disk_reload_still_deletes_the_row(qtbot, tmp_path,
+                                                                   monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True),
+                     _custom("github", "What is your GitHub?", answer="x", confirmed=True)])
+    ed = _editor(qtbot, store)
+
+    def reload_then_yes(*_a, **_k):
+        _run_saves(store)
+        assert ed.check_disk() == "reloaded"   # the poll fires inside the modal
+        return QtWidgets.QMessageBox.StandardButton.Yes
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", reload_then_yes)
+    ed._delete_clicked(_row(ed, "github"))
+    assert all(r["id"] != "github" for r in ed.rows)
+    assert ed.has_unsaved_edits()
+
+
+# --- Restore backup goes through the store's atomic writer --------------------------------
+
+def test_restore_backup_writes_through_restore_bytes(qtbot, tmp_path, monkeypatch):
+    store, bak = _damaged_with_bak(tmp_path)
+    ed = _editor(qtbot, store)
+    _yes(monkeypatch)
+    calls = []
+    real = apply_answers.restore_bytes
+    monkeypatch.setattr(apply_answers, "restore_bytes",
+                        lambda data, path=None: calls.append(path) or real(data, path))
+    ed._restore_backup_clicked()
+    assert calls == [store]
+    assert store.read_bytes() == bak.read_bytes()
+    assert not ed.load_error
+
+
+# --- reload frees the rows it drops ---------------------------------------------------------
+
+def test_reload_does_not_leak_top_level_widgets(qtbot, tmp_path):
+    store = tmp_path / "apply_answers.json"
+    apply_answers.save(apply_answers.seed_defaults(), store)
+    ed = _editor(qtbot, store)
+    app = QtWidgets.QApplication.instance()
+    QtWidgets.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+    before = len(app.topLevelWidgets())
+    for _ in range(20):
+        ed.reload()
+    QtWidgets.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+    assert len(app.topLevelWidgets()) <= before
+
+
+# --- Answer now writes only the new answer ------------------------------------------------
+
+def test_answer_now_saves_only_the_new_answer_and_keeps_other_edits_unsaved(
+        qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    ed = _editor(qtbot, store)
+    _accepting(monkeypatch, "Yes")
+    _row(ed, "work_authorized")["answer_widget"].setCurrentText("No")   # half-done edit
+    assert ed.answer_now(_CDL) is True
+    saved = {e["id"]: e for e in apply_answers.load(store)}
+    assert saved["work_authorized"]["answer"] == "Yes"
+    assert any(e["question"] == "Do you hold a CDL? Commercial driver license"
+               and e["answer"] == "Yes" and e["confirmed"] for e in saved.values())
+    assert _row(ed, "work_authorized")["answer_widget"].currentText() == "No"
+
+
+def test_answer_now_is_not_blocked_by_an_invalid_unsaved_edit(qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_custom("github", "What is your GitHub?", answer="x", confirmed=True)])
+    ed = _editor(qtbot, store)
+    _accepting(monkeypatch, "Yes")
+    _row(ed, "github")["question_widget"].setText("")        # invalid: no question
+    assert ed.validate()
+    assert ed.answer_now(_CDL) is True
+    questions = {e["question"] for e in apply_answers.load(store)}
+    assert "Do you hold a CDL? Commercial driver license" in questions
+    assert "What is your GitHub?" in questions
+
+
+def test_answer_now_with_no_unsaved_edits_shows_the_new_row(qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    ed = _editor(qtbot, store)
+    _accepting(monkeypatch, "Yes")
+    assert ed.answer_now(_CDL) is True
+    assert any(r["entry"].get("question") == "Do you hold a CDL? Commercial driver license"
+               for r in ed.rows)
+    assert not ed.has_unsaved_edits()
+
+
+def test_answer_now_cancelled_or_damaged_writes_nothing(qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [])
+    before = store.read_bytes()
+    ed = _editor(qtbot, store)
+    monkeypatch.setattr(AddAnswerDialog, "exec",
+                        lambda dlg: QtWidgets.QDialog.DialogCode.Rejected)
+    assert ed.answer_now(_CDL) is False
+    assert store.read_bytes() == before
+    store.write_text("{not json", encoding="utf-8")
+    ed.reload()
+    assert ed.answer_now(_CDL) is False
+    assert store.read_text(encoding="utf-8") == "{not json"

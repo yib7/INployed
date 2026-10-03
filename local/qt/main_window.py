@@ -418,14 +418,16 @@ class MainWindow(QtWidgets.QMainWindow):
             msg.setText(self.EMPTY_FIRST_RUN[1])
 
     def _answer_now(self, prefill: dict | None = None) -> bool:
-        """A parked job's Answer now (PR-7): Add answer on the Apply Answers
-        tab, prefilled with the parked question, and saved when the dialog is
-        accepted. True once the answer is on disk (the Auto-apply tab then
-        offers Re-queue). With no question kept, the tab opens."""
+        """A parked job's Answer now: Add answer on the Apply Answers tab,
+        prefilled with the parked question. Accepting it writes that answer
+        alone to the store (`AnswersEditor.answer_now`), so other unsaved edits
+        on the tab are neither saved nor in its way. True once the answer is on
+        disk (the Auto-apply tab then offers Re-queue). With no question kept,
+        the tab opens."""
         self._show_tab("Apply Answers")
-        if not prefill or not self.answers_tab.add_answer(prefill):
+        if not prefill:
             return False
-        return bool(self.answers_tab.save())
+        return bool(self.answers_tab.answer_now(prefill))
 
     def _show_tab(self, title: str) -> None:
         page = self._tab_widgets.get(title)

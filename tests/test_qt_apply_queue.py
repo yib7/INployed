@@ -2012,17 +2012,18 @@ def test_answer_now_with_several_questions_offers_each(qtbot, tmp_path):
 def test_answer_now_in_the_window_saves_the_prefilled_answer(qtbot, monkeypatch, tmp_path):
     w = _win(qtbot, monkeypatch, tmp_path)
     calls = []
-    monkeypatch.setattr(w.answers_tab, "add_answer",
-                        lambda prefill=None: calls.append(("add", prefill)) or True)
+    monkeypatch.setattr(w.answers_tab, "answer_now",
+                        lambda prefill=None: calls.append(("answer_now", prefill)) or True)
     monkeypatch.setattr(w.answers_tab, "save", lambda: calls.append(("save",)) or True)
     prefill = {"question": "Preferred team", "help": "", "type": "choice",
                "options": ["Data", "Platform"]}
     assert w._answer_now(prefill) is True
-    assert calls == [("add", prefill), ("save",)]
+    # the new answer is written on its own: the tab's Save (every pending edit) never runs
+    assert calls == [("answer_now", prefill)]
     assert w.tabs.tabText(w.tabs.currentIndex()) == "Apply Answers"
     # a cancelled dialog saves nothing
     calls.clear()
-    monkeypatch.setattr(w.answers_tab, "add_answer", lambda prefill=None: False)
+    monkeypatch.setattr(w.answers_tab, "answer_now", lambda prefill=None: False)
     assert w._answer_now(prefill) is False and calls == []
     assert w._answer_now(None) is False
 

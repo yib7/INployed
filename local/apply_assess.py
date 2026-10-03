@@ -701,7 +701,7 @@ class _Walker:
         url = str(self.page.url or "")
         on_linkedin = apply_linkedin.is_linkedin(url)
         easy = Step("stop", stop="easy_apply")
-        if apply_judge.already_applied(answers, facts, state):
+        if apply_judge.already_applied(answers, facts):
             return Step("unread", note="the site says this job was applied to before")
         if apply_run.remaps_to_form(state, digest, url):
             state = "application_form"

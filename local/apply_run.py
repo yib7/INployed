@@ -1708,8 +1708,10 @@ class _Accounts:
         try:
             answers = self.run._map(digest, {}, "signup_form" if signup else "login_wall",
                                     discover=False)
-            plan = apply_judge.plan(digest, self.run.catalog, answers,
-                                    company=self.run._company())
+            plan = apply_judge.plan(
+                digest, self.run.catalog, answers,
+                generation_enabled=bool(self.run.r.settings["auto_apply_generate"]),
+                company=self.run._company())
             rec = self.run.pages[-1] if self.run.pages else {"flags": {}}
             plan = self.run._complete_option_plan(digest, answers, plan, rec)
             advance = account_advance(digest, plan, signup=signup)
@@ -3623,7 +3625,7 @@ def loop_step(url: str, digest: apply_form.FormDigest, plan: FillPlan, state: st
     if handled is not None:
         return handled
     facts = facts if facts is not None else apply_judge.page_facts(digest, url)
-    applied = apply_judge.already_applied(answers or {}, facts, state)
+    applied = apply_judge.already_applied(answers or {}, facts)
     if applied:
         return f"park: {ALREADY_APPLIED_REASON} ({applied})"
     unsure = conf < apply_judge.PAGE_STATE_MIN_CONF
@@ -6003,7 +6005,7 @@ class _JobRun:
                                              f"{conf:.2f} again{after})")
             self.last_sig = sig
             unsure = conf < apply_judge.PAGE_STATE_MIN_CONF
-            applied = apply_judge.already_applied(answers, facts, state)
+            applied = apply_judge.already_applied(answers, facts)
             if applied and not self.submit_clicked and not self._code_sent:
                 # A job the site says was applied to
                 # before is never applied to again

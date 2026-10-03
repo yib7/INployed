@@ -1637,13 +1637,13 @@ def structure_against(facts: PageFacts, state: str) -> bool:
     return _structure(facts).get(state, 0.0) < 0
 
 
-def already_applied(answers: Mapping[str, Answer], facts: PageFacts, state: str = "") -> str:
+def already_applied(answers: Mapping[str, Answer], facts: PageFacts) -> str:
     """The evidence that the job was applied to before, or "": the page's
     own words (`page_facts`: a statement, on a page with no application box
     and no Apply entry), with the judge's `page_already_applied` named
     beside them. The Noul alone never parks: a pre-submit thanks page keeps
     the reason "a confirmation page before any submit; check whether ..."
-    (`confirmation_step`). `state` is unused; callers may leave it out."""
+    (`confirmation_step`)."""
     if not facts.already_applied:
         return ""
     p = noul_of(answers, "page_already_applied")

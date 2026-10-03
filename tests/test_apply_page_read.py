@@ -291,7 +291,7 @@ SCREENING = FormDigest(url_host="x", title="Apply",
 
 def test_already_applied_is_the_pages_own_statement_on_a_page_with_nothing_to_fill_or_open():
     facts = apply_judge.page_facts(STATUS)
-    assert "already applied" in apply_judge.already_applied({}, facts, "confirmation")
+    assert "already applied" in apply_judge.already_applied({}, facts)
     for digest, state in ((SIGN_IN_STATUS, "login_wall"), (SCREENING, "application_form")):
         facts = apply_judge.page_facts(digest)
         assert facts.already_applied == "", digest.title
@@ -335,7 +335,7 @@ def test_the_already_applied_noul_alone_never_parks_a_pre_submit_thanks_page():
     answers = {"page_state": _choice("confirmation", 0.9),
                **_nouls(page_already_applied=0.8)}
     facts = apply_judge.page_facts(thanks)
-    assert apply_judge.already_applied(answers, facts, "confirmation") == ""
+    assert apply_judge.already_applied(answers, facts) == ""
     step = apply_run.loop_step("https://x.example/thanks", thanks, FillPlan(), "confirmation",
                                0.9, answers=answers)
     assert step.startswith("park: a confirmation page before any submit"), step

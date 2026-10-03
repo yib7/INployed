@@ -1723,3 +1723,24 @@ def test_a_sign_ins_box_that_came_back_is_never_typed_again(tmp_path):
     digest = _boxes_digest(("Password", "current-password"))
     assert run.accounts._retype("127.0.0.1", [_Emptied()], digest) is False
     assert run.accounts.retyped == set()
+
+
+def test_a_sign_up_form_drafts_nothing_with_the_generate_setting_off(
+        _browser, flow_server, tmp_path, monkeypatch):
+    # every plan the run makes on a sign-up flow reads the person's
+    # auto_apply_generate; none falls back to drafting by default
+    import apply_judge
+    real_init, real_plan = apply_run.Runner.__init__, apply_judge.plan
+    seen: list = []
+
+    def init(self, *a, **k):
+        k["settings"] = {**k["settings"], "auto_apply_generate": False}
+        real_init(self, *a, **k)
+
+    def plan(*a, **k):
+        seen.append(k.get("generation_enabled", "default"))
+        return real_plan(*a, **k)
+    monkeypatch.setattr(apply_run.Runner, "__init__", init)
+    monkeypatch.setattr(apply_judge, "plan", plan)
+    _run(h.flow("password_rules"), tmp_path, _browser, flow_server)
+    assert seen and set(seen) == {False}, seen

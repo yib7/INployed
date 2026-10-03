@@ -1,4 +1,4 @@
-# Record or replay live Jev answers for a fixture set (SP8 tuning harness).
+# Record or replay live Jev answers for a fixture set (the Jev tuning harness).
 #
 #   .\scripts\jev_record.ps1 -Cap 0.20                     # record the runner tests
 #   .\scripts\jev_record.ps1 -Mode replay                  # replay them: no key, no network
@@ -23,23 +23,24 @@
 # Every live entry point stops at the cap (AUTO_APPLY_RECORD_USD_CAP, from -Cap):
 # a request whose estimated cost would pass it is never sent. A live recording
 # must pass -Cap (no default, and the Python entry points refuse one without
-# the variable); a dry run or a replay spends nothing and takes 0.88 (what the
-# cycle's approval had left under its limit after SP8b) when it is left out.
-# -Dry answers with
-# the fake at each request's estimated size into a temp copy of the cache, with
-# no key: the request count and the spend a recording would make. When the run
-# ends, the variables this script set are removed, so a later plain pytest stays
-# on the fake, and the key is dropped when this script loaded it. A recording or
-# a replay of the runner or matrix target ends with scripts/jev_thresholds.py
-# over its cache.
+# the variable). A dry run or a replay spends nothing; left without -Cap it
+# sets no cap variable, and a dry run then stops at the Python side's own dry
+# default (jev.DRY_RECORD_CAP_USD). -Dry answers with the fake at each
+# request's estimated size into a temp copy of the cache, with no key: the
+# request count and the spend a recording would make. When the run ends, the
+# variables this script set are removed (QT_QPA_PLATFORM goes back to the
+# caller's own value), the caller's location is restored, so a later plain
+# pytest stays on the fake, and the key is dropped when this script loaded it.
+# A recording or a replay of the runner or matrix target ends with
+# scripts/jev_thresholds.py over its cache.
 #
-# -Prune (SP8, -Mode replay only, -Target runner or matrix) rewrites the
+# -Prune (-Mode replay only, -Target runner or matrix) rewrites the
 # target's cache to keep only the keys that replay used, once the replay had
 # 0 misses and 0 failures (jev.prune_cache); otherwise it prints the refusal
 # and leaves the cache as it was. Over time a cache picks up keys no test
 # replays any more (a fixture changed, a test was removed); -Prune drops
 # them. It never runs in -Mode record: a recording's cache is meant to grow.
-# -Prune also refuses together with -Flows (SP8 review): a narrowed matrix run
+# -Prune also refuses together with -Flows: a narrowed matrix run
 # never touches the left-out flows' requests, so their keys would look unused
 # and be dropped even though a full run still needs them. The runner target
 # refuses the same way at session finish when the run was not the whole
@@ -52,7 +53,7 @@ param(
     [string]$Mode = "record",
     [ValidateSet("runner", "matrix", "captures")]
     [string]$Target = "runner",
-    [double]$Cap = 0.88,
+    [double]$Cap,
     [string]$Cache = "",
     [string]$Flows = "",
     [string]$Json = "",
@@ -79,16 +80,16 @@ if ($Prune -and $Flows) {
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-Set-Location $root
 
 $live = ($Mode -eq "record") -and (-not $Dry)
+$hasCap = $PSBoundParameters.ContainsKey("Cap")
 # A live recording names its own cap: what the spend ledger has left under the
-# cycle's limit. Checked before the key is read. A NaN cap never stops.
-if ($live -and -not $PSBoundParameters.ContainsKey("Cap")) {
+# approval's limit. Checked before the key is read. A NaN cap never stops.
+if ($live -and -not $hasCap) {
     Write-Host "A live recording needs -Cap <USD>: at most what the spend ledger has left under the limit."
     exit 2
 }
-if ([double]::IsNaN($Cap) -or [double]::IsInfinity($Cap) -or $Cap -le 0) {
+if ($hasCap -and ([double]::IsNaN($Cap) -or [double]::IsInfinity($Cap) -or $Cap -le 0)) {
     Write-Host "-Cap must be a finite USD amount above 0."
     exit 2
 }
@@ -111,11 +112,17 @@ if ($live -and -not $env:TYPESAFE_API_KEY) {
     }
 }
 
-$capText = $Cap.ToString([System.Globalization.CultureInfo]::InvariantCulture)
-$env:AUTO_APPLY_RECORD_USD_CAP = $capText
+$set = @()
+$capText = "the dry default"
+if ($hasCap) {
+    $capText = $Cap.ToString([System.Globalization.CultureInfo]::InvariantCulture) + " USD"
+    $env:AUTO_APPLY_RECORD_USD_CAP = $capText.Split(" ")[0]
+    $set += "AUTO_APPLY_RECORD_USD_CAP"
+}
+$callerQt = $env:QT_QPA_PLATFORM
 $env:QT_QPA_PLATFORM = "offscreen"
-$set = @("AUTO_APPLY_RECORD_USD_CAP")
 $code = 0
+Push-Location $root
 try {
     if ($Target -eq "runner") {
         $env:AUTO_APPLY_TEST_JEV = $Mode
@@ -123,7 +130,7 @@ try {
         if ($Dry) { $env:AUTO_APPLY_RECORD_DRY = "1"; $set += "AUTO_APPLY_RECORD_DRY" }
         if ($Cache) { $env:AUTO_APPLY_JEV_CACHE = $Cache; $set += "AUTO_APPLY_JEV_CACHE" }
         if ($Prune) { $env:AUTO_APPLY_JEV_PRUNE = "1"; $set += "AUTO_APPLY_JEV_PRUNE" }
-        Write-Host "jev $Mode over the runner tests (cap $capText USD, dry $Dry)"
+        Write-Host "jev $Mode over the runner tests (cap $capText, dry $Dry)"
         python -m pytest tests/test_apply_run.py tests/test_apply_run_boundaries.py tests/test_screening.py tests/test_apply_assess.py -q
         $code = $LASTEXITCODE
         if (-not $Dry) {
@@ -141,7 +148,7 @@ try {
         if ($Flows) { $matrixArgs += @("--flows", $Flows) }
         if ($Json) { $matrixArgs += @("--json", $Json) }
         if ($Prune) { $matrixArgs += @("--real-prune") }
-        Write-Host "jev $real over the flow matrix (cap $capText USD)"
+        Write-Host "jev $real over the flow matrix (cap $capText)"
         python @matrixArgs
         $code = $LASTEXITCODE
         if (-not $Dry) {
@@ -155,7 +162,7 @@ try {
         if ($Dry) { $captureMode = "dry" }
         $env:AUTO_APPLY_CAPTURE_JEV = $captureMode
         $set += "AUTO_APPLY_CAPTURE_JEV"
-        Write-Host "jev $captureMode over the local captures' page reads (cap $capText USD)"
+        Write-Host "jev $captureMode over the local captures' page reads (cap $capText)"
         python -m pytest tests/test_capture_reads.py -q -rsx
         $code = $LASTEXITCODE
         $summary = "tests/fixtures/local_captures/_jev/summary.txt"
@@ -164,6 +171,9 @@ try {
 }
 finally {
     foreach ($name in $set) { Remove-Item "Env:$name" -ErrorAction SilentlyContinue }
+    if ($callerQt) { $env:QT_QPA_PLATFORM = $callerQt }
+    else { Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue }
     if ($loadedKey) { Remove-Item Env:TYPESAFE_API_KEY -ErrorAction SilentlyContinue }
+    Pop-Location
 }
 exit $code

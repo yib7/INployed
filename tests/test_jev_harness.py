@@ -1074,3 +1074,62 @@ def test_the_record_scripts_runner_target_runs_the_runner_tests():
     runs = [line.strip() for line in script.splitlines()
             if line.strip().startswith("python -m pytest tests/test_apply_run.py")]
     assert runs == [f"python -m pytest {jev_harness.RUNNER_TESTS} -q"], runs
+
+
+def _record_script_in_caller(tmp_path, *args, qt=None):
+    """Run scripts/jev_record.ps1 (copied under `tmp_path`) from a caller shell
+    sitting in `tmp_path/caller`, with a fake `python` first on PATH so no
+    test, judge or network is reached; print the caller's location, its
+    QT_QPA_PLATFORM and the cap variable afterwards, one per line."""
+    (tmp_path / "scripts").mkdir()
+    shutil.copy2(REPO / "scripts" / "jev_record.ps1", tmp_path / "scripts" / "jev_record.ps1")
+    caller = tmp_path / "caller"
+    caller.mkdir()
+    fake = tmp_path / "fakebin"
+    fake.mkdir()
+    (fake / "python.bat").write_text("@echo fake python %*\r\n@exit /b 0\r\n", encoding="ascii")
+    env = {k: v for k, v in os.environ.items()
+           if k not in (jev.KEY_ENV, jev.RECORD_CAP_ENV, "QT_QPA_PLATFORM")}
+    env["PATH"] = str(fake) + os.pathsep + env.get("PATH", "")
+    if qt is not None:
+        env["QT_QPA_PLATFORM"] = qt
+    script = str(tmp_path / "scripts" / "jev_record.ps1")
+    command = (f"Set-Location '{caller}'; & '{script}' {' '.join(args)}; "
+               "Write-Output (Get-Location).Path; "
+               "Write-Output (\"qt=\" + $env:QT_QPA_PLATFORM); "
+               f"Write-Output (\"cap=\" + $env:{jev.RECORD_CAP_ENV})")
+    proc = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                           "-Command", command],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          env=env, timeout=60)
+    return caller, proc.stdout.strip().splitlines()[-3:], proc
+
+
+@pytest.mark.skipif(sys.platform != "win32" or shutil.which("powershell") is None,
+                    reason="scripts/jev_record.ps1 is a Windows PowerShell script")
+@pytest.mark.parametrize("args,said", [
+    (("-Cap", "0.05"), "TYPESAFE_API_KEY is not set"),     # stops at the missing key
+    (("-Mode", "replay"), "fake python -m pytest"),        # runs the fake python to the end
+])
+def test_the_record_script_leaves_the_callers_location_and_environment(tmp_path, args, said):
+    caller, lines, proc = _record_script_in_caller(tmp_path, *args)
+    assert said in proc.stdout, proc.stdout + proc.stderr
+    assert lines[0] == str(caller), proc.stdout + proc.stderr
+    assert lines[1] == "qt=", proc.stdout + proc.stderr
+    assert lines[2] == "cap=", proc.stdout + proc.stderr
+
+
+@pytest.mark.skipif(sys.platform != "win32" or shutil.which("powershell") is None,
+                    reason="scripts/jev_record.ps1 is a Windows PowerShell script")
+def test_the_record_script_restores_a_callers_own_qt_platform(tmp_path):
+    _caller, lines, proc = _record_script_in_caller(tmp_path, "-Mode", "replay", qt="windows")
+    assert "fake python -m pytest" in proc.stdout, proc.stdout + proc.stderr
+    assert lines[1] == "qt=windows", proc.stdout + proc.stderr
+
+
+def test_the_record_script_sets_no_cap_a_run_did_not_name():
+    """A replay or a dry run left without -Cap sets no cap variable, so the
+    Python side's own dry default applies and the script carries none."""
+    text = (REPO / "scripts" / "jev_record.ps1").read_text(encoding="ascii")
+    assert "0.88" not in text
+    assert "[double]$Cap = " not in text

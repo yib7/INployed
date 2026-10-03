@@ -208,6 +208,10 @@ GEMINI_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-f
 #
 # claude-sonnet-5-5 joined in cycle 21 (2026-09-29) as an option in all six Claude
 # dropdowns; no default changed.
+#
+# Re-checked 2026-10-03 against the same table: all five ids are Active, none
+# deprecated. claude-haiku-4-5-20251001 still reads "Not sooner than October 15,
+# 2026" with no newer haiku listed, so it stays the fast tier's default.
 CLAUDE_MODELS = ("claude-haiku-4-5", "claude-sonnet-5", "claude-sonnet-5-5", "claude-opus-5",
                  "claude-opus-5-5")
 

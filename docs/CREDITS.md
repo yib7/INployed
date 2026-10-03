@@ -55,11 +55,12 @@ PySide6 (Qt) · pytest · pytest-qt · pytest-xdist · pytest-timeout · ruff ·
 Python standard library (asyncio, sqlite3, argparse). The VM pin set (`scripts/requirements-vm.txt`) adds **numpy**, whose own
 declared expression is `BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0`.
 
-Three more are optional and installed only if you want the feature they serve, so
+Four more are optional and installed only if you want the feature they serve, so
 `requirements.txt` names them in a comment without installing them: **playwright**
-(Apache-2.0), the advanced auto-apply driver; and, for maintainers regenerating art and
-README media, **Pillow** (MIT-CMU) plus **imageio-ffmpeg** (BSD-2). A fourth license
-arrives without a pin: imageio-ffmpeg downloads its own **FFmpeg** binary
+(Apache-2.0), the browser behind the Jev auto-apply runner; **pyarrow** (Apache-2.0), a
+faster repost-key path the dashboard uses when it is present; and, for maintainers
+regenerating art and README media, **Pillow** (MIT-CMU) plus **imageio-ffmpeg** (BSD-2).
+A fifth license arrives without a pin: imageio-ffmpeg downloads its own **FFmpeg** binary
 (LGPL-2.1-or-later) at first use, so no requirements file can name it. No FFmpeg binary,
 and nothing else from that list, is committed here.
 

@@ -1195,12 +1195,12 @@ class JevRun:
         # run-stats column); summary_line() reads these two directly.
         self._writer_written = 0
         self._writer_kept = 0
-        # I2: write_notes() failures in a row, and whether that streak has
-        # reached WRITER_FAIL_LIMIT and stopped the writer for the rest of the
-        # run. The fresh and rescore passes share this JevRun, so one latch
-        # covers both. run_scoring's stage2_one hook reads and updates these
-        # directly -- write_notes() stays a pure "one call, returns dict or
-        # None" function with no run-state side effects.
+        # write_notes() failures in a row, and whether that streak has reached
+        # WRITER_FAIL_LIMIT and stopped the writer for the rest of the run. The
+        # fresh and rescore passes share this JevRun, so one latch covers both.
+        # run_scoring's stage2_one hook reports each call's outcome through
+        # note_writer_result(); write_notes() stays a pure "one call, returns
+        # dict or None" function with no run-state side effects.
         self._writer_fail_streak = 0
         self._writer_stopped = False
 
@@ -1247,10 +1247,24 @@ class JevRun:
         else:
             self._writer_kept += 1
 
+    def note_writer_result(self, ok: bool) -> None:
+        """One write_notes() call's outcome: counts it (`note_writer`), resets
+        the failure streak on success, and on the WRITER_FAIL_LIMIT-th failure
+        in a row stops the writer for the rest of the run, saying so once."""
+        self.note_writer(written=ok)
+        if ok:
+            self._writer_fail_streak = 0
+            return
+        self._writer_fail_streak += 1
+        if self._writer_fail_streak >= WRITER_FAIL_LIMIT and not self._writer_stopped:
+            self._writer_stopped = True
+            print(f"Jev writer: stopped after {WRITER_FAIL_LIMIT} failures in a row; the "
+                  "remaining jobs keep Jev's code text.")
+
     @property
     def writer_stopped(self) -> bool:
         """True once WRITER_FAIL_LIMIT write_notes() failures in a row have
-        stopped the writer for the rest of this run (I2)."""
+        stopped the writer for the rest of this run."""
         return self._writer_stopped
 
     def _usage(self) -> dict:
@@ -2682,17 +2696,7 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame, *,
                                 row["strengths"] = notes["strengths"]
                                 row["gaps"] = notes["gaps"]
                                 s1_df.loc[s1_row.index, "reason"] = notes["reason"]
-                                jev_run.note_writer(written=True)
-                                jev_run._writer_fail_streak = 0
-                            else:
-                                jev_run.note_writer(written=False)
-                                jev_run._writer_fail_streak += 1
-                                if (jev_run._writer_fail_streak >= WRITER_FAIL_LIMIT
-                                        and not jev_run._writer_stopped):
-                                    jev_run._writer_stopped = True
-                                    print(f"Jev writer: stopped after {WRITER_FAIL_LIMIT} "
-                                          "failures in a row; the remaining jobs keep Jev's "
-                                          "code text.")
+                            jev_run.note_writer_result(notes is not None)
                     return {"job_posting_id": job_id, **row}
                 if pool is None:
                     jev_run.note_no_llm(2, job_id)

@@ -552,3 +552,19 @@ def test_overlapping_writer_failures_count_every_job_and_stop_once(capsys):
     assert sj.WRITER_FAIL_LIMIT <= pool.calls <= len(tags)
     out = capsys.readouterr().out
     assert out.count("Jev writer: stopped after 3 failures in a row") == 1
+
+
+def test_jev_run_note_writer_result_owns_the_streak_and_the_latch(capsys):
+    """run_scoring reports each writer call's outcome through
+    `JevRun.note_writer_result`; the streak and the latch stay inside JevRun."""
+    run = sj.JevRun()
+    for _ in range(sj.WRITER_FAIL_LIMIT - 1):
+        run.note_writer_result(False)
+    run.note_writer_result(True)                  # a success resets the streak
+    assert not run.writer_stopped
+    for _ in range(sj.WRITER_FAIL_LIMIT):
+        run.note_writer_result(False)
+    assert run.writer_stopped
+    run.note_writer_result(False)                 # latched once, said once
+    assert run.writer == {"written": 1, "kept": 2 * sj.WRITER_FAIL_LIMIT}
+    assert capsys.readouterr().out.count("Jev writer: stopped after") == 1

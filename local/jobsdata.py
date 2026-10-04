@@ -769,8 +769,11 @@ def _save_cfg(updates: dict) -> None:
     """
     try:
         update_json_locked(_cfg_path(), updates)
-    except (OSError, FileLockTimeout):
-        pass
+    except (OSError, FileLockTimeout) as e:
+        # a damaged or unreadable config.json is left as it is: a partial write
+        # onto it would drop every other key, the submit switch among them
+        logging.getLogger(__name__).warning(
+            "not saved (%s): %s", ", ".join(sorted(updates)), errmsg.for_user(e) or type(e).__name__)
 
 
 def load_min_score(default: int = 4) -> int:

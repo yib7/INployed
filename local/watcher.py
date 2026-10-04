@@ -104,6 +104,11 @@ def save_config_key(key: str, value) -> None:
         # never take down the watcher loop over a contended config write.
         log.warning("config.json is locked by another process; "
                     "skipping the %s write; it retries on the next fire", key)
+    except OSError as e:
+        # a config.json that will not read or parse is left as it is
+        # (update_json_locked refuses to merge onto it); this fire uses the
+        # detected value, and the next fire tries the write again
+        log.warning("skipping the %s write: %s", key, e)
 
 
 def detect_gdrive_root() -> str | None:

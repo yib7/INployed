@@ -32,14 +32,16 @@ import json
 import os
 import re
 import shutil
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
 import envfile  # local module: comment-preserving .env reader/writer
-from jsonutil import keep_damaged, replace_with_retry  # damaged-file guard; lock-retrying replace
+from jsonutil import (  # damaged-file guards; lock-retrying replace
+    JsonUnreadable, keep_damaged, read_json_for_merge, replace_with_retry,
+)
 from locks import file_lock              # shared sidecar read-modify-write lock
 
 HERE = Path(__file__).resolve().parent
@@ -1156,6 +1158,56 @@ def read_problem(target_id: str, targets: dict[str, Path] | None = None) -> str:
     return ""
 
 
+def damaged_targets(targets: dict[str, Path] | None = None) -> set[str]:
+    """The JSON target ids whose file exists, reads, and does not parse as a
+    JSON object: the ones a Save may keep aside and start over
+    (`save`'s `replace_damaged`). A file that cannot be opened is not here,
+    since nothing is known about what it holds."""
+    out: set[str] = set()
+    for target_id, path in _resolve_targets(targets).items():
+        if target_id in ENV_TARGETS or path is None:
+            continue
+        try:
+            read_json_for_merge(Path(path))
+        except JsonUnreadable as e:
+            if e.damaged:
+                out.add(target_id)
+    return out
+
+
+# The auto-apply submit switch: `apply_run.submit_on` sends only on a stored
+# True. Its Field default is on, so a config file that cannot be trusted reads
+# it as off here (`load`, `submit_problem`) and not as the default.
+SUBMIT_KEY = "auto_apply_submit"
+
+
+def submit_problem(targets: dict[str, Path] | None = None) -> str:
+    """Why the stored submit switch cannot be trusted, or "". Either the config
+    file exists and does not read (`read_problem`), or it reads, holds no
+    `auto_apply_submit`, and a damaged copy of it was kept beside it
+    (`<name>.corrupt-<date-time>`): an earlier version started the file over
+    with only the keys of one partial write, so a switch the user had turned
+    off may be missing. Either way `load` reads the switch as off, and a
+    Settings Save, which writes the switch, ends it."""
+    problem = read_problem("config", targets)
+    if problem:
+        return problem
+    path = _resolve_targets(targets).get("config")
+    if path is None:
+        return ""
+    path = Path(path)
+    if SUBMIT_KEY in _read_file(path):
+        return ""
+    try:
+        kept = sorted(p.name for p in path.parent.glob(f"{path.name}.corrupt-*"))
+    except OSError:
+        kept = []
+    if not kept:
+        return ""
+    return (f"{path.name} was started over after a damaged copy was kept as {kept[-1]}, "
+            f"and the submit switch has not been saved since")
+
+
 def _read_target(target_id: str, path: Path | None) -> dict[str, Any]:
     """Read a backing store as a {key: value} dict, picking the right parser for
     its target (env files vs JSON). {} when the path is unset/missing."""
@@ -1220,6 +1272,13 @@ def load(targets: dict[str, Path] | None = None) -> dict[str, Any]:
     so the result is the effective configuration the UI should display. A key
     absent from its backing file falls back to DERIVED_WHEN_ABSENT (a migration
     off older keys in the same file) and then to the Field's default.
+
+    Two switches fail closed. When the config file exists and does not read,
+    the submit switch and the Jev switches read off: their defaults are on,
+    and on there sends applications or spends TypeSafe credits the user may
+    have switched off in the file that broke. When `submit_problem` finds a
+    config started over beside a damaged copy, the submit switch reads off
+    until a Save writes it.
     """
     targets = _resolve_targets(targets)
     cache: dict[str, dict[str, Any]] = {}
@@ -1233,6 +1292,14 @@ def load(targets: dict[str, Path] | None = None) -> dict[str, Any]:
             continue
         derive = DERIVED_WHEN_ABSENT.get(f.key)
         values[f.key] = f.default if derive is None else derive(store)
+    if "config" in cache:
+        store = cache["config"]
+        if read_problem("config", targets):
+            for key in (SUBMIT_KEY, *JEV_SWITCHES):
+                if key in values and key not in store:
+                    values[key] = False
+        elif SUBMIT_KEY in values and SUBMIT_KEY not in store and submit_problem(targets):
+            values[SUBMIT_KEY] = False
     return values
 
 
@@ -1277,6 +1344,27 @@ def switch_on(value: Any) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in SWITCH_ON_WORDS
+
+
+# The bool settings whose runtime readers take only a stored True: the
+# submit switch (`apply_run.submit_on`) and the three billed Jev tailor
+# options (`resume_tailor.config._jev_option`). A string there, "true"
+# included, runs off, so the Settings checkbox shows it off too.
+STRICT_SWITCHES = frozenset(("auto_apply_submit", "tailor_best_of_n",
+                             "cover_letter_jev_check", "tailor_ats_meaning"))
+
+
+def bool_setting_on(key: str, value: Any) -> bool:
+    """Is a stored bool setting `value` on, as the Settings checkbox shows
+    it? A real bool is itself. Any other value is off for a STRICT_SWITCHES
+    key, and for every other key on only as one of SWITCH_ON_WORDS
+    (`switch_on`). So a hand-edited "false", "off", "0", null or "" opens
+    unticked, and an unrelated Save writes false: never true."""
+    if isinstance(value, bool):
+        return value
+    if key in STRICT_SWITCHES:
+        return False
+    return switch_on(value)
 
 
 def _coerce_ok(f: Field, value: Any) -> bool:
@@ -1396,12 +1484,20 @@ def _atomic_write(path: Path, data: dict[str, Any]) -> None:
                 pass
 
 
-def save(values: dict[str, Any], targets: dict[str, Path] | None = None) -> None:
+def save(values: dict[str, Any], targets: dict[str, Path] | None = None, *,
+         replace_damaged: Collection[str] = ()) -> None:
     """Validate then persist `values`, grouped by Field.target.
 
     Raises ValueError(errors) if validation fails. For each backing file, merge
     the schema-owned values into the file's existing contents so unrelated keys
     survive, then write atomically with a .bak backup.
+
+    A JSON file that exists and cannot be read raises `JsonUnreadable` and is
+    left alone. One that reads and does not parse raises too, unless its
+    target id is in `replace_damaged`: the Settings tab passes the targets it
+    has told the user are damaged, and for those the file is kept beside the
+    new one as `<name>.corrupt-<date-time>` (`keep_damaged`) and `values`
+    start a new file.
     """
     errors = validate(values)
     if errors:
@@ -1432,9 +1528,15 @@ def save(values: dict[str, Any], targets: dict[str, Path] | None = None) -> None
             # jobsdata._save_cfg, and from the watcher process; without the lock
             # whichever writer read first has its keys silently reverted.
             with file_lock(Path(path)):
-                # a file that does not parse would merge as {} and be written
-                # over: keep it beside the new one (its .bak lasts one save)
-                keep_damaged(Path(path))
-                merged = _read_file(path)
+                try:
+                    merged = read_json_for_merge(Path(path))
+                except JsonUnreadable as e:
+                    # a damaged file the user was told about is kept beside the
+                    # new one (its .bak would last one save); any other is refused
+                    if not (e.damaged and target_id in replace_damaged):
+                        raise
+                    if keep_damaged(Path(path)) is None:
+                        raise
+                    merged = {}
                 merged.update(updates)
                 _atomic_write(Path(path), merged)

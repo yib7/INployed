@@ -48,16 +48,21 @@ def test_update_json_locked_merges_and_returns(cfg):
     assert _read(cfg) == {"seed": True, "a": 1}
 
 
-def test_update_json_locked_starts_fresh_on_a_corrupt_file(tmp_path):
+def test_update_json_locked_refuses_a_corrupt_file(tmp_path):
+    # 4-C1: starting fresh dropped every key the write did not carry
     p = tmp_path / "broken.json"
     p.write_text("{not json", encoding="utf-8")
-    assert jsonutil.update_json_locked(p, {"a": 1}) == {"a": 1}
+    with pytest.raises(jsonutil.JsonUnreadable):
+        jsonutil.update_json_locked(p, {"a": 1})
+    assert p.read_text(encoding="utf-8") == "{not json"
 
 
-def test_update_json_locked_starts_fresh_on_a_non_object(tmp_path):
+def test_update_json_locked_refuses_a_non_object(tmp_path):
     p = tmp_path / "list.json"
     p.write_text("[1, 2, 3]", encoding="utf-8")
-    assert jsonutil.update_json_locked(p, {"a": 1}) == {"a": 1}
+    with pytest.raises(jsonutil.JsonUnreadable):
+        jsonutil.update_json_locked(p, {"a": 1})
+    assert p.read_text(encoding="utf-8") == "[1, 2, 3]"
 
 
 def test_a_slow_writer_blocks_the_other_instead_of_racing(cfg, monkeypatch):

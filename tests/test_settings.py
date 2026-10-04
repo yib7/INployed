@@ -1761,8 +1761,9 @@ def test_save_keeps_a_damaged_json_file_aside(tmp_path):
     targets = _targets(tmp_path)
     targets["config"].write_text('{"min_score": 5,', encoding="utf-8")
     assert settings.read_problem("config", targets) == "config.json is not valid JSON"
-    settings.save({"min_score": 3}, targets)
-    settings.save({"min_score": 2}, targets)
+    assert settings.damaged_targets(targets) == {"config"}
+    settings.save({"min_score": 3}, targets, replace_damaged={"config"})
+    settings.save({"min_score": 2}, targets, replace_damaged={"config"})
     assert json.loads(targets["config"].read_text(encoding="utf-8"))["min_score"] == 2
     kept = list(tmp_path.glob("config.json.corrupt-*"))
     assert len(kept) == 1 and kept[0].read_text(encoding="utf-8") == '{"min_score": 5,'

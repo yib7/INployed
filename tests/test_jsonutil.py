@@ -141,18 +141,17 @@ def test_update_json_locked_survives_a_bom_prefixed_file(tmp_path):
 
 
 @pytest.mark.parametrize("damaged", ['{"min_score": 5, "gdrive_root": "G:', '["a list"]'])
-def test_update_json_locked_keeps_a_damaged_file_aside(tmp_path, caplog, damaged):
+def test_update_json_locked_leaves_a_damaged_file_in_place(tmp_path, damaged):
     # A hand edit that broke config.json used to be replaced by the one key the
-    # next column toggle wrote, with nothing said. The damaged file now stays
-    # beside the new one, and the log names it.
+    # next column toggle wrote, and then (4-C1) moved aside with a new file
+    # holding only that key, so the submit switch read its default. Now the
+    # write is refused and the damaged file stays where every reader sees it.
     p = tmp_path / "config.json"
     p.write_text(damaged, encoding="utf-8")
-    with caplog.at_level("WARNING", logger="jsonutil"):
+    with pytest.raises(jsonutil.JsonUnreadable):
         jsonutil.update_json_locked(p, {"hidden_columns": ["score"]})
-    assert json.loads(p.read_text(encoding="utf-8")) == {"hidden_columns": ["score"]}
-    kept = list(tmp_path.glob("config.json.corrupt-*"))
-    assert len(kept) == 1 and kept[0].read_text(encoding="utf-8") == damaged
-    assert kept[0].name in caplog.text
+    assert p.read_text(encoding="utf-8") == damaged
+    assert not list(tmp_path.glob("config.json.corrupt-*"))
 
 
 def test_keep_damaged_leaves_a_good_or_missing_file_alone(tmp_path):

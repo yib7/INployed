@@ -236,10 +236,11 @@ def test_save_config_key_tolerates_missing_or_corrupt_file(tmp_path, monkeypatch
     watcher.save_config_key("gdrive_root", "E:/drive")
     assert json.loads(cfg_path.read_text(encoding="utf-8")) == {"gdrive_root": "E:/drive"}
 
-    # corrupt file -> treated as empty, not crash
+    # corrupt file -> left as it is (4-C1: a partial write would drop the
+    # submit switch), logged, and no crash
     cfg_path.write_text("{not json", encoding="utf-8")
     watcher.save_config_key("gdrive_root", "F:/drive")
-    assert json.loads(cfg_path.read_text(encoding="utf-8")) == {"gdrive_root": "F:/drive"}
+    assert cfg_path.read_text(encoding="utf-8") == "{not json"
 
 
 def test_watcher_autodetect_does_not_revert_dashboard_write(tmp_path, monkeypatch):

@@ -364,19 +364,34 @@ class SettingsForm(QtWidgets.QWidget):
         self._refresh_dirty()
 
     def _name_damaged_files(self) -> None:
-        """A settings file that exists and does not parse reads as defaults
-        (`settings.load`); the status line names it and says what Save does
-        with it (`jsonutil.keep_damaged`), so nobody saves over a hand edit
-        that broke one line without knowing."""
+        """A settings file that exists and does not read shows defaults
+        (`settings.load`, with the submit and Jev switches off); the status
+        line names it and says what Save does with it, so nobody saves over a
+        hand edit that broke one line without knowing. A file that parses
+        badly is kept aside by Save (`settings.save`'s `replace_damaged`,
+        only for the files named here); one that cannot be opened is never
+        written over. A config started over beside a damaged copy shows the
+        submit switch off until a Save writes it (`settings.submit_problem`)."""
         notes = []
+        self._damaged_targets = settings.damaged_targets(self.targets)
         for target_id in settings.TARGET_FILES:
             if target_id in settings.ENV_TARGETS:
                 continue
             problem = settings.read_problem(target_id, self.targets)
-            if problem:
-                name = problem.split(" ", 1)[0]
+            if not problem:
+                continue
+            name = problem.split(" ", 1)[0]
+            if target_id in self._damaged_targets:
                 notes.append(f"{problem}, so its boxes show the defaults. Save keeps the "
                              f"damaged file beside it as {name}.corrupt-<date-time>.")
+            else:
+                notes.append(f"{problem}, so its boxes show the defaults. Save will not "
+                             f"write to it until it opens.")
+        if not settings.read_problem("config", self.targets):
+            rebuilt = settings.submit_problem(self.targets)
+            if rebuilt:
+                notes.append(f"{rebuilt}, so Submit when verified shows off until you "
+                             f"save it.")
         self.status.setText(" ".join(notes))
 
     # ---- search / filter ------------------------------------------------------
@@ -703,7 +718,10 @@ class SettingsForm(QtWidgets.QWidget):
         self._gate_keys[gate_key] = section
 
         check = QtWidgets.QCheckBox(gate.label if gate else "Enable")
-        check.setChecked(bool(stored.get(gate_key, getattr(gate, "default", False))))
+        # the gate reads its stored value by the same rule as every other bool
+        # box (`_checked`): a hand-edited "false" opens unticked
+        check.setChecked(settings.bool_setting_on(
+            gate_key, stored.get(gate_key, getattr(gate, "default", False))))
         check.toggled.connect(self._apply_section_visibility)
         # This switch decides whether its section's fields apply at all, so it
         # moves BOTH things that report on withheld settings: the disclosure count
@@ -724,7 +742,8 @@ class SettingsForm(QtWidgets.QWidget):
         check.toggled.connect(lambda *_a: self._on_field_edited(gate_key))
         sec.add_widget(check)
         self._getters[gate_key] = lambda c=check: c.isChecked()
-        self._setters[gate_key] = lambda v, c=check: c.setChecked(bool(v))
+        self._setters[gate_key] = lambda v, c=check, k=gate_key: c.setChecked(
+            settings.bool_setting_on(k, v))
         # The gate is a section-body widget, not a QFormLayout row, so it is the one
         # schema key with an EMPTY row list (registered so lookups never KeyError).
         # That makes `_set_field_visible(gate_key, ...)` a deliberate no-op, which is
@@ -1873,17 +1892,14 @@ class SettingsForm(QtWidgets.QWidget):
 
     @staticmethod
     def _checked(f: settings.Field, value) -> bool:
-        """A bool field's stored `value` as its checkbox shows it. The Jev
-        switches are read by `settings.switch_on`, the rule `jev_switch` reads
-        them by, so a hand-edited "false", null, 0 or "" shows off here and
-        spends nothing there. The scoring_config.json bools go
-        through the same word list, which is the one `score_jobs._as_bool` reads
-        them by, so a stored "false" opens unchecked and the next Save keeps it
-        off. Every other bool keeps `bool()`: its
-        runtime readers spell their own rule."""
-        if f.key in settings.JEV_SWITCHES or f.target == "scoring":
-            return settings.switch_on(value)
-        return bool(value)
+        """A bool field's stored `value` as its checkbox shows it
+        (`settings.bool_setting_on`): a real bool is itself; a string, a
+        number or null is on only as one of the on words, and never for the
+        switches whose runtime reader takes only a stored True (the submit
+        switch, the billed Jev tailor options). The form writes every field
+        on Save, so a box that opened ticked over a stored "false" would turn
+        that switch on with any unrelated change."""
+        return settings.bool_setting_on(f.key, value)
 
     @staticmethod
     def _coerce(f: settings.Field, raw):
@@ -1945,7 +1961,8 @@ class SettingsForm(QtWidgets.QWidget):
         # "Save settings". Two claims about the same question must not disagree.
         before = self._as_form_values(settings.load(self.targets))
         try:
-            settings.save(values, self.targets)
+            settings.save(values, self.targets,
+                          replace_damaged=getattr(self, "_damaged_targets", set()))
         except (ValueError, OSError) as exc:
             # The one arm that stays modal. A rejected field is something the user
             # can see and fix where they are; an unwritable config.json is neither,
@@ -1953,6 +1970,7 @@ class SettingsForm(QtWidgets.QWidget):
             self.status.setText("Save failed.")
             QtWidgets.QMessageBox.critical(self, "Settings", errmsg.for_user(exc))
             return False
+        self._damaged_targets = set()    # this Save replaced them; a new break is refused
         summary = self._changed_summary(before, values)
         restart = self._restart_notice(before, values)
         rollover = self._rollover_notice(values)

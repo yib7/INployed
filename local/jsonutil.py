@@ -6,10 +6,12 @@ atomic write (temp file in the same directory, then os.replace) makes each
 write all-or-nothing so a concurrent reader never sees a partial file.
 
 Atomicity is not enough on its own: it stops a TORN file, not a LOST UPDATE.
-`update_json_locked` adds the missing half — the read -> merge -> write cycle
+`update_json_locked` adds the missing half: the read -> merge -> write cycle
 runs inside an exclusive sidecar lock, so the settings save, the background
 delete queue and the watcher's gdrive_root probe cannot overwrite each other's
-keys. Everything that read-modify-writes a shared JSON file goes through it.
+keys. Everything that read-modify-writes a shared JSON file goes through it,
+and it refuses to merge onto a file that exists and will not read or parse
+(`JsonUnreadable`), so a partial write never drops the keys it does not carry.
 """
 from __future__ import annotations
 
@@ -120,9 +122,10 @@ def keep_damaged(path: Path) -> Path | None:
     """Move `path` aside to `corrupt_name(path)` when it exists and does not
     parse as a JSON object, and return where it went; None when the file is
     absent or fine (a BOM is fine, as in `read_json_dict`), or could not be
-    read or moved. Writers call it before a read-merge-write: the merge reads
-    a damaged file as {}, and the write would then replace a hand edit that
-    broke one line with only the keys being saved."""
+    read or moved. Only a writer about to replace the WHOLE file calls it: the
+    Settings tab's Save, which writes every setting on the form, once the tab
+    has told the user the file is damaged (`settings.save`'s
+    `replace_damaged`). A partial write refuses instead (`update_json_locked`)."""
     path = Path(path)
     try:
         raw = json.loads(path.read_text(encoding="utf-8-sig"))
@@ -147,6 +150,48 @@ def keep_damaged(path: Path) -> Path | None:
     return target
 
 
+class JsonUnreadable(OSError):
+    """A JSON file that exists and could not be read (`damaged` False) or
+    does not parse as a JSON object (`damaged` True). A merge onto it would
+    start from {} and write only the keys being saved, losing every other key
+    in the file, the auto-apply submit switch among them, so nothing is
+    written. An OSError, so a caller that already catches OSError around a
+    write reports this the same way. The message names the file and no
+    directory, so it can go on screen as it is."""
+
+    def __init__(self, message: str, *, damaged: bool):
+        super().__init__(message)
+        self.damaged = damaged
+
+
+def read_json_for_merge(path: Path) -> dict:
+    """`path` parsed as a JSON object for a read-merge-write: {} only when the
+    file does not exist. A file that exists and cannot be read, or reads and
+    is not a JSON object, raises JsonUnreadable and the caller writes nothing.
+    utf-8-sig as in `read_json_dict`, so a BOM is not damage."""
+    path = Path(path)
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except FileNotFoundError:
+        return {}
+    except ValueError:          # bytes that are not UTF-8 text
+        raw = None
+    except OSError as e:
+        raise JsonUnreadable(
+            f"{path.name} could not be opened ({type(e).__name__}), so nothing was saved "
+            f"to it. Try again in a moment.", damaged=False) from e
+    else:
+        try:
+            raw = json.loads(text)
+        except ValueError:
+            raw = None
+    if isinstance(raw, dict):
+        return raw
+    raise JsonUnreadable(
+        f"{path.name} is not a valid JSON object, so nothing was saved to it. Fix the "
+        f"file, or move it aside to start a new one.", damaged=True)
+
+
 def update_json_locked(path: Path, updates: dict, *,
                        timeout: float | None = None) -> dict:
     """Merge `updates` into the JSON object at `path` under an exclusive lock.
@@ -158,14 +203,18 @@ def update_json_locked(path: Path, updates: dict, *,
     (the dashboard's delete runs on a background queue) or a page of Settings
     reverting (that save runs on the UI thread), both with no error.
 
+    A file that exists and cannot be read or parsed is left as it is and
+    JsonUnreadable is raised (`read_json_for_merge`): merging onto {} would
+    drop every key this write does not carry, and a reader then takes the
+    default for each one.
+
     Returns the merged dict that was written. Raises locks.FileLockTimeout if
-    the lock cannot be taken, and OSError if the write itself fails; callers
-    that must never crash the UI catch both.
+    the lock cannot be taken, and OSError (JsonUnreadable included) if the
+    read or the write fails; callers that must never crash the UI catch both.
     """
     path = Path(path)
     with file_lock(path, timeout=timeout):
-        keep_damaged(path)
-        merged = read_json_dict(path)
+        merged = read_json_for_merge(path)
         merged.update(updates)
         atomic_write_json(path, merged)
     return merged

@@ -21,6 +21,7 @@ import settings
 import vm_schedule
 import vm_sync
 from qt import theme
+from qt.plaintext import Label, literal
 
 WEEKDAYS = ("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
 BLANK = "—"
@@ -64,10 +65,10 @@ class VMPanel(QtWidgets.QWidget):
         self.targets = targets
         self._runner = runner or vm_sync.run_cmd
         self._confirm = confirm or (
-            lambda title, msg: QtWidgets.QMessageBox.question(self, title, msg)
+            lambda title, msg: QtWidgets.QMessageBox.question(self, title, literal(msg))
             == QtWidgets.QMessageBox.StandardButton.Yes)
         self._notify = notify or (
-            lambda title, msg: QtWidgets.QMessageBox.information(self, title, msg))
+            lambda title, msg: QtWidgets.QMessageBox.information(self, title, literal(msg)))
         self._target_factory = target_factory or (lambda: vm_sync.VMTarget.from_env(self.targets))
         # Separate from `_runner` on purpose: a credential never goes in argv. It
         # rides an scp'd mode-600 file that the remote script deletes; ssh stdin
@@ -83,7 +84,7 @@ class VMPanel(QtWidgets.QWidget):
     def _build(self) -> None:
         v = QtWidgets.QVBoxLayout(self)
         v.setContentsMargins(0, 8, 0, 0)
-        head = QtWidgets.QLabel("Cloud job-discovery VM")
+        head = Label("Cloud job-discovery VM")
         head.setProperty("heading", True)
         # One step up the type scale from the four sub-headings below it
         # (Pause / Credentials / Push / Local watcher task), which carry the same
@@ -94,7 +95,7 @@ class VMPanel(QtWidgets.QWidget):
         t = self._target_factory()
         status = (f"Connected target: {t.user}@{t.instance} (zone {t.zone})" if t.configured()
                   else "No VM configured; set VM_INSTANCE / VM_ZONE / VM_USER in Settings.")
-        self.status_label = QtWidgets.QLabel(status)
+        self.status_label = Label(status)
         # PlainText, not QLabel's AutoText default: this is the one label here whose
         # text starts with interpolated values (VM_USER / VM_INSTANCE / VM_ZONE from
         # the .env), so an instance name carrying markup would render as HTML
@@ -111,11 +112,11 @@ class VMPanel(QtWidgets.QWidget):
         v.addWidget(self.status_label)
 
         # --- schedule ---
-        v.addWidget(QtWidgets.QLabel("Schedule: pick up to 6 run times (>=2h apart):"))
+        v.addWidget(Label("Schedule: pick up to 6 run times (>=2h apart):"))
         grid = QtWidgets.QGridLayout()
         for i in range(MAX_TIMES):
             cell = QtWidgets.QHBoxLayout()
-            cell.addWidget(QtWidgets.QLabel(f"Run {i + 1}"))
+            cell.addWidget(Label(f"Run {i + 1}"))
             combo = QtWidgets.QComboBox()
             combo.setAccessibleName(f"Run {i + 1} time")
             combo.addItems([BLANK, *HOUR_OPTIONS])
@@ -126,13 +127,13 @@ class VMPanel(QtWidgets.QWidget):
         v.addLayout(grid)
 
         freq_row = QtWidgets.QHBoxLayout()
-        freq_row.addWidget(QtWidgets.QLabel("Frequency"))
+        freq_row.addWidget(Label("Frequency"))
         self.freq = QtWidgets.QComboBox()
         self.freq.setAccessibleName("Frequency")
         self.freq.addItems(list(vm_schedule.FREQS))
         self.freq.currentIndexChanged.connect(self._on_freq_changed)
         freq_row.addWidget(self.freq)
-        freq_row.addWidget(QtWidgets.QLabel("Weekday"))
+        freq_row.addWidget(Label("Weekday"))
         self.weekday = QtWidgets.QComboBox()
         self.weekday.setAccessibleName("Weekday")
         self.weekday.addItems(list(WEEKDAYS))
@@ -142,7 +143,7 @@ class VMPanel(QtWidgets.QWidget):
         freq_row.addStretch(1)
         v.addLayout(freq_row)
 
-        v.addWidget(QtWidgets.QLabel("crontab preview:"))
+        v.addWidget(Label("crontab preview:"))
         self.preview = _CronPreview()
         self.preview.setAccessibleName("crontab preview")
         self.preview.setReadOnly(True)
@@ -160,11 +161,11 @@ class VMPanel(QtWidgets.QWidget):
         v.addLayout(sbar)
 
         # --- pause ---
-        pause_head = QtWidgets.QLabel("Pause")
+        pause_head = Label("Pause")
         pause_head.setProperty("heading", True)
         v.addWidget(pause_head)
         prow = QtWidgets.QHBoxLayout()
-        prow.addWidget(QtWidgets.QLabel("Until"))
+        prow.addWidget(Label("Until"))
         self.pause_date = QtWidgets.QDateEdit()
         self.pause_date.setAccessibleName("Pause until date")
         self.pause_date.setCalendarPopup(True)
@@ -177,7 +178,7 @@ class VMPanel(QtWidgets.QWidget):
         self.pause_date.setMinimumDate(QtCore.QDate(tomorrow.year, tomorrow.month, tomorrow.day))
         self.pause_date.setDate(QtCore.QDate(tomorrow.year, tomorrow.month, tomorrow.day))
         prow.addWidget(self.pause_date)
-        prow.addWidget(QtWidgets.QLabel("time"))
+        prow.addWidget(Label("time"))
         self.pause_time = QtWidgets.QComboBox()
         self.pause_time.setAccessibleName("Pause until time")
         self.pause_time.addItems([BLANK, *HOUR_OPTIONS])
@@ -195,10 +196,10 @@ class VMPanel(QtWidgets.QWidget):
         # The VM's cron runs with a bare environment, so run_scraper.sh exports the
         # API credentials itself. Before this section, rotating a dead token meant
         # an ssh session and a hand-written sed; now it is a paste and a click.
-        cred_head = QtWidgets.QLabel("Credentials")
+        cred_head = Label("Credentials")
         cred_head.setProperty("heading", True)
         v.addWidget(cred_head)
-        cred_note = QtWidgets.QLabel(
+        cred_note = Label(
             "Rotate an API key on the VM without touching the command line. The key "
             "is written to ~/scraper_secrets.env (readable only by your VM user), "
             "run_scraper.sh is pointed at it, and nothing is stored on this machine.")
@@ -235,10 +236,10 @@ class VMPanel(QtWidgets.QWidget):
         v.addLayout(crow)
 
         # --- push ---
-        push_head = QtWidgets.QLabel("Push")
+        push_head = Label("Push")
         push_head.setProperty("heading", True)
         v.addWidget(push_head)
-        note = QtWidgets.QLabel("Copy your current search + scoring config up to the VM.")
+        note = Label("Copy your current search + scoring config up to the VM.")
         note.setProperty("muted", True)
         v.addWidget(note)
         push_btn = QtWidgets.QPushButton("Push config to VM")
@@ -246,10 +247,10 @@ class VMPanel(QtWidgets.QWidget):
         v.addWidget(push_btn, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
 
         # --- local watcher task ---
-        lt_head = QtWidgets.QLabel("Local watcher task")
+        lt_head = Label("Local watcher task")
         lt_head.setProperty("heading", True)
         v.addWidget(lt_head)
-        lt_note = QtWidgets.QLabel(
+        lt_note = Label(
             "The LinkedInJobsWatcher scheduled task checks for fresh results a few "
             "minutes after each VM run (offsets in Settings above).")
         lt_note.setProperty("muted", True)

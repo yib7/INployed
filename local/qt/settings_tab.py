@@ -38,6 +38,7 @@ import settings_archive
 import vm_sync
 from qt import theme
 from qt.widgets import CollapsibleSection
+from qt.plaintext import Label, literal
 
 SECTION_HELP = {
     # What Jev does in each area, and what off means. The three
@@ -428,7 +429,7 @@ class SettingsForm(QtWidgets.QWidget):
         this form follows so nothing has to reason about which containers are
         index-sensitive.
         """
-        lab = QtWidgets.QLabel("")
+        lab = Label("")
         lab.setProperty("muted", True)
         lab.setWordWrap(True)
         lab.setVisible(False)
@@ -699,7 +700,7 @@ class SettingsForm(QtWidgets.QWidget):
     def _fill_section(self, sec: CollapsibleSection, section, fields, stored):
         blurb = SECTION_HELP.get(section)
         if blurb:
-            lab = QtWidgets.QLabel(blurb)
+            lab = Label(blurb)
             lab.setProperty("muted", True)
             lab.setWordWrap(True)
             sec.add_widget(lab)
@@ -760,7 +761,7 @@ class SettingsForm(QtWidgets.QWidget):
 
         blurb = SECTION_HELP.get(section)
         if blurb:
-            lab = QtWidgets.QLabel(blurb)
+            lab = Label(blurb)
             lab.setProperty("muted", True)
             lab.setWordWrap(True)
             cbox.addWidget(lab)
@@ -911,15 +912,15 @@ class SettingsForm(QtWidgets.QWidget):
         # width and only its text/colour toggle: hiding and showing it would shunt
         # the label sideways every time a value changed, which is a lot of motion
         # to pay for one glyph.
-        dot = QtWidgets.QLabel("")
+        dot = Label("")
         dot.setProperty("dirtyDot", True)
         dot.setProperty("dirty", False)   # a real bool from the start, never unset
         dot.setFixedWidth(12)
         self._dots[f.key] = dot
         h.addWidget(dot)
-        h.addWidget(QtWidgets.QLabel(f.label))
+        h.addWidget(Label(f.label))
         # Storage tag as a small mono bordered chip (".env" / "config.json").
-        tag = QtWidgets.QLabel(settings.storage_location(f))
+        tag = Label(settings.storage_location(f))
         tag.setProperty("storageTag", True)
         theme.set_type_role(tag, "mono")
         h.addWidget(tag)
@@ -935,7 +936,7 @@ class SettingsForm(QtWidgets.QWidget):
         # dynamic property no QSS matches is the P5 defect: counted, styled,
         # invisible. `test_the_restart_chip_has_a_selector_the_widget_matches`.)
         if f.restart:
-            chip = QtWidgets.QLabel("restart")
+            chip = Label("restart")
             chip.setProperty("storageTag", True)
             chip.setProperty("restartTag", True)
             theme.set_type_role(chip, "mono")
@@ -948,7 +949,7 @@ class SettingsForm(QtWidgets.QWidget):
         # why it was not there a moment ago is its own small confusion, and the
         # chip is also where the user learns the disclosure toggle exists.
         if f.advanced:
-            chip = QtWidgets.QLabel("(advanced)")
+            chip = Label("(advanced)")
             chip.setProperty("muted", True)
             chip.setToolTip('Normally folded away behind "Show advanced settings"')
             chip.setVisible(False)
@@ -969,10 +970,10 @@ class SettingsForm(QtWidgets.QWidget):
         form.addRow(self._label_cell(f), self._input_cell(f, widget))
         rows.append((form, form.rowCount() - 1))
         if f.help:
-            help_lab = QtWidgets.QLabel(f.help)
+            help_lab = Label(f.help)
             help_lab.setProperty("muted", True)
             help_lab.setWordWrap(True)
-            form.addRow("", help_lab)
+            form.addRow(Label(""), help_lab)
             rows.append((form, form.rowCount() - 1))
         self._connect_field_signals(f)
         self._flag_a_rewritten_int(f, value)
@@ -1008,7 +1009,7 @@ class SettingsForm(QtWidgets.QWidget):
         if reset is not None:
             row.addWidget(reset, 0)
         col.addLayout(row)
-        note = QtWidgets.QLabel("")
+        note = Label("")
         note.setWordWrap(True)
         note.setVisible(False)
         col.addWidget(note)
@@ -1252,7 +1253,7 @@ class SettingsForm(QtWidgets.QWidget):
             slider.setValue(int(value))
         except (TypeError, ValueError):
             slider.setValue(int(f.default))
-        readout = QtWidgets.QLabel(str(slider.value()))
+        readout = Label(str(slider.value()))
         slider.valueChanged.connect(lambda v, lab=readout: lab.setText(str(v)))
         slider.setFixedWidth(220)
         h.addWidget(slider)
@@ -1833,7 +1834,7 @@ class SettingsForm(QtWidgets.QWidget):
         restore.setProperty("tier", "tertiary")
         restore.clicked.connect(self.restore_defaults)
         bar.addWidget(restore)
-        self.status = QtWidgets.QLabel("")
+        self.status = Label("")
         self.status.setProperty("muted", True)
         bar.addWidget(self.status)
         bar.addStretch(1)
@@ -1968,7 +1969,7 @@ class SettingsForm(QtWidgets.QWidget):
             # can see and fix where they are; an unwritable config.json is neither,
             # and a status line alone would let them walk away believing they saved.
             self.status.setText("Save failed.")
-            QtWidgets.QMessageBox.critical(self, "Settings", errmsg.for_user(exc))
+            QtWidgets.QMessageBox.critical(self, "Settings", literal(errmsg.for_user(exc)))
             return False
         self._damaged_targets = set()    # this Save replaced them; a new break is refused
         summary = self._changed_summary(before, values)
@@ -1984,13 +1985,13 @@ class SettingsForm(QtWidgets.QWidget):
         if summary:
             note = "\n\nA snapshot was saved to the archive." if archived else ""
             QtWidgets.QMessageBox.information(
-                self, "Settings", "Settings saved. Updated:\n\n- " + "\n- ".join(summary)
+                self, "Settings", literal("Settings saved. Updated:\n\n- " + "\n- ".join(summary)
                 + (f"\n\n{restart}" if restart else "") + note
-                + (f"\n\n{rollover}" if rollover else ""))
+                + (f"\n\n{rollover}" if rollover else "")))
         else:
             QtWidgets.QMessageBox.information(
-                self, "Settings", "No changes to save; your settings are unchanged."
-                + (f"\n\n{rollover}" if rollover else ""))
+                self, "Settings", literal("No changes to save; your settings are unchanged."
+                + (f"\n\n{rollover}" if rollover else "")))
         self._maybe_prompt_vm_push(before, values, summary)
         if self.on_saved:
             self.on_saved()
@@ -2094,7 +2095,7 @@ class SettingsForm(QtWidgets.QWidget):
                      "(there is no automated code push); run:\n"
                      "  gcloud compute scp pipeline/score_jobs.py <user>@<vm>:~ --zone=<zone>")
         if QtWidgets.QMessageBox.question(
-                self, "Push config to VM?", text,
+                self, "Push config to VM?", literal(text),
                 QtWidgets.QMessageBox.StandardButton.Yes
                 | QtWidgets.QMessageBox.StandardButton.No
         ) != QtWidgets.QMessageBox.StandardButton.Yes:
@@ -2236,7 +2237,7 @@ class ArchiveDialog(QtWidgets.QDialog):
         self.resize(560, 470)
 
         v = QtWidgets.QVBoxLayout(self)
-        intro = QtWidgets.QLabel(
+        intro = Label(
             "Saved snapshots (newest first). Load one into the form to review, then Save to apply it. "
             "Secrets are restored too; loading un-masks them in the form so you can review "
             "exactly what would be saved.")
@@ -2314,7 +2315,7 @@ class ArchiveDialog(QtWidgets.QDialog):
             return
         if QtWidgets.QMessageBox.question(
                 self, "Delete snapshot",
-                f"Delete snapshot {s.label}? This cannot be undone."
+                literal(f"Delete snapshot {s.label}? This cannot be undone.")
         ) != QtWidgets.QMessageBox.StandardButton.Yes:
             return
         settings_archive.delete_snapshot(s.path)

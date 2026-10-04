@@ -11,6 +11,7 @@ from PySide6 import QtCore, QtWidgets
 from jobsdata import STATS_COLUMNS
 from qt import theme
 from qt.jobs_model import JobsTableModel
+from qt.plaintext import Label
 
 # Every metrics column except the two identifiers is a count -> right-align it
 # and group the thousands, so token counts stay scannable down the column.
@@ -45,12 +46,12 @@ class StatsTab(QtWidgets.QWidget):
         v = QtWidgets.QVBoxLayout(self)
         v.setContentsMargins(8, 8, 8, 8)
 
-        self.badge = QtWidgets.QLabel("")
+        self.badge = Label("")
         self.badge.setWordWrap(True)
         self.badge.hide()
         v.addWidget(self.badge)
 
-        self.summary = QtWidgets.QLabel("")
+        self.summary = Label("")
         self.summary.setWordWrap(True)
         v.addWidget(self.summary)
 
@@ -80,7 +81,7 @@ class StatsTab(QtWidgets.QWidget):
         v.addWidget(self.table, 1)
 
         # A passive readout of the applied-vs-recommendation labels (no export).
-        self.calibration = QtWidgets.QLabel("")
+        self.calibration = Label("")
         self.calibration.setWordWrap(True)
         self.calibration.setProperty("muted", True)
         v.addWidget(self.calibration)

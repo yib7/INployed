@@ -60,6 +60,7 @@ import errmsg
 import jev
 import jev_switch
 from qt import theme, workers
+from qt.plaintext import Label, literal
 from apply_pause import builtin_answering
 from locks import FileLockTimeout, file_lock
 from resume_tailor import apply_answers
@@ -192,7 +193,7 @@ class TestAnswersDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle("Test my answers")
         v = QtWidgets.QVBoxLayout(self)
-        note = QtWidgets.QLabel(
+        note = Label(
             "Ran the shipped screening questions against your saved, confirmed "
             "answers.")
         note.setWordWrap(True)
@@ -210,7 +211,7 @@ class TestAnswersDialog(QtWidgets.QDialog):
         theme.register_table(self.table)
         v.addWidget(self.table, 1)
 
-        self.spend_label = QtWidgets.QLabel(spend_text)
+        self.spend_label = Label(spend_text)
         self.spend_label.setProperty("muted", True)
         v.addWidget(self.spend_label)
 
@@ -276,29 +277,29 @@ class AddAnswerDialog(QtWidgets.QDialog):
         form = QtWidgets.QFormLayout()
         self.question_edit = QtWidgets.QLineEdit()
         self.question_edit.textChanged.connect(self._recompute)
-        form.addRow("Question:", self.question_edit)
+        form.addRow(Label("Question:"), self.question_edit)
 
         self.type_combo = QtWidgets.QComboBox()
         self.type_combo.addItems([_TYPE_LABELS[t] for t in apply_answers.CUSTOM_TYPES])
         self.type_combo.currentTextChanged.connect(self._on_type_changed)
-        form.addRow("Type:", self.type_combo)
+        form.addRow(Label("Type:"), self.type_combo)
 
         self._answer_row = QtWidgets.QHBoxLayout()
-        form.addRow("Answer:", self._answer_row)
+        form.addRow(Label("Answer:"), self._answer_row)
 
         self.note_edit = QtWidgets.QLineEdit()
         self.note_edit.setMaxLength(apply_answers.NOTE_MAX)
         self.note_edit.textChanged.connect(self._recompute)
-        form.addRow("Note:", self.note_edit)
+        form.addRow(Label("Note:"), self.note_edit)
         v.addLayout(form)
 
-        self.hint_label = QtWidgets.QLabel("")
+        self.hint_label = Label("")
         self.hint_label.setWordWrap(True)
         self.hint_label.setProperty("muted", True)
         self.hint_label.setVisible(False)
         v.addWidget(self.hint_label)
 
-        self.message_label = QtWidgets.QLabel("")
+        self.message_label = Label("")
         self.message_label.setWordWrap(True)
         self.message_label.setProperty("muted", True)
         v.addWidget(self.message_label)
@@ -433,10 +434,10 @@ class AnswersEditor(QtWidgets.QWidget):
         v.setContentsMargins(8, 8, 8, 8)
 
         top = QtWidgets.QHBoxLayout()
-        title = QtWidgets.QLabel("Apply Answers")
+        title = Label("Apply Answers")
         title.setProperty("heading", True)
         top.addWidget(title)
-        blurb = QtWidgets.QLabel(
+        blurb = Label(
             "Reusable answers the apply helper fills into forms. Every answer is "
             "typed, so a form gets the answer you picked, or a blank.")
         blurb.setProperty("muted", True)
@@ -444,14 +445,14 @@ class AnswersEditor(QtWidgets.QWidget):
         top.addWidget(blurb, 1)
         v.addLayout(top)
 
-        self.counts_label = QtWidgets.QLabel("")
+        self.counts_label = Label("")
         self.counts_label.setProperty("muted", True)
         v.addWidget(self.counts_label)
 
         self.review_banner = QtWidgets.QFrame()
         self.review_banner.setProperty("callout", "warning")
         rb = QtWidgets.QHBoxLayout(self.review_banner)
-        self.review_label = QtWidgets.QLabel("")
+        self.review_label = Label("")
         self.review_label.setWordWrap(True)
         rb.addWidget(self.review_label, 1)
         self.review_confirm_btn = QtWidgets.QPushButton("I've checked these")
@@ -463,7 +464,7 @@ class AnswersEditor(QtWidgets.QWidget):
         self.disk_banner = QtWidgets.QFrame()
         self.disk_banner.setProperty("callout", "warning")
         db = QtWidgets.QHBoxLayout(self.disk_banner)
-        self.disk_label = QtWidgets.QLabel(_DISK_CHANGED)
+        self.disk_label = Label(_DISK_CHANGED)
         self.disk_label.setWordWrap(True)
         db.addWidget(self.disk_label, 1)
         self.disk_reload_btn = QtWidgets.QPushButton("Reload")
@@ -500,7 +501,7 @@ class AnswersEditor(QtWidgets.QWidget):
         self.test_answers_btn = QtWidgets.QPushButton("Test my answers")
         self.test_answers_btn.clicked.connect(self._test_answers_clicked)
         bar.addWidget(self.test_answers_btn)
-        self.status = QtWidgets.QLabel("")
+        self.status = Label("")
         self.status.setProperty("muted", True)
         bar.addWidget(self.status)
         bar.addStretch(1)
@@ -671,7 +672,7 @@ class AnswersEditor(QtWidgets.QWidget):
         head = QtWidgets.QHBoxLayout()
         question_widget: QtWidgets.QWidget
         if is_builtin:
-            question_widget = QtWidgets.QLabel(question_text)
+            question_widget = Label(question_text)
             question_widget.setWordWrap(True)
         else:
             question_widget = QtWidgets.QLineEdit(question_text)
@@ -703,7 +704,7 @@ class AnswersEditor(QtWidgets.QWidget):
             note_edit = QtWidgets.QLineEdit(str(entry.get("note", "") or ""))
             note_edit.setPlaceholderText("Note (optional)")
             answer_line.addWidget(note_edit, 1)
-            note_counter = QtWidgets.QLabel("")
+            note_counter = Label("")
             note_counter.setProperty("muted", True)
             answer_line.addWidget(note_counter)
         elif etype == "choice":
@@ -718,12 +719,12 @@ class AnswersEditor(QtWidgets.QWidget):
             answer_widget = QtWidgets.QPlainTextEdit(answer)
             answer_widget.setMaximumHeight(70)
             answer_line.addWidget(answer_widget, 1)
-            counter_label = QtWidgets.QLabel("")
+            counter_label = Label("")
             counter_label.setProperty("muted", True)
             answer_line.addWidget(counter_label, 0, QtCore.Qt.AlignmentFlag.AlignTop)
         outer.addLayout(answer_line)
 
-        preview_label = QtWidgets.QLabel("")
+        preview_label = Label("")
         preview_label.setProperty("muted", True)
         outer.addWidget(preview_label)
 
@@ -953,7 +954,7 @@ class AnswersEditor(QtWidgets.QWidget):
             store = apply_answers.load_store(self.store_path)
         except apply_answers.AnswerStoreError as exc:
             self.status.setText("Not saved: the answers file is damaged.")
-            QtWidgets.QMessageBox.critical(self, "Apply answers", errmsg.for_user(exc))
+            QtWidgets.QMessageBox.critical(self, "Apply answers", literal(errmsg.for_user(exc)))
             return False
         disk = list(store["answers"])
         known = apply_answers.with_missing_builtins(disk) if self._merge_defaults else disk
@@ -978,7 +979,7 @@ class AnswersEditor(QtWidgets.QWidget):
             return False
         except (ValueError, OSError, apply_answers.AnswerStoreError) as exc:
             self.status.setText("Save failed.")
-            QtWidgets.QMessageBox.critical(self, "Apply answers", errmsg.for_user(exc))
+            QtWidgets.QMessageBox.critical(self, "Apply answers", literal(errmsg.for_user(exc)))
             return False
         if self.has_unsaved_edits():
             # the banner offers Reload; Save changes merges the new answer in
@@ -1003,7 +1004,7 @@ class AnswersEditor(QtWidgets.QWidget):
         self._disk_timer.stop()
         try:
             answer = QtWidgets.QMessageBox.question(
-                self, "Delete answer", "Delete '%s'?" % question)
+                self, "Delete answer", literal("Delete '%s'?" % question))
         finally:
             self._disk_timer.start()
         if answer != QtWidgets.QMessageBox.StandardButton.Yes:
@@ -1022,14 +1023,14 @@ class AnswersEditor(QtWidgets.QWidget):
     def save(self) -> bool:
         if self.load_error:
             self.status.setText("Not saved: the answers file is damaged.")
-            QtWidgets.QMessageBox.critical(self, "Apply answers", self.load_error)
+            QtWidgets.QMessageBox.critical(self, "Apply answers", literal(self.load_error))
             return False
         answers = self.collect()
         errs = apply_answers.validate(answers) + _own_question_problems(answers)
         if errs:
             self.status.setText("Not saved; see the error.")
             QtWidgets.QMessageBox.critical(self, "Apply answers",
-                                           "Problems found:\n\n- " + "\n- ".join(errs))
+                                           literal("Problems found:\n\n- " + "\n- ".join(errs)))
             return False
         merged = False
         try:
@@ -1053,12 +1054,12 @@ class AnswersEditor(QtWidgets.QWidget):
             return False
         except (ValueError, OSError, apply_answers.AnswerStoreError) as exc:
             self.status.setText("Save failed.")
-            QtWidgets.QMessageBox.critical(self, "Apply answers", errmsg.for_user(exc))
+            QtWidgets.QMessageBox.critical(self, "Apply answers", literal(errmsg.for_user(exc)))
             return False
         warn = apply_answers.warnings(answers)
         self.reload()
         if warn:
-            QtWidgets.QMessageBox.warning(self, "Apply answers", "\n\n".join(warn))
+            QtWidgets.QMessageBox.warning(self, "Apply answers", literal("\n\n".join(warn)))
         self.status.setText(_SAVED_MERGED if merged else "Saved.")
         if self.on_saved:
             self.on_saved()
@@ -1078,7 +1079,7 @@ class AnswersEditor(QtWidgets.QWidget):
                 apply_answers.restore_bytes(self.snapshot, self.store_path)
             except OSError as exc:
                 self.status.setText("Could not put the answers file back.")
-                QtWidgets.QMessageBox.critical(self, "Apply answers", errmsg.for_user(exc))
+                QtWidgets.QMessageBox.critical(self, "Apply answers", literal(errmsg.for_user(exc)))
                 return
         self.reload()
         self.status.setText("Dropped your unsaved edits.")
@@ -1121,8 +1122,8 @@ class AnswersEditor(QtWidgets.QWidget):
         damaged = self._damaged_copy_path()
         if QtWidgets.QMessageBox.question(
                 self, "Restore backup",
-                "Replace the damaged file with %s? The damaged file is kept as %s."
-                % (bak.name, damaged.name)
+                literal("Replace the damaged file with %s? The damaged file is kept as %s."
+                % (bak.name, damaged.name))
         ) != QtWidgets.QMessageBox.StandardButton.Yes:
             return
         try:
@@ -1134,7 +1135,7 @@ class AnswersEditor(QtWidgets.QWidget):
             restored = self.store_path.read_bytes()
         except OSError as exc:
             self.status.setText("Restore failed.")
-            QtWidgets.QMessageBox.critical(self, "Restore backup", errmsg.for_user(exc))
+            QtWidgets.QMessageBox.critical(self, "Restore backup", literal(errmsg.for_user(exc)))
             return
         self.reload()
         self.snapshot = restored
@@ -1183,7 +1184,7 @@ class AnswersEditor(QtWidgets.QWidget):
         if self.load_error:
             self.test_answers_btn.setToolTip("Fix the damaged answers file first.")
         elif blocked:
-            self.test_answers_btn.setToolTip(blocked)
+            self.test_answers_btn.setToolTip(literal(blocked))
         elif live:
             self.test_answers_btn.setToolTip(
                 "Uses the Auto-apply judge setting (currently: %s). Runs the "
@@ -1234,4 +1235,4 @@ class AnswersEditor(QtWidgets.QWidget):
         self._test_running = False
         self.refresh_test_answers_state()
         self.status.setText("Test my answers failed.")
-        QtWidgets.QMessageBox.critical(self, "Test my answers", errmsg.for_user(exc))
+        QtWidgets.QMessageBox.critical(self, "Test my answers", literal(errmsg.for_user(exc)))

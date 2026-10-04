@@ -24,6 +24,7 @@ import resume_md
 import settings
 from qt import workers
 from qt.widgets import CollapsibleSection
+from qt.plaintext import Label, literal
 from resume_tailor import config, master_edit, master_validate
 
 _SECTION_FIELDS = {
@@ -133,13 +134,13 @@ class ResumeDataEditor(QtWidgets.QWidget):
         self.scroll.setHorizontalScrollBarPolicy(
             QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         outer.addWidget(self.scroll, 1)
-        self.status = QtWidgets.QLabel("")
+        self.status = Label("")
         self.status.setProperty("muted", True)
         outer.addWidget(self.status)
 
     def _build_md_bar(self) -> QtWidgets.QHBoxLayout:
         bar = QtWidgets.QHBoxLayout()
-        title = QtWidgets.QLabel("Scorer résumé (resume.md):")
+        title = Label("Scorer résumé (resume.md):")
         title.setProperty("heading", True)
         bar.addWidget(title)
         self.md_model = QtWidgets.QComboBox()
@@ -168,7 +169,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
             f"QLabel {{ color: {theme.AMBER}; border: none; }}")
         row = QtWidgets.QHBoxLayout(frame)
         row.setContentsMargins(8, 6, 8, 6)
-        msg = QtWidgets.QLabel(
+        msg = Label(
             "resume.md is older than your Resume Data, so the job scorer is matching "
             "against an out-of-date résumé. Regenerate to bring it in sync.")
         msg.setWordWrap(True)
@@ -206,12 +207,12 @@ class ResumeDataEditor(QtWidgets.QWidget):
         data = self._read()
 
         if not self.master_path.exists():
-            warn = QtWidgets.QLabel("No master_experience.yaml yet. Copy the example file to "
+            warn = Label("No master_experience.yaml yet. Copy the example file to "
                                     "master_experience.yaml, then reopen this tab.")
             warn.setProperty("muted", True)
             warn.setWordWrap(True)
             v.addWidget(warn)
-        tips = QtWidgets.QLabel(_TIPS)
+        tips = Label(_TIPS)
         tips.setProperty("muted", True)
         tips.setWordWrap(True)
         v.addWidget(tips)
@@ -233,12 +234,12 @@ class ResumeDataEditor(QtWidgets.QWidget):
             edit = QtWidgets.QLineEdit(str(basics.get(k, "") or ""))
             self._basics_edits[k] = edit
             self._basics_orig[k] = edit.text()
-            form.addRow(label, edit)
+            form.addRow(Label(label), edit)
         v.addWidget(box)
 
     def _section_block(self, v, section: str, entries: list) -> None:
         head = QtWidgets.QHBoxLayout()
-        lab = QtWidgets.QLabel(section.capitalize())
+        lab = Label(section.capitalize())
         lab.setProperty("heading", True)
         head.addWidget(lab)
         head.addStretch(1)
@@ -247,7 +248,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         head.addWidget(add)
         v.addLayout(head)
         if not entries:
-            none = QtWidgets.QLabel("(none yet)")
+            none = Label("(none yet)")
             none.setProperty("muted", True)
             v.addWidget(none)
         for idx, entry in enumerate(entries):
@@ -263,7 +264,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
             edit = QtWidgets.QLineEdit(str(entry.get(k, "") or ""))
             self._entry_edits[(section, idx, k)] = edit
             self._entry_orig[(section, idx, k)] = edit.text()
-            form.addRow(label, edit)
+            form.addRow(Label(label), edit)
         bv.addLayout(form)
 
         # C: per-block "don't tailor". When checked, this block renders the user's
@@ -280,7 +281,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         atoms_holder = QtWidgets.QWidget()
         ah = QtWidgets.QVBoxLayout(atoms_holder)
         ah.setContentsMargins(0, 0, 0, 0)
-        cap = QtWidgets.QLabel("Achievements (atoms); impact: one measurable result per line")
+        cap = Label("Achievements (atoms); impact: one measurable result per line")
         cap.setProperty("muted", True)
         ah.addWidget(cap)
         for atom in entry.get("achievements") or []:
@@ -298,7 +299,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         vb_holder = QtWidgets.QWidget()
         vh = QtWidgets.QVBoxLayout(vb_holder)
         vh.setContentsMargins(0, 0, 0, 0)
-        vh_cap = QtWidgets.QLabel("Your exact bullets, one per line; rendered on the résumé as typed:")
+        vh_cap = Label("Your exact bullets, one per line; rendered on the résumé as typed:")
         vh_cap.setProperty("muted", True)
         vh_cap.setWordWrap(True)
         vh.addWidget(vh_cap)
@@ -308,7 +309,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
                                    "Led a team of 5 to ship X\nBuilt Y, cutting Z by 30%")
         vb_edit.setMinimumHeight(110)
         vh.addWidget(vb_edit)
-        preview = QtWidgets.QLabel()
+        preview = Label()
         preview.setProperty("muted", True)
         preview.setWordWrap(True)
         vh.addWidget(preview)
@@ -372,25 +373,25 @@ class ResumeDataEditor(QtWidgets.QWidget):
         what = QtWidgets.QLineEdit(str(atom.get("what", "") or ""))
         self._atom_edits[(aid, "what")] = what
         self._atom_orig[(aid, "what")] = what.text()
-        form.addRow("what", what)
+        form.addRow(Label("what"), what)
         angles = QtWidgets.QLineEdit(", ".join(str(x) for x in (atom.get("angles") or [])))
         self._atom_edits[(aid, "angles")] = angles
         self._atom_orig[(aid, "angles")] = angles.text()
-        form.addRow("angles", angles)
+        form.addRow(Label("angles"), angles)
         imp = QtWidgets.QPlainTextEdit("\n".join(str(x) for x in (atom.get("impact") or [])))
         imp.setFixedHeight(64)
         self._atom_impact[aid] = imp
         self._atom_impact_orig[aid] = imp.toPlainText()
-        form.addRow("impact", imp)
+        form.addRow(Label("impact"), imp)
         dele = QtWidgets.QPushButton("Delete achievement")
         dele.clicked.connect(lambda _=False, a=aid: self._delete_atom(a))
-        form.addRow("", dele)
+        form.addRow(Label(""), dele)
         bv.addWidget(frame)
 
     def _readonly_block(self, v, data: dict) -> None:
         box = QtWidgets.QGroupBox("Education & Skills (view only here)")
         bv = QtWidgets.QVBoxLayout(box)
-        note = QtWidgets.QLabel("Edit these in master_experience.yaml for now "
+        note = Label("Edit these in master_experience.yaml for now "
                                 "(in-dashboard editing is on the backlog).")
         note.setProperty("muted", True)
         note.setWordWrap(True)
@@ -404,7 +405,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
             for pool, items in skills.items():
                 lines.append(f"{pool}: {', '.join(str(x) for x in (items or []))}")
         if lines:
-            lab = QtWidgets.QLabel("\n".join(lines))
+            lab = Label("\n".join(lines))
             lab.setProperty("muted", True)
             lab.setWordWrap(True)  # a long skills line must wrap, not widen the page
             bv.addWidget(lab)
@@ -431,7 +432,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         # Project count + at-most/exactly-N mode.
         section.add_widget(self._projects_control())
 
-        help_lbl = QtWidgets.QLabel(
+        help_lbl = Label(
             'Each box is a comma-separated list of bullet line-counts, e.g. "2, 2, 1" = '
             "three bullets sized 2 / 2 / 1 printed lines (each 1-3, up to 5 bullets). Leave "
             "a box blank to let the engine choose. Unchecking the box above keeps these "
@@ -499,7 +500,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         self._projects_count_spin = QtWidgets.QSpinBox()
         self._projects_count_spin.setRange(1, 6)
         self._projects_count_spin.setValue(n)
-        form.addRow("How many projects", self._projects_count_spin)
+        form.addRow(Label("How many projects"), self._projects_count_spin)
 
         self._projects_mode_max = QtWidgets.QRadioButton("At most this many")
         self._projects_mode_exact = QtWidgets.QRadioButton("Exactly this many")
@@ -510,9 +511,9 @@ class ResumeDataEditor(QtWidgets.QWidget):
         mode_row.addStretch(1)
         mode_holder = QtWidgets.QWidget()
         mode_holder.setLayout(mode_row)
-        form.addRow("Mode", mode_holder)
+        form.addRow(Label("Mode"), mode_holder)
 
-        mode_help = QtWidgets.QLabel(
+        mode_help = Label(
             "At most N: list up to N of your strongest projects, dropping the weakest to "
             "hold one page. Exactly N: always keep N projects (when you have that many), "
             "trimming bullets so no whole project is dropped.")
@@ -523,8 +524,8 @@ class ResumeDataEditor(QtWidgets.QWidget):
         self._project_tiers_edit = QtWidgets.QLineEdit(
             _tiers_to_text(jobsdata.load_project_bullet_tiers()))
         self._project_tiers_edit.setPlaceholderText("e.g. 2:3, 2:2, 1:1")
-        form.addRow("Bullets by strength", self._project_tiers_edit)
-        tiers_help = QtWidgets.QLabel(
+        form.addRow(Label("Bullets by strength"), self._project_tiers_edit)
+        tiers_help = Label(
             'Optional tiers (projects:bullets, strongest first): "2:3, 2:2, 1:1" gives your '
             "2 strongest projects 3 bullets each, the next 2 get 2, the 5th gets 1. Projects "
             "past the last tier use the bullet count above. Leave blank for a flat count. The "
@@ -534,7 +535,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         tiers_help.setProperty("muted", True)
         form.addRow(tiers_help)
 
-        self._projects_warn = QtWidgets.QLabel(
+        self._projects_warn = Label(
             "More than 4 projects rarely fits one page cleanly; the tailor may shrink "
             "bullets or (in 'at most' mode) drop your weakest projects to hold one page.")
         self._projects_warn.setWordWrap(True)
@@ -550,7 +551,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         box = QtWidgets.QGroupBox(title)
         form = QtWidgets.QFormLayout(box)
         if not names:
-            none = QtWidgets.QLabel("(no entries yet)")
+            none = Label("(no entries yet)")
             none.setProperty("muted", True)
             form.addRow(none)
         for nm in names:
@@ -562,7 +563,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
             edit.setPlaceholderText("e.g. 2, 2, 1")
             store[nm] = edit
             if nm in live_names:
-                form.addRow(nm, edit)
+                form.addRow(Label(nm), edit)
                 continue
             # A stale row (no longer in the master): mark it and give it a ✕ button.
             field = QtWidgets.QWidget()
@@ -574,7 +575,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
             drop.setToolTip("Remove this stale entry (no longer in your résumé data)")
             hl.addWidget(drop)
             label = f"{nm}  (removed from résumé data)"
-            form.addRow(label, field)
+            form.addRow(Label(label), field)
             self._stale_layout_rows.append((kind, nm, field, form))
             drop.clicked.connect(
                 lambda _=False, k=kind, n=nm, w=field, f=form: self._delete_stale_layout(k, n, w, f))
@@ -738,7 +739,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         if problems:
             self._set_status(f"{len(problems)} problem(s); nothing was saved.")
             QtWidgets.QMessageBox.critical(
-                self, "Résumé data", "Problems found:\n\n- " + "\n- ".join(problems))
+                self, "Résumé data", literal("Problems found:\n\n- " + "\n- ".join(problems)))
             return False
 
         try:
@@ -750,7 +751,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
                 master_edit.update_atom(aid, fields, self.master_path)
         except (ValueError, OSError) as exc:
             self._set_status("Save failed.")
-            QtWidgets.QMessageBox.critical(self, "Résumé data", errmsg.for_user(exc))
+            QtWidgets.QMessageBox.critical(self, "Résumé data", literal(errmsg.for_user(exc)))
             return False
 
         # Per-block "don't tailor" bullets live in config.json (separate from the
@@ -772,7 +773,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
             self._set_status("Valid.")
         else:
             QtWidgets.QMessageBox.critical(
-                self, "Validate", "Problems found:\n\n- " + "\n- ".join(errs))
+                self, "Validate", literal("Problems found:\n\n- " + "\n- ".join(errs)))
             self._set_status(f"{len(errs)} problem(s); see the list.")
 
     def revert(self) -> None:
@@ -789,13 +790,13 @@ class ResumeDataEditor(QtWidgets.QWidget):
 
     def _delete_entry(self, section: str, idx: int, name: str) -> None:
         if QtWidgets.QMessageBox.question(
-                self, "Delete entry", f"Delete '{name}' and all its bullets?"
+                self, "Delete entry", literal(f"Delete '{name}' and all its bullets?")
         ) != QtWidgets.QMessageBox.StandardButton.Yes:
             return
         try:
             master_edit.delete_entry(section, idx, self.master_path)
         except (ValueError, OSError) as exc:
-            QtWidgets.QMessageBox.critical(self, "Delete entry", errmsg.for_user(exc))
+            QtWidgets.QMessageBox.critical(self, "Delete entry", literal(errmsg.for_user(exc)))
             return
         self.reload()
         self._set_status(f"Deleted '{name}'.")
@@ -808,7 +809,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         try:
             master_edit.delete_atom(atom_id, self.master_path)
         except (ValueError, OSError) as exc:
-            QtWidgets.QMessageBox.critical(self, "Delete achievement", errmsg.for_user(exc))
+            QtWidgets.QMessageBox.critical(self, "Delete achievement", literal(errmsg.for_user(exc)))
             return
         self.reload()
         self._set_status("Deleted an achievement.")
@@ -824,10 +825,10 @@ class ResumeDataEditor(QtWidgets.QWidget):
         imp = QtWidgets.QPlainTextEdit()
         imp.setObjectName("add_atom_impact")
         imp.setFixedHeight(64)
-        form.addRow("What (required)", what)
-        form.addRow("Angles (comma-separated, required)", angles)
-        form.addRow("Impact (one per line)", imp)
-        problems_label = QtWidgets.QLabel("")
+        form.addRow(Label("What (required)"), what)
+        form.addRow(Label("Angles (comma-separated, required)"), angles)
+        form.addRow(Label("Impact (one per line)"), imp)
+        problems_label = Label("")
         problems_label.setObjectName("add_atom_problems")
         problems_label.setWordWrap(True)
         problems_label.setProperty("danger", True)
@@ -873,7 +874,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
             try:
                 master_edit.add_atom(section, idx, data, self.master_path)
             except (ValueError, OSError) as exc:
-                QtWidgets.QMessageBox.critical(self, "Add achievement", errmsg.for_user(exc))
+                QtWidgets.QMessageBox.critical(self, "Add achievement", literal(errmsg.for_user(exc)))
                 continue
             break
         self.reload()
@@ -887,7 +888,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         for k, label in _SECTION_FIELDS[section]:
             edits[k] = QtWidgets.QLineEdit()
             edits[k].setObjectName(f"add_entry_{k}")
-            form.addRow(label, edits[k])
+            form.addRow(Label(label), edits[k])
         what = QtWidgets.QLineEdit()
         what.setObjectName("add_entry_what")
         angles = QtWidgets.QLineEdit()
@@ -895,10 +896,10 @@ class ResumeDataEditor(QtWidgets.QWidget):
         impact = QtWidgets.QPlainTextEdit()
         impact.setObjectName("add_entry_impact")
         impact.setFixedHeight(64)
-        form.addRow("First achievement (what)", what)
-        form.addRow("Angles (comma-separated)", angles)
-        form.addRow("Impact (one per line, optional)", impact)
-        problems_label = QtWidgets.QLabel("")
+        form.addRow(Label("First achievement (what)"), what)
+        form.addRow(Label("Angles (comma-separated)"), angles)
+        form.addRow(Label("Impact (one per line, optional)"), impact)
+        problems_label = Label("")
         problems_label.setObjectName("add_entry_problems")
         problems_label.setWordWrap(True)
         problems_label.setProperty("danger", True)
@@ -943,7 +944,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
             try:
                 master_edit.append_entry(section, data, self.master_path)
             except (ValueError, OSError) as exc:
-                QtWidgets.QMessageBox.critical(self, "Add entry", errmsg.for_user(exc))
+                QtWidgets.QMessageBox.critical(self, "Add entry", literal(errmsg.for_user(exc)))
                 continue
             break
         self.reload()
@@ -971,7 +972,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
             return
         if QtWidgets.QMessageBox.question(
                 self, "Generate resume.md",
-                f"Rebuild resume.md from your Resume Data with {model}?\n\nThis makes a Gemini call."
+                literal(f"Rebuild resume.md from your Resume Data with {model}?\n\nThis makes a Gemini call.")
         ) != QtWidgets.QMessageBox.StandardButton.Yes:
             return
         self._set_status("Generating resume.md … (Gemini)")
@@ -981,7 +982,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
 
     def _gen_failed(self, exc) -> None:
         self._set_status("resume.md generation failed.")
-        QtWidgets.QMessageBox.critical(self, "Generate resume.md", f"Generation failed:\n\n{errmsg.for_user(exc)}")
+        QtWidgets.QMessageBox.critical(self, "Generate resume.md", literal(f"Generation failed:\n\n{errmsg.for_user(exc)}"))
 
     def _preview(self, md: str) -> None:
         self._set_status("resume.md generated; review it before it's saved.")
@@ -989,7 +990,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         dlg.setWindowTitle("Generated resume.md: review before saving")
         dlg.resize(840, 660)
         v = QtWidgets.QVBoxLayout(dlg)
-        note = QtWidgets.QLabel("Review (and edit) the generated resume.md. 'Use this' backs up the "
+        note = Label("Review (and edit) the generated resume.md. 'Use this' backs up the "
                                 "current file to resume.md.bak, then writes this version.")
         note.setProperty("muted", True)
         note.setWordWrap(True)
@@ -1011,7 +1012,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         try:
             resume_md.write_resume_md(text)
         except OSError as exc:
-            QtWidgets.QMessageBox.critical(self, "resume.md", f"Could not write resume.md:\n\n{errmsg.for_user(exc)}")
+            QtWidgets.QMessageBox.critical(self, "resume.md", literal(f"Could not write resume.md:\n\n{errmsg.for_user(exc)}"))
             return
         self._set_status("resume.md updated (old version saved to resume.md.bak).")
         self._refresh_stale_banner()  # now back in sync -> hide the warning
@@ -1028,7 +1029,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
                 self, "Push resume.md", "No resume.md yet; generate it first.")
             return
         if QtWidgets.QMessageBox.question(
-                self, "Push resume.md", f"Copy resume.md to {target.user}@{target.instance}?"
+                self, "Push resume.md", literal(f"Copy resume.md to {target.user}@{target.instance}?")
         ) != QtWidgets.QMessageBox.StandardButton.Yes:
             return
         self._set_status("Pushing resume.md to VM …")
@@ -1059,4 +1060,4 @@ class ResumeDataEditor(QtWidgets.QWidget):
     def _push_md_launch_error(self, exc) -> None:
         self._set_status("resume.md push failed.")
         QtWidgets.QMessageBox.critical(
-            self, "Push resume.md", f"Push failed to launch:\n\n{errmsg.for_user(exc)}")
+            self, "Push resume.md", literal(f"Push failed to launch:\n\n{errmsg.for_user(exc)}"))

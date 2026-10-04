@@ -39,6 +39,7 @@ from PySide6 import QtCore, QtWidgets
 
 from qt import theme
 from qt.chrome import Pill
+from qt.plaintext import Label
 
 _EMPTY_TEXT = ("Select a job to see its score breakdown, strengths, gaps, "
                "and description.")
@@ -170,7 +171,7 @@ class JobDetailCard(QtWidgets.QFrame):
         outer.setSpacing(8)
 
         # Empty state (swapped with the content widget).
-        self._empty = QtWidgets.QLabel(_EMPTY_TEXT)
+        self._empty = Label(_EMPTY_TEXT)
         self._empty.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self._empty.setStyleSheet(f"color: {theme.FAINT};")
         outer.addWidget(self._empty, 1)
@@ -194,11 +195,11 @@ class JobDetailCard(QtWidgets.QFrame):
         # html.escape()d into a deliberate RichText span; these two carry no
         # markup of our own, so the cheaper and unmissable fix is to say they
         # are plain. Sibling of the QPlainTextEdit choice for the JD below.
-        self.title_label = QtWidgets.QLabel("")
+        self.title_label = Label("")
         self.title_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         theme.set_type_role(self.title_label, "title")
         title_col.addWidget(self.title_label)
-        self.meta_label = QtWidgets.QLabel("")
+        self.meta_label = Label("")
         self.meta_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         self.meta_label.setProperty("muted", True)
         title_col.addWidget(self.meta_label)
@@ -259,7 +260,7 @@ class JobDetailCard(QtWidgets.QFrame):
         self._split.addWidget(self._left_pane)
 
         # REASON / NEXT STEP lede.
-        self.reason_label = QtWidgets.QLabel("")
+        self.reason_label = Label("")
         self.reason_label.setWordWrap(True)
         self.reason_label.setTextFormat(QtCore.Qt.TextFormat.RichText)
         lv.addWidget(self.reason_label)
@@ -511,16 +512,18 @@ class JobDetailCard(QtWidgets.QFrame):
         if not items:
             return
         fam = theme.SEMANTICS[family]
-        head = QtWidgets.QLabel(
+        head = Label(
             f'<span style="color:{fam["pill_fg"]};font-weight:600;'
             f'letter-spacing:0.4px">{heading}</span>')
+        head.setTextFormat(QtCore.Qt.TextFormat.RichText)
         theme.set_type_role(head, "caption")
         col.addWidget(head)
         for item in items:
-            lab = QtWidgets.QLabel(
+            lab = Label(
                 f'<span style="color:{fam["pill_fg"]};font-weight:700">{mark}</span>'
                 f'&nbsp;&nbsp;<span style="color:{theme.TEXT_SECONDARY}">'
                 f'{html.escape(item)}</span>')
+            lab.setTextFormat(QtCore.Qt.TextFormat.RichText)       # composed here; each item is escaped
             lab.setWordWrap(True)
             col.addWidget(lab)
         col.addStretch(1)

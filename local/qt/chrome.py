@@ -27,6 +27,7 @@ from typing import Callable
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from qt import theme
+from qt.plaintext import Label
 
 
 def _pill_colors(family_name: str) -> tuple[QtGui.QColor, QtGui.QColor]:
@@ -36,7 +37,7 @@ def _pill_colors(family_name: str) -> tuple[QtGui.QColor, QtGui.QColor]:
     return bg, theme.qcolor(fam["pill_fg"])
 
 
-class Pill(QtWidgets.QLabel):
+class Pill(Label):
     """A rounded status pill. Modes:
 
     - `family="success"` … — semantic pill (tinted bg, family pill_fg text).
@@ -290,7 +291,7 @@ class ChipBar(QtWidgets.QWidget):
                 c.blockSignals(False)
 
 
-class _CountBadge(QtWidgets.QLabel):
+class _CountBadge(Label):
     """A small bordered `N label` badge (mono-bold count + muted caption)."""
 
     def __init__(self, label: str, value_color: str = theme.TEXT, parent=None) -> None:
@@ -298,6 +299,8 @@ class _CountBadge(QtWidgets.QLabel):
         self._label = label
         self._value_color = value_color
         self.setProperty("countBadge", True)
+        # RichText: composed here from a number and a fixed caption
+        self.setTextFormat(QtCore.Qt.TextFormat.RichText)
         theme.set_type_role(self, "caption")
         self.set_value(0)
 
@@ -322,14 +325,16 @@ class IdentityStrip(QtWidgets.QFrame):
         lay.setContentsMargins(16, 6, 16, 6)
         lay.setSpacing(12)
 
-        self.wordmark = QtWidgets.QLabel(
+        self.wordmark = Label(
             f'<span style="color:{theme.ACCENT};font-weight:700">IN</span>'
             f'<span style="color:{theme.TEXT};font-weight:700">ployed</span>')
+        self.wordmark.setTextFormat(QtCore.Qt.TextFormat.RichText)
         theme.set_type_role(self.wordmark, "section")
         lay.addWidget(self.wordmark)
 
-        self.tagline = QtWidgets.QLabel(
+        self.tagline = Label(
             f'<span style="color:{theme.FAINT}">job-search console</span>')
+        self.tagline.setTextFormat(QtCore.Qt.TextFormat.RichText)
         theme.set_type_role(self.tagline, "mono")
         lay.addWidget(self.tagline)
 

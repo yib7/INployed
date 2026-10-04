@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict
 
 from PySide6 import QtCore, QtGui, QtWidgets
+from qt.plaintext import Label
 
 import osopen
 
@@ -85,7 +86,7 @@ class ApplyPanel(QtWidgets.QWidget):
         v.setContentsMargins(8, 8, 8, 8)
 
         top = QtWidgets.QHBoxLayout()
-        self._title = QtWidgets.QLabel("Apply")
+        self._title = Label("Apply")
         self._title.setProperty("heading", True)
         self._title.setWordWrap(True)
         top.addWidget(self._title, 1)
@@ -96,7 +97,7 @@ class ApplyPanel(QtWidgets.QWidget):
         top.addWidget(close)
         v.addLayout(top)
 
-        hint = QtWidgets.QLabel(
+        hint = Label(
             "For portals that don't auto-fill from your résumé upload: paste the apply sheet into "
             "Claude-in-Chrome to fill the fields by hand; it stops before the final Submit. Review "
             "every field and submit it yourself.")
@@ -136,7 +137,7 @@ class ApplyPanel(QtWidgets.QWidget):
         v.addLayout(tools)
 
         sheet_row = QtWidgets.QHBoxLayout()
-        sheet_label = QtWidgets.QLabel("Apply sheet (apply.md)")
+        sheet_label = Label("Apply sheet (apply.md)")
         sheet_label.setProperty("muted", True)
         sheet_row.addWidget(sheet_label)
         sheet_row.addStretch(1)
@@ -167,7 +168,7 @@ class ApplyPanel(QtWidgets.QWidget):
 
     def _path_row(self, label: str, tooltip: str | None = None):
         row = QtWidgets.QHBoxLayout()
-        lab = QtWidgets.QLabel(label)
+        lab = Label(label)
         lab.setProperty("muted", True)
         edit = QtWidgets.QLineEdit()
         edit.setAccessibleName(label)

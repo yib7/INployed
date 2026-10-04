@@ -18,6 +18,7 @@ from qt import theme
 from qt.delegates import JobRowDelegate
 from qt.jobs_model import NUMERIC_COLS, SORT_ROLE, JobsTableModel
 from qt.widgets import ColorLegend
+from qt.plaintext import Label
 from seen_db import APP_STATUSES
 from vm_schedule import RUN_LABELS
 
@@ -153,7 +154,7 @@ class JobsTab(QtWidgets.QWidget):
         self.search.setPlaceholderText("Search title / company…")
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._debounced_filter)
-        bar.addWidget(QtWidgets.QLabel("Search:"))
+        bar.addWidget(Label("Search:"))
         bar.addWidget(self.search, 1)
 
         self.search_col = QtWidgets.QComboBox()
@@ -161,7 +162,7 @@ class JobsTab(QtWidgets.QWidget):
         self.search_col.addItem("All")
         self.search_col.addItems([COLUMN_LABELS.get(c, c) for c in self.col_ids])
         self.search_col.currentIndexChanged.connect(self._apply_filters)
-        bar.addWidget(QtWidgets.QLabel("In:"))
+        bar.addWidget(Label("In:"))
         bar.addWidget(self.search_col)
 
         # The five discovery filters (Min score / Day / Time / Reco / Easy Apply)
@@ -197,7 +198,7 @@ class JobsTab(QtWidgets.QWidget):
         cols_btn.clicked.connect(self._choose_columns)
         bar.addWidget(cols_btn)
 
-        self.count_label = QtWidgets.QLabel("")
+        self.count_label = Label("")
         self.count_label.setProperty("muted", True)
         bar.addWidget(self.count_label)
 
@@ -274,18 +275,18 @@ class JobsTab(QtWidgets.QWidget):
         self._filters_popup = QtWidgets.QWidget(self, QtCore.Qt.WindowType.Popup)
         theme.add_popup_shadow(self._filters_popup)
         self._filters_form = QtWidgets.QFormLayout(self._filters_popup)
-        self._filters_form.addRow("Min score:", self.minscore)
-        self._filters_form.addRow("Day:", self.day)
-        self._filters_form.addRow("Time:", self.time)
-        self._filters_form.addRow("Reco:", self.reco)
-        self._filters_form.addRow("Easy Apply:", self.easy)
+        self._filters_form.addRow(Label("Min score:"), self.minscore)
+        self._filters_form.addRow(Label("Day:"), self.day)
+        self._filters_form.addRow(Label("Time:"), self.time)
+        self._filters_form.addRow(Label("Reco:"), self.reco)
+        self._filters_form.addRow(Label("Easy Apply:"), self.easy)
         self._filters_popup.hide()
 
     def add_filter_row(self, widget, *, label: str = "", is_active=None) -> None:
         """Mount an extra control inside the Filters popup (e.g. the Tracker's
         Follow-up-due checkbox). If `is_active` (a 0-arg callable -> bool) is given,
         it counts toward the active-filter badge."""
-        self._filters_form.addRow(label, widget)
+        self._filters_form.addRow(Label(label), widget)
         if is_active is not None:
             self._extra_filter_active.append(is_active)
         self._update_filters_label()
@@ -593,7 +594,7 @@ class JobsTab(QtWidgets.QWidget):
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle("Columns")
         v = QtWidgets.QVBoxLayout(dlg)
-        v.addWidget(QtWidgets.QLabel("Show these columns:"))
+        v.addWidget(Label("Show these columns:"))
         for cid in self.col_ids:
             cb = QtWidgets.QCheckBox(COLUMN_LABELS.get(cid, cid))
             cb.setChecked(cid not in self._hidden)

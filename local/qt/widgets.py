@@ -11,6 +11,7 @@ from typing import Callable
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from qt import theme
+from qt.plaintext import Label, literal
 
 
 class CollapsibleSection(QtWidgets.QFrame):
@@ -52,7 +53,7 @@ class CollapsibleSection(QtWidgets.QFrame):
         self._header.clicked.connect(self._on_header_clicked)
         header_row.addWidget(self._header)
         self._subtitle_text = subtitle
-        self._subtitle = QtWidgets.QLabel(subtitle)
+        self._subtitle = Label(subtitle)
         self._subtitle.setProperty("muted", True)
         self._subtitle.setVisible(bool(subtitle))
         header_row.addWidget(self._subtitle)
@@ -123,7 +124,7 @@ class CollapsibleSection(QtWidgets.QFrame):
         self.set_collapsed(not self.is_collapsed())
         self._on_toggled(self.is_collapsed())
 
-class ElidedLabel(QtWidgets.QLabel):
+class ElidedLabel(Label):
     """A caption that ELIDES instead of being sliced off at the layout's edge.
 
     Qt clips a QLabel that is given less width than it asked for, mid-glyph and
@@ -144,7 +145,7 @@ class ElidedLabel(QtWidgets.QLabel):
 
     def setText(self, text: str) -> None:  # noqa: N802 (Qt naming)
         self._full = text or ""
-        self.setToolTip(self._full)
+        self.setToolTip(literal(self._full))
         super().setText(self._full)
         self._elide()
 
@@ -246,7 +247,7 @@ class ColorLegend(QtWidgets.QWidget):
         for color, text in self.items:
             swatch = _LegendSwatch(color)
             self._swatches.append(swatch)
-            label = QtWidgets.QLabel(text)
+            label = Label(text)
             label.setProperty("muted", True)
             self._labels.append(text)
             h.addWidget(swatch)

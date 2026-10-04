@@ -64,6 +64,7 @@ from qt.settings_tab import SettingsForm
 from qt.stats_tab import StatsTab, _human_age
 from qt.vm_panel import VMPanel
 from qt.widgets import ElidedLabel
+from qt.plaintext import Label, literal
 from resume_trash import recycle_resume_folder
 from seen_db import SeenRegistry
 
@@ -305,11 +306,11 @@ class MainWindow(QtWidgets.QMainWindow):
         w = QtWidgets.QWidget()
         v = QtWidgets.QVBoxLayout(w)
         v.addStretch(1)
-        title = QtWidgets.QLabel(self.EMPTY_FIRST_RUN[0])
+        title = Label(self.EMPTY_FIRST_RUN[0])
         title.setProperty("heading", True)
         title.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         v.addWidget(title)
-        msg = QtWidgets.QLabel(self.EMPTY_FIRST_RUN[1])
+        msg = Label(self.EMPTY_FIRST_RUN[1])
         msg.setWordWrap(True)
         msg.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         msg.setProperty("muted", True)
@@ -444,7 +445,7 @@ class MainWindow(QtWidgets.QMainWindow):
         h = QtWidgets.QHBoxLayout(bar)
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(4)
-        h.addWidget(QtWidgets.QLabel("Interface size"))
+        h.addWidget(Label("Interface size"))
         minus = QtWidgets.QPushButton("-")
         minus.setProperty("compact", True)  # zero side padding so the glyph fits
         minus.setFixedWidth(26)
@@ -467,7 +468,7 @@ class MainWindow(QtWidgets.QMainWindow):
         plus.setToolTip("Larger (+10%)")
         plus.clicked.connect(lambda: self._nudge_scale(10))
         h.addWidget(plus)
-        self._scale_readout = QtWidgets.QLabel(f"{self._ui_scale_pct}%")
+        self._scale_readout = Label(f"{self._ui_scale_pct}%")
         self._scale_readout.setMinimumWidth(38)
         h.addWidget(self._scale_readout)
         # A short debounce so dragging the slider stays smooth (apply once it settles).
@@ -585,7 +586,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.offline_banner = QtWidgets.QFrame()
         self.offline_banner.setProperty("callout", "warning")
         ob = QtWidgets.QHBoxLayout(self.offline_banner)
-        self.offline_label = QtWidgets.QLabel("")
+        self.offline_label = Label("")
         self.offline_label.setWordWrap(True)
         ob.addWidget(self.offline_label, 1)
         self.offline_start_btn = QtWidgets.QPushButton("Start Google Drive")
@@ -1421,8 +1422,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._reload_timer.stop()
         QtWidgets.QMessageBox.warning(
             self, "Background write failed",
-            f"Could not update the job files ({description}): {errmsg.for_user(exc)}\n\n"
-            "Reloading the dashboard from disk.")
+            literal(f"Could not update the job files ({description}): {errmsg.for_user(exc)}\n\n"
+            "Reloading the dashboard from disk."))
         self.reload_data_async()
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:  # noqa: N802 - Qt override
@@ -1472,8 +1473,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if not q.drain(timeout_ms=30000):
                 QtWidgets.QMessageBox.warning(
                     self, "Writes still pending",
-                    f"{q.pending_count()} background write(s) did not finish; the "
-                    "files on disk may be missing your last mark-seen/delete.")
+                    literal(f"{q.pending_count()} background write(s) did not finish; the "
+                    "files on disk may be missing your last mark-seen/delete."))
         super().closeEvent(event)
 
     def _scrape_in_flight(self) -> bool:
@@ -1674,6 +1675,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _confirm_scrape(self) -> str | None:
         box = QtWidgets.QMessageBox(self)
+        box.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         box.setWindowTitle("Find new jobs")
         box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
         box.setText("Finding new jobs collects fresh postings through the job-data provider; this "
@@ -1736,11 +1738,11 @@ class MainWindow(QtWidgets.QMainWindow):
         names = "\n".join(f"  •  {p.parent.name}/{p.name}" for p in pending)
         resp = QtWidgets.QMessageBox.question(
             self, "Unscored job-search results found",
-            "A previous job search was interrupted before its results were "
+            literal("A previous job search was interrupted before its results were "
             "scored, so they never appeared in the dashboard:\n\n"
             f"{names}\n\n"
             "Score them now? This only runs the scoring step (Gemini); it does "
-            "not collect new jobs and costs no discovery credits.",
+            "not collect new jobs and costs no discovery credits."),
             QtWidgets.QMessageBox.StandardButton.Yes
             | QtWidgets.QMessageBox.StandardButton.No,
             QtWidgets.QMessageBox.StandardButton.Yes)
@@ -1965,7 +1967,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._scraping = False
         msg = errmsg.for_user(exc)
         self._set_status(f"Find new jobs failed: {msg.splitlines()[0] if msg else exc}")
-        QtWidgets.QMessageBox.critical(self, "Find new jobs", f"The run failed.\n\n{msg}")
+        QtWidgets.QMessageBox.critical(self, "Find new jobs", literal(f"The run failed.\n\n{msg}"))
 
     # ---- add a job by hand (no scraper, no scoring) ----------------------------
 
@@ -2004,6 +2006,7 @@ class MainWindow(QtWidgets.QMainWindow):
         duplicate never silently reports success."""
         import manual_add
         box = QtWidgets.QMessageBox(self)
+        box.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         box.setWindowTitle("Add a job by hand")
         box.setText(manual_add.duplicate_message(dup))
         again = box.addButton("Tailor again", QtWidgets.QMessageBox.ButtonRole.AcceptRole)
@@ -2103,7 +2106,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._manual_adding = False
         msg = errmsg.for_user(exc)
         self._set_status(f"Add job failed: {msg.splitlines()[0] if msg else exc}")
-        QtWidgets.QMessageBox.warning(self, "Add a job by hand", f"Could not add the job.\n\n{msg}")
+        QtWidgets.QMessageBox.warning(self, "Add a job by hand", literal(f"Could not add the job.\n\n{msg}"))
 
     # ---- delete / edit job entries -------------------------------------------
 
@@ -2115,8 +2118,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if QtWidgets.QMessageBox.question(
                 self, "Delete job(s)?",
-                f"Permanently remove {len(ids)} job(s) from your dataset? This can't be "
-                "undone. Any tailored-résumé folder is moved to the Recycle Bin."
+                literal(f"Permanently remove {len(ids)} job(s) from your dataset? This can't be "
+                "undone. Any tailored-résumé folder is moved to the Recycle Bin.")
         ) != QtWidgets.QMessageBox.StandardButton.Yes:
             return
         # Snapshot the résumé folders BEFORE the delete — the registry rows are
@@ -2285,7 +2288,7 @@ class MainWindow(QtWidgets.QMainWindow):
         title, company = job.get("title", "this job"), job.get("company", "?")
         if QtWidgets.QMessageBox.question(
                 self, "Mark as applied?",
-                f"Add '{title}' @ {company} to your application tracker as applied?"
+                literal(f"Add '{title}' @ {company} to your application tracker as applied?")
         ) != QtWidgets.QMessageBox.StandardButton.Yes:
             return
         self.registry.set_status(jid, "applied", company=company,
@@ -2299,7 +2302,7 @@ class MainWindow(QtWidgets.QMainWindow):
         msg = errmsg.for_user(exc)
         self._set_status(msg.splitlines()[0] if msg else "Apply failed")
         QtWidgets.QMessageBox.information(
-            self, "Apply", f"{msg}\n\nUse 'Tailor resume' on this job, then try Apply again.")
+            self, "Apply", literal(f"{msg}\n\nUse 'Tailor resume' on this job, then try Apply again."))
 
     # ---- tailor --------------------------------------------------------------
 
@@ -2308,10 +2311,10 @@ class MainWindow(QtWidgets.QMainWindow):
         trivially testable). Returns True to proceed."""
         return QtWidgets.QMessageBox.question(
             self, "Tailor many resumes at once?",
-            f"About to tailor {n} resumes ({MAX_PARALLEL_TAILORS} at a time), each "
+            literal(f"About to tailor {n} resumes ({MAX_PARALLEL_TAILORS} at a time), each "
             f"making its own Gemini calls and launching pdflatex. If the API rate-limits, "
             f"jobs wait it out and retry; any job that still fails turns red in the "
-            f"Unseen tab for a re-run. Continue?"
+            f"Unseen tab for a re-run. Continue?")
         ) == QtWidgets.QMessageBox.StandardButton.Yes
 
     def _tailor_selected(self) -> None:
@@ -2330,7 +2333,7 @@ class MainWindow(QtWidgets.QMainWindow):
         cfg = settings.load()
         cover = QtWidgets.QMessageBox.question(
             self, "Cover letter",
-            f"Also generate a cover letter for the selected {len(jobs)} job(s)?"
+            literal(f"Also generate a cover letter for the selected {len(jobs)} job(s)?")
         ) == QtWidgets.QMessageBox.StandardButton.Yes
         opts = {"cover_letter": cover, "ats_report": bool(cfg.get("tailor_ats_report", True)),
                 "prep_sheet": bool(cfg.get("tailor_prep_sheet", False)),
@@ -2501,7 +2504,7 @@ class MainWindow(QtWidgets.QMainWindow):
             text = f"Tailored {len(oks)} of {total} resume(s).\n\nFailed:\n{lines}"
             if degraded:
                 text += f"\n\nFinished with warnings:\n{_tailor_warning_lines(degraded)}"
-            QtWidgets.QMessageBox.warning(self, "Tailor resume", text)
+            QtWidgets.QMessageBox.warning(self, "Tailor resume", literal(text))
             status = f"Tailored {len(oks)} of {total}; {len(fails)} failed (see dialog)."
             if degraded:
                 status += f" {len(degraded)} with warnings."
@@ -2509,9 +2512,9 @@ class MainWindow(QtWidgets.QMainWindow):
         elif degraded:
             QtWidgets.QMessageBox.warning(
                 self, "Tailor resume",
-                f"Tailored {len(oks)} of {total} resume(s), {len(degraded)} with "
+                literal(f"Tailored {len(oks)} of {total} resume(s), {len(degraded)} with "
                 f"warnings:\n\n{_tailor_warning_lines(degraded)}\n\n"
-                f"Each folder's tailor_report.txt has the full record.")
+                f"Each folder's tailor_report.txt has the full record."))
             self._set_status(
                 f"Resume(s) ready ({len(oks)}); {len(degraded)} with warnings (see dialog).")
         elif oks:
@@ -2529,7 +2532,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _finish_tailor_error(self, exc) -> None:
         self._tailoring = False
         self.btn_tailor.setEnabled(True)
-        QtWidgets.QMessageBox.warning(self, "Tailor resume", f"Tailoring failed: {errmsg.for_user(exc)}")
+        QtWidgets.QMessageBox.warning(self, "Tailor resume", literal(f"Tailoring failed: {errmsg.for_user(exc)}"))
         self._set_status(f"Tailor failed: {errmsg.for_user(exc)}")
 
     # ---- batch auto-apply queueing ---------------------------------------
@@ -2675,9 +2678,9 @@ class MainWindow(QtWidgets.QMainWindow):
                              "tailor run is in flight")
             elif QtWidgets.QMessageBox.question(
                     self, "Queue for auto-apply",
-                    f"{len(not_ready)} job(s) aren't tailored yet. Tailor now "
+                    literal(f"{len(not_ready)} job(s) aren't tailored yet. Tailor now "
                     "(cover letter included; spends Gemini credit) and queue "
-                    "when done?") == QtWidgets.QMessageBox.StandardButton.Yes:
+                    "when done?")) == QtWidgets.QMessageBox.StandardButton.Yes:
                 jobs = [j for j in (self._job_payload(i) for i in not_ready) if j]
                 # A job whose entry can't resolve an apply URL can never be
                 # queued after tailoring either — drop it BEFORE spending
@@ -2813,9 +2816,9 @@ class MainWindow(QtWidgets.QMainWindow):
             # has to hold the rule; the CLI held it and the GUI did not.
             QtWidgets.QMessageBox.warning(
                 self, "Master ATS password",
-                f"Could not store the password ({type(exc).__name__}). Check that "
+                literal(f"Could not store the password ({type(exc).__name__}). Check that "
                 f"the keyring package is installed and the Windows Credential "
-                f"Manager is available.")
+                f"Manager is available."))
             return
         if not stored:
             QtWidgets.QMessageBox.warning(
@@ -2893,7 +2896,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _finish_cover_error(self, exc) -> None:
         self._covering = False
         QtWidgets.QMessageBox.warning(self, "Cover letter",
-                                      f"Cover letter failed: {errmsg.for_user(exc)}")
+                                      literal(f"Cover letter failed: {errmsg.for_user(exc)}"))
         self._set_status(f"Cover letter failed: {errmsg.for_user(exc)}")
 
     def _payload_with_master_fallback(self, jid: str) -> dict | None:
@@ -2971,7 +2974,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             problems = setup_check.local_problems()
         except Exception as exc:  # noqa: BLE001
-            QtWidgets.QMessageBox.critical(self, "Check setup", f"Could not run checks: {errmsg.for_user(exc)}")
+            QtWidgets.QMessageBox.critical(self, "Check setup", literal(f"Could not run checks: {errmsg.for_user(exc)}"))
             return
         # Everything above is local file reads. The job-data check is a network
         # call and the claude CLI version check starts a subprocess, so both go
@@ -3008,10 +3011,10 @@ class MainWindow(QtWidgets.QMainWindow):
             # one failed. The message a mid-rotation user sees is the one that
             # needs the hint, so it gets it too.
             QtWidgets.QMessageBox.critical(
-                self, "Check setup", "Problems found:\n\n- " + "\n- ".join(problems)
+                self, "Check setup", literal("Problems found:\n\n- " + "\n- ".join(problems)
                 + "\n\nThese are checked against the settings this dashboard loaded "
                 "at launch. If you just changed a key or path, restart the "
-                "dashboard and check again before chasing one of these.")
+                "dashboard and check again before chasing one of these."))
             self._set_status(f"Setup check: {len(problems)} problem(s); see the list.")
 
     # ---- tracker extras ------------------------------------------------------
@@ -3032,7 +3035,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if QtWidgets.QMessageBox.question(
                 self, "Remove from tracker?",
-                f"Remove {len(ids)} job(s) from the application tracker?"
+                literal(f"Remove {len(ids)} job(s) from the application tracker?")
         ) != QtWidgets.QMessageBox.StandardButton.Yes:
             return
         for jid in ids:
@@ -3075,8 +3078,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refresh_tracker()
         QtWidgets.QMessageBox.information(
             self, "Tracker imported",
-            f"Merged {counts['status']} tracked application(s), {counts['seen']} "
-            f"seen id(s), and {counts['resume_paths']} résumé link(s).")
+            literal(f"Merged {counts['status']} tracked application(s), {counts['seen']} "
+            f"seen id(s), and {counts['resume_paths']} résumé link(s)."))
 
     def _tracker_prep(self) -> None:
         if getattr(self, "_prepping", False):

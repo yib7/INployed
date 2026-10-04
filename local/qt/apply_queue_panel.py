@@ -70,6 +70,7 @@ from qt.apply_pause_card import PauseCard
 from qt.chrome import ChipBar, Pill
 from qt.delegates import BAND_ROLE, STATUS_LABELS, STATUS_TAGS, TAG_ROLE, JobRowDelegate
 from qt.widgets import ElidedLabel
+from qt.plaintext import Label, literal
 
 # The repo root (this file lives in <root>/local/qt/): the console commands
 # cd here first so the relative `local/apply_run.py` resolves.
@@ -392,7 +393,7 @@ class _DetailsPanel(QtWidgets.QFrame):
         v.setContentsMargins(14, 10, 14, 10)
         v.setSpacing(6)
 
-        self.empty_label = QtWidgets.QLabel(self._EMPTY)
+        self.empty_label = Label(self._EMPTY)
         self.empty_label.setStyleSheet(f"color: {theme.FAINT};")
         self.empty_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         v.addWidget(self.empty_label)
@@ -410,7 +411,7 @@ class _DetailsPanel(QtWidgets.QFrame):
         # Qt::mightBeRichText over them and render a posting's stray markup;
         # the lede and callout below stay RichText because we compose their
         # markup ourselves and html.escape() the untrusted part into it.
-        self.title_label = QtWidgets.QLabel("")
+        self.title_label = Label("")
         self.title_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         theme.set_type_role(self.title_label, "section")
         head.addWidget(self.title_label)
@@ -424,12 +425,12 @@ class _DetailsPanel(QtWidgets.QFrame):
         head.addWidget(self.open_folder_btn)
         cv.addLayout(head)
 
-        self.meta_label = QtWidgets.QLabel("")
+        self.meta_label = Label("")
         self.meta_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         self.meta_label.setProperty("muted", True)
         cv.addWidget(self.meta_label)
 
-        self.lede_label = QtWidgets.QLabel("")
+        self.lede_label = Label("")
         self.lede_label.setWordWrap(True)
         self.lede_label.setTextFormat(QtCore.Qt.TextFormat.RichText)
         cv.addWidget(self.lede_label)
@@ -439,7 +440,9 @@ class _DetailsPanel(QtWidgets.QFrame):
         wh = QtWidgets.QHBoxLayout(self.callout)
         wh.setContentsMargins(12, 8, 12, 8)
         wh.setSpacing(10)
-        self.callout_label = QtWidgets.QLabel("")
+        self.callout_label = Label("")
+        # RichText: the callout is composed here and escapes each question
+        self.callout_label.setTextFormat(QtCore.Qt.TextFormat.RichText)
         self.callout_label.setWordWrap(True)
         wh.addWidget(self.callout_label, 1)
         self.answer_now_btn = QtWidgets.QPushButton("Answer now")
@@ -450,7 +453,7 @@ class _DetailsPanel(QtWidgets.QFrame):
         wh.addWidget(self.answer_now_btn, 0, QtCore.Qt.AlignmentFlag.AlignTop)
         cv.addWidget(self.callout)
 
-        self.artifacts_label = QtWidgets.QLabel("")
+        self.artifacts_label = Label("")
         self.artifacts_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         self.artifacts_label.setWordWrap(True)
         self.artifacts_label.setProperty("muted", True)
@@ -728,7 +731,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self.jev_notice.setProperty("callout", "warning")
         jn = QtWidgets.QHBoxLayout(self.jev_notice)
         jn.setContentsMargins(12, 8, 12, 8)
-        self.jev_label = QtWidgets.QLabel("")
+        self.jev_label = Label("")
         self.jev_label.setWordWrap(True)
         jn.addWidget(self.jev_label, 1)
         self.jev_notice.setVisible(False)
@@ -834,7 +837,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self._single_job_tips = {b: b.toolTip() for b in (
             self.requeue_btn, self.mark_applied_btn, self.dont_apply_btn)}
 
-        self.status_label = QtWidgets.QLabel("")
+        self.status_label = Label("")
         self.status_label.setProperty("muted", True)
         v.addWidget(self.status_label)
 
@@ -980,7 +983,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                     if c == 0:
                         item.setData(QtCore.Qt.ItemDataRole.UserRole,
                                      str(e.get("job_posting_id", "")))
-                        item.setToolTip(str(arts.get("folder", "")))
+                        item.setToolTip(literal(str(arts.get("folder", ""))))
                     elif COLUMN_IDS[c] == "difficulty" and text:
                         item.setData(BAND_ROLE, apply_assess.band_family(
                             difficulty.get("score")))
@@ -1092,7 +1095,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         if not reason and self._gate_busy:
             reason = profile_lock.RUN_BUSY
         self.start_run_btn.setEnabled(not reason)
-        self.start_run_btn.setToolTip(reason or self._start_tip)
+        self.start_run_btn.setToolTip(literal(reason or self._start_tip))
         self.jev_label.setText(reason)
         self.jev_notice.setVisible(bool(reason))
         self.refresh_difficulty_state()
@@ -1126,7 +1129,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self.check_difficulty_btn.setVisible(not hidden)
         self.check_difficulty_btn.setEnabled(not reason and not busy)
         self.check_difficulty_btn.setToolTip(
-            reason or (apply_assess.PROFILE_BUSY if busy else self._check_tip))
+            literal(reason or (apply_assess.PROFILE_BUSY if busy else self._check_tip)))
         return reason, busy
 
     # ---- selection / details --------------------------------------------------------
@@ -1231,8 +1234,8 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         """Ask before removing several jobs; tests monkeypatch this."""
         answer = QtWidgets.QMessageBox.question(
             self, "Remove from queue",
-            f"Remove the {n} selected jobs from the auto-apply queue? Their job "
-            f"folders stay on disk.")
+            literal(f"Remove the {n} selected jobs from the auto-apply queue? Their job "
+            f"folders stay on disk."))
         return answer == QtWidgets.QMessageBox.StandardButton.Yes
 
     def _mark_applied(self) -> None:
@@ -1317,6 +1320,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         """Ask before launching; tests monkeypatch this method to answer
         without driving a live modal."""
         box = QtWidgets.QMessageBox(self)
+        box.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         box.setWindowTitle("Start auto-apply run")
         box.setText(self._confirm_text(n))
         start_btn = box.addButton("Start", QtWidgets.QMessageBox.ButtonRole.AcceptRole)
@@ -1329,9 +1333,9 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         """Ask before checking every queued job; tests monkeypatch this."""
         answer = QtWidgets.QMessageBox.question(
             self, "Check difficulty",
-            f"Check how hard each of the {n} queued job(s) is to auto-apply? A new "
+            literal(f"Check how hard each of the {n} queued job(s) is to auto-apply? A new "
             f"terminal reads each job's first application page in the auto-apply "
-            f"browser, {self._at_once_words(n)}: about 2 to 4 Jev requests per job.")
+            f"browser, {self._at_once_words(n)}: about 2 to 4 Jev requests per job."))
         return answer == QtWidgets.QMessageBox.StandardButton.Yes
 
     def _parallel_now(self) -> int:
@@ -1443,8 +1447,8 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         """Ask to Re-queue once the answer is saved; tests monkeypatch this."""
         answer = QtWidgets.QMessageBox.question(
             self, "Re-queue",
-            f"Your answer is saved. Re-queue {e.get('company', 'this job')} so the next "
-            f"run applies with it?")
+            literal(f"Your answer is saved. Re-queue {e.get('company', 'this job')} so the next "
+            f"run applies with it?"))
         return answer == QtWidgets.QMessageBox.StandardButton.Yes
 
     def _copy_kickoff(self) -> None:

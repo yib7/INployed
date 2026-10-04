@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
+from qt.plaintext import Label
 
 import apply_facts
 import apply_pause
@@ -87,11 +88,11 @@ class PauseCard(QtWidgets.QFrame):
         v = QtWidgets.QVBoxLayout(self)
         v.setContentsMargins(12, 10, 12, 10)
         v.setSpacing(6)
-        self.title_label = QtWidgets.QLabel("")
+        self.title_label = Label("")
         self.title_label.setTextFormat(QtCore.Qt.TextFormat.RichText)
         self.title_label.setWordWrap(True)
         v.addWidget(self.title_label)
-        self.reason_label = QtWidgets.QLabel("")
+        self.reason_label = Label("")
         self.reason_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         self.reason_label.setWordWrap(True)
         self.reason_label.setProperty("muted", True)
@@ -120,11 +121,11 @@ class PauseCard(QtWidgets.QFrame):
         self.park_btn.clicked.connect(lambda: self._send("park"))
         bar.addWidget(self.park_btn)
         bar.addStretch(1)
-        self.more_label = QtWidgets.QLabel("")
+        self.more_label = Label("")
         self.more_label.setProperty("muted", True)
         bar.addWidget(self.more_label)
         v.addLayout(bar)
-        self.status_label = QtWidgets.QLabel("")
+        self.status_label = Label("")
         self.status_label.setProperty("muted", True)
         self.status_label.setWordWrap(True)
         v.addWidget(self.status_label)
@@ -180,13 +181,13 @@ class PauseCard(QtWidgets.QFrame):
         lay = QtWidgets.QVBoxLayout(frame)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(2)
-        label = QtWidgets.QLabel(str(q.get("label") or "(a field with no label)")
+        label = Label(str(q.get("label") or "(a field with no label)")
                                  + (" *" if q.get("required") else ""))
         label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         label.setWordWrap(True)
         lay.addWidget(label)
         if q.get("help"):
-            hint = QtWidgets.QLabel(str(q["help"]))
+            hint = Label(str(q["help"]))
             hint.setTextFormat(QtCore.Qt.TextFormat.PlainText)
             hint.setWordWrap(True)
             hint.setProperty("muted", True)
@@ -195,7 +196,7 @@ class PauseCard(QtWidgets.QFrame):
                                "save": None}
         widget_kind = str(q.get("widget") or apply_pause.W_TEXT)
         if q.get("sensitive") or widget_kind == apply_pause.W_BROWSER:
-            note = QtWidgets.QLabel(BROWSER_ONLY_HEADLESS if headless else BROWSER_ONLY)
+            note = Label(BROWSER_ONLY_HEADLESS if headless else BROWSER_ONLY)
             note.setWordWrap(True)
             lay.addWidget(note)
             row["kind"] = apply_pause.W_BROWSER

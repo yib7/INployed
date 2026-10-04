@@ -29,6 +29,7 @@ from PySide6 import QtGui, QtWidgets
 
 import errmsg
 from qt import workers
+from qt.plaintext import Label
 
 
 class JobChatDialog(QtWidgets.QDialog):
@@ -63,7 +64,7 @@ class JobChatDialog(QtWidgets.QDialog):
     def _build(self) -> None:
         v = QtWidgets.QVBoxLayout(self)
 
-        hint = QtWidgets.QLabel(
+        hint = Label(
             "Ask about this job's apply sheet, tailored bullets, cover letter, "
             "posting or your full experience file. Answers come only from those, "
             "and it says so when something isn't there.")
@@ -84,7 +85,7 @@ class JobChatDialog(QtWidgets.QDialog):
         self.input.setMaximumHeight(120)
         v.addWidget(self.input)
 
-        self.status = QtWidgets.QLabel("")
+        self.status = Label("")
         self.status.setProperty("muted", True)
         v.addWidget(self.status)
 

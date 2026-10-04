@@ -17,6 +17,7 @@ required too); it does not re-tailor itself, that stays on the table actions.
 from __future__ import annotations
 
 from PySide6 import QtWidgets
+from qt.plaintext import Label, literal
 
 
 class ManualAddDialog(QtWidgets.QDialog):
@@ -44,7 +45,7 @@ class ManualAddDialog(QtWidgets.QDialog):
                 "Add a job by hand (for a posting the automatic search didn't surface). "
                 "Fill in the URL and paste the job description; it's saved and tailored "
                 "right away, the same résumé engine discovered jobs use.")
-        self.intro = QtWidgets.QLabel(intro_text)
+        self.intro = Label(intro_text)
         self.intro.setWordWrap(True)
         self.intro.setProperty("muted", True)
         v.addWidget(self.intro)
@@ -52,16 +53,16 @@ class ManualAddDialog(QtWidgets.QDialog):
         form = QtWidgets.QFormLayout()
         self.url = QtWidgets.QLineEdit(str(self._initial.get("url", "")))
         self.url.setPlaceholderText("https://…")
-        form.addRow("Job URL:", self.url)
+        form.addRow(Label("Job URL:"), self.url)
         self.title = QtWidgets.QLineEdit(str(self._initial.get("title", "")))
         self.title.setPlaceholderText("e.g. Data Analyst")
-        form.addRow("Job title:", self.title)
+        form.addRow(Label("Job title:"), self.title)
         self.company = QtWidgets.QLineEdit(str(self._initial.get("company", "")))
         self.company.setPlaceholderText("e.g. Acme Corp")
-        form.addRow("Company:", self.company)
+        form.addRow(Label("Company:"), self.company)
         v.addLayout(form)
 
-        v.addWidget(QtWidgets.QLabel("Job description (paste the posting text):"))
+        v.addWidget(Label("Job description (paste the posting text):"))
         self.jd = QtWidgets.QPlainTextEdit(str(self._initial.get("jd_text", "")))
         self.jd.setPlaceholderText("Paste the full job description here.")
         self.jd.setMinimumHeight(220)
@@ -100,7 +101,7 @@ class ManualAddDialog(QtWidgets.QDialog):
         if missing:
             QtWidgets.QMessageBox.warning(
                 self, self.windowTitle(),
-                "Please fill in: " + ", ".join(missing) + ".")
+                literal("Please fill in: " + ", ".join(missing) + "."))
             return
         self.accept()
 

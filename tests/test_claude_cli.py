@@ -833,3 +833,33 @@ def test_child_env_drops_other_providers_secrets(monkeypatch, tmp_path):
         assert leaked not in env, f"{leaked} reached the claude subprocess"
     assert env.get("ANTHROPIC_MODEL") == "claude-sonnet-5"
     assert "PATH" in env
+
+
+def _secret_setting_names() -> set:
+    sys.path.insert(0, str(REPO / "local"))
+    import settings
+    return {f.key for f in settings.SETTINGS_SCHEMA if getattr(f, "secret", False)}
+
+
+def test_c7_every_secret_setting_is_scrubbed_from_the_child_env():
+    """4-C7: the scrub list is pinned to the Settings schema, so a new secret
+    field (TypeSafe's key was the one missed) cannot ride into `claude`."""
+    names = _secret_setting_names()
+    assert "TYPESAFE_API_KEY" in names
+    missing = (names | {"TYPESAFE_BASE_URL"}) - set(claude_cli._SCRUBBED_ENV_VARS)
+    assert not missing, f"not scrubbed from the claude child: {sorted(missing)}"
+
+
+def test_c7_the_typesafe_key_never_reaches_the_claude_child(monkeypatch, tmp_path):
+    monkeypatch.setattr(claude_cli, "find_claude", lambda: str(tmp_path / "claude"))
+    for name in _secret_setting_names() | {"TYPESAFE_BASE_URL"}:
+        monkeypatch.setenv(name, "synthetic-secret")
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["env"] = kwargs.get("env")
+        return _proc(stdout=_envelope("hi"))
+
+    monkeypatch.setattr(claude_cli.subprocess, "run", fake_run)
+    claude_cli.run_claude("sys", "user", "m")
+    assert "synthetic-secret" not in captured["env"].values()

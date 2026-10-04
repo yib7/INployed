@@ -39,14 +39,16 @@ DEFAULT_TIMEOUT_S = 180
 
 # Other providers' secrets must not ride into the `claude` child process. The
 # parent has already loaded .env, so a bare subprocess.run() would hand Bright
-# Data's and Gemini's credentials to an unrelated vendor's CLI purely by env
-# inheritance. Nothing here is needed by `claude` (it authenticates through its
-# own stored login), so strip them; everything else — PATH, HOME/USERPROFILE,
-# ANTHROPIC_* — is passed through untouched.
+# Data's, Gemini's and TypeSafe's credentials to an unrelated vendor's CLI by
+# env inheritance. Nothing here is needed by `claude` (it authenticates through
+# its own stored login), so strip them. PATH, HOME/USERPROFILE and ANTHROPIC_*
+# pass through untouched. A test pins this list to every secret field in
+# local/settings.py.
 _SCRUBBED_ENV_VARS = (
     "GEMINI_API_KEY", "GEMINI_API_KEYS", "GOOGLE_API_KEY",
     "GOOGLE_APPLICATION_CREDENTIALS", "RESUME_TAILOR_GEMINI_API_KEY",
     "BRIGHT_DATA_API_TOKEN", "HEALTHCHECKS_URL", "HEALTHCHECK_URL",
+    "TYPESAFE_API_KEY", "TYPESAFE_BASE_URL",
 )
 
 

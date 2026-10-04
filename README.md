@@ -84,7 +84,7 @@ joins the pool with one Settings row; by default it bills the project.
 
 ## Quick start
 
-**You need:** Windows 10/11, **Git** ([download](https://git-scm.com/downloads)), and **Python
+**You need:** Windows 11, **Git** ([download](https://git-scm.com/downloads)), and **Python
 3.14** ([download](https://www.python.org/downloads/)). Nothing else. Everything the dashboard
 needs installs with `pip` in Step 2. Steps 1-4 take about five minutes and end with a running
 app; Steps 5-7 connect it to your own data and accounts.
@@ -93,7 +93,7 @@ app; Steps 5-7 connect it to your own data and accounts.
 >
 > | | Status |
 > |---|---|
-> | **Windows 10/11** | Supported. Dashboard + full test suite run here, and CI runs the suite on `windows-latest` every push. |
+> | **Windows 11** | Supported. Dashboard + full test suite run here, and CI runs the suite on `windows-latest` every push. |
 > | **Linux** | Supported for the **pipeline scripts only** (`pipeline/scraper.py`, `pipeline/score_jobs.py`): that is how they run on the GCP VM in production. The Qt dashboard is not tested on Linux. |
 > | **macOS** | Untested. Not claimed. |
 >

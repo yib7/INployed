@@ -686,10 +686,10 @@ traffic is the work you asked for, and each destination gets only what it needs:
 | Destination | When | What it receives |
 | --- | --- | --- |
 | Bright Data | you run job discovery | your search keywords and the dataset ID |
-| Google Gemini (Vertex or API key) | scoring and résumé tailoring | the job description, your `resume.md` / `master_experience.yaml` content |
+| Google Gemini (Vertex or API key) | scoring, résumé tailoring, and auto-apply's free-text answers | the job description, your `resume.md` / `master_experience.yaml` content; in auto-apply, the form's question and an excerpt of your apply sheet for each free-text answer it drafts |
 | Anthropic (`claude` CLI) | only if you set a provider to `claude` | the same prompts, through your own CLI login |
-| the employer's application site | only when you run auto-apply or the difficulty check on a queued job | auto-apply: the answers from your apply sheet and answer bank, typed into the form by the auto-apply browser profile; it submits only when the gate in *Auto-apply (batch, Jev-judged)* passes. The difficulty check opens the posting and its Apply page and types nothing |
-| TypeSafe (the Jev judge) | only while **Use Jev** is on and a key is set | scoring: the job's text and your `resume.md`; the tailor: the job's text and the parts of your experience file, skills and drafted bullets it judges (and, with the Settings options on, the cover letter's sentences and the ATS keywords); the difficulty check and auto-apply: each form page's field labels, options and visible text, the names of your facts for the field mapping. In auto-apply the values stay on your machine until the verification and grounding checks, which receive the values it typed and an excerpt of your apply sheet |
+| the employer's application site | only when you run auto-apply or the difficulty check on a queued job | auto-apply: the answers from your apply sheet and answer bank, typed into the form by the auto-apply browser profile; your sign-up email and the ATS master password when the site asks you to sign in or create an account; your résumé PDF and cover letter as file uploads. It submits only when the gate in *Auto-apply (batch, Jev-judged)* passes. The difficulty check opens the posting and its Apply page and types nothing |
+| TypeSafe (the Jev judge) | only while **Use Jev** is on and a key is set | scoring: the job's text and your `resume.md`; the tailor: the job's text and the parts of your experience file, skills and drafted bullets it judges (and, with the Settings options on, the cover letter's sentences and the ATS keywords); the difficulty check and auto-apply: each form page's field labels, options and visible text, the names of your facts for the field mapping. In auto-apply the values stay on your machine until the verification and grounding checks, which receive the values it typed and an excerpt of your apply sheet. When a site emails a code or a link, auto-apply reads your webmail inbox and sends the sender, subject and preview of up to 15 of the newest messages that arrived since the job started (a message whose time cannot be read is kept, so the list can hold unrelated mail), then the opened message's body (up to 2,000 characters) with its link texts and hosts, so the judge can pick the right email and link |
 | your own GCP VM (`gcloud compute ssh/scp`) | only when you click a VM control in *Settings* | your search and scoring config, the ids already collected, and rows to merge; plus, only when you click **Set on VM**, the one API key you typed into that box. It runs under your own `gcloud` login |
 | healthchecks.io | **opt-in, VM cron only** | a start ping and the run's exit code; no job data, no identifiers |
 
@@ -697,13 +697,22 @@ The healthchecks ping is a dead-man's switch: a silently failing cron run emails
 you. It is off unless you set `HEALTHCHECKS_URL`
 yourself (see `scripts/run_scraper.sh`); unset, `ping_hc` is a no-op.
 
-Your credentials never cross providers: the Gemini and Bright Data secrets are
-stripped from the environment before the `claude` CLI is launched, the ATS master
-password lives in the Windows Credential Manager and leaves it only to be typed into
-a password field on an application's site or copied to the clipboard when you ask,
-and nothing is written to the repo. Secrets stay in your git-ignored
-`.env`. The one credential that leaves this PC is the one you hand to **Set on VM**,
-and it goes to your own VM so its cron runs can authenticate.
+Your API keys never cross providers: the Gemini, Bright Data and TypeSafe secrets
+(every secret field in *Settings*, plus `TYPESAFE_BASE_URL`) are stripped from the
+environment before the `claude` CLI is launched, the TypeSafe client always talks to
+`https://api.typesafe.ai`, and nothing is written to the repo. Secrets stay in your
+git-ignored `.env`. The one API key that leaves this PC is the one you hand to
+**Set on VM**, and it goes to your own VM so its cron runs can authenticate.
+
+The ATS master password lives in the Windows Credential Manager. It leaves it to be
+typed into a password box on the job's own application site, or copied to the
+clipboard when you ask (the copy is kept out of Windows clipboard history and the
+cloud clipboard). Auto-apply types it only on an `https` page and only on the
+application's own site: a plain-HTTP password page, or a move to another company's
+site on the same ATS, parks the job with a plain reason. **One password is used on
+every application site**, so a site that stores it badly, or a fake sign-in page on
+an admitted site, exposes your account on the others. Use a password you use nowhere
+else. Per-site passwords are planned.
 
 ### Manage the VM from the dashboard
 If you run discovery + scoring on a GCP VM, the dashboard drives it without

@@ -35,13 +35,14 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from jsonutil import atomic_write_json  # noqa: E402  (needs HERE on sys.path)
+from locks import file_lock  # noqa: E402  (the ledger's read-merge-write lock)
 
 __all__ = [
     "SERVICE", "ledger_path", "record", "lookup", "list_accounts", "tenant_key",
@@ -88,16 +89,23 @@ def _netloc(domain_or_url: str) -> str:
 def _load_ledger(path: Optional[Path] = None, *,
                  quarantine: bool = False) -> Dict[str, Dict[str, Any]]:
     """The ledger map, or {} when there is none yet. A file that cannot be read
-    or is not a JSON object reads as {} with a warning naming it. `quarantine`
-    (the writer, `record`) also moves such a file aside to
-    ats_accounts.json.corrupt-<stamp>, so the write that follows never destroys
-    the record of which sites hold an account; readers leave it in place."""
+    or is not a JSON object reads as {} with a warning naming it, for a reader.
+    `quarantine` (the writer, `record`) moves a file that is not a JSON object
+    aside to ats_accounts.json.corrupt-<stamp>, so the write that follows never
+    destroys the record of which sites hold an account; and when the file
+    cannot be read at all (locked, permissions) or cannot be moved aside, it
+    raises OSError, so nothing is written over it. Readers leave it in place."""
     lp = ledger_path(path)
     try:
         data = json.loads(lp.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return {}
-    except (OSError, ValueError) as exc:
+    except ValueError as exc:
+        reason = f"{type(exc).__name__}: {exc}"
+    except OSError as exc:
+        if quarantine:
+            raise OSError(f"the ATS account ledger {lp.name} could not be read "
+                          f"({type(exc).__name__}); the account was not recorded") from exc
         reason = f"{type(exc).__name__}: {exc}"
     else:
         if isinstance(data, dict):
@@ -113,8 +121,10 @@ def _load_ledger(path: Optional[Path] = None, *,
         try:
             os.replace(lp, target)
             moved = f"; kept as {target.name}, starting a new ledger"
-        except OSError:
-            moved = "; it could not be moved aside"
+        except OSError as exc:
+            raise OSError(f"the ATS account ledger {lp.name} is damaged and could not be "
+                          f"moved aside ({type(exc).__name__}); the account was not "
+                          f"recorded") from exc
     logging.getLogger(__name__).warning(
         "the ATS account ledger %s could not be read (%s)%s", lp, reason,
         moved or "; reading it as empty")
@@ -134,20 +144,25 @@ def record(domain_or_url: str, email: str, method: str = "master_password",
            path: Optional[Path] = None, **extra: Any) -> Dict[str, Any]:
     """Upsert one ledger entry keyed by lowercased netloc. `extra` may carry
     descriptive fields (note, username, ...); a password-shaped field name
-    raises ValueError, since this file is plaintext and holds no credentials."""
+    raises ValueError, since this file is plaintext and holds no credentials.
+    A ledger that cannot be read, or is damaged and cannot be moved aside,
+    raises OSError and is left as it is (`_load_ledger`)."""
     key = _netloc(domain_or_url)
     if not key:
         raise ValueError("a domain or URL is required")
     _assert_no_password_keys(dict(extra))
-    ledger = _load_ledger(path, quarantine=True)
-    rec = ledger.get(key) or {"created_at": _now()}
-    rec.update({"email": str(email), "method": str(method),
-                "updated_at": _now(), **extra})
-    _assert_no_password_keys(rec)  # belt-and-braces before it hits disk
-    ledger[key] = rec
     lp = ledger_path(path)
     lp.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_json(lp, ledger)
+    # the lock spans the read and the write: two runs recording at once
+    # (parallel difficulty checks) would otherwise each drop the other's site
+    with file_lock(lp):
+        ledger = _load_ledger(lp, quarantine=True)
+        rec = ledger.get(key) or {"created_at": _now()}
+        rec.update({"email": str(email), "method": str(method),
+                    "updated_at": _now(), **extra})
+        _assert_no_password_keys(rec)  # belt-and-braces before it hits disk
+        ledger[key] = rec
+        atomic_write_json(lp, ledger)
     return dict(rec)
 
 
@@ -334,20 +349,34 @@ def unmet_rules(rules: Dict[str, Any]) -> Optional[List[str]]:
     return out
 
 
-def fill_password(page_or_frame, locator) -> bool:
+def fill_password(page_or_frame, locator, *,
+                  host_ok: Optional[Callable[[str], bool]] = None) -> bool:
     """Move the stored password directly into a field, keeping errors private.
 
     The read-back compares lengths, so the value is never read back into
     Python. A field that truncated or ignored the fill (a maxlength, a widget
     that rewrites what it was given), or a fill that raised, reports False
     and the box is emptied, so no half password is left behind. The log
-    never gives the password's length."""
+    never gives the password's length.
+
+    `host_ok`, when given, is asked about the URL of the frame that holds the
+    box at the moment of the fill: the box is pinned to one element first
+    (`element_handle`), its own frame's URL is checked, and the fill goes to
+    that element, which a frame that navigates away no longer holds. False
+    from `host_ok` returns False with nothing typed."""
     password = _get_master_password()
     if not password:
         return False
     target = None
     try:
         target = page_or_frame.locator(locator) if isinstance(locator, str) else locator
+        if host_ok is not None:
+            target = target.element_handle(timeout=5_000)
+            frame = target.owner_frame()
+            if frame is None or not host_ok(str(frame.url or "")):
+                logging.getLogger(__name__).warning(
+                    "the password box's frame is not on an allowed site; nothing typed")
+                return False
         target.fill(password, timeout=5_000)
         # the length is counted in the page, so the value itself never crosses
         # back into this process (`input_value()` would hand it over)
@@ -372,6 +401,11 @@ def fill_password(page_or_frame, locator) -> bool:
 
 _CF_UNICODETEXT = 13
 _GMEM_MOVEABLE = 0x0002
+# Registered formats Windows reads beside the text: the first keeps clipboard
+# monitors (history included) from recording it, and the two DWORD 0 flags keep
+# it out of Win+V history and off the cloud clipboard ("Sync across devices").
+_EXCLUDE_FROM_MONITORS = "ExcludeClipboardContentFromMonitorProcessing"
+_PRIVATE_FLAGS = ("CanIncludeInClipboardHistory", "CanUploadToCloudClipboard")
 
 
 def _win_clip():
@@ -387,6 +421,8 @@ def _win_clip():
     user32.GetClipboardData.argtypes = [wintypes.UINT]
     user32.SetClipboardData.restype = ctypes.c_void_p
     user32.SetClipboardData.argtypes = [wintypes.UINT, ctypes.c_void_p]
+    user32.RegisterClipboardFormatW.restype = wintypes.UINT
+    user32.RegisterClipboardFormatW.argtypes = [wintypes.LPCWSTR]
     kernel32.GlobalAlloc.restype = ctypes.c_void_p
     kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
     kernel32.GlobalLock.restype = ctypes.c_void_p
@@ -396,9 +432,34 @@ def _win_clip():
     return ctypes, user32, kernel32
 
 
+def _put(ctypes, user32, kernel32, fmt: int, buf) -> None:
+    """Copy ctypes buffer `buf` into a movable global block and hand it to the
+    open clipboard as format `fmt`."""
+    size = ctypes.sizeof(buf)
+    handle = kernel32.GlobalAlloc(_GMEM_MOVEABLE, size)
+    if not handle:
+        raise OSError("GlobalAlloc failed")
+    ptr = kernel32.GlobalLock(handle)
+    if not ptr:
+        kernel32.GlobalFree(handle)
+        raise OSError("GlobalLock failed")
+    try:
+        ctypes.memmove(ptr, ctypes.addressof(buf), size)
+    finally:
+        kernel32.GlobalUnlock(handle)
+    if not user32.SetClipboardData(fmt, handle):
+        kernel32.GlobalFree(handle)  # ownership only passes on success
+        raise OSError("SetClipboardData failed")
+
+
 def _clip_set(text: str) -> None:
-    """Put `text` on the Windows clipboard as CF_UNICODETEXT (test seam:
-    monkeypatched by the suite; never called with real secrets in tests)."""
+    """Put `text` on the Windows clipboard as CF_UNICODETEXT, marked private
+    in the same clipboard open: `ExcludeClipboardContentFromMonitorProcessing`,
+    and `CanIncludeInClipboardHistory` and `CanUploadToCloudClipboard` as
+    DWORD 0, so the copied password stays out of Win+V history and the cloud
+    clipboard. A format Windows will not register is skipped (an older
+    Windows has no history to keep it out of). Test seam: monkeypatched by the
+    suite; never called with real secrets in tests."""
     if os.name != "nt":
         raise RuntimeError("clipboard transit is Windows-only (ctypes/user32)")
     ctypes, user32, kernel32 = _win_clip()
@@ -406,22 +467,14 @@ def _clip_set(text: str) -> None:
         raise OSError("OpenClipboard failed")
     try:
         user32.EmptyClipboard()
-        buf = ctypes.create_unicode_buffer(text)
-        size = ctypes.sizeof(buf)
-        handle = kernel32.GlobalAlloc(_GMEM_MOVEABLE, size)
-        if not handle:
-            raise OSError("GlobalAlloc failed")
-        ptr = kernel32.GlobalLock(handle)
-        if not ptr:
-            kernel32.GlobalFree(handle)
-            raise OSError("GlobalLock failed")
-        try:
-            ctypes.memmove(ptr, buf, size)
-        finally:
-            kernel32.GlobalUnlock(handle)
-        if not user32.SetClipboardData(_CF_UNICODETEXT, handle):
-            kernel32.GlobalFree(handle)  # ownership only passes on success
-            raise OSError("SetClipboardData failed")
+        _put(ctypes, user32, kernel32, _CF_UNICODETEXT, ctypes.create_unicode_buffer(text))
+        exclude = user32.RegisterClipboardFormatW(_EXCLUDE_FROM_MONITORS)
+        if exclude:
+            _put(ctypes, user32, kernel32, exclude, ctypes.c_uint32(0))
+        for name in _PRIVATE_FLAGS:
+            fmt = user32.RegisterClipboardFormatW(name)
+            if fmt:
+                _put(ctypes, user32, kernel32, fmt, ctypes.c_uint32(0))
     finally:
         user32.CloseClipboard()
 

@@ -469,3 +469,164 @@ def test_public_api_never_returns_the_password(kr, clip):
     assert ats_accounts.password_exists() is True                # -> bool
     assert ats_accounts.clear_clipboard_if_password() in (True, False)
     assert "_get_master_password" not in getattr(ats_accounts, "__all__", ())
+
+
+# --- 4-C6: the writer never replaces a ledger it could not read -----------------
+
+def _flaky_ledger_read(monkeypatch, ledger):
+    real = Path.read_text
+
+    def read(self, *a, **k):
+        if Path(self) == ledger:
+            raise PermissionError(32, "sharing violation (synthetic)")
+        return real(self, *a, **k)
+    monkeypatch.setattr(Path, "read_text", read)
+
+
+def _seed(ledger):
+    seed = {f"site{i}.example.com": {"email": "x@example.invalid",
+                                     "method": "master_password"} for i in range(3)}
+    ledger.write_text(json.dumps(seed), encoding="utf-8")
+    return seed
+
+
+def test_c6_record_raises_when_the_ledger_cannot_be_read(ledger, monkeypatch):
+    seed = _seed(ledger)
+    _flaky_ledger_read(monkeypatch, ledger)
+    with pytest.raises(OSError):
+        ats_accounts.record("new.example.com", "x@example.invalid")
+    monkeypatch.undo()
+    assert json.loads(ledger.read_text(encoding="utf-8")) == seed
+    assert not list(ledger.parent.glob("ats_accounts.json.corrupt-*"))
+
+
+def test_c6_record_raises_when_a_damaged_ledger_cannot_be_moved_aside(ledger, monkeypatch):
+    ledger.write_text("{not json", encoding="utf-8")
+    real_replace = ats_accounts.os.replace
+
+    def refuse(src, dst):
+        if Path(src) == ledger:
+            raise PermissionError(32, "sharing violation (synthetic)")
+        return real_replace(src, dst)
+    monkeypatch.setattr(ats_accounts.os, "replace", refuse)
+    with pytest.raises(OSError):
+        ats_accounts.record("new.example.com", "x@example.invalid")
+    monkeypatch.undo()
+    assert ledger.read_text(encoding="utf-8") == "{not json"
+
+
+def test_c6_a_reader_still_reads_an_unreadable_ledger_as_empty(ledger, monkeypatch):
+    _seed(ledger)
+    _flaky_ledger_read(monkeypatch, ledger)
+    assert ats_accounts.lookup("site0.example.com") is None
+
+
+def test_c6_two_writers_never_lose_each_others_account(ledger, monkeypatch):
+    """record's read-merge-write runs under the ledger's file lock: a writer
+    that read before the other wrote would otherwise drop its account."""
+    import threading
+    import time
+    real_write = ats_accounts.atomic_write_json
+    started = threading.Event()
+
+    def slow_write(path, data):
+        if "slow.example.com" in data:
+            started.set()
+            time.sleep(0.4)
+        real_write(path, data)
+    monkeypatch.setattr(ats_accounts, "atomic_write_json", slow_write)
+    t = threading.Thread(target=ats_accounts.record,
+                         args=("slow.example.com", "x@example.invalid"))
+    t.start()
+    assert started.wait(5)
+    ats_accounts.record("fast.example.com", "x@example.invalid")
+    t.join(5)
+    assert set(json.loads(ledger.read_text(encoding="utf-8"))) == {
+        "slow.example.com", "fast.example.com"}
+
+
+# --- A-LOW: the password box is checked where it is, at the moment of the fill ----
+
+def test_fill_password_checks_the_frame_that_holds_the_box(browser_page, kr):
+    kr.set_password(ats_accounts.SERVICE, "master", SECRET)
+    browser_page.set_content(
+        '<iframe srcdoc="<input id=password type=password>"></iframe>')
+    box = browser_page.frame_locator("iframe").locator("#password")
+    seen = []
+    assert ats_accounts.fill_password(browser_page, box,
+                                      host_ok=lambda url: seen.append(url) or False) is False
+    assert seen == ["about:srcdoc"]
+    assert browser_page.frames[1].locator("#password").input_value() == ""
+    assert ats_accounts.fill_password(browser_page, box, host_ok=lambda url: True) is True
+    assert browser_page.frames[1].locator("#password").input_value() == SECRET
+
+
+# --- A-MED: the copied password stays out of clipboard history and the cloud ------
+
+class _FakeWin32:
+    """user32/kernel32 stand-ins over real ctypes memory: every SetClipboardData
+    is recorded with the bytes of its block and whether the clipboard was open."""
+
+    def __init__(self):
+        import ctypes
+        self.ctypes = ctypes
+        self.blocks = {}
+        self.formats = {}
+        self.open = False
+        self.sets = []
+        self.opens = 0
+
+    # user32
+    def OpenClipboard(self, _owner):  # noqa: N802 (win32 names)
+        self.open = True
+        self.opens += 1
+        return 1
+
+    def CloseClipboard(self):  # noqa: N802
+        self.open = False
+        return 1
+
+    def EmptyClipboard(self):  # noqa: N802
+        self.sets.clear()
+        return 1
+
+    def RegisterClipboardFormatW(self, name):  # noqa: N802
+        return self.formats.setdefault(name, 0xC000 + len(self.formats))
+
+    def SetClipboardData(self, fmt, handle):  # noqa: N802
+        buf = self.blocks[handle]
+        self.sets.append((fmt, bytes(buf), self.open))
+        return handle
+
+    # kernel32
+    def GlobalAlloc(self, _flags, size):  # noqa: N802
+        buf = self.ctypes.create_string_buffer(max(1, size))
+        handle = self.ctypes.addressof(buf)
+        self.blocks[handle] = buf
+        return handle
+
+    def GlobalLock(self, handle):  # noqa: N802
+        return handle
+
+    def GlobalUnlock(self, _handle):  # noqa: N802
+        return 1
+
+    def GlobalFree(self, handle):  # noqa: N802
+        self.blocks.pop(handle, None)
+        return 0
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the clipboard transit is Windows-only")
+def test_clip_set_keeps_the_text_out_of_history_and_the_cloud(monkeypatch):
+    fake = _FakeWin32()
+    monkeypatch.setattr(ats_accounts, "_win_clip", lambda: (fake.ctypes, fake, fake))
+    ats_accounts._clip_set("synthetic-not-a-password")
+    assert fake.opens == 1 and fake.open is False
+    by_fmt = {fmt: (data, was_open) for fmt, data, was_open in fake.sets}
+    assert all(was_open for _, was_open in by_fmt.values())
+    text, _ = by_fmt[ats_accounts._CF_UNICODETEXT]
+    assert text.decode("utf-16-le").rstrip("\x00") == "synthetic-not-a-password"
+    zero = (0).to_bytes(4, "little")
+    for name in ("CanIncludeInClipboardHistory", "CanUploadToCloudClipboard"):
+        assert by_fmt[fake.formats[name]][0][:4] == zero, name
+    assert fake.formats["ExcludeClipboardContentFromMonitorProcessing"] in by_fmt

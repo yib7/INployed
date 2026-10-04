@@ -27,6 +27,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from PySide6 import QtGui, QtWidgets
 
+import errmsg
 from qt import workers
 
 
@@ -146,7 +147,7 @@ class JobChatDialog(QtWidgets.QDialog):
         self._set_busy(False)
 
     def _finish_turn_error(self, exc: BaseException) -> None:
-        self._append("Couldn't answer", str(exc) or exc.__class__.__name__)
+        self._append("Couldn't answer", errmsg.for_user(exc))
         self._set_busy(False)
 
     def copy_answer(self) -> None:
@@ -156,7 +157,12 @@ class JobChatDialog(QtWidgets.QDialog):
 
     def _append(self, speaker: str, text: str) -> None:
         self._blocks.append(f"**{speaker}**\n\n{text}")
-        self.transcript.setMarkdown("\n\n---\n\n".join(self._blocks))
+        # the answer is model text over a scraped posting: raw HTML in it shows
+        # as text (an <img> tag would otherwise load a local file)
+        features = QtGui.QTextDocument.MarkdownFeature
+        self.transcript.document().setMarkdown(
+            "\n\n---\n\n".join(self._blocks),
+            features.MarkdownDialectGitHub | features.MarkdownNoHTML)
         self.transcript.moveCursor(QtGui.QTextCursor.MoveOperation.End)
 
     def _set_busy(self, busy: bool) -> None:

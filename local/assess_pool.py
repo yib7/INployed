@@ -37,6 +37,8 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+import errmsg
+
 SLOT_PREFIX = "slot-"
 ROOT_NAME = "assess_profiles"
 SWEEP_TRIES = 3
@@ -267,7 +269,7 @@ def stopped_why(stderr: str, returncode: Any) -> str:
     for line in reversed(str(stderr or "").splitlines()):
         line = line.strip()
         if line and not _LOG_LINE.match(line):
-            return f"the worker stopped: {line[:STDERR_MAX]}"
+            return f"the worker stopped: {errmsg.scrub_paths(line)[:STDERR_MAX]}"
     if returncode is None:
         return "the worker stopped"
     return f"the worker stopped: exit code {returncode}"

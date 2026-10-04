@@ -1129,3 +1129,12 @@ def test_a_slot_the_start_sweep_could_not_delete_is_never_used(pool, capsys, mon
     assert {c[1].name for c in spawner.calls} == {"slot-2", "slot-3"}
     assert held and set(held) == {"old"}, "no copy is written into the held slot"
     assert list(pool.root.iterdir()) == [], "the end sweep deletes it once it is free"
+
+
+def test_4_9_stopped_why_shows_no_absolute_path():
+    err = ("Traceback (most recent call last):\n"
+           "FileNotFoundError: [Errno 2] No such file: "
+           r"'C:\Users\Jane Doe\AppData\Local\INployed\queue.json'")
+    why = ap.stopped_why(err, 1)
+    assert "queue.json" in why
+    assert "Jane Doe" not in why and "AppData" not in why

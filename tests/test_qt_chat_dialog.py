@@ -472,3 +472,26 @@ def test_apply_panel_ask_ai_without_a_job_is_a_noop(qtbot):
     w = _win(qtbot)
     w._ask_ai_from_panel()
     assert w._chat_dialogs == {}
+
+
+def test_4_9_an_error_shows_no_absolute_path(qtbot, monkeypatch):
+    _sync_workers(monkeypatch)
+    _stub_chat(monkeypatch, answer=OSError(
+        r"could not open C:\Users\Jane Doe\AppData\Local\INployed\ctx.json"))
+    _host, dlg = _dialog(qtbot)
+    _ask(dlg, "What should I lead with?")
+    text = dlg.transcript.toPlainText()
+    assert "ctx.json" in text
+    assert "Jane Doe" not in text and "AppData" not in text
+
+
+def test_c4_html_in_an_answer_shows_as_text(qtbot, monkeypatch):
+    """4-C4: the answer is model text over a scraped posting; raw HTML in it
+    must not render (an <img> would load a local file)."""
+    _sync_workers(monkeypatch)
+    _stub_chat(monkeypatch, answer='Lead with <img src="C:/x.png"> and <b>this</b>.')
+    _host, dlg = _dialog(qtbot)
+    _ask(dlg, "What should I lead with?")
+    text = dlg.transcript.toPlainText()
+    assert '<img src="C:/x.png">' in text and "<b>this</b>" in text
+    assert "<img" not in dlg.transcript.toHtml().replace("&lt;img", "")

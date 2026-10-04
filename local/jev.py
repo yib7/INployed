@@ -56,6 +56,9 @@ MODE_ENV = "AUTO_APPLY_JEV_MODE"
 CACHE_ENV = "AUTO_APPLY_JEV_CACHE"
 DEFAULT_CACHE = "tests/fixtures/jev_cache/cache.json"
 CONSOLE_KEYS_URL = "console.typesafe.ai/keys"
+# The API root, passed to the SDK by name so a TYPESAFE_BASE_URL in the
+# environment can never send the key and the page summaries to another host
+BASE_URL = "https://api.typesafe.ai"
 
 MODES = ("typesafe", "fake", "replay")
 
@@ -430,7 +433,8 @@ class TypeSafeJev:
         # so a judge that stays down costs four requests over about a minute,
         # never the SDK's three inside each of them
         self._client = typesafe_sdk.TypeSafeClient(
-            api_key=key, model=model, retry=typesafe_sdk.RetryPolicy(max_retries=0), **extra)
+            api_key=key, model=model, retry=typesafe_sdk.RetryPolicy(max_retries=0),
+            base_url=BASE_URL, **extra)
 
     def judge(self, state: Any, questions: dict[str, dict]) -> dict[str, Answer]:
         response = self._client.system_one(state, questions, model=self.model)

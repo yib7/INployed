@@ -30,6 +30,7 @@ def test_typesafe_wire_contract(monkeypatch):
     clients = []
 
     def isolated_client(**kwargs):
+        assert kwargs.pop("base_url") == jev.BASE_URL
         client = client_type(**kwargs, transport=http.MockTransport(respond),
                              base_url="https://typesafe.example.test/v1")
         clients.append(client)

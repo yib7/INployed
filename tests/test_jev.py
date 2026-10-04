@@ -734,3 +734,15 @@ def test_the_guard_refuses_a_choice_past_the_option_limit_before_sending(caplog)
     # The next request that fits goes out as ever.
     got = judge.judge({"bullet": "Built"}, {"verb": _choice(jev.CHOICE_OPTIONS_MAX)})
     assert got["verb"].kind == "choice" and inner.calls == 1 and judge.answers == 1
+
+
+def test_a_the_typesafe_client_pins_its_host_over_the_env(monkeypatch):
+    """4-A LOW: a TYPESAFE_BASE_URL in the environment (or a .env row) would
+    send the key and every page summary to another host. The client names the
+    real API root itself."""
+    monkeypatch.setenv("TYPESAFE_BASE_URL", "https://collector.example.test")
+    record = []
+    _fake_sdk(monkeypatch, _sdk_response(), record)
+    jev.TypeSafeJev(api_key="k-test")
+    init = next(r for r in record if r[0] == "init")[1]
+    assert init["base_url"] == "https://api.typesafe.ai" == jev.BASE_URL

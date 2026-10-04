@@ -49,6 +49,7 @@ from __future__ import annotations
 import base64
 import html
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -76,6 +77,22 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 
+# PowerShell ends a single-quoted string at any of these, the curly ones too
+_PS_QUOTES = ("'", "\u2018", "\u2019", "\u201a", "\u201b")
+
+# A job id the check passes on the command line: digits for a LinkedIn job,
+# `manual-<hex>` for one added by hand
+_SAFE_JOB_ID = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _ps_literal(text: str) -> str:
+    """`text` as a PowerShell single-quoted string. The one escape such a
+    string knows is a doubled quote, and every quote character is doubled."""
+    for quote in _PS_QUOTES:
+        text = text.replace(quote, quote * 2)
+    return f"'{text}'"
+
+
 def _console_command(root: Path, verb: str) -> str:
     """The PowerShell line that runs `apply_run.py <verb>` from `root`.
 
@@ -83,10 +100,9 @@ def _console_command(root: Path, verb: str) -> str:
     `Set-Location -LiteralPath '<root>'`: a single-quoted string is literal in
     PowerShell (no `$` expansion, no backtick escapes) and `-LiteralPath` keeps
     a `[` from reading as a wildcard, so a checkout under any folder name
-    resolves. The one escape a single-quoted string knows is a doubled quote.
+    resolves.
     """
-    literal = str(root).replace("'", "''")
-    return f"Set-Location -LiteralPath '{literal}'; python local/apply_run.py {verb}"
+    return f"Set-Location -LiteralPath {_ps_literal(str(root))}; python local/apply_run.py {verb}"
 
 
 # The drain is this project's own code (local/apply_run.py): it claims each
@@ -143,11 +159,14 @@ def _spawn_console(argv: list[str]) -> None:
 def _assess_command(root: Path, job_ids: list[str]) -> str:
     """The PowerShell line that runs the difficulty check from `root`: the
     named jobs, or every queued job (`--all`) when none is named. Each id is
-    a single-quoted literal, the root as in `_console_command`."""
-    literal = str(root).replace("'", "''")
-    args = ["'" + str(jid).replace("'", "''") + "'" for jid in job_ids] or ["--all"]
-    return (f"Set-Location -LiteralPath '{literal}'; python local/apply_assess.py "
-            + " ".join(args))
+    a single-quoted literal, the root as in `_console_command`. Raises
+    ValueError for an id outside letters, digits, `_` and `-`."""
+    for jid in job_ids:
+        if not (isinstance(jid, str) and _SAFE_JOB_ID.fullmatch(jid)):
+            raise ValueError(f"a job id the check cannot pass on: {jid!r}")
+    args = [_ps_literal(jid) for jid in job_ids] or ["--all"]
+    return (f"Set-Location -LiteralPath {_ps_literal(str(root))}; "
+            "python local/apply_assess.py " + " ".join(args))
 
 
 def _spawn_check(job_ids: list[str]) -> None:
@@ -1366,6 +1385,10 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         for Windows among the reasons)."""
         try:
             self._on_check_difficulty(ids)
+        except ValueError:
+            self._set_note("The difficulty check did not start: a selected job's id "
+                           "holds characters the check cannot pass on.")
+            return False
         except OSError as e:
             more = (" Select fewer jobs, or select none to check every queued job."
                     if len(ids) > 1 else "")

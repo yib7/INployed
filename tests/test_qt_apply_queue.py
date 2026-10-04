@@ -1555,7 +1555,7 @@ def test_the_check_command_runs_apply_assess_in_the_repo():
         f"Set-Location -LiteralPath '{literal}'; python local/apply_assess.py '1' '2'")
     assert aqp._assess_command(root, []).endswith(
         "python local/apply_assess.py --all")
-    assert aqp._assess_command(root, ["it's"]).endswith("'it''s'")
+    assert aqp._assess_command(root, ["manual-0a1b_C"]).endswith("'manual-0a1b_C'")
 
 
 def test_the_default_check_spawns_its_own_console(monkeypatch):
@@ -2321,3 +2321,28 @@ def test_the_save_box_tooltip_shows_the_page_question_as_text(qtbot, pause_home)
     doc = QtGui.QTextDocument()
     doc.setHtml(tip)
     assert "<b>Bold</b> question <img src='x.png'>" in doc.toPlainText()
+
+
+@pytest.mark.parametrize("bad", ["it's", "x\u2019; Write-Output INJECTED; \u2019",
+                                 "1 2", "1;calc", "$(calc)", "", "1\n2", "\uff11"])
+def test_c9_the_check_command_refuses_an_id_outside_the_safe_set(bad):
+    with pytest.raises(ValueError):
+        aqp._assess_command(Path("C:/repo"), ["1", bad])
+
+
+@pytest.mark.parametrize("quote", ["'", "\u2018", "\u2019", "\u201a", "\u201b"])
+def test_c9_every_powershell_single_quote_in_the_root_is_doubled(quote):
+    """PowerShell 5.1 ends a single-quoted string at a curly quote too."""
+    root = Path(f"C:/Users/o{quote}brien/repo")
+    for line in (aqp._console_command(root, "drain"), aqp._assess_command(root, ["7"])):
+        literal = line.split("-LiteralPath ", 1)[1].split("; python", 1)[0]
+        assert literal == "'" + str(root).replace(quote, quote * 2) + "'"
+
+
+def test_c9_a_check_refused_for_a_bad_id_says_so(qtbot, tmp_path):
+    def refuse(ids):
+        raise ValueError("job id outside the safe set")
+    p = _dpanel(qtbot, _three(tmp_path), on_check_difficulty=refuse)
+    _multi(p, "2")
+    p.check_difficulty_btn.click()             # no exception escapes the slot
+    assert p.status_label.text().startswith("The difficulty check did not start")

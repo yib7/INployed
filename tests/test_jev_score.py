@@ -173,6 +173,8 @@ def test_use_jev_agrees_with_jev_switch_on_one_config_file(cfg_file, sdk, monkey
     on, why = jev_score.use_jev(env)
     assert on is jev_switch.jev_on("scoring", env=env)
     assert why == (jev_switch.jev_why_off("scoring", env=env) or "Settings")
+    if isinstance(cfg, str):        # 4-C8: a file that will not parse reads off
+        assert (on, why) == (False, jev_score.REASON_SWITCH)
 
 
 # Stored switch values, hand-edited ones included: the VM copy of the scorer

@@ -114,13 +114,15 @@ WARNED_REASONS = (REASON_KEY, REASON_SDK, REASON_MODULE)
 # --- does this run use Jev? -------------------------------------------------------
 
 def _read_config(path: Path) -> dict[str, Any]:
-    """The dashboard config as a dict; {} when it is unreadable or holds no JSON
-    object, so every switch reads its default (`jsonutil.read_json_dict`)."""
+    """The dashboard config as a dict. `use_jev` reads it only when the file
+    exists, so one that cannot be read or holds no JSON object reads with the
+    master switch off (`jev_switch._config`): the switches default on, and a
+    user who switched Jev off and then broke the file must not be billed."""
     try:
         data = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+        return {MASTER_KEY: False}
+    return data if isinstance(data, dict) else {MASTER_KEY: False}
 
 
 def switch_on(value: Any) -> bool:

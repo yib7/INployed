@@ -194,10 +194,28 @@ def test_the_key_is_read_from_the_environment_at_call_time(sdk, monkeypatch):
 
 
 @pytest.mark.parametrize("text", ["{not json", "[1, 2]", "", "null"])
-def test_an_unreadable_config_file_reads_as_the_defaults(sdk, text):
+def test_c8_a_config_file_that_will_not_parse_reads_jev_off(sdk, text):
+    """Finding 4-C8: the switches default on, so a config the user switched
+    Jev off in and then broke used to spend credits. Now it reads off, in the
+    same words as a switch turned off in Settings (which shows it off too)."""
     jev_switch.config_path().write_text(text, encoding="utf-8")
-    assert jev_switch.jev_on("scoring", env=KEY) is True
-    assert jev_switch.jev_why_off("apply", env=KEY) == ""
+    for area in jev_switch.AREAS:
+        assert jev_switch.jev_on(area, env=KEY) is False, area
+        assert jev_switch.jev_why_off(area, env=KEY) == jev_switch.REASON_SWITCH, area
+    assert jev_switch.master_on() is False
+
+
+def test_c8_a_config_file_that_cannot_be_opened_reads_jev_off(sdk, monkeypatch):
+    path = jev_switch.config_path()
+    path.write_text(json.dumps(ON), encoding="utf-8")
+    real = type(path).read_text
+
+    def locked(self, *a, **k):
+        if self == path:
+            raise PermissionError(32, "sharing violation (synthetic)")
+        return real(self, *a, **k)
+    monkeypatch.setattr(type(path), "read_text", locked)
+    assert jev_switch.jev_on("scoring", env=KEY) is False
 
 
 def test_a_missing_config_file_reads_as_the_defaults(sdk):

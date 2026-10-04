@@ -60,7 +60,7 @@ from pathlib import Path
 from typing import Any
 
 import jev
-from jsonutil import read_json_dict
+from jsonutil import read_json_for_merge
 
 log = logging.getLogger("jev_switch")
 
@@ -116,12 +116,20 @@ def config_path() -> Path:
 
 
 def _config() -> dict[str, Any]:
-    """The config file as a dict; {} when it is missing, unreadable, not a JSON
-    object, or its path cannot be resolved, so every switch reads its default."""
+    """The config file as a dict; {} when it is missing or its path cannot be
+    resolved, so every switch reads its default (on). A file that exists and
+    cannot be read, or does not parse as a JSON object, reads with the master
+    switch off: the switches default on, and a user who switched Jev off and
+    then broke the file would otherwise spend TypeSafe credits. Settings shows
+    the switches off for such a file too (`settings.load`)."""
     try:
-        return read_json_dict(config_path())
-    except Exception:       # noqa: BLE001  (a broken config reads as the defaults)
+        path = config_path()
+    except Exception:       # noqa: BLE001  (no resolvable config reads as the defaults)
         return {}
+    try:
+        return read_json_for_merge(path)
+    except Exception:       # noqa: BLE001  (JsonUnreadable, or anything odd about the file)
+        return {MASTER_KEY: False}
 
 
 def apply_mode(flag: str | None = None, *,

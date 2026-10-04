@@ -768,3 +768,99 @@ def test_heal_reused_reports_an_unreadable_master_and_exits_nonzero(
 
     assert exc.value.code not in (0, None)
     assert "master" in str(exc.value.code).lower()
+
+
+# --- 3.5e (cycle 23): a chain of reused rows heals in one pass -------------------
+# A reused row whose source was itself a reused row written blank: A copies B,
+# B copies C. One pass used to heal B from C and leave A blank (B was still blank
+# in the pass's snapshot); the phase 3B synthetic master needed a second write
+# pass to heal 13 more. A blank cell now follows the chain to the first row that
+# holds a value, and stops at a cycle.
+
+def _chain_frame():
+    return pd.DataFrame([
+        _reused("A", origin="B"),
+        _reused("B", origin="C"),
+        _reused("C", origin="D"),
+        _src("D"),
+    ])
+
+
+def test_3_5e_heal_reused_rows_resolves_a_three_link_chain_in_one_pass():
+    frame = _chain_frame()
+    healed = sj.heal_reused_rows(frame, frame)
+
+    assert healed["job_posting_id"].tolist() == ["A", "B", "C"]
+    for _, row in healed.iterrows():
+        assert (row["reason"], row["deep_score"], row["strengths"], row["gaps"],
+                row["recommendation"]) == ("good fit", "8.0", "python | sql", "no spark", "apply")
+    assert sj.heal_reused_rows(_apply(frame, healed), _apply(frame, healed)).empty
+
+
+def test_3_5e_a_chain_takes_each_cell_from_the_nearest_row_that_holds_it():
+    frame = pd.DataFrame([
+        _reused("A", origin="B"),
+        _reused("B", origin="C", reason="B's own reason"),
+        _src("C", gaps=""),
+    ])
+    row = sj.heal_reused_rows(frame, frame).set_index("job_posting_id").loc["A"]
+    assert row["reason"] == "B's own reason"         # what a second pass would give
+    assert row["deep_score"] == "8.0"
+    assert pd.isna(row["gaps"])                       # blank all the way to the root
+
+
+@pytest.mark.parametrize("rows", [
+    [_reused("A", origin="B"), _reused("B", origin="A")],
+    [_reused("A", origin="A")],
+    [_reused("X", origin="A"), _reused("A", origin="B"), _reused("B", origin="C"),
+     _reused("C", origin="A")],
+])
+def test_3_5e_a_cycle_of_reused_rows_heals_nothing_and_ends(rows):
+    frame = pd.DataFrame(rows)
+    assert sj.heal_reused_rows(frame, frame).empty
+
+
+def test_3_5e_a_chain_through_a_row_that_is_not_reused_stops_there():
+    frame = pd.DataFrame([
+        _reused("A", origin="B"),
+        _src("B", reason="", score_reused=False, score_reused_from="C"),
+        _src("C", reason="never reached"),
+    ])
+    row = sj.heal_reused_rows(frame, frame).set_index("job_posting_id").loc["A"]
+    assert pd.isna(row["reason"]) and row["deep_score"] == "8.0"
+
+
+def test_3_5e_heal_master_reuse_heals_a_chain_in_one_write(tmp_path, monkeypatch):
+    rows = [
+        _m("A", score_reused="True", score_reused_from="B"),
+        _m("B", score_reused="True", score_reused_from="C"),
+        _m("C", score_reused="True", score_reused_from="SRC"),
+        _m("SRC", reason="root reason", deep_score="7.5", strengths="sql", gaps="none",
+           recommendation="apply", score_reused="False"),
+        _m("L1", score_reused="True", score_reused_from="L2"),
+        _m("L2", score_reused="True", score_reused_from="L1"),            # a cycle
+    ]
+    master = _write_master_rows(tmp_path, monkeypatch, rows)
+
+    assert sj.heal_master_reuse() == 3
+    after = _read_all(master)
+    for job_id in ("A", "B", "C"):
+        assert after.loc[job_id, "reason"] == "root reason"
+        assert after.loc[job_id, "deep_score"] == "7.5"
+    assert after.loc["L1", "reason"] == "" and after.loc["L2", "reason"] == ""
+    assert sj.heal_master_reuse() == 0                                    # the second pass
+
+
+def test_3_5e_heal_run_files_follows_the_chain_through_the_master(tmp_path, monkeypatch):
+    _write_master_rows(tmp_path, monkeypatch, [
+        _m("B", score_reused="True", score_reused_from="SRC"),
+        _m("SRC", reason="root reason", deep_score="7.5", strengths="sql", gaps="none",
+           recommendation="apply", score_reused="False"),
+    ])
+    run = tmp_path / "morning" / "linkedin_jobs_2026-09-25_morning_scored.csv.gz"
+    rows = _run_file_rows()
+    rows[0]["score_reused_from"] = "B"
+    _write_run_gz(run, rows)
+
+    assert sj.heal_run_files() == (1, 1)
+    assert _read_run(run).loc["NEW-1", "reason"] == "root reason"

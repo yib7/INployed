@@ -2329,30 +2329,79 @@ def _heal_id(value: Any) -> str:
     return text[:-2] if _HEAL_FLOAT_ID_RE.fullmatch(text) else text
 
 
+# The key a `_source_lookup` entry keeps its own reuse origin under: the id the
+# source row itself was reused from, "" when it is no reused row. Not a heal column.
+_HEAL_ORIGIN = "score_reused_from"
+
+
+def _reused_flag(value: Any) -> bool:
+    """A truthy `score_reused` cell ("True", "true", "1", "1.0", True)."""
+    return not _cell_blank(value) and str(value).strip().lower() in _HEAL_TRUE
+
+
 def _source_lookup(sources: pd.DataFrame,
                    wanted: set[str] | None = None) -> dict[str, dict[str, Any]]:
     """Job id -> {heal column: value} for `sources`, first row per id winning.
-    With `wanted`, only those ids are kept."""
+
+    Each entry also holds `_HEAL_ORIGIN`: the id the row was itself reused from
+    ("" when it is no reused row), so a heal can follow a chain of reused rows
+    to the one that holds the value. With `wanted`, only those ids and the ids
+    their chains pass through are kept."""
     if sources is None or sources.empty or "job_posting_id" not in sources.columns:
         return {}
     cols = [c for c in _HEAL_COLS if c in sources.columns]
     if not cols:
         return {}
     values = [sources[c].tolist() for c in cols]
+    n = len(sources)
+    flags = (sources["score_reused"].tolist() if "score_reused" in sources.columns
+             else [False] * n)
+    origins = (sources[_HEAL_ORIGIN].tolist() if _HEAL_ORIGIN in sources.columns
+               else [""] * n)
     lookup: dict[str, dict[str, Any]] = {}
     for i, raw in enumerate(sources["job_posting_id"].tolist()):
         key = _heal_id(raw)
-        if key and key not in lookup and (wanted is None or key in wanted):
-            lookup[key] = {c: v[i] for c, v in zip(cols, values)}
-    return lookup
+        if key and key not in lookup:
+            entry = {c: v[i] for c, v in zip(cols, values)}
+            entry[_HEAL_ORIGIN] = _heal_id(origins[i]) if _reused_flag(flags[i]) else ""
+            lookup[key] = entry
+    if wanted is None:
+        return lookup
+    keep: set[str] = set()
+    for key in wanted:
+        while key and key in lookup and key not in keep:
+            keep.add(key)
+            key = lookup[key][_HEAL_ORIGIN]
+    return {k: v for k, v in lookup.items() if k in keep}
+
+
+def _chain_value(lookup: dict[str, dict[str, Any]], origin: str, col: str) -> Any:
+    """`col` from the first row on the reuse chain from `origin` that holds it.
+
+    The chain runs from a source row to the row it was itself reused from, and
+    on, while the cell is blank there; it ends at a row that is no reused row,
+    at an id `lookup` lacks, or where it would revisit a row (a cycle). None
+    when no row on it holds a value. One pass therefore heals what repeated
+    passes would: a reused row whose source was a reused row written blank."""
+    seen: set[str] = set()
+    while origin and origin not in seen:
+        seen.add(origin)
+        source = lookup.get(origin)
+        if source is None or col not in source:
+            return None
+        if not _cell_blank(source[col]):
+            return source[col]
+        origin = source.get(_HEAL_ORIGIN, "")
+    return None
 
 
 def _heal_cells(frame: pd.DataFrame, sources: pd.DataFrame,
                 lookup: dict[str, dict[str, Any]] | None = None) -> list[tuple[int, str, Any]]:
     """(row position, column, value) for each blank reuse cell of a reused row of
-    `frame` that its source row in `sources` can fill. Only columns `frame` has.
-    A caller that heals many frames from one `sources` passes its `_source_lookup`
-    as `lookup` so the sources are indexed once."""
+    `frame` that its source row in `sources` can fill, following the source's
+    own reuse chain (`_chain_value`) when the source cell is blank too. Only
+    columns `frame` has. A caller that heals many frames from one `sources`
+    passes its `_source_lookup` as `lookup` so the sources are indexed once."""
     if frame is None or frame.empty:
         return []
     if not {"job_posting_id", "score_reused", "score_reused_from"} <= set(frame.columns):
@@ -2364,8 +2413,7 @@ def _heal_cells(frame: pd.DataFrame, sources: pd.DataFrame,
     own_ids = frame["job_posting_id"].tolist()
     origins = frame["score_reused_from"].tolist()
     reused = [pos for pos, flag in enumerate(frame["score_reused"].tolist())
-              if not _cell_blank(flag) and str(flag).strip().lower() in _HEAL_TRUE
-              and _heal_id(own_ids[pos])]
+              if _reused_flag(flag) and _heal_id(own_ids[pos])]
     if not reused:
         return []
     if lookup is None:
@@ -2377,13 +2425,15 @@ def _heal_cells(frame: pd.DataFrame, sources: pd.DataFrame,
     cells: list[tuple[int, str, Any]] = []
     frame_vals = {c: frame[c].tolist() for c in frame_cols}
     for pos in reused:
-        source = lookup.get(_heal_id(origins[pos]))
-        if source is None:
+        origin = _heal_id(origins[pos])
+        if origin not in lookup:
             continue
         for col in frame_cols:
-            if (col in source and _cell_blank(frame_vals[col][pos])
-                    and not _cell_blank(source[col])):
-                cells.append((pos, col, source[col]))
+            if not _cell_blank(frame_vals[col][pos]):
+                continue
+            value = _chain_value(lookup, origin, col)
+            if value is not None:
+                cells.append((pos, col, value))
     return cells
 
 

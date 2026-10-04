@@ -29,7 +29,7 @@ from typing import Any, Callable, Collection, Dict, List, Optional, Tuple
 # they stay bound here alongside the name re-exports below.
 from . import assets, ats, config, layout, measure  # noqa: F401
 from . import jev_assist
-from .common import _PRINCIPLE, _gkey, fence_jd
+from .common import _PRINCIPLE, _gkey, fence_jd, one_line
 from .itemcheck import leading_verb
 from .llm import as_dict, call
 # Re-exports. The two seams below live in their own modules; every
@@ -360,7 +360,7 @@ def rephrase(jd: str, job_title: str, sel: Dict[str, Any],
     for b in out.get("bullets") or []:
         if not isinstance(b, dict):
             continue
-        gk, text = b.get("gkey"), (b.get("text") or "").strip()
+        gk, text = b.get("gkey"), one_line(b.get("text") or "")
         if gk in gm and text:
             result[gk] = text
     return result
@@ -381,7 +381,7 @@ def rephrase_drafts(jd: str, job_title: str, sel: Dict[str, Any],
         texts = b.get("texts")
         if not isinstance(texts, list):
             texts = [b.get("text")]
-        clean = [t.strip() for t in texts if isinstance(t, str) and t.strip()]
+        clean = [one_line(t) for t in texts if isinstance(t, str) and t.strip()]
         clean = list(dict.fromkeys(clean))[:REPHRASE_DRAFTS]
         gk = b.get("gkey")
         if gk in gm and clean:
@@ -594,7 +594,7 @@ Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<one bullet>"}}, ..
     for b in out.get("bullets") or []:
         if not isinstance(b, dict):
             continue
-        gk, text = b.get("gkey"), (b.get("text") or "").strip()
+        gk, text = b.get("gkey"), one_line(b.get("text") or "")
         if gk in dropped and gk in gm and text:
             result[gk] = text
     return result
@@ -658,7 +658,7 @@ Return ONLY JSON: {{"text": "<rewritten bullet>"}}"""
     out = as_dict(call(system, user, config.TIER_FLASH_LITE, json_out=True,
                        temperature=0.0), "text")
     text = out.get("text")
-    return text.strip() if isinstance(text, str) else ""
+    return one_line(text) if isinstance(text, str) else ""
 
 
 def dedupe_leading_verbs(bullets: Dict[str, str], gm: Dict[str, List[str]], jd: str,
@@ -813,7 +813,7 @@ Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<lengthened or unch
     for b in out.get("bullets", []) or []:
         if not isinstance(b, dict):
             continue
-        gk, text = b.get("gkey"), (b.get("text") or "").strip()
+        gk, text = b.get("gkey"), one_line(b.get("text") or "")
         if gk in seen and text:
             new_text[gk] = text
 
@@ -936,7 +936,7 @@ Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<repaired bullet>"}
         for b in out.get("bullets", []) or []:
             if not isinstance(b, dict):
                 continue
-            gk, text = b.get("gkey"), (b.get("text") or "").strip()
+            gk, text = b.get("gkey"), one_line(b.get("text") or "")
             # Commit only strict improvement, so a bad repair can't make things worse.
             if (gk in offenders and text
                     and len(style_violations(text)) < len(style_violations(offenders[gk]))):

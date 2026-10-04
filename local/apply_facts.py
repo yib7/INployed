@@ -31,7 +31,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Iterable
 
 from apply_form import FIELD_TYPES
-from apply_sheet import parse_apply_md, split_name
+from apply_sheet import _tail_key, parse_apply_md, split_name
 from resume_tailor.answer_tables import COUNTRIES, US_STATES
 
 KINDS = ("text", "bool", "choice_text", "file", "date")
@@ -129,13 +129,15 @@ _BASICS_KEYS = {"full_name": "name", "email": "email", "phone": "phone",
                 "location": "location", "linkedin_url": "linkedin",
                 "github_url": "github", "website_url": "website"}
 
-_H2_RE = re.compile(r"(?m)^##\s+(?P<name>[^\n]+?)\s*$")
+# `[ \t]` after the hashes: with `\s` a line of bare `##`, its line break and
+# the next line would read as one heading.
+_H2_RE = re.compile(r"(?m)^##[ \t]+(?P<name>[^\n]+?)\s*$")
 _ADDRESS_H3_RE = re.compile(r"(?m)^###\s+Address\s*$")
 _EM_DASH = chr(0x2014)
 _DOT = chr(0xB7)
 _YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
 _ENTRY_HEADER_RE = re.compile(r"^\*\*(?P<org>.+?)\*\*(?:\s+" + _EM_DASH + r"\s+(?P<rest>.*))?$")
-_UNESCAPE_RE = re.compile(r"(?m)^(\s*)\\(#{1,6}\s|-\s+\*\*)")
+_UNESCAPE_RE = re.compile(r"(?m)^(\s*)\\(#{1,6}(?:\s|$)|-\s+\*\*)")
 
 
 @dataclass(frozen=True)
@@ -373,14 +375,22 @@ def _strip_nested_address(candidate_section: str) -> str:
 
 
 def _h2_sections(text: str) -> dict[str, str]:
-    """Lowercased `## ` heading -> the body up to the next `## ` heading. The
-    first occurrence of a heading wins (parse_apply_md's rule for a repeat)."""
+    """Lowercased `## ` heading -> the body up to the next `## ` heading.
+
+    parse_apply_md's rule for a repeat: the sections apply_data writes after
+    the model-written résumé and letter (`apply_sheet._TAIL_SECTIONS`: Cover
+    letter, Standard answers, Electronic signature) take their LAST heading,
+    every other section its FIRST, so a heading-shaped line inside a bullet
+    never stands in for the writer's own."""
     out: dict[str, str] = {}
     matches = list(_H2_RE.finditer(text or ""))
     for i, m in enumerate(matches):
         name = m.group("name").strip().lower()
         end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        out.setdefault(name, text[m.start():end].strip())
+        if _tail_key(name):
+            out[name] = text[m.start():end].strip()
+        else:
+            out.setdefault(name, text[m.start():end].strip())
     return out
 
 

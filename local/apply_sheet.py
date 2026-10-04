@@ -21,6 +21,33 @@ _KV_RE = re.compile(r"^\s*-\s+\*\*(?P<label>(?:\\\*|\\(?!\*)|[^*\\])+?)\*\*\s*(?
 # A `## ` / `### ` section heading; text after `#`s, trailing space tolerated.
 _HEADING_RE = re.compile(r"^\s*#{2,3}\s+(?P<name>.+?)\s*$")
 
+# The sections apply_data writes AFTER the résumé bullets and the cover letter,
+# the two parts a model writes. A heading-shaped line that got into either sits
+# above the writer's own heading for these, so each is read from its LAST
+# heading; the sections written before them (Candidate, Address, Education)
+# keep their FIRST heading. Either way the writer's heading is the one read.
+_TAIL_SECTIONS = ("cover letter", "standard answers", "electronic signature")
+
+
+def _tail_key(section: str) -> str:
+    """The `_TAIL_SECTIONS` entry a lowercased heading names, else ""."""
+    for key in _TAIL_SECTIONS:
+        if section == key or (key == "electronic signature" and section.startswith(key)):
+            return key
+    return ""
+
+
+def _last_tail_headings(lines: List[str]) -> Dict[str, int]:
+    """`_TAIL_SECTIONS` key -> the index of the last line that is its heading."""
+    out: Dict[str, int] = {}
+    for i, line in enumerate(lines):
+        h = _HEADING_RE.match(line)
+        if h:
+            key = _tail_key(h.group("name").strip().lower())
+            if key:
+                out[key] = i
+    return out
+
 
 def split_name(full: str) -> Tuple[str, str]:
     """Split a full name into (first, last). One token → ("Name", ""); three+ →
@@ -51,10 +78,18 @@ def parse_apply_md(text: str) -> Dict[str, Any]:
     signature_name = ""
     section = ""
     seen: set = set()
-    for line in str(text or "").splitlines():
+    lines = str(text or "").splitlines()
+    last_tail = _last_tail_headings(lines)
+    for i, line in enumerate(lines):
         h = _HEADING_RE.match(line)
         if h:
             section = h.group("name").strip().lower()
+            # The sections written after the model-written résumé and letter
+            # are read from their LAST heading (`_TAIL_SECTIONS`).
+            tail = _tail_key(section)
+            if tail and last_tail.get(tail) != i:
+                section = ""
+                continue
             # A REPEATED section heading is ignored. apply_data writes each
             # section exactly once, so a second `## Candidate` can only come
             # from something that got INTO the file; letting the later copy

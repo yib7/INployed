@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from . import apply_answers, assets
+from .common import one_line
 
 # What `write` reports when the answer file is damaged and the sheet goes out
 # with no answers.
@@ -54,8 +55,10 @@ def build_marker(job: Dict[str, str]) -> str:
 
 
 def parse_marker(text: str) -> Dict[str, str]:
-    """Extract the job-identity dict from an apply.md's meta marker ({} if absent)."""
-    m = _MARKER_RE.search(text or "")
+    """Extract the job-identity dict from an apply.md's meta marker ({} if absent).
+    The writer puts the marker last in the file, so the LAST one is read: a
+    marker-shaped string inside a bullet above it never names the job."""
+    m = _last(_MARKER_RE, text or "")
     if not m:
         return {}
     try:
@@ -63,6 +66,20 @@ def parse_marker(text: str) -> Dict[str, str]:
     except ValueError:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _last(pattern: "re.Pattern[str]", text: str, pos: int = 0,
+          endpos: Optional[int] = None) -> Optional["re.Match[str]"]:
+    """The last match of `pattern` in text[pos:endpos], else None.
+
+    The sections build_markdown writes AFTER the model-written résumé and letter
+    (Cover letter, Standard answers, Electronic signature, the meta marker) are
+    found by their LAST heading. A heading-shaped line that got into a bullet
+    of an older sheet sits above the writer's own heading, so it never wins."""
+    found = None
+    for m in pattern.finditer(text, pos, len(text) if endpos is None else endpos):
+        found = m
+    return found
 
 
 # The résumé sections whose bullets ARE the tailored resume content. Technical
@@ -108,12 +125,7 @@ def parse_resume_bullets(md_text: str) -> List[str]:
 # collapsed to single spaces first. Without that, a value carrying a newline --
 # a scraped job title, a master-YAML field pasted out of a web page -- ends the
 # line early and everything after it is read as fresh document structure.
-_WS_RUN_RE = re.compile(r"\s+")
-
-
-def _one_line(value: Any) -> str:
-    """`value` as a single line: whitespace runs (newlines included) -> one space."""
-    return _WS_RUN_RE.sub(" ", "" if value is None else str(value)).strip()
+_one_line = one_line
 
 
 def _kv(label: str, value: Any, *, always: bool = False) -> str:
@@ -155,18 +167,18 @@ def _address_lines(answers: List[Dict[str, Any]]) -> str:
 def _education_lines(education: List[Dict[str, Any]]) -> str:
     out = ["## Education\n"]
     for e in education:
-        head = e.get("school", "") or ""
-        degree_bits = [e.get("degree", ""), e.get("concentration", "")]
+        head = _one_line(e.get("school", "") or "")
+        degree_bits = [_one_line(e.get("degree", "")), _one_line(e.get("concentration", ""))]
         degree = ", ".join(b for b in degree_bits if b)
         tail_bits = []
         if e.get("minor"):
-            tail_bits.append(f"minor: {e['minor']}")
+            tail_bits.append(f"minor: {_one_line(e['minor'])}")
         if e.get("dates"):
-            tail_bits.append(str(e["dates"]))
+            tail_bits.append(_one_line(e["dates"]))
         if e.get("gpa"):
-            tail_bits.append(f"GPA {e['gpa']}")
+            tail_bits.append(f"GPA {_one_line(e['gpa'])}")
         if e.get("location"):
-            tail_bits.append(str(e["location"]))
+            tail_bits.append(_one_line(e["location"]))
         line = head
         if degree:
             line += f" — {degree}"
@@ -179,7 +191,7 @@ def _education_lines(education: List[Dict[str, Any]]) -> str:
             honors = e.get("honors")
             if honors and not isinstance(honors, (list, tuple)):
                 honors = [honors]
-            vals = [str(h).strip() for h in (honors or []) if str(h or "").strip()]
+            vals = [_one_line(h) for h in (honors or []) if str(h or "").strip()]
             if vals:
                 out.append(f"  - Awards & Honors: {'; '.join(vals)}\n")
     if len(out) == 1:
@@ -210,12 +222,14 @@ def _lead_meta(master: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
 def _grouped_bullets(entry: Dict[str, Any], bullets: Dict[str, str]) -> List[str]:
     """Surviving bullet texts for one block's groups, in selection order — mirrors
     render._group_bullets (a group whose bullet was trimmed away on one-page
-    enforcement, i.e. absent from `bullets`, is skipped)."""
+    enforcement, i.e. absent from `bullets`, is skipped). Each bullet is one
+    line here, whatever the model wrote: a newline in it would end the `- `
+    line and let the rest open a section of the sheet."""
     out: List[str] = []
     for ids in entry.get("groups", []) or []:
         gk = "+".join(ids)
         if gk in bullets:
-            text = str(bullets[gk]).strip()
+            text = _one_line(bullets[gk])
             if text:
                 out.append(text)
     return out
@@ -223,8 +237,8 @@ def _grouped_bullets(entry: Dict[str, Any], bullets: Dict[str, str]) -> List[str
 
 def _entry_header(primary: str, extras: List[Any]) -> str:
     """`**primary** — extra · extra` (extras are the factual title/location/dates)."""
-    bits = [str(x).strip() for x in extras if str(x or "").strip()]
-    head = f"**{str(primary).strip()}**"
+    bits = [_one_line(x) for x in extras if str(x or "").strip()]
+    head = f"**{_one_line(primary)}**"
     if bits:
         head += " — " + " · ".join(bits)
     return head
@@ -267,7 +281,7 @@ def _projects_md(entries: List[Dict[str, Any]], meta: Dict[str, Dict[str, Any]],
         if not b or not items:
             continue
         header = _entry_header(b["name"], [])  # apply.md project headers carry no dates
-        link_bits = [str(b.get("live_url") or "").strip(), str(b.get("repo") or "").strip()]
+        link_bits = [_one_line(b.get("live_url") or ""), _one_line(b.get("repo") or "")]
         link = " · ".join(x for x in link_bits if x)
         note = f"*{link}*" if link else ""
         out.append(_entry_block(header, items, note=note))
@@ -294,8 +308,8 @@ def _leadership_md(entries: List[Dict[str, Any]], meta: Dict[str, Dict[str, Any]
 def _skills_md(skill_lines: Optional[List[Dict[str, str]]]) -> str:
     rows: List[str] = []
     for ln in skill_lines or []:
-        label = str(ln.get("label", "")).strip()
-        items = str(ln.get("items", "")).strip()
+        label = _one_line(ln.get("label", ""))
+        items = _one_line(ln.get("items", ""))
         if not (label or items):
             continue
         rows.append(f"- **{label}:** {items}" if label else f"- {items}")
@@ -334,8 +348,9 @@ def _resume_lines(master: Dict[str, Any], sel: Optional[Dict[str, Any]],
 # application would be the one the posting supplied. Neither shape is legitimate
 # letter prose, so both are backslash-escaped: markdown renders the escape as a
 # literal `#` or `-`, the letter still reads and pastes correctly, and neither
-# regex matches any more.
-_MD_HEADING_LINE_RE = re.compile(r"^(\s*)(#{1,6}\s)")
+# regex matches any more. A line of bare `#`s is escaped too: a multi-line
+# heading pattern reads `##`, a line break and the next line as one heading.
+_MD_HEADING_LINE_RE = re.compile(r"^(\s*)(#{1,6}(?:\s|$))")
 _MD_KV_LINE_RE = re.compile(r"^(\s*)(-\s+\*\*)")
 
 
@@ -357,10 +372,12 @@ def _cover_letter_section(cover_body: str) -> str:
 
     This is where the cover letter's plain text lives now; the folder ships the
     letter's `.tex` instead of a `.txt`, and a `.tex` is useless in a paste box.
-    Line endings are normalised to `\\n`; the splice re-renders them in the file's
-    own convention.
+    Line endings are normalised to `\\n`, the Unicode line breaks
+    `str.splitlines` honours (U+2028, U+0085, ...) included, so every line the
+    sheet's readers see is a line `_defuse_structure` has checked; the splice
+    re-renders them in the file's own convention.
     """
-    text = (cover_body or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    text = "\n".join((cover_body or "").splitlines()).strip()
     return "## Cover letter\n\n" + _defuse_structure(text) + "\n"
 
 
@@ -545,11 +562,13 @@ def refresh_answer_sections(folder: Path, answers: List[Dict[str, Any]]) -> bool
     text = _read_untranslated(path)
     if text is None:
         return False
-    m_start = _ANSWERS_HEADING_RE.search(text)
-    if not m_start:
-        return False
-    m_sig = _SIGNATURE_PREFIX_RE.search(text, m_start.end())
+    # The writer's own headings: the last signature heading, and the last
+    # Standard answers heading above it (`_last`).
+    m_sig = _last(_SIGNATURE_PREFIX_RE, text)
     if not m_sig:
+        return False
+    m_start = _last(_ANSWERS_HEADING_RE, text, 0, m_sig.start())
+    if not m_start:
         return False
     eol = _dominant_eol(text)
     spans = [(m_start.start(), m_sig.start(), _standard_answer_lines(answers))]
@@ -608,8 +627,9 @@ def legacy_cover_txts(folder: Path) -> List[Path]:
 
 
 def _cover_span(text: str) -> Optional[tuple]:
-    """(start, end) offsets of an existing `## Cover letter` block, else None."""
-    m = _COVER_HEADING_RE.search(text)
+    """(start, end) offsets of an existing `## Cover letter` block (its last
+    heading, `_last`), else None."""
+    m = _last(_COVER_HEADING_RE, text)
     if not m:
         return None
     nxt = _ANY_HEADING_RE.search(text, m.end())
@@ -625,7 +645,7 @@ def _cover_insert_at(text: str) -> int:
     the signature), else before the meta marker, else at the end. Same slot
     build_markdown renders it into, so a patched sheet matches a rewritten one."""
     for pattern in (_ANSWERS_HEADING_RE, _SIGNATURE_PREFIX_RE, _MARKER_START_RE):
-        m = pattern.search(text)
+        m = _last(pattern, text)
         if m:
             return m.start()
     return len(text)

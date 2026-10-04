@@ -15,7 +15,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from . import assets, ats, config, layout, measure
-from .common import fence_jd
+from .common import fence_jd, one_line
 from .llm import as_dict, call
 
 # ── Stage 3: skills (exactly 4 fixed categories) ─────────────────────────────
@@ -127,6 +127,9 @@ def _finalize_skill_lines(out: Dict[str, Any], jd: str = "") -> List[Dict[str, s
         # discarding the model's relevance ranking.
         if isinstance(raw, list):
             raw = ", ".join(str(x) for x in raw if str(x).strip())
+        # One printed line: a newline in the model's answer never reaches it.
+        if isinstance(raw, str):
+            raw = one_line(raw)
         picked = _complete_to_count(raw if isinstance(raw, str) else "",
                                     pools.get(label, []), targets.get(label, 0), jd)
         if swap:

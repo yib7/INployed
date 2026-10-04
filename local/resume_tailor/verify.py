@@ -63,7 +63,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, Iterable, List, Optional
 
 from . import assets, compose
-from .common import split_sentences
+from .common import one_line, split_sentences
 
 # Digit-bearing figures: 40,000 / 37% / 3.5 / v1.4.0 — commas normalized away.
 _NUM_RE = re.compile(r"\d[\d,]*(?:\.\d+)*")
@@ -309,8 +309,11 @@ def _entry_names(sel: Dict[str, Any]) -> str:
 def group_unseen(sel: Dict[str, Any], ids: Iterable[str], text: str) -> List[str]:
     """Distinctive tokens in `text` with no trace in the atoms `ids` (plus the
     selection's entry names) — the exact check `enforce_grounded` applies to one
-    bullet, exposed so a pass that re-keys a bullet can gate its own change."""
-    return unseen_tokens(text, group_source_text(ids, extra=_entry_names(sel)))
+    bullet, exposed so a pass that re-keys a bullet can gate its own change.
+    The bullet is read as the one line the résumé and apply.md print
+    (`common.one_line`): the tracer ends a sentence at a newline, and each line
+    after one would hand its first word the action-verb pass."""
+    return unseen_tokens(one_line(text), group_source_text(ids, extra=_entry_names(sel)))
 
 
 def enforce_grounded(sel: Dict[str, Any], bullets: Dict[str, str], *,

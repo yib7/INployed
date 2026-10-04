@@ -116,7 +116,7 @@ import logging
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 from . import aiwriting, compose, config, itemcheck, jev_assist, measure, verify
-from .common import _PRINCIPLE
+from .common import _PRINCIPLE, one_line
 from .llm import as_dict, call
 
 log = logging.getLogger(__name__)
@@ -437,7 +437,7 @@ def _proposals(out: Dict[str, Any], allowed: Sequence[str]) -> Dict[str, str]:
             continue
         gk = b.get("gkey")
         if gk in allowed:
-            result[gk] = (b.get("text") or "").strip()
+            result[gk] = one_line(b.get("text") or "")
     return result
 
 

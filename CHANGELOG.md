@@ -67,6 +67,10 @@ All notable changes to INployed are recorded here. The format follows
   up in a bullet. The bullet prompts and the grounding gate now skip `interview_notes`;
   every other key on an atom still reaches the bullet writer.
 
+- **`score_jobs.py --heal-reused` fixes a chain in one run.** A reposted row whose reused score
+  came from another reused row now takes the first real score up the chain (cycles stop safely);
+  before, a second run was needed.
+
 ### Removed
 
 - **Check again with my answers** and **Pre-answer** are gone from the Auto-apply tab, along
@@ -75,6 +79,40 @@ All notable changes to INployed are recorded here. The format follows
   answer lower a job's score, run **Check difficulty** on it again. The Difficulty tooltip
   still lists the questions your answers cannot fill, and a paused run's **Waiting for you**
   card and a parked job's **Answer now** still save answers for later runs.
+
+### Security
+
+- **Auto-apply stays on the job's own account.** Once a job reaches its application platform
+  (Workday, iCIMS, Greenhouse and the rest), a page that moves it to another company's account
+  or another platform stops the job with "the application left the job's own account on its
+  application platform". A career-site front end such as Eightfold or Phenom may still hand the
+  job on to the company's platform.
+- **The master password goes only over `https`.** A password box on a plain-HTTP page, frame or
+  form stops the job with "this site asks for a password over an unencrypted connection", and
+  the box's frame is checked again at the moment of typing.
+- **Chrome runs with its sandbox on** and takes no downloads during auto-apply and the
+  difficulty check.
+- **Emailed codes come only from the job's own senders.** A code or link sent by LinkedIn, your
+  mail provider, a sign-in service or another platform is never used, and the ATS name the run
+  reads from an address is its registered site, so `linkedin-careers.example` no longer reads as
+  LinkedIn.
+- **A damaged or locked file is never written over.** A `config.json` that will not read or
+  parse is left as it is: submitting and Jev read as off until you save in Settings, which keeps
+  the damaged copy beside it. The same holds for the auto-apply queue and the ATS accounts
+  ledger. A switch stored as the text "false" no longer reads as on.
+- **Text from a page, a scraped row or a model shows as written** in every dashboard label,
+  message and tooltip, never as HTML.
+- **A model-written line cannot forge an apply.md section.** Bullets, skill lines and headers stay
+  on one line, and the cover letter, answers and signature are read from the sections the writer
+  itself put last, so a heading inside model text cannot change what auto-apply types.
+- **Secrets stay with their own service.** The TypeSafe key is removed from the `claude` CLI's
+  environment, every secret setting is removed from gcloud's, and the TypeSafe client always
+  talks to `https://api.typesafe.ai`. The copied master password stays out of Windows clipboard
+  history and the cloud clipboard.
+- A page with more than 200 boxes stops the job, and the difficulty check's console accepts only
+  job ids made of letters, digits, `-` and `_`.
+- The User Guide's *What leaves your machine* lists everything auto-apply sends: the inbox rows
+  and message read for a code, the free-text drafts, and what the employer's site receives.
 
 ## [1.16.0] - 2026-09-28
 

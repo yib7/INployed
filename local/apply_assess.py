@@ -176,7 +176,7 @@ def account_worded(text: str) -> bool:
     """Does a posting's control read as a way into an account (the walk
     never clicks a sign-in or a sign-up): a sign-in or log-in
     (`apply_send_words.SIGN_IN_WORDS`), a sign-up or a new account
-    (`apply_run._CREATE_ACCOUNT`), or a Next or Continue with no Apply word
+    (`apply_account_flow._CREATE_ACCOUNT`), or a Next or Continue with no Apply word
     (`apply_judge.entry_worded`). "Sign in to apply" is one; "Continue
     to apply" is not."""
     import apply_judge

@@ -1194,9 +1194,10 @@ def test_an_outage_inside_the_account_step_reaches_the_run(step, monkeypatch):
     """The account step's catch-all (ACC-10) lets a judge outage through to
     the run's breaker (RES-02); it is never noted as the step's own error."""
     import apply_run
+    import apply_account_flow
     from apply_form import Field, FormDigest
     monkeypatch.setattr(apply_run.ats_accounts, "has_password", lambda: True)
-    monkeypatch.setattr(apply_run, "account_forms", lambda page, digest: [])
+    monkeypatch.setattr(apply_account_flow, "account_forms", lambda page, digest: [])
     monkeypatch.setattr(apply_run.apply_form, "frames", lambda page: [])
     run = _account_run(_map=_down)
     accounts = apply_run._Accounts(run)
@@ -1835,12 +1836,13 @@ def test_a_judge_that_cannot_run_inside_the_account_step_is_never_a_login_wall(
     the moment (`jev.RequestRejected`) parks with its own reason. Neither is
     noted as the account step's own error and read as a login wall."""
     import apply_run
+    import apply_account_flow
     from apply_form import Field, FormDigest
 
     def _raise(*a, **k):
         raise error()
     monkeypatch.setattr(apply_run.ats_accounts, "has_password", lambda: True)
-    monkeypatch.setattr(apply_run, "account_forms", lambda page, digest: [])
+    monkeypatch.setattr(apply_account_flow, "account_forms", lambda page, digest: [])
     monkeypatch.setattr(apply_run.apply_form, "frames", lambda page: [])
     run = _account_run(_map=_raise)
     accounts = apply_run._Accounts(run)

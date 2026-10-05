@@ -18,7 +18,7 @@ unloaded). Fixtures:
   launch fails and with "could not import playwright" when Playwright itself
   is absent; with `APPLY_BROWSER_REQUIRED=1` (CI's browser step) each of
   those fails instead.
-- `flow_server` (session): `apply_harness.FlowServer`, the fixtures served
+- `flow_server` (session): `apply_pages.FlowServer`, the fixtures served
   with a counted `POST /submit/<name>` (the flow matrix and its invariants).
 
 The browser is module-scoped because Playwright's sync API keeps an asyncio

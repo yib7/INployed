@@ -9,7 +9,8 @@ then the success rate per flow and overall.
                                    [--real record|replay|dry] [--real-cache PATH]
                                    [--real-prune]
 
-The flows, the judges and the invariants are `tests/apply_harness.py`'s. The
+The flows, the judges and the invariants are the harness's (`tests/apply_flows.py`,
+`tests/apply_invariants.py`, run by `tests/apply_harness.py`). The
 run is hermetic: the fixtures are served from `tests/fixtures/` on a local
 port, the job folders, queues and account ledgers live in a temp dir, the
 master password is a synthetic string, the judge is `FakeJev` or `NoisyJev`
@@ -178,7 +179,7 @@ def _crash_results(flow_name: str, seeds: tuple, reason: str, real: bool = False
     real judge's too with `real`), each naming the cause: a crashed or hung
     worker counts every run as a miss."""
     import apply_harness as h
-    f = next((f for f in h.FLOWS if f.name == flow_name), None)
+    f = next((f for f in h.apply_flows.FLOWS if f.name == flow_name), None)
     real = real and (f is None or (f.replayable and f.recorded))
     return [h.RunResult(flow_name, judge, "failed", reason, False, [], 0, 0, 0.0)
             for judge, _ in h.judges(seeds, real=object() if real else None)]
@@ -332,7 +333,7 @@ def _apart_flows(flows) -> list[str]:
 def _unrecorded_flows(flows) -> list[str]:
     """Flows `run_matrix` leaves out of the real judge's replay column
     because the registry still marks them `recorded=False`
-    (`apply_harness.Flow`). The flag is bookkeeping, so a prior recording
+    (`apply_flows.Flow`). The flag is bookkeeping, so a prior recording
     can cache fresh keys for one of these and leave the flag unflipped
     (commit a74890d recorded 11 pause flows, but
     their `recorded=False` flags never flipped, so a `--real-prune` run
@@ -357,7 +358,7 @@ def _recorded_now(h, results) -> list[str]:
     still marks `recorded=False`: the flags to flip, or the replay keeps
     leaving them out."""
     ran = {r.flow for r in results}
-    return [f.name for f in h.FLOWS if f.name in ran and f.replayable and not f.recorded]
+    return [f.name for f in h.apply_flows.FLOWS if f.name in ran and f.replayable and not f.recorded]
 
 
 def _record_real(h, flows, mode: str, cache: Path, workdir: Path, *, fast: bool,
@@ -419,7 +420,7 @@ def _record_real(h, flows, mode: str, cache: Path, workdir: Path, *, fast: bool,
         # the replay leaves a `recorded=False` flow out until its flag is
         # flipped
         print(f"apply_matrix: recorded now, still marked recorded=False in "
-              f"tests/apply_harness.py (flip each to recorded=True): {', '.join(flip)}")
+              f"tests/apply_flows.py (flip each to recorded=True): {', '.join(flip)}")
     if json_out:
         rows = [{k: v for k, v in asdict(r).items() if k != "actions"} for r in col.results]
         Path(json_out).write_text(json.dumps({"results": rows, "unrecorded": col.unrecorded,
@@ -467,13 +468,13 @@ def main(argv: list[str] | None = None) -> int:
         tmp_path = Path(tmp)
         _isolate(tmp_path)
         import apply_harness as h
-        flows = h.FLOWS
+        flows = h.apply_flows.FLOWS
         if args.flows:
             wanted = {n.strip() for n in args.flows.split(",") if n.strip()}
-            flows = tuple(f for f in h.FLOWS if f.name in wanted)
-        if args.real_prune and _flows_narrowed(flows, h.FLOWS):
+            flows = tuple(f for f in h.apply_flows.FLOWS if f.name in wanted)
+        if args.real_prune and _flows_narrowed(flows, h.apply_flows.FLOWS):
             print(f"apply_matrix: --real-prune refuses a --flows-narrowed run "
-                  f"({len(flows)} of {len(h.FLOWS)} flow(s) selected): the flows left out "
+                  f"({len(flows)} of {len(h.apply_flows.FLOWS)} flow(s) selected): the flows left out "
                   f"never got a chance to use their keys, so pruning could drop one they "
                   f"still need. Rerun the whole matrix (drop --flows) before pruning.",
                   file=sys.stderr)
@@ -481,7 +482,7 @@ def main(argv: list[str] | None = None) -> int:
         unrecorded = _unrecorded_flows(flows)
         if args.real_prune and unrecorded:
             print(f"apply_matrix: --real-prune refuses: {len(unrecorded)} flow(s) the replay "
-                  f"leaves out only because tests/apply_harness.py still marks them "
+                  f"leaves out only because tests/apply_flows.py still marks them "
                   f"recorded=False: {', '.join(unrecorded)}. A prior recording may have "
                   f"already cached fresh keys for these; pruning now could delete them before "
                   f"the flag is ever flipped. Flip each Flow's recorded=True once its "
@@ -541,7 +542,7 @@ def main(argv: list[str] | None = None) -> int:
                   + (f"; left out, their text changes with the clock: {', '.join(apart)}"
                      if apart else "")
                   + (f"; left out, not recorded yet (their recorded=False flags in "
-                     f"tests/apply_harness.py flip after the next recording): "
+                     f"tests/apply_flows.py flip after the next recording): "
                      f"{', '.join(unrecorded)}" if unrecorded else ""))
         print(f"the suite's pinned floors (fake and seeds {h.SUITE_SEEDS[0]} to "
               f"{h.SUITE_SEEDS[-1]}): noisy {h.SUCCESS_FLOOR:.1%}, fake "

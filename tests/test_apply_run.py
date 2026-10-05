@@ -69,7 +69,7 @@ def _bank():
 @pytest.fixture(autouse=True)
 def _fast_timing():
     """The fixtures are static pages: the harness's short settle and click
-    windows (`apply_harness.FAST_TIMING`) read them as well as the
+    windows (`apply_pages.FAST_TIMING`) read them as well as the
     production ones. A test whose page moves on by a timer sets its own
     quiet window."""
     import apply_harness
@@ -1102,7 +1102,7 @@ def test_linkedin_shaped_posting_follows_its_apply_link_through_the_redirect(
 
 class _PageStateJudge(jev.FakeJev):
     """The fake, with the page state of every page on `HOST` read as `STATE`
-    at `CONF`, its Nouls as `NOULS` says (`apply_harness.read_as`): a live
+    at `CONF`, its Nouls as `NOULS` says (`apply_flows.read_as`): a live
     misread, scripted."""
     HOST = ""
     STATE = ""

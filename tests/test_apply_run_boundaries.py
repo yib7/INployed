@@ -21,7 +21,7 @@ def _judge_selector(jev_judge):
 
 @pytest.fixture(autouse=True)
 def _fast_timing():
-    """The harness's short settle and click windows (`apply_harness.FAST_TIMING`):
+    """The harness's short settle and click windows (`apply_pages.FAST_TIMING`):
     nothing here waits on a real page's timer."""
     import apply_harness
     with apply_harness.fast_timing():

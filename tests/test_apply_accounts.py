@@ -24,6 +24,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
 import apply_harness as h  # noqa: E402
+import apply_pages  # noqa: E402
 import apply_run  # noqa: E402
 import ats_accounts  # noqa: E402
 import jev  # noqa: E402
@@ -796,7 +797,7 @@ def test_a_sign_ups_password_rules_are_read_and_met(_browser, flow_server, tmp_p
 def test_a_stored_password_that_misses_a_rule_parks_before_anything_is_typed(
         _browser, flow_server, tmp_path, monkeypatch):
     import dataclasses
-    monkeypatch.setattr(h, "PASSWORD", "Short-Pw1")        # nine characters
+    monkeypatch.setattr(apply_pages, "PASSWORD", "Short-Pw1")        # nine characters
     f = dataclasses.replace(h.flow("password_rules"), status="needs_human",
                             reason=r"^the master password does not meet the password rules")
     r = _run(f, tmp_path, _browser, flow_server)

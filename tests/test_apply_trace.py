@@ -286,7 +286,7 @@ def test_a_traced_record_whose_attempt_copy_was_never_written_is_kept(tmp_path):
 
 class _ReadAs(jev.FakeJev):
     """The fake, with every page read as `STATE` at `CONF` (the rest spread),
-    its Nouls as `NOULS` says (`apply_harness.read_as`)."""
+    its Nouls as `NOULS` says (`apply_flows.read_as`)."""
     STATE = ""
     CONF = 0.0
     NOULS = "coherent"

@@ -349,7 +349,7 @@ network) either target.
   the runner, on a run narrower than the whole `RUNNER_TESTS` set (a file left out, `-k`, `-m`,
   a deselected test, a node id narrower than a file) or a `jev_judge` test skipped for a reason
   the harness does not account for; for the matrix, on a narrowed `--flows` or a flow still
-  marked `recorded=False` in `tests/apply_harness.py`.
+  marked `recorded=False` in `tests/apply_flows.py`.
 - **Spend cap:** `jev.SpendCap` measures its spend, request count and failed requests as a
   delta of the lifetime counter `total_usage()`, which `reset_usage()` never touches. Before
   commit 3d0ea37 it read `usage()`, so a runner test that called `reset_usage()` inside a live

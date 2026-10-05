@@ -95,7 +95,7 @@ UNRECORDED_REASON = "no replay recording yet; scripts/jev_record.ps1 records it"
 # recorded on. The fact catalog lists today's date (`apply_facts.build`, the
 # `today` fact) in every request that carries the facts, so a request made on
 # another day has another key. A record or replay run (the runner tests here,
-# the matrix's real column through `apply_harness.hermetic`) reads today as
+# the matrix's real column through `apply_pages.hermetic`) reads today as
 # this day, and the caches replay on any later day. A new recording keeps this
 # date, or moves it together with every cache it re-records. The fake and the
 # noisy judges and production keep the real date.

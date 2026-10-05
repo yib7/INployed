@@ -2,7 +2,8 @@
 
 `apply_run` re-exports the names of the modules split out of it, for the
 readers that reach them through it; `apply_fill` does the same for the
-click API of `apply_click`. A monkeypatch on a re-export rebinds the
+click API of `apply_click`, and the flow harness `apply_harness` for
+`apply_pages`, `apply_flows` and `apply_invariants`. A monkeypatch on a re-export rebinds the
 facade's name only, while the code reads the name from the module that
 defines it, so the patch does nothing and the test passes for the wrong
 reason. This test reads every test and script for patch targets on the
@@ -17,7 +18,7 @@ import ast
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-FACADES = ("apply_run", "apply_fill", "jev")
+FACADES = ("apply_run", "apply_fill", "jev", "apply_harness")
 # Patched on the facade on purpose: the run and `apply_fill` call these through
 # `apply_fill`'s own binding, so a patch there reaches the callers a test drives.
 REEXPORT_PATCHES = {("apply_fill", "click"), ("apply_fill", "settle")}
@@ -26,11 +27,15 @@ REEXPORT_PATCHES = {("apply_fill", "click"), ("apply_fill", "settle")}
 SPLIT_OUT = {"apply_limits", "apply_outcome", "apply_sites", "apply_sendwatch", "apply_page",
              "apply_account_flow", "apply_route", "apply_gate", "apply_record", "apply_job",
              "apply_job_pages", "apply_job_form", "apply_job_submit", "apply_send_words",
-             "apply_click", "apply_form_js", "jev_doubles"}
+             "apply_click", "apply_form_js", "jev_doubles", "apply_pages", "apply_flows",
+             "apply_invariants"}
+# Where a facade's source lives: `local/`, but the harness is in `tests/`.
+HOME = {"apply_harness": REPO / "tests"}
 
 
 def _defined(module: str) -> set[str]:
-    tree = ast.parse((REPO / "local" / f"{module}.py").read_text(encoding="utf-8"))
+    path = HOME.get(module, REPO / "local") / f"{module}.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     names: set[str] = set()
     for st in tree.body:
         if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -88,7 +93,7 @@ def _targets(path: Path) -> list[tuple[str, str, int]]:
                 if isinstance(t, ast.Attribute) and _facade(t.value, aliases):
                     found.append((_facade(t.value, aliases), t.attr, n.lineno))
         # ((module, name), value) pairs and {(module, name): value} keys
-        # (`apply_harness.FAST_TIMING`, `Flow.timing`)
+        # (`apply_pages.FAST_TIMING`, `Flow.timing`)
         pairs = []
         if isinstance(n, ast.Dict):
             pairs = [k for k in n.keys if k is not None]
@@ -111,7 +116,7 @@ def test_the_scan_finds_the_patches_it_guards():
     found = {(mod, name) for _f, mod, name, _l in _all_targets()}
     # names patched today on each facade, so the scan cannot pass by finding nothing
     assert {("apply_run", "load_settings"), ("apply_run", "Runner"),
-            ("apply_fill", "apply"), ("jev", "get")} <= found
+            ("apply_fill", "apply"), ("jev", "get"), ("apply_harness", "run_flow")} <= found
 
 
 def test_every_patch_on_a_facade_targets_a_name_the_facade_defines():

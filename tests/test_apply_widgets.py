@@ -3,7 +3,7 @@ and filled so the page holds what was planned.
 
 Per family: the extractor's reading (count, type, label, required, options,
 widget), a fill and read-back round trip through `apply_fill.apply`, and
-(in `apply_harness.FLOWS`) a replica flow in the matrix. The replicas under
+(in `apply_flows.FLOWS`) a replica flow in the matrix. The replicas under
 `tests/fixtures/forms/` are synthetic: the shapes of the captured pages,
 invented wording.
 

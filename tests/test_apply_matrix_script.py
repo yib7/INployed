@@ -13,7 +13,7 @@
   up promptly (not at the deadline) once the worker has died with nothing
   left to read.
 - A flow whose name is not in the registry makes its worker raise
-  (`apply_harness.flow` finds nothing): `_run_parallel` reports it as one
+  (`apply_flows.flow` finds nothing): `_run_parallel` reports it as one
   "failed" row naming the cause, never a hang. This needs no browser, so it
   runs whether or not Chromium is installed.
 
@@ -43,6 +43,7 @@ for sub in ("scripts", "local", "tests"):
     if p not in sys.path:
         sys.path.insert(0, p)
 
+import apply_flows  # noqa: E402
 import apply_harness as h  # noqa: E402
 import apply_matrix  # noqa: E402
 
@@ -202,7 +203,7 @@ def test_next_message_gives_up_promptly_once_a_dead_worker_has_nothing_left():
 # --- a worker that raises ---------------------------------------------------------------------
 
 def test_a_flow_missing_from_the_registry_is_a_failure_row_not_a_hang(tmp_path):
-    # `apply_harness.flow` does `next(f for f in FLOWS if f.name == name)`: a
+    # `apply_flows.flow` does `next(f for f in FLOWS if f.name == name)`: a
     # name outside the registry raises `StopIteration` before any browser or
     # server is touched, inside the worker; `_run_parallel` must turn that
     # into one row, never drop it and never hang waiting on it
@@ -227,7 +228,7 @@ def test_a_crashed_worker_counts_every_run_it_owed_as_a_miss_and_fails_the_exit(
     assert all(r.status == "failed" and not r.ok and "StopIteration" in r.reason
                for r in results)
     assert apply_matrix._crashed(results) == 3
-    monkeypatch.setattr(h, "FLOWS", h.FLOWS + (bogus,))
+    monkeypatch.setattr(apply_flows, "FLOWS", apply_flows.FLOWS + (bogus,))
     code = apply_matrix.main(["--flows", bogus.name, "--seeds", "1", "--jobs", "2"])
     assert code == 1
     assert "lost to a crashed or hung worker" in capsys.readouterr().err
@@ -273,7 +274,7 @@ def test_a_replay_miss_in_the_real_column_fails_the_script(monkeypatch, capsys):
     monkeypatch.setattr(apply_matrix, "_isolate", lambda *a, **k: None)
     unrecorded = dataclasses.replace(h.flow("post_form"), name="__never_recorded__",
                                      recorded=False)
-    monkeypatch.setattr(h, "FLOWS", h.FLOWS + (unrecorded,))
+    monkeypatch.setattr(apply_flows, "FLOWS", apply_flows.FLOWS + (unrecorded,))
     code = apply_matrix.main(["--flows", f"post_form,{unrecorded.name}", "--seeds", "0",
                               "--jobs", "2", "--real", "replay"])
     out, err = capsys.readouterr()
@@ -281,7 +282,7 @@ def test_a_replay_miss_in_the_real_column_fails_the_script(monkeypatch, capsys):
     assert "apply_matrix: FAILED: 2 replay miss(es) in the real column" in err
     assert "2 miss(es) over 1 flow(s)" in out
     assert re.search(r"left out, not recorded yet \(their recorded=False flags in "
-                     r"tests/apply_harness\.py flip after the next recording\): "
+                     r"tests/apply_flows\.py flip after the next recording\): "
                      r"__never_recorded__$", out, re.M), out
     # the same run with no miss passes
     monkeypatch.setattr(apply_matrix, "_run_parallel",
@@ -359,7 +360,7 @@ def test_real_prune_refuses_when_a_recorded_false_flow_was_left_out(tmp_path, mo
     monkeypatch.setattr(apply_matrix, "_run_parallel", fake_run_parallel)
     monkeypatch.setattr(apply_matrix, "_isolate", lambda *a, **k: None)
     import unittest.mock
-    with unittest.mock.patch.object(h, "FLOWS", (h.flow("post_form"), fresh)):
+    with unittest.mock.patch.object(apply_flows, "FLOWS", (h.flow("post_form"), fresh)):
         code = apply_matrix.main(["--seeds", "0", "--jobs", "2", "--real", "replay",
                                   "--real-cache", str(cache), "--real-prune"])
     out, err = capsys.readouterr()
@@ -384,7 +385,7 @@ def test_real_prune_does_not_refuse_for_a_replayable_false_flow(tmp_path, monkey
     monkeypatch.setattr(apply_matrix, "_run_parallel", fake_run_parallel)
     monkeypatch.setattr(apply_matrix, "_isolate", lambda *a, **k: None)
     import unittest.mock
-    with unittest.mock.patch.object(h, "FLOWS", (h.flow("post_form"), apart)):
+    with unittest.mock.patch.object(apply_flows, "FLOWS", (h.flow("post_form"), apart)):
         code = apply_matrix.main(["--seeds", "0", "--jobs", "2", "--real", "replay",
                                   "--real-cache", str(cache), "--real-prune"])
     out, err = capsys.readouterr()
@@ -397,7 +398,7 @@ def _one_flow_registry(monkeypatch):
     """The registry as `post_form` alone, every flag set: a whole-registry
     --real-prune test reads its own rows, never the registry's recorded
     flags (a flow added after the last recording refuses the prune at once)."""
-    monkeypatch.setattr(h, "FLOWS", (h.flow("post_form"),))
+    monkeypatch.setattr(apply_flows, "FLOWS", (h.flow("post_form"),))
 
 
 def test_real_prune_prunes_a_full_flow_clean_run(tmp_path, monkeypatch, capsys):
@@ -503,7 +504,7 @@ def test_a_recording_names_the_flows_it_recorded_that_are_still_flagged_unrecord
     fresh = dataclasses.replace(h.flow("post_form"), name="__fresh__", recorded=False)
     old = h.flow("lever_single_park")
     import unittest.mock
-    with unittest.mock.patch.object(h, "FLOWS", (old, fresh)):
+    with unittest.mock.patch.object(apply_flows, "FLOWS", (old, fresh)):
         assert apply_matrix._recorded_now(h, [_row("real", True),
                                               dataclasses.replace(_row("real", True),
                                                                   flow="__fresh__")]) == [

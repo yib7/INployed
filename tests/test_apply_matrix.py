@@ -3,14 +3,14 @@
 - `NoisyJev`: deterministic per (seed, request), fresh noise for a changed
   request, misreads only toward plausible neighbours, never moves a submit
   role, drops only field answers; no production mode reaches it.
-- `apply_harness.invariant_breaks`: each check fails on a planted breach and
+- `apply_invariants.invariant_breaks`: each check fails on a planted breach and
   stays quiet on a clean run; end to end, a loop sabotaged to click its
   submit outside the gate and a judge that reads a form as a confirmation
   are both caught.
 - The matrix: one test per registered flow under `FakeJev` and the first
   three noisy seeds (the script runs twenty), zero invariant breaks, the
   fake judge reaching every flow's end but a known one's; then the success
-  rates at or above the pinned floors (`apply_harness.SUCCESS_FLOOR`,
+  rates at or above the pinned floors (`apply_pages.SUCCESS_FLOOR`,
   `FAKE_SUCCESS_FLOOR`), which later phases raise.
 
 Headless Chromium through the module-scoped test browser; the judge is the
@@ -24,6 +24,7 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
+import apply_flows  # noqa: E402
 import apply_harness as h  # noqa: E402
 import apply_run  # noqa: E402
 import apply_route  # noqa: E402
@@ -568,7 +569,7 @@ def test_a_known_flow_is_reported_and_left_out_of_the_floors(monkeypatch):
     assert [f.name for f in h.FLOWS if f.known] == []
     flows = tuple(dataclasses.replace(f, known="SP3: planted") if f.name == "greenhouse_embed"
                   else f for f in h.FLOWS)
-    monkeypatch.setattr(h, "FLOWS", flows)
+    monkeypatch.setattr(apply_flows, "FLOWS", flows)
     rows = [h.RunResult("greenhouse_embed", "fake", "submitted", "x", False, [], 1, 2, 0.1),
             h.RunResult("ashby_wizard", "fake", "submitted", "confirmation page", True, [], 1,
                         4, 0.1),

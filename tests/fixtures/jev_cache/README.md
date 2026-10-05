@@ -28,7 +28,7 @@ Every request that lists the fact catalog carries today's date (the `today`
 fact, `local/apply_facts.py`), so the same request made on another day has
 another key. A record or replay run reads today as `RECORDED_TODAY` in
 `tests/jev_harness.py`, 2026-09-25: the runner tests through the `jev_judge`
-fixture, the matrix's real column through `apply_harness.hermetic`. A
+fixture, the matrix's real column through `apply_pages.hermetic`. A
 recording made on a later day runs pinned to that date too (the 2026-09-26 one
 did), so both caches replay on any day. Moving the constant turns every entry
 into a miss; a change to it re-records both caches. The fake and noisy judges and production read the
@@ -59,7 +59,7 @@ alone, one flow at a time in one process, and stops starting flows at the cap;
 a replay runs in the worker pool with the rest. `ticker_page` is left out of a
 replay: its page text changes with the clock, so no recorded key can hit.
 
-A flow marked `recorded=False` in `tests/apply_harness.py` is one the cache has
+A flow marked `recorded=False` in `tests/apply_flows.py` is one the cache has
 no answers for yet: a replay leaves it out and names it. A recording runs it
 and prints it as a flag to flip; after the next recording, set each one it
 names to `recorded=True`, so the replay covers it. A replay that misses a
@@ -106,7 +106,7 @@ rewrite refuse, naming the reason, and leave the cache exactly as it was:
   end (`apply_matrix._real_short`). The requests after the point where it
   stopped were never asked for
 - for the matrix target: any flow the replay leaves out because
-  `tests/apply_harness.py` still marks it `recorded=False`
+  `tests/apply_flows.py` still marks it `recorded=False`
   (`apply_matrix._unrecorded_flows`). A `recorded=False` flag is bookkeeping,
   so a prior recording can have already cached fresh keys for the flow
   under a flag that never flipped (the

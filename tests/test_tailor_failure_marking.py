@@ -22,7 +22,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
 import seen_db  # noqa: E402
-from qt import jobs_tab, main_window as mw, theme  # noqa: E402
+from qt import jobs_tab, mw_tailor, theme  # noqa: E402
 from qt.jobs_model import JobsTableModel  # noqa: E402
 from qt.main_window import MainWindow  # noqa: E402
 
@@ -170,10 +170,10 @@ def test_tailor_work_emits_one_result_per_job_incrementally(qtbot, monkeypatch):
 
 
 def test_tailor_pool_is_bounded():
-    assert mw._tailor_pool_size(1) == 1
-    assert mw._tailor_pool_size(3) == 3
-    assert mw._tailor_pool_size(14) == mw.MAX_PARALLEL_TAILORS
-    assert mw._tailor_pool_size(0) == 1
+    assert mw_tailor._tailor_pool_size(1) == 1
+    assert mw_tailor._tailor_pool_size(3) == 3
+    assert mw_tailor._tailor_pool_size(14) == mw_tailor.MAX_PARALLEL_TAILORS
+    assert mw_tailor._tailor_pool_size(0) == 1
 
 
 def test_apply_df_views_passes_failed_ids_to_tabs(qtbot):

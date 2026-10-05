@@ -753,7 +753,7 @@ def test_a_bullet_the_fill_never_touched_is_not_noted(synthetic_master, monkeypa
 def test_a_still_underfull_bullet_never_marks_the_run_degraded(synthetic_master,
                                                                monkeypatch):
     """The severity call, pinned. `on_warning` is the dashboard's degraded-run channel
-    (`main_window._tailor_warning_lines` keys the batch summary off a job having ANY
+    (`mw_tailor._tailor_warning_lines` keys the batch summary off a job having ANY
     warning). With the user's layout most bullets are two-line and a part-empty last
     line is a cosmetic blemish, so this finding goes to the report only: `entries` stays
     empty, the collector is never called, and the run is still clean."""

@@ -13,6 +13,7 @@ import manual_add
 import outbox
 import vm_sync
 from qt import main_window as mw
+from qt import mw_pipeline
 from qt.main_window import MainWindow
 from qt.manual_add_dialog import ManualAddDialog
 
@@ -365,7 +366,7 @@ def test_delete_jobs_recycles_resume_folders(qtbot, monkeypatch):
     monkeypatch.setattr(mw.jobsdata, "delete_jobs",
                         lambda ids, **k: events.append(("delete", list(ids))) or len(list(ids)))
     recycled = []
-    monkeypatch.setattr(mw, "recycle_resume_folder",
+    monkeypatch.setattr(mw_pipeline, "recycle_resume_folder",
                         lambda p: recycled.append(p) or True)
     monkeypatch.setattr(w, "reload_data", lambda: None)
     w._delete_jobs(["a", "b"])
@@ -384,7 +385,7 @@ def test_delete_jobs_clears_registry_even_when_recycle_refuses(qtbot, monkeypatc
     monkeypatch.setattr(QtWidgets.QMessageBox, "question",
                         staticmethod(lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Yes))
     monkeypatch.setattr(mw.jobsdata, "delete_jobs", lambda ids, **k: len(list(ids)))
-    monkeypatch.setattr(mw, "recycle_resume_folder", lambda p: False)
+    monkeypatch.setattr(mw_pipeline, "recycle_resume_folder", lambda p: False)
     monkeypatch.setattr(w, "reload_data", lambda: None)
     w._delete_jobs(["x"])
     w.registry.clear_resume_path.assert_any_call("x")
@@ -405,7 +406,7 @@ def test_delete_jobs_survives_recycle_error(qtbot, monkeypatch):
     def boom(p):
         raise OSError("locked by Explorer")
 
-    monkeypatch.setattr(mw, "recycle_resume_folder", boom)
+    monkeypatch.setattr(mw_pipeline, "recycle_resume_folder", boom)
     reloaded = []
     monkeypatch.setattr(w, "reload_data_async", lambda: reloaded.append(True))
     w._delete_jobs(["x"])

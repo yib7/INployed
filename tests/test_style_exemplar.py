@@ -157,7 +157,7 @@ def test_a_directory_at_the_exemplar_path_never_breaks_a_tailoring_run(paths):
 
 
 def test_example_text_stays_cached(paths):
-    """main_window._tailor_work pre-warms this before fanning out across threads, so the
+    """mw_tailor._tailor_work pre-warms this before fanning out across threads, so the
     lru_cache is required, not incidental: N concurrent tailors must not each re-read."""
     txt, _ = paths
     txt.write_text("First answer.\n", encoding="utf-8")

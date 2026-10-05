@@ -19,6 +19,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
 from qt import main_window as mw  # noqa: E402
+from qt import mw_pipeline  # noqa: E402
 from qt import workers  # noqa: E402
 from qt.main_window import MainWindow  # noqa: E402
 
@@ -261,7 +262,7 @@ def test_delete_jobs_drops_rows_before_background_delete_runs(qtbot, tmp_path, m
     monkeypatch.setattr(mw.jobsdata, "delete_jobs",
                         lambda ids, **k: deleted.append(list(ids)) or len(list(ids)))
     recycled = []
-    monkeypatch.setattr(mw, "recycle_resume_folder",
+    monkeypatch.setattr(mw_pipeline, "recycle_resume_folder",
                         lambda p: recycled.append(p) or True)
 
     w._delete_jobs(["1"])
@@ -294,7 +295,7 @@ def test_delete_jobs_completion_reports_recycle_failures(qtbot, tmp_path, monkey
     def boom(p):
         raise OSError("locked by Explorer")
 
-    monkeypatch.setattr(mw, "recycle_resume_folder", boom)
+    monkeypatch.setattr(mw_pipeline, "recycle_resume_folder", boom)
     w._delete_jobs(["1"])
     msg = w.statusBar().currentMessage()
     assert "Deleted 1 job(s)." in msg and "Recycle Bin" in msg

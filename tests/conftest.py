@@ -501,7 +501,7 @@ def _hermetic_repo_data(tmp_path_factory):
         # sys.path and REPO_ROOT, so moving it at runtime touches nothing else.
         mp.setattr(jobsdata, "HERE", d)
         # the dashboard's own binding to the local master: the worker-side
-        # description lookup for a hand-added job (qt.main_window._with_master_jd)
+        # description lookup for a hand-added job (qt.mw_tailor._with_master_jd)
         # must never read the author's real file from a test
         mp.setattr(jobsdata, "MASTER_CSV", d / "linkedin_jobs_master.csv")
         mp.setattr(watcher, "CONFIG_PATH", d / "config.json")

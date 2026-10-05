@@ -8,6 +8,7 @@ import pytest
 from PySide6 import QtWidgets
 
 from qt import main_window as mw
+from qt import mw_pipeline, mw_tailor
 from qt.main_window import PREVIEW_TABS, TAB_TITLES, MainWindow
 
 
@@ -48,7 +49,7 @@ def test_scrape_env_points_at_drive_master(qtbot, monkeypatch, tmp_path):
     import scraper
     w = _win(qtbot)
     (tmp_path / "linkedin_jobs_master.csv.gz").write_bytes(b"")  # just has to exist
-    monkeypatch.setattr(mw, "gdrive_root_dir", lambda paths: tmp_path)
+    monkeypatch.setattr(mw_pipeline, "gdrive_root_dir", lambda paths: tmp_path)
     monkeypatch.delenv("LINKEDIN_EXTRA_MASTER", raising=False)
 
     env = w._scrape_env()
@@ -60,9 +61,9 @@ def test_scrape_env_points_at_drive_master(qtbot, monkeypatch, tmp_path):
 def test_scrape_env_omits_extra_master_when_absent(qtbot, monkeypatch, tmp_path):
     w = _win(qtbot)
     monkeypatch.delenv("LINKEDIN_EXTRA_MASTER", raising=False)
-    monkeypatch.setattr(mw, "gdrive_root_dir", lambda paths: None)   # no Drive root
+    monkeypatch.setattr(mw_pipeline, "gdrive_root_dir", lambda paths: None)   # no Drive root
     assert "LINKEDIN_EXTRA_MASTER" not in w._scrape_env()
-    monkeypatch.setattr(mw, "gdrive_root_dir", lambda paths: tmp_path)  # root, but no master file
+    monkeypatch.setattr(mw_pipeline, "gdrive_root_dir", lambda paths: tmp_path)  # root, but no master file
     assert "LINKEDIN_EXTRA_MASTER" not in w._scrape_env()
 
 
@@ -98,7 +99,7 @@ def test_scrape_env_hands_the_scorer_the_dashboard_jev_switch(qtbot, monkeypatch
     finds no config.json of its own, so the two never disagree."""
     import jev_score
     w = _win(qtbot)
-    monkeypatch.setattr(mw, "gdrive_root_dir", lambda paths: None)
+    monkeypatch.setattr(mw_pipeline, "gdrive_root_dir", lambda paths: None)
     monkeypatch.setenv("SCORE_USE_JEV", "later")        # a stray value in our own env
     _jev_scoring(monkeypatch, **state)
     env = w._scrape_env()
@@ -112,7 +113,7 @@ def test_the_scorer_switch_comes_from_jev_switch_switched_off(qtbot, monkeypatch
     """The dashboard asks jev_switch's public `switched_off("scoring")`."""
     import jev_switch
     w = _win(qtbot)
-    monkeypatch.setattr(mw, "gdrive_root_dir", lambda paths: None)
+    monkeypatch.setattr(mw_pipeline, "gdrive_root_dir", lambda paths: None)
     asked = []
     monkeypatch.setattr(jev_switch, "switched_off", lambda area: asked.append(area) or off)
     assert w._scrape_env()["SCORE_USE_JEV"] == value
@@ -129,7 +130,7 @@ def test_a_dashboard_launched_scorer_names_what_is_missing(qtbot, monkeypatch, c
     prints its one warning naming the missing piece (JS-4)."""
     import jev_score
     w = _win(qtbot)
-    monkeypatch.setattr(mw, "gdrive_root_dir", lambda paths: None)
+    monkeypatch.setattr(mw_pipeline, "gdrive_root_dir", lambda paths: None)
     _jev_scoring(monkeypatch, **state)
     assert jev_score.use_jev(w._scrape_env()) == (False, reason)
     warnings = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("WARNING")]
@@ -139,12 +140,12 @@ def test_a_dashboard_launched_scorer_names_what_is_missing(qtbot, monkeypatch, c
 def test_console_python_swaps_pythonw_for_python(monkeypatch):
     # pythonw has no usable stdout -> children must run on the console python
     monkeypatch.setattr(mw.os.path, "exists", lambda p: True)
-    assert mw._console_python(r"C:\Py\pythonw.exe").lower().endswith("python.exe")
+    assert mw_pipeline._console_python(r"C:\Py\pythonw.exe").lower().endswith("python.exe")
     # but only when the sibling python.exe actually exists
     monkeypatch.setattr(mw.os.path, "exists", lambda p: False)
-    assert mw._console_python(r"C:\Py\pythonw.exe").lower().endswith("pythonw.exe")
+    assert mw_pipeline._console_python(r"C:\Py\pythonw.exe").lower().endswith("pythonw.exe")
     # a normal interpreter passes straight through
-    assert mw._console_python(r"C:\Py\python.exe").lower().endswith("python.exe")
+    assert mw_pipeline._console_python(r"C:\Py\python.exe").lower().endswith("python.exe")
 
 
 def test_scale_bar_nudges_clamp_and_persist(qtbot, monkeypatch):
@@ -267,9 +268,9 @@ def _stub_vm_hooks(monkeypatch):
 
 def test_scrape_work_success_returns_true(qtbot, monkeypatch, tmp_path):
     w = _win(qtbot)
-    monkeypatch.setattr(mw, "APPDATA", tmp_path)
+    monkeypatch.setattr(mw_pipeline, "APPDATA", tmp_path)
     _stub_vm_hooks(monkeypatch)
-    monkeypatch.setattr(mw.subprocess, "Popen",
+    monkeypatch.setattr(mw_pipeline.subprocess, "Popen",
                         lambda *a, **k: _FakeProc(["ok\n"], 0))
     assert w._scrape_work(True) is True
     assert "ok" in (tmp_path / "scrape.log").read_text(encoding="utf-8")
@@ -277,9 +278,9 @@ def test_scrape_work_success_returns_true(qtbot, monkeypatch, tmp_path):
 
 def test_scrape_work_raises_with_captured_output_on_failure(qtbot, monkeypatch, tmp_path):
     w = _win(qtbot)
-    monkeypatch.setattr(mw, "APPDATA", tmp_path)
+    monkeypatch.setattr(mw_pipeline, "APPDATA", tmp_path)
     _stub_vm_hooks(monkeypatch)
-    monkeypatch.setattr(mw.subprocess, "Popen",
+    monkeypatch.setattr(mw_pipeline.subprocess, "Popen",
                         lambda *a, **k: _FakeProc(["scraping...\n", "BOOM bad token\n"], 2))
     with pytest.raises(RuntimeError) as ei:
         w._scrape_work(True)
@@ -425,7 +426,7 @@ def test_apply_work_opens_url_only_when_asked(qtbot, monkeypatch, open_url, expe
     monkeypatch.setattr(apply_mod, "build_apply_context",
                         lambda folder: {"apply_url": "https://x/1", "job": {"company": "Acme"}})
     opened = []
-    monkeypatch.setattr(mw.chrome_launch, "open_in_chrome", opened.append)
+    monkeypatch.setattr(mw_tailor.chrome_launch, "open_in_chrome", opened.append)
     ctx = w._apply_work("1", {"job_posting_id": "1"}, open_url)
     assert ctx["apply_url"] == "https://x/1"
     assert opened == expected
@@ -439,7 +440,7 @@ def test_apply_work_defaults_to_opening(qtbot, monkeypatch):
     monkeypatch.setattr(apply_mod, "build_apply_context",
                         lambda folder: {"apply_url": "https://x/1", "job": {}})
     opened = []
-    monkeypatch.setattr(mw.chrome_launch, "open_in_chrome", opened.append)
+    monkeypatch.setattr(mw_tailor.chrome_launch, "open_in_chrome", opened.append)
     w._apply_work("1", {"job_posting_id": "1"})
     assert opened == ["https://x/1"]
 
@@ -942,7 +943,7 @@ def test_tailor_selected_status_drops_console_wording(qtbot, monkeypatch):
 
 def test_finish_tailor_records_successes_and_reports(qtbot, monkeypatch, tmp_path):
     w = _win(qtbot)
-    monkeypatch.setattr(mw.osopen, "open_path", lambda *_: None)
+    monkeypatch.setattr(mw_tailor.osopen, "open_path", lambda *_: None)
     reloaded = []
     monkeypatch.setattr(w, "reload_data_async", lambda: reloaded.append(1))
     shown = {}
@@ -1020,8 +1021,8 @@ def test_tailor_warning_lines_truncates_a_noisy_job():
     """A bad grounding day can warn once per bullet; the dialog stays a summary and
     points at the folder's report for the rest."""
     rows = [{"label": "Eng @ A", "warnings": [f"w{i}" for i in range(9)]}]
-    block = mw._tailor_warning_lines(rows)
-    assert block.count("Eng @ A") == mw.MAX_TAILOR_WARNINGS_SHOWN + 1
+    block = mw_tailor._tailor_warning_lines(rows)
+    assert block.count("Eng @ A") == mw_tailor.MAX_TAILOR_WARNINGS_SHOWN + 1
     assert "...and 4 more (see tailor_report.txt)" in block
 
 
@@ -1035,7 +1036,7 @@ def test_tailor_warning_lines_carry_no_absolute_path():
         "advisory: ATS check skipped ([Errno 2] No such file: '/home/someone/x/resume.pdf')",
         "page limit: resume shipped on 2 pages (limit is 1)",
     ]}]
-    block = mw._tailor_warning_lines(rows)
+    block = mw_tailor._tailor_warning_lines(rows)
     assert "Users" not in block and "someone" not in block and "/home/" not in block
     assert "apply.md" in block and "resume.pdf" in block
     assert "page limit: resume shipped on 2 pages (limit is 1)" in block
@@ -1057,7 +1058,7 @@ def test_tailor_dialog_block_carries_the_run_log_warnings_and_none_of_its_notes(
     rep.warn(KIND_GROUNDING, "[reground] the re-ask answered 1 of 2 bullet(s); 1 stay dropped (exp-1 b3)")
     rep.advisory(r"ATS check skipped ([Errno 13] Permission denied: 'C:\Users\x\ats_report.md')")
     assert len(rep.notes) == 3 and len(streamed) == 2
-    block = mw._tailor_warning_lines([{"label": "Eng @ A", "warnings": streamed}])
+    block = mw_tailor._tailor_warning_lines([{"label": "Eng @ A", "warnings": streamed}])
     assert ("  - Eng @ A: grounding: [reground] the re-ask answered 1 of 2 bullet(s); "
             "1 stay dropped (exp-1 b3)") in block
     assert ("  - Eng @ A: advisory: ATS check skipped ([Errno 13] Permission denied: "
@@ -1088,7 +1089,7 @@ def test_finish_tailor_opens_folder_only_when_enabled(qtbot, monkeypatch, tmp_pa
     monkeypatch.setattr(w, "reload_data", lambda: None)
     monkeypatch.setattr(QtWidgets.QMessageBox, "warning", staticmethod(lambda *a, **k: None))
     opened = []
-    monkeypatch.setattr(mw.osopen, "open_path", lambda p: opened.append(str(p)))
+    monkeypatch.setattr(mw_tailor.osopen, "open_path", lambda p: opened.append(str(p)))
     results = [{"id": "1", "label": "Eng @ A", "dir": tmp_path / "1", "error": None}]
 
     # default OFF (key absent) -> the folder is NOT opened
@@ -1406,10 +1407,10 @@ def test_offer_unscored_recovery_skipped_while_scraping(qtbot, monkeypatch, tmp_
 
 def test_score_only_work_runs_scorer_only_and_appends_log(qtbot, monkeypatch, tmp_path):
     w = _win(qtbot)
-    monkeypatch.setattr(mw, "APPDATA", tmp_path)
+    monkeypatch.setattr(mw_pipeline, "APPDATA", tmp_path)
     (tmp_path / "scrape.log").write_text("earlier scrape\n", encoding="utf-8")
     cmds = []
-    monkeypatch.setattr(mw.subprocess, "Popen",
+    monkeypatch.setattr(mw_pipeline.subprocess, "Popen",
                         lambda cmd, **k: (cmds.append(cmd), _FakeProc(["scored ok\n"], 0))[1])
     _stub_vm_hooks(monkeypatch)
     assert w._score_only_work() is True
@@ -1426,11 +1427,11 @@ def test_score_only_work_runs_scorer_only_and_appends_log(qtbot, monkeypatch, tm
 def test_score_only_work_hands_the_scorer_the_dashboard_jev_switch(qtbot, monkeypatch, tmp_path,
                                                                   state, value):
     w = _win(qtbot)
-    monkeypatch.setattr(mw, "APPDATA", tmp_path)
+    monkeypatch.setattr(mw_pipeline, "APPDATA", tmp_path)
     _stub_vm_hooks(monkeypatch)
     _jev_scoring(monkeypatch, **state)
     envs = []
-    monkeypatch.setattr(mw.subprocess, "Popen",
+    monkeypatch.setattr(mw_pipeline.subprocess, "Popen",
                         lambda cmd, **k: (envs.append(k.get("env")), _FakeProc(["ok\n"], 0))[1])
     assert w._score_only_work() is True
     assert len(envs) == 1 and envs[0] is not None

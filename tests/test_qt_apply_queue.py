@@ -30,6 +30,7 @@ import apply_queue  # noqa: E402
 import jev_switch  # noqa: E402
 from qt import apply_queue_panel as aqp  # noqa: E402
 from qt import main_window as mw  # noqa: E402
+from qt import mw_queue  # noqa: E402
 from qt.apply_queue_panel import (  # noqa: E402
     KICKOFF_COMMAND,
     LOGIN_COMMAND,
@@ -634,7 +635,7 @@ def _feed_password_dialogs(monkeypatch, answers):
 def test_set_ats_password_happy_path(qtbot, monkeypatch, tmp_path):
     w = _win(qtbot, monkeypatch, tmp_path)
     stored = []
-    monkeypatch.setattr(mw.ats_accounts, "set_master_password",
+    monkeypatch.setattr(mw_queue.ats_accounts, "set_master_password",
                         lambda pw: stored.append(pw) or True)
     _feed_password_dialogs(monkeypatch, [("fake-pw", True), ("fake-pw", True)])
     w._set_ats_password()
@@ -677,7 +678,7 @@ def test_apply_queue_mark_seen_marks_seen_and_removes_without_status(qtbot, monk
 def test_set_ats_password_mismatch_blank_and_cancel_abort(qtbot, monkeypatch, tmp_path):
     w = _win(qtbot, monkeypatch, tmp_path)
     stored = []
-    monkeypatch.setattr(mw.ats_accounts, "set_master_password",
+    monkeypatch.setattr(mw_queue.ats_accounts, "set_master_password",
                         lambda pw: stored.append(pw) or True)
     warned = []
     monkeypatch.setattr(QtWidgets.QMessageBox, "warning",

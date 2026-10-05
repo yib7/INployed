@@ -15,7 +15,7 @@ sys.path.insert(0, str(REPO / "local"))
 import manual_add  # noqa: E402
 import outbox  # noqa: E402
 import vm_sync  # noqa: E402
-import qt.main_window as mw  # noqa: E402
+import qt.mw_pipeline as mw_pipeline  # noqa: E402
 from qt.main_window import MainWindow  # noqa: E402
 
 
@@ -74,7 +74,7 @@ def test_push_outbox_to_vm_unions_sweep_ids(monkeypatch, tmp_path, win):
         got["drive"] = Path(drive)
         return ["11", "77"]
 
-    monkeypatch.setattr(mw, "gdrive_root_dir", lambda paths: tmp_path)
+    monkeypatch.setattr(mw_pipeline, "gdrive_root_dir", lambda paths: tmp_path)
     monkeypatch.setattr(outbox, "new_run_ids", lambda before: ["11"])
     monkeypatch.setattr(outbox, "unsynced_master_ids", _sweep)
     monkeypatch.setattr(outbox, "write_rows_outbox",
@@ -90,7 +90,7 @@ def test_push_outbox_to_vm_unions_sweep_ids(monkeypatch, tmp_path, win):
 def test_push_outbox_to_vm_skips_sweep_without_drive_root(monkeypatch, win):
     # No Drive root resolvable (e.g. dashboard opened with no sources): the
     # sweep must be skipped entirely, not run against a fabricated path.
-    monkeypatch.setattr(mw, "gdrive_root_dir", lambda paths: None)
+    monkeypatch.setattr(mw_pipeline, "gdrive_root_dir", lambda paths: None)
     monkeypatch.setattr(outbox, "new_run_ids", lambda before: [])
     monkeypatch.setattr(outbox, "unsynced_master_ids",
                         lambda drive, **k: pytest.fail("sweep must be skipped"))

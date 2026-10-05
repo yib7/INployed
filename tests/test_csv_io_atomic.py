@@ -1,7 +1,7 @@
 """P1-2: csv_io.write_csv_gz_atomic generalized with a `compression` parameter so
 _drop_ids_from_csv and _append_dedup_csv (local/jobsdata.py) can reuse the same
 atomic tmp+os.replace helper for PLAIN csv writes, not just gz. Default stays gz
-so both existing call sites (csv_io.reconcile_file, qt/main_window._write_is_seen)
+so both existing call sites (csv_io.reconcile_file, qt/mw_tracker._write_is_seen)
 keep working unchanged.
 """
 import os

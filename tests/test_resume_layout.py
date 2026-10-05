@@ -935,7 +935,7 @@ def test_compile_tex_suppresses_console_window(tmp_path, monkeypatch):
     """pdflatex must spawn headless: compile_tex passes creationflags=_NO_WINDOW so the
     windowless dashboard (pythonw) never flashes a console window per compile pass — the
     cause of the focus-stealing pop-ups during a tailor run. Mirrors the scrape spawn's
-    qt.main_window._no_window_flag() idiom."""
+    qt.mw_pipeline._no_window_flag() idiom."""
     import os
     from types import SimpleNamespace
 

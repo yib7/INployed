@@ -19,7 +19,7 @@ from . import config, render
 # pdflatex is a console app; spawned from the windowless dashboard (pythonw) it would
 # otherwise flash a console window each pass and steal focus — the cause of the pop-ups
 # during a tailor run. CREATE_NO_WINDOW (Windows only; 0 elsewhere) keeps every compile
-# headless — mirrors qt.main_window._no_window_flag().
+# headless. It mirrors qt.mw_pipeline._no_window_flag().
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 

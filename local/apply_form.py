@@ -238,7 +238,7 @@ def extract(page, *, content_site: Callable[[str], bool] | None = None) -> FormD
 
     `content_site(frame_url)`: may that child frame be read first (an
     embedded video or an ad stays in place)? The runner passes the page's
-    site and the ATS platforms (`apply_run.content_frame_site`); the default
+    site and the ATS platforms (`apply_sites.content_frame_site`); the default
     takes only a frame of the page's own host, or a blank or srcdoc one.
     At most `apply_judge.FIELDS_MAX` + 1 fields are kept, so a caller can
     tell a page holds more than it reads."""

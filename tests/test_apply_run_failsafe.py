@@ -15,6 +15,7 @@ sys.path.insert(0, str(REPO / "local"))
 
 import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
+import apply_sendwatch  # noqa: E402
 import apply_limits  # noqa: E402
 import apply_send_words  # noqa: E402
 import settings  # noqa: E402
@@ -235,9 +236,9 @@ def test_the_navigation_guard_stays_on_through_a_sign_in_challenge(
     on: list[bool] = []
     seen: list[bool] = []
     armed: list[bool] = []
-    start, stop = apply_run._NavGuard.start, apply_run._NavGuard.stop
-    monkeypatch.setattr(apply_run._NavGuard, "start", lambda g: (on.append(True), start(g)))
-    monkeypatch.setattr(apply_run._NavGuard, "stop", lambda g: (on.append(False), stop(g)))
+    start, stop = apply_sendwatch._NavGuard.start, apply_sendwatch._NavGuard.stop
+    monkeypatch.setattr(apply_sendwatch._NavGuard, "start", lambda g: (on.append(True), start(g)))
+    monkeypatch.setattr(apply_sendwatch._NavGuard, "stop", lambda g: (on.append(False), stop(g)))
     click = apply_run._Accounts._click
 
     def _quiet(self, page, digest, n):

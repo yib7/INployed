@@ -49,6 +49,7 @@ import apply_harness as h  # noqa: E402
 import apply_judge  # noqa: E402
 import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
+import apply_sendwatch  # noqa: E402
 import apply_limits  # noqa: E402
 import apply_send_words  # noqa: E402
 import jev  # noqa: E402
@@ -1446,7 +1447,7 @@ def test_a_stopped_page_after_a_request_left_keeps_the_check_sent_end(monkeypatc
     # sites", whose note invites a Re-queue
     job, _, _ = _code_job("Submit application", "submit")
     job._send_watch = SimpleNamespace(any=lambda: True)
-    monkeypatch.setattr(apply_run, "_NavGuard", _Blocked)
+    monkeypatch.setattr(apply_sendwatch, "_NavGuard", _Blocked)
     step = apply_run._Parked("needs_human", f"{apply_run.CHECK_SENT_REASON}: a request left after "
                                             "the submit click and the page reads as the form "
                                             "again", apply_run.CHECK_SENT_NOTE)
@@ -1459,7 +1460,7 @@ def test_a_stopped_page_after_a_request_left_keeps_the_check_sent_end(monkeypatc
 def test_a_stopped_page_after_a_final_worded_step_asks_the_person_to_check(monkeypatch):
     job, _, _ = _code_job("Confirm", "advance")
     job._final_advance = True
-    monkeypatch.setattr(apply_run, "_NavGuard", _Blocked)
+    monkeypatch.setattr(apply_sendwatch, "_NavGuard", _Blocked)
     with pytest.raises(apply_run._Parked) as p:
         with job._password_guard():
             pass
@@ -2650,7 +2651,7 @@ def test_a_post_to_a_new_tab_that_redirects_still_counts_as_a_send(context, tmp_
 
 
 def test_a_held_send_no_tab_claimed_is_a_possible_send_when_the_watch_stops():
-    watch = apply_run.SendWatch(Mock(), Mock())
+    watch = apply_sendwatch.SendWatch(Mock(), Mock())
     watch._unplaced = [("https://a.example/x", "possible", "POST https://a.example/x"),
                        ("https://a.example/y", "sent", "GET https://a.example/y")]
     assert watch.any() and watch.first() == "POST https://a.example/x"
@@ -2814,7 +2815,7 @@ def test_a_refused_form_read_after_the_captcha_wait_parks_as_not_sent(monkeypatc
         start = stop = lambda self: None
         any = lambda self: False    # noqa: E731
         first = lambda self: ""     # noqa: E731
-    monkeypatch.setattr(apply_run, "SendWatch", _Watch)
+    monkeypatch.setattr(apply_sendwatch, "SendWatch", _Watch)
     monkeypatch.setattr(job, "_human_check_showing", lambda **kw: True)
     monkeypatch.setattr(job, "_wait_for_human_check", lambda *a, **kw: None)
     monkeypatch.setattr(job, "_moved_during_wait", lambda *a: True)

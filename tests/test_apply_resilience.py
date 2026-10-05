@@ -452,11 +452,11 @@ def test_a_get_after_the_clicks_navigation_is_loaded_again_only_when_the_sends_a
     # are always carried
     from unittest.mock import Mock
 
-    import apply_run
+    import apply_sendwatch
     site = "https://careers.fabrikam.example"
     beacon, post, late = (Mock(redirected_from=None) for _ in range(3))
     get = Mock(url=f"{site}/thanks", redirected_from=None)
-    watch = apply_run.SendWatch(Mock(), Mock())
+    watch = apply_sendwatch.SendWatch(Mock(), Mock())
     watch._order = [(beacon, "possible", f"POST {_BEACON}"), (post, "sent", f"POST {site}/submit"),
                     (get, "sent", f"GET {site}/thanks"), (late, "sent", f"POST {site}/late")]
     watch.caused = [f"POST {_BEACON}", f"POST {site}/submit"]
@@ -486,9 +486,9 @@ def test_an_answer_counts_only_for_a_request_the_watch_holds():
     # request the watch does not hold may be reused by a later one
     from unittest.mock import Mock
 
-    import apply_run
+    import apply_sendwatch
     held, stranger = Mock(), Mock()
-    watch = apply_run.SendWatch(Mock(), Mock())
+    watch = apply_sendwatch.SendWatch(Mock(), Mock())
     watch._order = [(held, "sent", "POST https://careers.fabrikam.example/submit")]
     watch._finished(stranger)
     watch._answered(Mock(request=stranger))

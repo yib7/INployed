@@ -248,7 +248,8 @@ def test_b1_the_live_browser_runs_without_no_sandbox(_browser, tmp_path):
         ps = ("Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "
               f"'*{profile.name}*' }} | ForEach-Object {{ $_.CommandLine }}")
         out = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
-                             capture_output=True, text=True, timeout=60).stdout
+                             capture_output=True, text=True, encoding="utf-8",
+                             errors="replace", timeout=60).stdout
     finally:
         ctx.close()
     lines = [line for line in out.splitlines() if "--user-data-dir" in line]

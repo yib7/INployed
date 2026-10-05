@@ -43,6 +43,7 @@ sys.path.insert(0, str(REPO / "local"))
 
 import apply_fill  # noqa: E402
 import apply_form  # noqa: E402
+import apply_form_js  # noqa: E402
 import apply_harness as h  # noqa: E402
 import apply_judge  # noqa: E402
 import apply_queue  # noqa: E402
@@ -1601,15 +1602,15 @@ def test_every_copy_of_the_send_and_step_words_holds_the_loops_own():
     # until the judge says it sends)
     assert _words(apply_send_words.SEND_WORDS.pattern) == submit - {"apply"}
     # the extractor's `submit` hint
-    hint = re.search(r"submits \|\| /(.*?)/i\.test\(text\)", apply_form._EXTRACT_JS).group(1)
+    hint = re.search(r"submits \|\| /(.*?)/i\.test\(text\)", apply_form_js._EXTRACT_JS).group(1)
     assert _words(hint) == submit
     # a popup's send name, the extractor's and `send_phrase`'s
     verbs = (submit - {"apply"}) | final
-    assert _words(_js_regex(apply_form._EXTRACT_JS, "SEND_VERB")) == verbs
+    assert _words(_js_regex(apply_form_js._EXTRACT_JS, "SEND_VERB")) == verbs
     assert _words(apply_send_words._POPUP_VERB.pattern) == verbs
-    assert _words(_js_regex(apply_form._EXTRACT_JS, "SEND_LEAD")) == _words(
+    assert _words(_js_regex(apply_form_js._EXTRACT_JS, "SEND_LEAD")) == _words(
         apply_send_words._POPUP_LEAD.pattern)
-    assert _words(_js_regex(apply_form._EXTRACT_JS, "SEND_OBJECT")) == _words(
+    assert _words(_js_regex(apply_form_js._EXTRACT_JS, "SEND_OBJECT")) == _words(
         apply_send_words._POPUP_SEND_OBJECT.pattern)
     # the click's arm and the overlay picker splice every send and last-step word
     assert _words(apply_fill._SEND_JS) == submit | final
@@ -1631,7 +1632,7 @@ def test_the_popup_names_the_overlays_never_and_the_step_words_pin_each_differen
     # shows up here
     submit = _words(apply_send_words.SUBMIT_WORDS.pattern)
     final = _words(apply_send_words.FINAL_WORDS.pattern)
-    js = apply_form._EXTRACT_JS
+    js = apply_form_js._EXTRACT_JS
     # the extractor's `sendName` reads no leading Apply: the live check
     # (`send_phrase`) refuses "Apply now" and "Apply with" as a popup's name,
     # the extractor only reads them as a way on (POPUP_GO_ON, "apply with"),

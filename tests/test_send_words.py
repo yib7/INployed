@@ -5,7 +5,7 @@ is pinned here to its text, so a change to a list shows up as one red line
 per copy it reaches, and no copy can drift from the lists.
 """
 import apply_fill
-import apply_form
+import apply_form_js
 import apply_judge
 import apply_send_words as sw
 
@@ -32,7 +32,7 @@ def test_the_page_script_sources_are_built_from_the_word_lists():
 
 
 def test_every_page_script_holds_the_built_sources():
-    js = apply_form._EXTRACT_JS
+    js = apply_form_js._EXTRACT_JS
     assert f"const SEND_LEAD = {sw.js_send_lead()};" in js
     assert f"const SEND_VERB = {sw.js_send_verb()};" in js
     assert f"const SEND_OBJECT = {sw.js_send_object()};" in js

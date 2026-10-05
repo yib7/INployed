@@ -1,4 +1,4 @@
-# Local Windows side (Python 3.14): watcher, dashboard,
+# Local Windows side (Python 3.14, see .python-version): watcher, dashboard,
 # resume tailor, and tests. Pins re-verified against PyPI stable on 2026-10-03
 # (every pin below is the newest installable stable release on PyPI, and pip-audit
 # reports no known vulnerability against this set). The one pin that is not the

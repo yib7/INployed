@@ -201,6 +201,7 @@ def test_b1_every_launch_keeps_the_sandbox_and_refuses_downloads(tmp_path, monke
 
 
 def test_b1_the_probe_browser_keeps_the_sandbox_and_refuses_downloads(monkeypatch):
+    pytest.importorskip("playwright")
     launches: list[dict] = []
     contexts: list[dict] = []
 

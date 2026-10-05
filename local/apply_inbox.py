@@ -368,27 +368,30 @@ def _main_frame(request) -> bool:
 
 
 def _message(tab, inbox_url: str, site: str, *, jev, ats: str, company: str, want: str,
-             since: datetime | None) -> Message | None:
+             since: datetime | None,
+             refuse: Callable[[str], bool] | None = None) -> Message | None:
     """The message the judge takes for the site's, carrying a `want` ("code"
     or "link"), among the rows no older than `since`; None when no
-    row qualifies."""
+    row qualifies. A row whose sender `refuse` names is asked about as the
+    others are and never picked (`apply_judge.read_inbox`)."""
     messages = [m for m in list_messages(tab, inbox_url) if not _stale(m, since)]
     rows = [asdict(message) for message in messages]
     if not rows:
         return None
     state, questions = apply_judge.inbox_questions(rows, site, ats=ats, company=company,
                                                    want=want)
-    chosen = apply_judge.read_inbox(jev.judge(state, questions), rows, want=want)
+    chosen = apply_judge.read_inbox(jev.judge(state, questions), rows, want=want, refuse=refuse)
     return next((m for m in messages if m.n == chosen), None)
 
 
 def _poll(tab, inbox_url: str, site: str, *, jev, ats: str, company: str,
-          since: datetime | None = None, used=frozenset()) -> str | None:
+          since: datetime | None = None, used=frozenset(),
+          refuse: Callable[[str], bool] | None = None) -> str | None:
     """One read of the inbox: the message the judge takes for the site's,
     and the code it picks from that message's body, never one the run used
     already (`used`, by `code_hash`); None when either is missing."""
     message = _message(tab, inbox_url, site, jev=jev, ats=ats, company=company, want="code",
-                       since=since)
+                       since=since, refuse=refuse)
     if not message:
         return None
     try:
@@ -442,12 +445,13 @@ def verification_links(links: list[tuple[str, str]], allowed: Callable[[str], bo
 
 def _poll_link(tab, inbox_url: str, site: str, *, jev, ats: str, company: str,
                allowed: Callable[[str], bool], since: datetime | None = None,
-               refused: list | None = None) -> str | None:
+               refused: list | None = None,
+               refuse: Callable[[str], bool] | None = None) -> str | None:
     """One read of the inbox for a verification link: the message the
     judge takes for the site's account check, and its one verification link
     on an allowed host (the judge picks when it holds several)."""
     message = _message(tab, inbox_url, site, jev=jev, ats=ats, company=company, want="link",
-                       since=since)
+                       since=since, refuse=refuse)
     if not message:
         return None
     try:
@@ -533,7 +537,7 @@ def fetch_code(page, site: str, inbox_url: str, *, jev, polls: int = 3,
                wait_s: float = 60, clock=time.monotonic, sleep=time.sleep,
                deadline: float | None = None, ats: str = "", company: str = "",
                errors: list | None = None, since: datetime | None = None,
-               used=frozenset()) -> str | None:
+               used=frozenset(), refuse: Callable[[str], bool] | None = None) -> str | None:
     """Judge message relevance and code candidates; never log mail or codes.
 
     `ats` (the queue entry's system) and `company` reach the from-site
@@ -548,11 +552,11 @@ def fetch_code(page, site: str, inbox_url: str, *, jev, polls: int = 3,
     is appended to `errors` by its type name alone (its message may quote the
     mail). A message whose time is before `since` (the job's start)
     is never read, and a code in `used` (by `code_hash`: the run typed it
-    already) is never picked.
+    already) is never picked, nor a message whose sender `refuse` names.
     """
     def one(tab):
         return _poll(tab, inbox_url, site, jev=jev, ats=ats, company=company, since=since,
-                     used=used)
+                     used=used, refuse=refuse)
     return _polling(page, inbox_url, one, polls=polls, wait_s=wait_s, clock=clock, sleep=sleep,
                     deadline=deadline, errors=errors)
 
@@ -561,17 +565,19 @@ def fetch_link(page, site: str, inbox_url: str, *, jev, allowed: Callable[[str],
                polls: int = 3, wait_s: float = 60, clock=time.monotonic, sleep=time.sleep,
                deadline: float | None = None, ats: str = "", company: str = "",
                errors: list | None = None, since: datetime | None = None,
-               refused: list | None = None) -> str | None:
+               refused: list | None = None,
+               refuse: Callable[[str], bool] | None = None) -> str | None:
     """The verification link of the site's account check, polled
     as `fetch_code` polls: the message the judge takes for the site's and
     for an account check by link, then its one verification link whose
     host `allowed` takes (the application's own site, a known ATS). A
     verification link on any other host is never handed back and never
-    opened: its host joins `refused`. The link is only read here; the
+    opened: its host joins `refused`. A message whose sender `refuse`
+    names is never picked. The link is only read here; the
     caller opens it. Never logs mail or links."""
     def one(tab):
         return _poll_link(tab, inbox_url, site, jev=jev, ats=ats, company=company,
-                          allowed=allowed, since=since, refused=refused)
+                          allowed=allowed, since=since, refused=refused, refuse=refuse)
     return _polling(page, inbox_url, one, polls=polls, wait_s=wait_s, clock=clock, sleep=sleep,
                     deadline=deadline, errors=errors)
 

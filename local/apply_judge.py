@@ -62,7 +62,7 @@ import dataclasses
 import logging
 import re
 from dataclasses import asdict, dataclass, field
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from urllib.parse import urlsplit
 
@@ -220,6 +220,7 @@ STRUCT_RULED_OUT = -2.0         # a confirmation beside a form with no received 
 READ_NOUL_MIN = 0.50            # a read Noul at or above it says yes
 HELP_CAP = 200                  # per-field help text sent
 OPTIONS_CAP = 40                # per-field options sent
+FIELDS_MAX = 200                # boxes read on one page; a page with more parks
 
 PAGE_STATES = ("application_form", "login_wall", "signup_form", "review_page",
                "confirmation", "code_gate", "captcha_or_bot_check", "payment_request",
@@ -881,7 +882,10 @@ def page_requests(digest: FormDigest, catalog: FactCatalog,
     application and whose roles never beat the page's own (`plan`); else
     the fields halved, again and again until every request fits or holds a
     single field, the first part with the buttons and every part with its
-    own `fields` (its questions name them by their place in it)."""
+    own `fields` (its questions name them by their place in it). Only the
+    first `FIELDS_MAX` fields are asked about."""
+    if len(digest.fields) > FIELDS_MAX:
+        digest = dataclasses.replace(digest, fields=digest.fields[:FIELDS_MAX])
     state, questions = page_questions(digest, catalog, job, fields=fields)
     if request_fits(state, questions):
         return [(state, questions)]
@@ -2696,12 +2700,18 @@ def inbox_questions(messages: list[Mapping[str, Any]], site: str, *, ats: str = 
 
 
 def read_inbox(answers: Mapping[str, Answer],
-               messages: list[Mapping[str, Any]], want: str = "code") -> int | None:
+               messages: list[Mapping[str, Any]], want: str = "code", *,
+               refuse: Callable[[str], bool] | None = None) -> int | None:
     """The n of the message maximising `from_site * has_{want}`, with both
-    above `INBOX_MIN`; None when no message qualifies."""
+    above `INBOX_MIN`; None when no message qualifies. `refuse(sender)`: a
+    sender the code never takes the code or link from, whatever the judge
+    answered (LinkedIn, the inbox provider, an identity provider, another
+    ATS than the job's: `apply_run._JobRun._sender_refused`)."""
     best_n, best_p = None, 0.0
     for m in messages:
         n = int(m["n"])
+        if refuse is not None and refuse(str(m.get("sender", ""))):
+            continue
         from_site = noul_of(answers, f"msg_{n}_from_site")
         has = noul_of(answers, f"msg_{n}_has_{want}")
         if from_site <= INBOX_MIN or has <= INBOX_MIN:

@@ -2041,8 +2041,10 @@ def extract(page, *, content_site: Callable[[str], bool] | None = None) -> FormD
     `content_site(frame_url)`: may that child frame be read first (an
     embedded video or an ad stays in place)? The runner passes the page's
     site and the ATS platforms (`apply_run.content_frame_site`); the default
-    takes only a frame of the page's own host, or a blank or srcdoc one."""
-    from apply_judge import PAGE_TEXT_CAP      # lazy: apply_judge imports this module
+    takes only a frame of the page's own host, or a blank or srcdoc one.
+    At most `apply_judge.FIELDS_MAX` + 1 fields are kept, so a caller can
+    tell a page holds more than it reads."""
+    from apply_judge import FIELDS_MAX, PAGE_TEXT_CAP   # lazy: apply_judge imports this module
 
     fields: list[Field] = []
     buttons: list[Button] = []
@@ -2068,6 +2070,8 @@ def extract(page, *, content_site: Callable[[str], bool] | None = None) -> FormD
                 "apply_form: frame %d skipped: %s", idx, type(e).__name__)
             continue
         for f in raw.get("fields") or []:
+            if len(fields) > FIELDS_MAX:
+                break
             fields.append(Field(
                 n=len(fields), locator=(idx, str(f["css"])), label=str(f["label"]),
                 type=str(f["type"]), required=bool(f["required"]),
@@ -2163,7 +2167,15 @@ def resolve(page, locator: tuple[int, str]):
     first frame at the URL is taken, so for them the index is the better
     guide, and it is used whenever the frame at the index still has the
     URL."""
-    idx, css = int(locator[0]), str(locator[1])
+    return resolve_frame(page, locator).locator(str(locator[1]))
+
+
+def resolve_frame(page, locator: tuple[int, str]):
+    """The frame `resolve` finds a digest locator in (by the URL it had at
+    the last `extract` first, then by its index): a check of where a control
+    sits looks at the frame the act will use. Raises `IndexError` when the
+    frame no longer exists."""
+    idx = int(locator[0])
     all_frames = frames(page)
     try:
         urls = _FRAME_URLS.get(page) or []
@@ -2175,10 +2187,10 @@ def resolve(page, locator: tuple[int, str]):
         if here != want:
             moved = [f for f in all_frames[1:] if str(getattr(f, "url", "") or "") == want]
             if moved:
-                return moved[0].locator(css)
+                return moved[0]
     if not 0 <= idx < len(all_frames):
         raise IndexError(f"frame {idx} is gone (page has {len(all_frames)})")
-    return all_frames[idx].locator(css)
+    return all_frames[idx]
 
 
 # --- live reads of the page (the submit gate and every click) ------------------------

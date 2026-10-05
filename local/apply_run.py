@@ -225,8 +225,76 @@ _SHARED_HOSTING = frozenset((
     "pages.dev", "workers.dev", "web.app", "firebaseapp.com", "appspot.com",
     "cloudfront.net", "amazonaws.com", "blogspot.com", "wixsite.com", "webflow.io",
     "onrender.com", "fly.dev", "glitch.me", "ngrok.io", "ngrok-free.app", "surge.sh",
-    "wordpress.com", "sharepoint.com", "notion.site"))
+    "wordpress.com", "sharepoint.com", "notion.site", "weebly.com", "squarespace.com",
+    "myshopify.com", "wixstudio.io", "editorx.io", "jimdosite.com", "webnode.com",
+    "square.site", "carrd.co", "framer.website", "framer.app", "godaddysites.com",
+    "wpengine.com", "wpcomstaging.com", "gitlab.io", "bitbucket.io", "readthedocs.io",
+    "repl.co", "replit.app", "railway.app", "deno.dev", "azurestaticapps.net",
+    "cloudapp.net", "windows.net", "ondigitalocean.app", "digitaloceanspaces.com",
+    "hs-sites.com", "hubspotpagebuilder.com", "myportfolio.com", "tumblr.com",
+    "substack.com", "googleusercontent.com", "zohosites.com",
+    "strikingly.com", "mystrikingly.com", "webstarts.com", "site123.me", "yolasite.com"))
+# Hosts with many owners on the one host, each under its own path
+# (`sites.google.com/view/<name>`): each such host is a site of its own, never
+# one site with the rest of its domain (a Google sign-in, a Google Doc).
+_SHARED_HOSTS = frozenset((
+    "sites.google.com", "docs.google.com", "drive.google.com", "storage.googleapis.com",
+    "forms.office.com", "forms.microsoft.com", "s3.amazonaws.com"))
+# Shared hosting whose names nest under one another
+# (`bucket.s3.amazonaws.com`, `account.blob.core.windows.net`): a host there is
+# its own site, the whole name.
+_NESTED_HOSTING = frozenset(("amazonaws.com", "windows.net", "googleusercontent.com"))
+# Oracle's recruiting hosts (`<tenant>.fa.<region>.oraclecloud.com`). Oracle's
+# other cloud hosts (object storage, any customer's app) serve anyone's pages
+# and are never the platform.
+_ORACLE_RECRUITING = re.compile(r"^[a-z0-9-]+\.fa\.[a-z0-9-]+\.oraclecloud\.com$")
+# One vendor's sites: a job's account on one of them may move between them
+# (Workday's careers and sign-in hosts, SuccessFactors' career site and its
+# recruiting pages).
+_PLATFORMS = (
+    frozenset(("myworkdayjobs.com", "myworkdaysite.com", "myworkday.com", "workday.com")),
+    frozenset(("successfactors.com", "successfactors.eu", "sapsf.com", "sapsf.eu",
+               "jobs2web.com")),
+    frozenset(("ultipro.com", "ukg.com", "saashr.com")),
+    frozenset(("applytojob.com", "jazzhr.com", "jazz.co")),
+    frozenset(("paycor.com", "recruitingbypaycor.com")),
+    frozenset(("personio.de", "personio.com")),
+    frozenset(("oraclecloud.com", "taleo.net")),
+)
+# Host labels that name no company on an ATS platform: the boards, sign-in,
+# API and asset hosts every company there shares
+# (`boards.greenhouse.io`, `login.icims.com`, `workforcenow.adp.com`).
+_SHARED_TENANT_LABELS = frozenset((
+    "www", "jobs", "job", "careers", "career", "apply", "boards", "job-boards", "boards-api",
+    "app", "apps", "api", "login", "auth", "sso", "accounts", "account", "secure", "my",
+    "cdn", "static", "assets", "recruiting", "recruit", "hire", "hiring", "talent", "portal",
+    "mail", "embed", "id", "signin", "candidate", "candidates", "external", "fa", "identity",
+    "ats", "workforcenow", "myjobs", "sjobs", "en", "us", "eu", "uk", "ca", "au", "de"))
+# a platform's numbered data-centre and pod labels (`wd5`, `career4`, `us58`)
+_NUMBERED_LABEL = re.compile(r"^(?:wd|career|performancemanager|recruiting|hcm|dc|us|eu|ca|"
+                             r"uk|au|ats|jobs|secure|pod|na|emea|apac)\d+[a-z]?$")
+_LOOPBACK_HOSTS = frozenset(("127.0.0.1", "::1", "localhost"))
+# Senders whose mail is never the job's code or link: an identity provider's
+# sign-in and security mail (beside LinkedIn and the inbox provider's own)
+_IDENTITY_SITES = frozenset((
+    "okta.com", "oktapreview.com", "auth0.com", "onelogin.com", "microsoftonline.com",
+    "microsoft.com", "live.com", "office.com", "office365.com", "outlook.com", "hotmail.com",
+    "google.com", "gmail.com", "googlemail.com", "apple.com", "icloud.com", "id.me",
+    "login.gov", "duosecurity.com", "duo.com", "pingidentity.com", "pingone.com",
+    "jumpcloud.com", "yahoo.com", "facebook.com", "facebookmail.com", "github.com",
+    "amazon.com", "amazonaws.com"))
+# the inbox providers' own mail domains, by the provider `apply_inbox` names
+_INBOX_PROVIDER_SITES = {
+    "gmail": frozenset(("google.com", "gmail.com", "googlemail.com")),
+    "outlook": frozenset(("microsoft.com", "outlook.com", "office.com", "office365.com",
+                          "live.com", "hotmail.com", "microsoftonline.com")),
+}
 VIEWPORT = {"width": 1400, "height": 1000}
+# Every browser the runner opens keeps Chrome's renderer sandbox on
+# (Playwright turns it off unless asked) and takes no downloads: an
+# application's pages are a stranger's, in a profile that holds the
+# sign-ins and the typed password.
+LAUNCH_HARDENING = {"chromium_sandbox": True, "accept_downloads": False}
 BROWSER_CHANNEL = "chrome"         # the installed Google Chrome; the bundled Chromium is the fallback
 RECORD_NAME = "apply_record.md"
 HIDDEN = "<hidden>"
@@ -238,6 +306,11 @@ EASY_APPLY_NOTE = apply_linkedin.EASY_APPLY_NOTE
 LINKEDIN_RETURN_REASON = "the application went back to LinkedIn after the company's form"
 CODE_NOTE = "enter the emailed code manually, then Re-queue"
 LINK_REASON = "emailed verification link needed"
+# a page that moved the job onto another company's account on its ATS, or
+# onto another platform, after the job's own was known
+TENANT_REASON = "the application left the job's own account on its application platform"
+PASSWORD_HTTP_REASON = "this site asks for a password over an unencrypted connection"
+FIELDS_MAX_REASON = "the page holds more boxes than the run reads on one page"
 ACCOUNT_EXISTS_REASON = "an account exists"
 SSO_REASON = "sign-in only through another site"
 SSO_NOTE = "sign in once in the auto-apply profile, then Re-queue"
@@ -456,7 +529,8 @@ def launch_profile(pw, profile_dir: Path, *, headless: bool, log=None):
         _sweep_check_copies(profile_dir, log)
         try:
             ctx = pw.chromium.launch_persistent_context(
-                str(profile_dir), channel=BROWSER_CHANNEL, headless=headless, viewport=VIEWPORT)
+                str(profile_dir), channel=BROWSER_CHANNEL, headless=headless, viewport=VIEWPORT,
+                **LAUNCH_HARDENING)
         except Exception as e:      # noqa: BLE001  (Chrome absent or broken: the bundled build)
             if profile_lock.chrome_holds(profile_dir):
                 raise profile_lock.ProfileBusy(profile_lock.RUN_BUSY) from None
@@ -464,7 +538,7 @@ def launch_profile(pw, profile_dir: Path, *, headless: bool, log=None):
             log.warning("Google Chrome did not start (%s: %s); using the bundled Chromium",
                         type(e).__name__, first)
             ctx = pw.chromium.launch_persistent_context(
-                str(profile_dir), headless=headless, viewport=VIEWPORT)
+                str(profile_dir), headless=headless, viewport=VIEWPORT, **LAUNCH_HARDENING)
     except BaseException:
         guard.release()
         raise
@@ -675,6 +749,20 @@ def account_forms(page, digest) -> list:
         for form in pw_forms]
 
 
+_FORM_ACTION_JS = "el => el.form && el.form.getAttribute('action') ? el.form.action : ''"
+
+
+def _form_action(loc) -> str:
+    """The absolute action URL of the form a box sits in; "" for a box with
+    no form or no action, a script action (`javascript:`), or a box that
+    cannot be read."""
+    try:
+        action = str(loc.evaluate(_FORM_ACTION_JS, timeout=5_000) or "")
+    except Exception:       # noqa: BLE001  (a box or frame that went away)
+        return ""
+    return action if urlsplit(action).scheme.lower() in ("http", "https") else ""
+
+
 def _credential_form(digest) -> bool:
     """A sign-in or sign-up screen by its boxes: a password box, or the
     address box of a two-step sign-in, and no file box (an account screen
@@ -703,7 +791,8 @@ class _NavGuard:
     password may be typed (`_password_ok`: never LinkedIn, the inbox or a
     job board); a GET wherever the run may go
     (`_allowed_site`), so a hop back to LinkedIn after the submit still
-    loads. `posts` keeps each stopped post's method and bare URL, as
+    loads. A navigation to an unencrypted address (`_insecure`) is stopped
+    either way. `posts` keeps each stopped post's method and bare URL, as
     `SendWatch` writes its rows."""
 
     def __init__(self, run, page):
@@ -724,8 +813,10 @@ class _NavGuard:
             frame_id = None
         if target_host and request.is_navigation_request() and frame_id in self.frames:
             post = request.method.upper() == "POST"
-            if not (self.run._password_ok(target_host) if post
-                    else self.run._allowed_site(target_host)):
+            # an unencrypted address (`_insecure`) is stopped either way: a
+            # GET form carries the password in its URL
+            if _insecure(request.url) or not (self.run._password_ok(request.url) if post
+                                              else self.run._allowed_site(target_host)):
                 self.blocked.append(target_host)
                 if post:
                     self.posted = True
@@ -1719,7 +1810,12 @@ class _Accounts:
                 return False
             by_n = {pf.n: pf for pf in plan.fields}
             passwords, emails, others, written = [], [], [], []
-            password_hosts = {_host(page.url)}
+            # the addresses the password would answer to: the page's, each
+            # password box's frame's (the frame the fill acts in) and its
+            # form's action
+            password_urls = [str(page.url)]
+            action_urls: list[str] = []
+            box_frames: list = []
             for field in digest.fields:
                 loc = apply_form.resolve(page, field.locator).first
                 idx = int(field.locator[0])
@@ -1733,9 +1829,12 @@ class _Accounts:
                         continue
                     passwords.append(loc)
                     self.run._keep_secret_box(field.locator)
-                    if 0 <= idx < len(frames):
-                        guard.frames.add(id(frames[idx]))
-                        password_hosts.add(_host(self.run._frame_url(frames, idx)))
+                    frame = self.run._box_frame(page, field.locator, frames)
+                    box_frames.append(frame)
+                    if frame is not None:
+                        guard.frames.add(id(frame))
+                        password_urls.append(self.run._frame_address(frame))
+                    action_urls.append(_form_action(loc))
                 elif _is_email_box(field):
                     emails.append(loc)
                     if 0 <= idx < len(frames):
@@ -1788,7 +1887,11 @@ class _Accounts:
                 # the last word before the password is typed: the page and
                 # every frame holding a password box are on the application's
                 # site, whichever path (a sign-up link, a redirect) led here
-                outside = sorted(h for h in password_hosts if h and not self.run._password_ok(h))
+                why = self.run._secret_refusal([*password_urls, *action_urls])
+                if why.startswith(PASSWORD_HTTP_REASON):
+                    raise _Parked("needs_human", why, LOGIN_NOTE)
+                outside = sorted({_host(u) for u in password_urls
+                                  if _host(u) and not self.run._password_ok(u)})
                 if outside:
                     raise _Parked("needs_human",
                                   f"a sign-in on {outside[0]}, outside the application site",
@@ -1819,7 +1922,13 @@ class _Accounts:
                 tied = self.run._option_ties(typed, errors)
                 filled = [f for f in filled if f.n not in tied]
                 self.run._park_a_required_tie(typed, tied)
-                for loc in passwords:
+                for loc, frame in zip(passwords, box_frames):
+                    # the box's frame where the fill acts, once more just
+                    # before it: a frame that moved since the check above
+                    # never takes the password
+                    moved = self.run._moved_box(page, frame)
+                    if moved:
+                        raise _Parked("needs_human", moved, LOGIN_NOTE)
                     if not ats_accounts.fill_password(page, loc):
                         return False
                 if passwords:
@@ -1881,7 +1990,8 @@ class _Accounts:
 class _Inbox:
     """The job's verification mail (`apply_inbox`), read in a tab of its own:
     a code, never one older than the job or one the job used already, or an
-    account check's link on an allowed host."""
+    account check's link on an allowed host; never from a sender the job
+    refuses (`_JobRun._sender_refused`)."""
 
     def __init__(self, run):
         self.run = run
@@ -1900,7 +2010,7 @@ class _Inbox:
                                       clock=self.run.r.clock, sleep=self.run.r.sleep,
                                       deadline=self.run.deadline, errors=errors,
                                       since=self.run.started_at, used=frozenset(self.used),
-                                      **self._entry_words())
+                                      refuse=self.run._sender_refused, **self._entry_words())
         if code:
             self.used.add(apply_inbox.code_hash(code))
         self.run._trace("inbox", found=bool(code), errors=errors)
@@ -1914,7 +2024,7 @@ class _Inbox:
                                       allowed=self.run._link_ok, clock=self.run.r.clock,
                                       sleep=self.run.r.sleep, deadline=self.run.deadline,
                                       errors=errors, since=self.run.started_at, refused=refused,
-                                      **self._entry_words())
+                                      refuse=self.run._sender_refused, **self._entry_words())
         self.refused = refused
         # the link's host alone: its path and query carry the account's token
         self.run._trace("inbox_link", found=bool(link), host=_host(link or ""),
@@ -2084,10 +2194,18 @@ def _site(url_or_host: str) -> str:
       is generic (`jobs.example.co.uk` -> `example.co.uk`), else the whole
       host: `ltd.uk`, `gc.ca`, `gouv.fr` or `tx.us` are suffixes that
       hold many owners, and a host there is never grouped with another;
+    - a host many owners share by path (`_SHARED_HOSTS`: `sites.google.com`)
+      is its own site;
+    - on Oracle's cloud, only a recruiting host (`_ORACLE_RECRUITING`) is the
+      platform's site; any other Oracle cloud host is its own;
     - else the last two labels."""
     host = _host(url_or_host)
-    if not host or host.replace(".", "").isdigit() or "." not in host:
+    if not host or host.replace(".", "").isdigit() or "." not in host or ":" in host:
         return host             # an IP address, `localhost`
+    if host in _SHARED_HOSTS:
+        return host
+    if host.endswith(".oraclecloud.com") and not _ORACLE_RECRUITING.match(host):
+        return host
     labels = [p for p in host.split(".") if p]
     known = _known_sites()
     for i in range(len(labels) - 1):
@@ -2095,7 +2213,7 @@ def _site(url_or_host: str) -> str:
         if tail in known:
             return tail
     if len(labels) >= 3 and ".".join(labels[-2:]) in _SHARED_HOSTING:
-        if ".".join(labels[-2:]) == "amazonaws.com":
+        if ".".join(labels[-2:]) in _NESTED_HOSTING:
             return ".".join(labels)
         return ".".join(labels[-3:])
     if len(labels) >= 3 and len(labels[-1]) == 2:
@@ -2103,6 +2221,51 @@ def _site(url_or_host: str) -> str:
             return ".".join(labels[-3:])
         return ".".join(labels)
     return ".".join(labels[-2:])
+
+
+def _platform(site: str) -> frozenset[str]:
+    """The sites of the vendor `site` belongs to (`_PLATFORMS`); a site no
+    vendor shares stands alone."""
+    return next((p for p in _PLATFORMS if site in p), frozenset((site,)))
+
+
+def _ats_tenant(url_or_host: str) -> str:
+    """The company account a host on an ATS platform names, "" for a host
+    every company there shares or a host off the platforms: the tenant
+    `ats_accounts.tenant_key` reads (Workday, iCIMS), else the host's labels
+    left of its site without the shared and numbered ones
+    (`acme.bamboohr.com` -> "acme", `ehxx.fa.us2.oraclecloud.com` ->
+    "ehxx", `boards.greenhouse.io` and `wd5.myworkdaysite.com` -> "")."""
+    host = _host(url_or_host)
+    site = _site(host)
+    if site not in ATS_SITES:
+        return ""
+    key = ats_accounts.tenant_key(host)
+    if key:
+        return key.split("/", 1)[1]
+    left = host[:-len(site)].rstrip(".") if host.endswith("." + site) else ""
+    names = [label for label in left.split(".") if label
+             and label not in _SHARED_TENANT_LABELS and not _NUMBERED_LABEL.match(label)]
+    return ".".join(names)
+
+
+def _insecure(url: str) -> bool:
+    """Does `url` reach its site unencrypted? An `http` address anywhere but
+    this machine's own loopback (`127.0.0.1`, `::1`, `localhost`). A bare
+    host, or a scheme that names no host (`about:`, `blob:`), is no
+    such address."""
+    parts = urlsplit(str(url or "").strip())
+    if parts.scheme.lower() != "http":
+        return False
+    host = (parts.hostname or "").lower()
+    return not (host in _LOOPBACK_HOSTS or host.endswith(".localhost"))
+
+
+def _sender_site(sender: str) -> str:
+    """The site of a listed message's sender address ("" when the row shows
+    a name alone)."""
+    found = re.findall(r"[\w.+'-]+@([a-z0-9-]+(?:\.[a-z0-9-]+)+)", str(sender or "").lower())
+    return _site(found[-1]) if found else ""
 
 
 def _is_captcha_url(url: str) -> bool:
@@ -4691,7 +4854,15 @@ class Runner:
                     self.log.warning("the browser window is closed; the drain stops and the "
                                      "queued jobs stay queued")
                     break
-                entry = apply_queue.claim("apply_run", path=self.queue_path)
+                try:
+                    entry = apply_queue.claim("apply_run", path=self.queue_path)
+                except apply_queue.QueueLockTimeout as e:
+                    # a queue held past the lock's wait, or one that could
+                    # not be read (`QueueUnreadable`): nothing was written
+                    self.log.warning("the queue could not be claimed from (%s); the drain "
+                                     "stops and the queued jobs stay queued",
+                                     type(e).__name__)
+                    break
                 if entry is None:
                     break
                 outcome = self._run_job(ctx, entry)
@@ -5069,13 +5240,59 @@ class _JobRun:
         people's content: `docs.google.com`, `forms.office.com`, a Google
         sign-in frame); the admitted ATS by its whole site (`login.icims.com`
         next to `careers-gtsx.icims.com`); a known ATS platform
-        (`ATS_SITES`) anywhere. The master password never goes to LinkedIn
+        (`ATS_SITES`) anywhere, until the job's own account on one is known
+        (`_tenant_departure`). The master password never goes to LinkedIn
         (`_password_ok`)."""
         host = _host(host)
         if host in self.allowed or apply_linkedin.is_linkedin(host):
             return True
+        if self._tenant_departure(host):
+            return False
         site = _site(host)
         return site in ATS_SITES or any(site == _site(h) for h in self.ats_hosts)
+
+    def _pinned_hosts(self) -> list[str]:
+        """The job's own hosts on an ATS platform: its company's account there,
+        from the queue entry, from `_admit_ats_transition`, or the first one
+        the job's page landed on (`_pin_first_tenant`)."""
+        return sorted(h for h in self.ats_hosts if _site(h) in ATS_SITES)
+
+    def _tenant_departure(self, url_or_host: str) -> str:
+        """The job's own ATS host that `url_or_host` departs from, "" when it
+        does not. Once the job's account on an ATS platform is known
+        (`_pinned_hosts`), a host on a platform is the application's only
+        when it is one of the job's hosts, a host every company on the
+        job's platform shares (`login.icims.com`, `wd5.myworkdaysite.com`),
+        or a host naming the same company there (`careers-gtsx.icims.com`
+        beside `gtsx.icims.com`). Another company's account on the same
+        platform, or another platform, departs from it."""
+        host = _host(url_or_host)
+        site = _site(host)
+        if site not in ATS_SITES or host in self.ats_hosts:
+            return ""
+        pinned = self._pinned_hosts()
+        if not pinned:
+            return ""
+        platform = _platform(site)
+        mine = [h for h in pinned if _site(h) in platform]
+        if not mine:
+            return pinned[0]
+        tenant = _ats_tenant(host)
+        ours = {_ats_tenant(h) for h in mine} - {""}
+        return mine[0] if tenant and ours and tenant not in ours else ""
+
+    def _tenant_park(self, host: str, pinned: str) -> _Parked:
+        return _Parked("needs_human", f"{TENANT_REASON}: the page moved from {pinned} to "
+                                      f"{host}")
+
+    def _pin_first_tenant(self, url: str) -> None:
+        """The first ATS host the job's page lands on, when no step named
+        the job's account on a platform yet, becomes it: another company's
+        account met later departs from it (`_tenant_departure`)."""
+        host = _host(url)
+        if host and _site(host) in ATS_SITES and not self._pinned_hosts():
+            self.ats_hosts.add(host)
+            self._decide("tenant_pinned", f"the application's platform account is on {host}")
 
     def _check_host(self, url: str) -> None:
         if _error_page(url):
@@ -5088,6 +5305,9 @@ class _JobRun:
             self._recover_error_page(page)
             url = str(page.url)
         host = _host(url)
+        pinned = self._tenant_departure(host) if host else ""
+        if pinned:
+            raise self._tenant_park(host, pinned)
         if host and not self._allowed_site(host):
             raise _Parked("needs_human", f"left the allowed sites: {host}")
 
@@ -5289,11 +5509,17 @@ class _JobRun:
                                          f"{len(unmet)} of the rules the site states (the site "
                                          f"asks: {_cap(said, 160)})", PASSWORD_RULE_NOTE)
 
-    def _password_ok(self, host: str) -> bool:
-        """May the master password be typed on `host`? Only on the application
-        itself: the admitted ATS site or a known ATS platform, never on
-        LinkedIn's or the inbox provider's domain."""
-        host = _host(host)
+    def _password_ok(self, url_or_host: str) -> bool:
+        """May the master password be typed on `url_or_host`? Only on the
+        application itself: the admitted ATS site or a known ATS platform
+        (the job's own account there once it is known, `_tenant_departure`),
+        never on LinkedIn's or the inbox provider's domain, and never at an
+        address that reaches its site unencrypted (`_insecure`: an `http`
+        URL off this machine). The callers pass the page's, the frame's and
+        the form's URLs, so the scheme is checked with the host."""
+        if _insecure(url_or_host):
+            return False
+        host = _host(url_or_host)
         site = _site(host)
         if not site or site == _site(LINKEDIN_HOSTS[0]):
             return False
@@ -5301,6 +5527,8 @@ class _JobRun:
             return False
         if site in TRACKER_SITES or site in AGGREGATOR_SITES:
             return False            # A job board or a tracker is never the application
+        if self._tenant_departure(host):
+            return False
         return site in ATS_SITES or any(site == _site(h) for h in self.ats_hosts)
 
     def _extract(self, page=None) -> apply_form.FormDigest:
@@ -5315,7 +5543,46 @@ class _JobRun:
     def _frame_url(self, frames: list, idx: int) -> str:
         """The URL a frame's controls answer to; a blank or srcdoc frame takes
         its parent's."""
-        frame = frames[idx]
+        return self._frame_address(frames[idx])
+
+    def _box_frame(self, page, locator, frames: list):
+        """The frame a box's locator acts in (`apply_form.resolve_frame`: by
+        the URL the frame had at the read, then by its index), so the host
+        checked is the host typed on; the frame at its index when that
+        cannot be told, None when it is gone."""
+        try:
+            return apply_form.resolve_frame(page, locator)
+        except Exception:       # noqa: BLE001  (a page double, a frame gone)
+            idx = int(locator[0])
+            return frames[idx] if 0 <= idx < len(frames) else None
+
+    def _secret_refusal(self, urls: Iterable[str]) -> str:
+        """Why the master password may not go to a box answering to `urls`
+        (the page's, the box's frame's, its form's action), "" when it may:
+        an unencrypted address (`_insecure`) first, then a host off the
+        application (`_password_ok`)."""
+        urls = [str(u) for u in urls if str(u or "").strip()]
+        plain = next((u for u in urls if _insecure(u)), "")
+        if plain:
+            return f"{PASSWORD_HTTP_REASON} ({_host(plain)})"
+        outside = sorted({_host(u) for u in urls if _host(u) and not self._password_ok(u)})
+        return f"a password box on {outside[0]}, outside the application site" if outside \
+            else ""
+
+    def _moved_box(self, page, frame) -> str:
+        """Read just before the master password is typed: why the page or the
+        box's frame (where the fill acts) may no longer take it, now that
+        either may have moved since the check (`_secret_refusal`); "" when
+        both still may."""
+        urls = [str(getattr(page, "url", "") or "")]
+        if frame is not None:
+            urls.append(self._frame_address(frame))
+        why = self._secret_refusal(urls)
+        return f"the password box moved before the password was typed: {why}" if why else ""
+
+    def _frame_address(self, frame) -> str:
+        """The URL `frame`'s controls answer to; a blank or srcdoc frame takes
+        its parent's."""
         url = str(getattr(frame, "url", "") or "")
         seen: set[int] = set()
         while url in ("about:blank", "about:srcdoc") and id(frame) not in seen:
@@ -5385,7 +5652,11 @@ class _JobRun:
 
     def _admit_ats_transition(self, url: str, source_url: str) -> None:
         """Record where the application lives. A known ATS platform is
-        admitted wherever the flow met it; any other site only as the one
+        admitted wherever the flow met it, until the job's own account on one
+        is known (`_tenant_departure`): from then on another company's
+        account, or another platform, is admitted only as where LinkedIn's
+        Apply or a job board's company link led, and any other step that
+        lands there parks. Any other site is admitted only as the one
         destination LinkedIn's Apply led to. Chrome's error page is never
         one: the caller's retry (`_recover_error_page`) comes first."""
         if _error_page(url):
@@ -5398,11 +5669,15 @@ class _JobRun:
             # a hop that never moved on: never the destination
             raise _Parked("needs_human", f"the tracker hop ({host}) did not move on to the "
                                          f"company's site")
-        if any(_site(host) == _site(h) for h in self.ats_hosts):
+        from_board = bool(self._aggregator_host and not self._aggregator_left
+                          and _host(source_url) == self._aggregator_host)
+        pinned = self._tenant_departure(host)
+        if pinned:
+            if not (from_board or apply_linkedin.is_linkedin(source_url)):
+                raise self._tenant_park(host, pinned)
+        elif any(_site(host) == _site(h) for h in self.ats_hosts):
             return
         if _site(host) not in ATS_SITES:
-            from_board = (self._aggregator_host and not self._aggregator_left
-                          and _host(source_url) == self._aggregator_host)
             if (from_board and _aggregator(host) and _site(host) != _site(self._aggregator_host)
                     and any(_site(host) == _site(b) for b in self._boards)):
                 # a board's company link back to a board already read: the
@@ -5970,6 +6245,7 @@ class _JobRun:
                                              f"page(s){self._last_states()})")
             self._take_late_popup()
             self._check_host(self.page.url)
+            self._pin_first_tenant(self.page.url)
             self._filled_here = []
             self._last_filled, self._idle, self._refilled = {}, [], set()
             self._gate_repairs = 0
@@ -6639,9 +6915,13 @@ class _JobRun:
         into the page's trace (`own_page`; a digest of something else, a
         sign-in's create-account link, is traced as an event). `discover`:
         open the page's listboxes first to read their options (never on
-        LinkedIn)."""
+        LinkedIn). A page with more than `apply_judge.FIELDS_MAX` fields
+        parks: its mapping would cost the judge without end."""
         if state not in _MAPPED_STATES:
             return answers
+        if len(digest.fields) > apply_judge.FIELDS_MAX:
+            raise _Parked("needs_human", f"{FIELDS_MAX_REASON} (more than "
+                                         f"{apply_judge.FIELDS_MAX})")
         with_fields = state != "job_posting" or bool(digest.fields)
         if with_fields and discover and not self._on_linkedin():
             self._discover_listbox_options(digest)
@@ -8144,11 +8424,12 @@ class _JobRun:
         typed: list = []
         for pf in boxes:
             f = fields.get(pf.n)
-            idx = int(pf.locator[0])
-            box_host = _host(self._frame_url(frames, idx)) if 0 <= idx < len(frames) else ""
-            outside = sorted(h for h in {_host(self.page.url), box_host or _host(self.page.url)}
-                             if not self._password_ok(h))
-            loc, kind, posts_to = None, "", ""
+            # the frame the fill acts in (`resolve`'s), so the host checked
+            # is the host the password is typed on
+            frame = self._box_frame(self.page, pf.locator, frames)
+            box_url = self._frame_address(frame) if frame is not None else ""
+            box_host = _host(box_url)
+            loc, kind, posts_to, action = None, "", "", ""
             try:
                 loc = apply_form.resolve(self.page, pf.locator).first
                 kind, action = loc.evaluate(
@@ -8156,12 +8437,19 @@ class _JobRun:
                     "? el.form.action : '']", timeout=5_000)
                 if urlsplit(str(action or "")).scheme in ("http", "https"):
                     posts_to = _host(action)    # a `javascript:` action is no destination
+                else:
+                    action = ""
             except Exception:       # noqa: BLE001  (a box or frame that went away takes nothing)
                 loc = None
+            # the page, the box's frame and the form's action: an unencrypted
+            # address first, then a page or frame off the application
+            plain = self._secret_refusal(u for u in (str(self.page.url), box_url, action)
+                                         if _insecure(u))
+            outside = self._secret_refusal([str(self.page.url), box_url or str(self.page.url)])
             if not stored:
                 why = "the form asks for a password and no master password is stored"
-            elif outside:
-                why = f"a password box on {outside[0]}, outside the application site"
+            elif plain or outside:
+                why = plain or outside
             elif loc is None:
                 why = f"the password box ({pf.label}) went away"
             elif str(kind).lower() != "password" or f is None or not _names_password(f):
@@ -8171,10 +8459,13 @@ class _JobRun:
                 # job board are allowed to load and never take the password
                 why = f"the password box's form posts to {posts_to}, outside the allowed sites"
             else:
-                if 0 <= idx < len(frames):
-                    guard.frames.add(id(frames[idx]))
+                if frame is not None:
+                    guard.frames.add(id(frame))
                 guard.start()
                 self._keep_secret_box(pf.locator)
+                moved = self._moved_box(self.page, frame)
+                if moved:
+                    raise _Parked("needs_human", moved)
                 if ats_accounts.fill_password(self.page, loc):
                     account_host = account_host or box_host or host
                     typed.append(f)
@@ -9619,11 +9910,53 @@ class _JobRun:
             raise _Parked("needs_human", "emailed code could not be filled (the boxes did not "
                                          "keep it)", CODE_NOTE)
 
+    def _job_ats_sites(self) -> set[str]:
+        """The ATS sites the job's application runs on: the platform of each
+        of its own ATS hosts, and of the system its queue entry names."""
+        sites: set[str] = set()
+        for h in self._pinned_hosts():
+            sites |= _platform(_site(h))
+        system = str((self.entry.get("ats") or {}).get("system") or "").strip().lower()
+        for site, name in apply_queue.ATS_FAMILY_SITES.items():
+            if name == system and system != "linkedin":
+                sites |= _platform(site)
+        return sites
+
+    def _sender_refused(self, sender: str) -> bool:
+        """Is a listed message's sender one the job's code or link never
+        comes from, whatever the judge answers? LinkedIn (by its address, or
+        by its name on a row that shows a name alone); the inbox provider;
+        an identity provider (`_IDENTITY_SITES`) unless it is the job's own
+        site; another ATS than the job's when the job's is known
+        (`_job_ats_sites`). A page that set off another site's code (a
+        LinkedIn sign-in, a Workday account of another company) never gets
+        it typed in."""
+        site = _sender_site(sender)
+        if not site:
+            return bool(re.search(r"\blinkedin\b", str(sender or ""), re.I))
+        if site == _site(LINKEDIN_HOSTS[0]):
+            return True
+        inbox_url = str(self.r.run_context().get("inbox_url") or "")
+        provider = apply_inbox.provider_for(inbox_url) or ""
+        if site in _INBOX_PROVIDER_SITES.get(provider, ()) or site == _site(inbox_url):
+            return True
+        own = {_site(h) for h in self.ats_hosts}
+        page_host = _host(str(getattr(self.page, "url", "") or ""))
+        if page_host:
+            own.add(_site(page_host))
+        if site in _IDENTITY_SITES and site not in own:
+            return True
+        if site in ATS_SITES:
+            mine = self._job_ats_sites()
+            return bool(mine) and site not in mine
+        return False
+
     def _link_ok(self, host: str) -> bool:
         """May a verification link from the inbox be opened? Only
         on the application's own site (an admitted ATS host's or the job's
-        page's) or a known ATS platform (`ATS_SITES`), and on a multi-tenant
-        ATS only the job's own tenant (`ats_accounts.tenant_key`); never on
+        page's) or a known ATS platform (`ATS_SITES`), and once the job's own
+        account on a platform is known only that account's hosts
+        (`_tenant_departure`, `ats_accounts.tenant_key`); never on
         LinkedIn, a job board, a tracker, or the inbox provider's site
         (unless the job's page itself is served from the inbox's host)."""
         host = _host(host)
@@ -9637,6 +9970,9 @@ class _JobRun:
             return False
         own = {_site(h) for h in self.ats_hosts} | ({_site(page_host)} if page_host else set())
         if site not in own and site not in ATS_SITES:
+            return False
+        if self._tenant_departure(host):
+            # another company's account, or another platform, than the job's
             return False
         tenant = ats_accounts.tenant_key(host)
         ours = {ats_accounts.tenant_key(h) for h in [*self.ats_hosts, page_host]
@@ -10397,10 +10733,11 @@ def probe(url: str, *, follow_apply: bool = False, judge: Any = None, headed: bo
             ctx = launch_profile(pw, Path(profile_dir), headless=not headed)
         else:
             try:
-                browser = pw.chromium.launch(channel=BROWSER_CHANNEL, headless=not headed)
+                browser = pw.chromium.launch(channel=BROWSER_CHANNEL, headless=not headed,
+                                             chromium_sandbox=True)
             except Exception:       # noqa: BLE001  (Chrome absent: the bundled Chromium)
-                browser = pw.chromium.launch(headless=not headed)
-            ctx = browser.new_context(viewport=VIEWPORT)
+                browser = pw.chromium.launch(headless=not headed, chromium_sandbox=True)
+            ctx = browser.new_context(viewport=VIEWPORT, accept_downloads=False)
         try:
             return _probe(ctx, url, follow_apply=follow_apply, judge=judge, out=out,
                           settle_s=settle_s, park_mode=park_mode)

@@ -180,12 +180,14 @@ def account_worded(text: str) -> bool:
     (`apply_judge.entry_worded`). "Sign in to apply" is one; "Continue
     to apply" is not."""
     import apply_judge
-    import apply_run
+    import apply_account_flow
+    import apply_route
     import apply_send_words
     text = " ".join(str(text or "").split())
-    if apply_send_words.SIGN_IN_WORDS.search(text) or apply_run._CREATE_ACCOUNT.search(text):
+    if (apply_send_words.SIGN_IN_WORDS.search(text)
+            or apply_account_flow._CREATE_ACCOUNT.search(text)):
         return True
-    return bool(apply_run._NEXT_WORDS.search(text)) and not apply_judge.entry_worded(text)
+    return bool(apply_route._NEXT_WORDS.search(text)) and not apply_judge.entry_worded(text)
 
 
 def mode_gate(mode: str) -> str:
@@ -395,9 +397,11 @@ class _Walker:
         return True
 
     def run(self) -> Walk:
-        import apply_run
+        import apply_outcome
+        import apply_page
+        import apply_sites
         job_id = str(self.entry.get("job_posting_id") or "")
-        if apply_run._easy_apply(self.entry):
+        if apply_sites._easy_apply(self.entry):
             self.walk.system = "linkedin"
             self.walk.checked_at = _now()
             self._stop("easy_apply")
@@ -410,9 +414,9 @@ class _Walker:
         self.page = self.ctx.new_page()
         try:
             try:
-                apply_run.open_page(self.page, url)
+                apply_page.open_page(self.page, url)
             except Exception as e:      # noqa: BLE001  (a dead or slow page is the answer)
-                if apply_run._closed_error(e):
+                if apply_outcome._closed_error(e):
                     raise
                 self._unread(f"the posting did not load ({type(e).__name__})")
                 return self.walk
@@ -437,24 +441,26 @@ class _Walker:
 
     def _step(self) -> bool:
         import apply_linkedin
-        import apply_run
+        import apply_outcome
+        import apply_page
+        import apply_sites
         page = self.page
         url = str(page.url or "")
-        if apply_run._error_page(url):
+        if apply_page._error_page(url):
             return self._unread("a page did not load (Chrome's error page)")
         kind = apply_linkedin.url_kind(url)
         if kind == "signed_out":
             return self._unread(f"{apply_linkedin.SIGNED_OUT_REASON}; "
-                                f"{apply_run.LINKEDIN_LOGIN_NOTE}")
+                                f"{apply_outcome.LINKEDIN_LOGIN_NOTE}")
         if kind == "redirector":
             self._arrive()
-            if apply_run._on_linkedin_redirector(str(self.page.url)):
+            if apply_sites._on_linkedin_redirector(str(self.page.url)):
                 return self._unread("the LinkedIn redirect did not move on")
             return False
         if not apply_linkedin.is_linkedin(url):
-            self.hosts.add(apply_run._host(url))
+            self.hosts.add(apply_sites._host(url))
         digest = self._digest()
-        sig = apply_run.page_signature(url, digest)
+        sig = apply_page.page_signature(url, digest)
         if sig == self.last_sig:
             return self._unread("the page did not advance after the Apply entry")
         self.last_sig = sig
@@ -462,8 +468,8 @@ class _Walker:
             done = self._linkedin(kind)
             if done is not None:
                 return done
-        host = apply_run._host(url)
-        if apply_run._aggregator(host):
+        host = apply_sites._host(url)
+        if apply_sites._aggregator(host):
             return self._board(host, digest)
         return self._judged(digest)
 
@@ -515,10 +521,10 @@ class _Walker:
     def _extract(self):
         import apply_click
         import apply_form
-        import apply_run
+        import apply_sites
         page = self.page
         apply_click.watch_requests(page)
-        return apply_form.extract(page, content_site=lambda url: apply_run.content_frame_site(
+        return apply_form.extract(page, content_site=lambda url: apply_sites.content_frame_site(
             url, str(page.url), self.hosts))
 
     def _frame_url(self, frames: list, idx: int) -> str:
@@ -535,7 +541,7 @@ class _Walker:
 
     def _drop_foreign(self, digest):
         import apply_linkedin
-        import apply_run
+        import apply_sites
         frames = list(self.page.frames)
         page_url = str(self.page.url)
         on_linkedin = apply_linkedin.is_linkedin(page_url)
@@ -545,9 +551,9 @@ class _Walker:
                 dropped.add(idx)
                 continue
             url = self._frame_url(frames, idx)
-            host = "" if url.startswith("about:") else apply_run._host(url)
-            if apply_run._is_captcha_url(url) or (
-                    idx > 0 and host and not apply_run.content_frame_site(url, page_url,
+            host = "" if url.startswith("about:") else apply_sites._host(url)
+            if apply_sites._is_captcha_url(url) or (
+                    idx > 0 and host and not apply_sites.content_frame_site(url, page_url,
                                                                           self.hosts)) \
                     or (idx > 0 and not on_linkedin and apply_linkedin.is_linkedin(host)):
                 dropped.add(idx)
@@ -562,14 +568,14 @@ class _Walker:
         `_human_check_showing`): a CAPTCHA provider's frame tall enough to be
         a challenge, or with `checkbox` an unticked CAPTCHA checkbox."""
         import apply_form
-        import apply_run
+        import apply_sites
         import apply_limits
         try:
             frames = list(self.page.frames)
         except Exception:       # noqa: BLE001
             return False
         for frame in frames:
-            if not apply_run._is_captcha_url(str(getattr(frame, "url", "") or "")):
+            if not apply_sites._is_captcha_url(str(getattr(frame, "url", "") or "")):
                 continue
             try:
                 element = frame.frame_element()
@@ -586,9 +592,10 @@ class _Walker:
 
     def _linkedin(self, kind: str) -> bool | None:
         import apply_linkedin
-        import apply_run
+        import apply_outcome
+        import apply_route
         import apply_limits
-        view, _waited = apply_run.linkedin_view(
+        view, _waited = apply_route.linkedin_view(
             self.page, wait_s=apply_limits.LINKEDIN_READY_S if kind == "job" else 0,
             job_title=str(self.entry.get("title") or ""),
             company=str(self.entry.get("company") or ""))
@@ -604,7 +611,7 @@ class _Walker:
             return self._unread(apply_linkedin.APPLIED_REASON)
         if d.kind == "signed_out":
             return self._unread(f"{apply_linkedin.SIGNED_OUT_REASON} ({d.why}); "
-                                f"{apply_run.LINKEDIN_LOGIN_NOTE}")
+                                f"{apply_outcome.LINKEDIN_LOGIN_NOTE}")
         if d.kind != "offsite" or d.control is None:
             return self._stop("dead", f"{apply_linkedin.NO_APPLY_REASON} ({d.why})")
         self.linkedin_clicks += 1
@@ -615,18 +622,18 @@ class _Walker:
 
     def _board(self, host: str, digest) -> bool:
         import apply_form
-        import apply_run
-        if host in self.boards or len(self.boards) >= apply_run.AGGREGATOR_BOARDS_MAX:
+        import apply_sites
+        if host in self.boards or len(self.boards) >= apply_sites.AGGREGATOR_BOARDS_MAX:
             chain = " -> ".join([*self.boards, host])
             return self._stop("dead", f"A chain of job boards ({chain}) and no company site")
         self.boards.append(host)
-        control = apply_run.company_site_control(
-            digest, board=host, targets=apply_run.link_targets(self.page, digest))
+        control = apply_sites.company_site_control(
+            digest, board=host, targets=apply_sites.link_targets(self.page, digest))
         if control is None:
             return self._stop("dead", f"A job board's posting ({host}) with no link to the "
                                       f"company's site")
         done = self._click(apply_form.resolve(self.page, control.locator), control.text)
-        if not done and apply_run._host(str(self.page.url)) == host:
+        if not done and apply_sites._host(str(self.page.url)) == host:
             return self._stop("dead", f"The job board's link to the company's site stayed on "
                                       f"{host}")
         return done
@@ -695,7 +702,7 @@ class _Walker:
         import apply_fill
         import apply_judge
         import apply_linkedin
-        import apply_run
+        import apply_account_flow
         import apply_route
         import apply_limits
         answers, facts = self._read(digest)
@@ -710,7 +717,7 @@ class _Walker:
         easy = Step("stop", stop="easy_apply")
         if apply_judge.already_applied(answers, facts):
             return Step("unread", note="the site says this job was applied to before")
-        if apply_run.remaps_to_form(state, digest, url):
+        if apply_route.remaps_to_form(state, digest, url):
             state = "application_form"
         unsure = conf < apply_judge.PAGE_STATE_MIN_CONF
         if state == "confirmation" and not facts.link_sent:
@@ -723,37 +730,37 @@ class _Walker:
                 return Step("unread", note="the page reads as a confirmation before any "
                                            "submit; check whether this job was applied to "
                                            "before")
-        if on_linkedin and state in apply_run._LINKEDIN_FORM_STATES:
+        if on_linkedin and state in apply_route._LINKEDIN_FORM_STATES:
             return easy
         if state != "confirmation" and not on_linkedin:
-            sites = apply_run.sso_only(digest)
+            sites = apply_account_flow.sso_only(digest)
             if sites:
                 return Step("stop", stop="dead", note=SSO_NOTE.format(sites=", ".join(sites)))
         if unsure:
-            settled, _how = apply_run.unsure_step(state, digest, facts)
+            settled, _how = apply_route.unsure_step(state, digest, facts)
             if settled is None:
                 return Step("unread", note=f"unsure what this page is ({state}, {conf:.2f})")
             state = settled
         elif state == "other":
-            state = apply_run.other_step(facts, digest) or state
-        if on_linkedin and state in apply_run._LINKEDIN_FORM_STATES:
+            state = apply_route.other_step(facts, digest) or state
+        if on_linkedin and state in apply_route._LINKEDIN_FORM_STATES:
             return easy
-        if state in apply_run._LINK_REMAPS and facts.link_sent:
+        if state in apply_route._LINK_REMAPS and facts.link_sent:
             state = "code_gate"
         found = dict(state=state, digest=digest, facts=facts)
         if state == "job_posting":
             plan = self._posting_plan(digest, answers)
             if on_linkedin:
-                if digest.fields and apply_run.posting_entry_choice(digest, plan)[0] is None:
+                if digest.fields and apply_route.posting_entry_choice(digest, plan)[0] is None:
                     return Step("stop", stop="easy_apply", **found)
                 return Step("stop", stop="dead", note=apply_linkedin.NO_APPLY_REASON, **found)
-            apart, unclassified, _scan = apply_run.posting_context(self.page, digest, plan)
-            n, how = apply_run.posting_entry_choice(digest, plan, apart=apart,
+            apart, unclassified, _scan = apply_route.posting_context(self.page, digest, plan)
+            n, how = apply_route.posting_entry_choice(digest, plan, apart=apart,
                                                     unclassified=unclassified)
             if how == "judged_apply_entry" and self._account_entry(digest, n):
                 text_only = dataclasses.replace(plan, buttons={
                     role: held for role, held in plan.buttons.items() if role != "apply_entry"})
-                n, how = apply_run.posting_entry_choice(digest, text_only, apart=apart,
+                n, how = apply_route.posting_entry_choice(digest, text_only, apart=apart,
                                                         unclassified=unclassified)
             if n is not None and self._account_entry(digest, n):
                 return Step("account", **found)
@@ -835,14 +842,15 @@ class _Walker:
         tracker's hop, and a tab that opens late is taken when the click left
         the page as it was. True when the walk ends here."""
         import apply_form
-        import apply_run
+        import apply_gate
+        import apply_sendwatch
         import apply_page
         import apply_limits
         live = apply_form.live_text(loc)
-        why = apply_run.live_refusal("apply_entry", text, live) if live else ""
+        why = apply_gate.live_refusal("apply_entry", text, live) if live else ""
         if why:
             return self._unread(f"the Apply entry {why}")
-        address = apply_run.mailto_address(loc)
+        address = apply_page.mailto_address(loc)
         if address:
             return self._stop("dead", MAILTO_NOTE.format(address=address))
         if self.walk.clicks >= ENTRY_HOPS_MAX:
@@ -861,13 +869,13 @@ class _Walker:
             self.page = popup
             self._arrive()
             return False
-        watch = apply_run.LateWatch(self.page, signal, source)
+        watch = apply_sendwatch.LateWatch(self.page, signal, source)
         watch.start()
         try:
             self._arrive()
         finally:
             watch.stop()
-        late = [p for p in watch.popups if p is not self.page and not apply_run._page_closed(p)]
+        late = [p for p in watch.popups if p is not self.page and not apply_page._page_closed(p)]
         if late and signal in ("dom", "none"):
             self.page = late[0]
             self._arrive()
@@ -879,29 +887,31 @@ class _Walker:
         no click); a tracker's hop is waited out (`apply_page._past_trackers`)."""
         import apply_fill
         import apply_linkedin
-        import apply_run
+        import apply_outcome
+        import apply_page
+        import apply_sites
         import apply_limits
         page = self.page
         apply_fill.settle(page, apply_limits.CLICK_TIMEOUT_S)
-        if apply_run._on_linkedin_redirector(str(page.url)):
+        if apply_sites._on_linkedin_redirector(str(page.url)):
             cont = apply_linkedin.continue_control(page)
             href = urljoin(str(page.url), cont.href) if cont is not None and cont.href else ""
             if href.lower().startswith(("http://", "https://")) \
                     and not apply_linkedin.is_linkedin(href):
                 try:
-                    apply_run.open_page(page, href)
+                    apply_page.open_page(page, href)
                 except Exception as e:      # noqa: BLE001  (the next read says what shows)
-                    if apply_run._closed_error(e):
+                    if apply_outcome._closed_error(e):
                         raise
             else:
                 try:
-                    page.wait_for_url(lambda u: not apply_run._on_linkedin_redirector(u),
+                    page.wait_for_url(lambda u: not apply_sites._on_linkedin_redirector(u),
                                       timeout=apply_limits.REDIRECT_TIMEOUT_S * 1000)
                     apply_fill.settle(page, apply_limits.CLICK_TIMEOUT_S)
                 except Exception as e:      # noqa: BLE001  (the next read says it stayed)
-                    if apply_run._closed_error(e):
+                    if apply_outcome._closed_error(e):
                         raise
-        apply_run._past_trackers(page, {}, self.log,
+        apply_page._past_trackers(page, {}, self.log,
                                  str(self.entry.get("job_posting_id") or ""))
 
 
@@ -1173,7 +1183,8 @@ def run(job_ids: list[str], *, all_queued: bool = False, judge,
     judge went down or the window closed, 2 when nothing could be checked.
     `report`, when given, is filled with the last job's outcome for a worker
     (`worker_result`); the printed lines do not change."""
-    import apply_run
+    import apply_outcome
+    import apply_page
     import jev
     from resume_tailor import apply_answers
     log = log or logging.getLogger("apply_assess")
@@ -1214,15 +1225,15 @@ def run(job_ids: list[str], *, all_queued: bool = False, judge,
             _say(f"[{i}/{len(chosen)}] {name}: Jev is down ({e}); the check stops here")
             return 1
         except Exception as e:      # noqa: BLE001  (one line; the frames go to the log)
-            if apply_run._closed_error(e):
+            if apply_outcome._closed_error(e):
                 _note(report, "closed", "the browser window was closed", job_id=jid,
                       counted=counted, usd=jev.total_usage()["usd"] - usd0)
                 _say(f"[{i}/{len(chosen)}] {name}: the browser window was closed; the check "
                      f"stops here")
                 return 1
-            result, why = None, f"{type(e).__name__} at {apply_run.error_step(e)}"
+            result, why = None, f"{type(e).__name__} at {apply_page.error_step(e)}"
             log.error("job %s: %s; traceback (the message left out):\n  %s", jid, why,
-                      "\n  ".join(apply_run.error_frames(e)))
+                      "\n  ".join(apply_page.error_frames(e)))
         else:
             unread = result is None
         spent = jev.total_usage()["usd"] - usd_before

@@ -484,8 +484,22 @@ def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess:
     # No stdin channel on purpose: on Windows gcloud shells out to plink.exe,
     # which consumes stdin for its own prompts -- piped data reaches the remote
     # command mangled (measured: "probe-value" arrived as the single byte "y").
+    return _run_gcloud(cmd)
+
+
+def _gcloud_env() -> dict:
+    """The dashboard's environment minus every API key and token the
+    Settings schema marks secret: gcloud and the plink it starts need none
+    of them, and a child process has no reason to hold them."""
+    drop = {f.key for f in settings.SETTINGS_SCHEMA if getattr(f, "secret", False)}
+    drop.add("TYPESAFE_BASE_URL")
+    return {k: v for k, v in os.environ.items() if k not in drop}
+
+
+def _run_gcloud(cmd: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(launch_argv(cmd), capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", timeout=300)
+                          encoding="utf-8", errors="replace", timeout=300,
+                          env=_gcloud_env())
 
 
 def sync_exclude_ids_to_vm(target: VMTarget, local_path) -> subprocess.CompletedProcess | None:

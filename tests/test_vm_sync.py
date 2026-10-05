@@ -802,3 +802,28 @@ def test_reject_cwd_shadow_passes_a_program_from_elsewhere(tmp_path, monkeypatch
     real.write_text("", encoding="utf-8")
     assert vm_sync._reject_cwd_shadow("python", str(real)) == str(real)
     assert vm_sync._reject_cwd_shadow("python", None) is None
+
+
+def test_run_cmd_keeps_every_secret_setting_out_of_the_gcloud_env(monkeypatch):
+    """gcloud (and the plink it starts) gets no API key or token from the
+    dashboard's environment: the scrub follows the Settings schema."""
+    import settings
+    names = {f.key for f in settings.SETTINGS_SCHEMA if getattr(f, "secret", False)}
+    assert "TYPESAFE_API_KEY" in names
+    for name in names | {"TYPESAFE_BASE_URL"}:
+        monkeypatch.setenv(name, "synthetic-secret")
+    monkeypatch.setenv("CLOUDSDK_CONFIG", "kept")
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["env"] = kwargs.get("env")
+        return vm_sync.subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(vm_sync.subprocess, "run", fake_run)
+    monkeypatch.setattr(vm_sync, "launch_argv", lambda cmd: list(cmd))
+    # conftest stubs run_cmd itself, so this calls the body it wraps
+    vm_sync._run_gcloud(["gcloud", "version"])
+    env = captured["env"]
+    assert env is not None
+    assert not (names | {"TYPESAFE_BASE_URL"}) & set(env)
+    assert env["CLOUDSDK_CONFIG"] == "kept"

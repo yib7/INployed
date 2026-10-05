@@ -1192,7 +1192,7 @@ def test_an_unsure_read_of_a_form_is_acted_on_through_the_forms_own_gates(
         context, fixture_url, job_folder, catalog_builder, tmp_path):
     # an unsure read of a form (under the floor twice) goes on as its guess,
     # and the form's own gates decide the rest (review I5: the path is the
-    # unsure rule's, `_check_unsure`, never the sure read's)
+    # unsure rule's, `apply_route.unsure_step`, never the sure read's)
     _enqueue(job_folder, fixture_url("ashby_steps.html"))
     runner = _runner(context, tmp_path)
     runner.jev = _UnsureJudge()

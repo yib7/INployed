@@ -18,6 +18,7 @@ sys.path.insert(0, str(REPO / "local"))
 
 import apply_harness as h  # noqa: E402
 import jev  # noqa: E402
+import jev_doubles  # noqa: E402
 
 QUESTIONS = {"page_state": {"type": "choice", "instructions": "Which kind of page is `page`?",
                             "criteria": {"application_form": "a form", "other": "anything else"}}}
@@ -89,7 +90,7 @@ def test_real_judge_replay_reads_the_cache_and_asks_no_one(tmp_path):
 def test_real_judge_dry_answers_with_the_fake_into_a_temp_copy_under_the_cap(tmp_path):
     cache = tmp_path / "m.json"
     rj = h.real_judge("dry", cache, cap_usd=0.5)
-    assert rj.cache != cache and isinstance(rj.cap.inner, jev.DryRun)
+    assert rj.cache != cache and isinstance(rj.cap.inner, jev_doubles.DryRun)
     assert rj.cap.cap_usd == 0.5 and not h.replay_only(rj.judge)
     sim0 = jev.simulated_usage()["requests"]
     rj.judge.judge(_state("a"), QUESTIONS)

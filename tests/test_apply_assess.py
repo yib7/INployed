@@ -21,6 +21,7 @@ import pytest
 
 import apply_assess as aa
 import jev
+import jev_doubles
 import jev_switch
 
 # The browser tests take the module's test browser (they skip where Playwright
@@ -603,7 +604,7 @@ def test_a_noisy_judge_never_types_or_clicks_past_the_entry(context, flow_server
     import apply_harness as h
     _routes(context, h.linkedin_job_routes(target="lever_single.html")(flow_server.base))
     got, why, rec, _ = _check(context, tmp_path, LINKEDIN_JOB,
-                              judge=jev.NoisyJev(jev.FakeJev(), seed=seed))
+                              judge=jev_doubles.NoisyJev(jev.FakeJev(), seed=seed))
     assert {a.kind for a in rec.actions} <= _READ_ONLY, rec.actions
     assert [a.text.strip() for a in rec.actions] in ([], ["Apply"]), rec.actions
     assert got is None or 1 <= got["score"] <= 10
@@ -1111,7 +1112,7 @@ def test_a_noisy_judge_never_clicks_an_account_link_in_the_posting(context, tmp_
     _serve(context, {"/jobs/7": _account_posting("Create an account"),
                      "/apply/form": _form("lever_single.html")})
     got, _why, rec, _ = _check(context, tmp_path, f"{CAREERS}/jobs/7",
-                               judge=jev.NoisyJev(_AccountEntry("Create an account"),
+                               judge=jev_doubles.NoisyJev(_AccountEntry("Create an account"),
                                                   seed=seed))
     assert {a.kind for a in rec.actions} <= _READ_ONLY, rec.actions
     assert [a.text.strip() for a in rec.actions] in ([], ["Apply now"]), rec.actions

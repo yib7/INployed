@@ -80,6 +80,7 @@ if str(REPO / "local") not in sys.path:
 import apply_run  # noqa: E402
 import apply_send_words  # noqa: E402
 import jev  # noqa: E402
+import jev_doubles  # noqa: E402
 
 FIXTURES_DIR = REPO / "tests" / "fixtures"
 BANK_PATH = FIXTURES_DIR / "apply_matrix_answers.json"
@@ -2396,7 +2397,7 @@ def judges(seeds: Iterable[int] = SUITE_SEEDS, *, fake: bool = True,
     """("fake", FakeJev()) and ("noisy-<seed>", NoisyJev(FakeJev(), seed)) per
     seed, then ("real", `real`) when given (a `RealJudge`'s judge)."""
     out: list[tuple[str, Any]] = [("fake", jev.FakeJev())] if fake else []
-    out += [(f"noisy-{s}", jev.NoisyJev(jev.FakeJev(), s)) for s in seeds]
+    out += [(f"noisy-{s}", jev_doubles.NoisyJev(jev.FakeJev(), s)) for s in seeds]
     if real is not None:
         out.append((REAL, real))
     return out
@@ -2451,7 +2452,7 @@ def real_judge(mode: str, cache: Path = REAL_CACHE, cap_usd: float | None = None
     if mode == "dry":
         import jev_harness
         cache = jev_harness.dry_copy(cache)
-        inner: Any = jev.DryRun()
+        inner: Any = jev_doubles.DryRun()
     else:
         inner = live() if live is not None else jev.TypeSafeJev()
     cap = jev.SpendCap(inner, cap_usd)

@@ -24,6 +24,7 @@ sys.path.insert(0, str(REPO / "local"))
 import apply_judge  # noqa: E402
 import apply_run  # noqa: E402
 import jev  # noqa: E402
+import jev_doubles  # noqa: E402
 from apply_form import Button, Field, FormDigest  # noqa: E402
 from apply_judge import FillPlan  # noqa: E402
 
@@ -437,7 +438,7 @@ def _requests(n):
 
 
 def test_the_read_nouls_are_flipped_at_least_as_often_as_the_page_state_is_swapped():
-    judge = jev.NoisyJev(_Truth("application_form"), 3)
+    judge = jev_doubles.NoisyJev(_Truth("application_form"), 3)
     runs = swaps = flips = nouls = 0
     for state, q in _requests(400):
         out = judge.judge(state, q)
@@ -452,7 +453,7 @@ def test_the_read_nouls_are_flipped_at_least_as_often_as_the_page_state_is_swapp
 
 
 def test_a_flipped_noul_lands_on_the_wrong_side_with_room_to_spare():
-    judge = jev.NoisyJev(_Truth("login_wall"), 5, swap_p=0.0, noul_p=1.0)
+    judge = jev_doubles.NoisyJev(_Truth("login_wall"), 5, swap_p=0.0, noul_p=1.0)
     for state, q in _requests(30):
         out = judge.judge(state, q)
         assert 0.10 <= out["page_sign_in"].noul <= 0.40
@@ -460,7 +461,7 @@ def test_a_flipped_noul_lands_on_the_wrong_side_with_room_to_spare():
 
 
 def test_a_misread_page_state_takes_its_nouls_along():
-    judge = jev.NoisyJev(_Truth("signup_form"), 7, swap_p=1.0, noul_p=0.0, coherent_p=1.0)
+    judge = jev_doubles.NoisyJev(_Truth("signup_form"), 7, swap_p=1.0, noul_p=0.0, coherent_p=1.0)
     for state, q in _requests(30):
         out = judge.judge(state, q)
         misread = out["page_state"].choice
@@ -471,7 +472,7 @@ def test_a_misread_page_state_takes_its_nouls_along():
 
 
 def test_no_noul_noise_without_swaps_or_flips_is_a_pull_toward_the_middle():
-    judge = jev.NoisyJev(_Truth("code_gate"), 9, swap_p=0.0, noul_p=0.0, conf_scale=0.75)
+    judge = jev_doubles.NoisyJev(_Truth("code_gate"), 9, swap_p=0.0, noul_p=0.0, conf_scale=0.75)
     for state, q in _requests(20):
         out = judge.judge(state, q)
         assert 0.80 <= out["page_code"].noul <= 0.90
@@ -482,9 +483,9 @@ def test_the_old_noise_is_unchanged_where_the_read_nouls_are_not_asked():
     # a request of the old shape (no read Noul) gets the same answers as before
     state = {"page": {"title": "Apply"}, "buttons": [{"n": 0, "text": "Continue"}]}
     questions = {"page_state": {"type": "choice", "instructions": "Which kind of screen?",
-                                "criteria": {s: s for s in jev.PAGE_STATE_NEIGHBOURS}},
+                                "criteria": {s: s for s in jev_doubles.PAGE_STATE_NEIGHBOURS}},
                  "button_0_role": {"type": "choice", "instructions": "Which role?",
                                    "criteria": {"advance": "", "other": ""}}}
-    a = jev.NoisyJev(jev.FakeJev(), 11).judge(state, questions)
-    b = jev.NoisyJev(jev.FakeJev(), 11, noul_p=0.9, coherent_p=0.9).judge(state, questions)
+    a = jev_doubles.NoisyJev(jev.FakeJev(), 11).judge(state, questions)
+    b = jev_doubles.NoisyJev(jev.FakeJev(), 11, noul_p=0.9, coherent_p=0.9).judge(state, questions)
     assert a == b

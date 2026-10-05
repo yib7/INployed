@@ -35,6 +35,7 @@ import apply_facts  # noqa: E402
 import apply_harness as h  # noqa: E402
 import apply_judge  # noqa: E402
 import jev  # noqa: E402
+import jev_doubles  # noqa: E402
 from apply_form import Field, FormDigest  # noqa: E402
 
 pytest_plugins = ["conftest_browser"]
@@ -171,7 +172,7 @@ def test_the_noisy_judge_drops_the_second_look_at_its_own_rate_and_draw(catalog)
     drops = [0, 0, 0]
     seeds = range(1, 401)
     for seed in seeds:
-        noisy = jev.NoisyJev(jev.FakeJev(), seed, drop_p=0.2)
+        noisy = jev_doubles.NoisyJev(jev.FakeJev(), seed, drop_p=0.2)
         a = "field_0_source" not in noisy.judge(*first)
         b = "field_0_source" not in noisy.judge(*second)
         drops[0] += a
@@ -181,7 +182,7 @@ def test_the_noisy_judge_drops_the_second_look_at_its_own_rate_and_draw(catalog)
     assert 0.14 * 400 <= drops[1] <= 0.26 * 400, drops
     assert drops[2] <= 0.08 * 400, drops
     # its confidence is scaled as the first look's is
-    noisy = jev.NoisyJev(jev.FakeJev(), 3, drop_p=0.0)
+    noisy = jev_doubles.NoisyJev(jev.FakeJev(), 3, drop_p=0.0)
     conf = noisy.judge(*second)["field_0_source"].confidence
     assert 0.75 <= conf <= 1.0
 
@@ -551,7 +552,7 @@ def test_a_required_popup_the_guard_refused_parks_on_its_question(catalog):
 def test_the_commitment_flow_parks_on_its_box_and_never_ticks_it(_browser, flow_server, tmp_path,
                                                                  seed):
     f = h.flow("consent_commitment")
-    judge = jev.FakeJev() if seed == 0 else jev.NoisyJev(jev.FakeJev(), seed)
+    judge = jev.FakeJev() if seed == 0 else jev_doubles.NoisyJev(jev.FakeJev(), seed)
     r = h.run_flow(f, judge, f"noisy-{seed}", browser=_browser, server=flow_server,
                    workdir=tmp_path)
     assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)

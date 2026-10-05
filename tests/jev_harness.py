@@ -17,7 +17,7 @@ screening question with (the runner tests, `RUNNER_TESTS`):
   every test after it.
 - `record` with `AUTO_APPLY_RECORD_DRY=1`: the dry run. The fake answers in
   place of the live model and each request counts at its estimated size
-  (`jev.DryRun`), over a temp copy of the cache: the request count and the
+  (`jev_doubles.DryRun`), over a temp copy of the cache: the request count and the
   spend a recording would make, and the cap at work (`jev.DRY_RECORD_CAP_USD`
   when the variable is unset), with no key, no network and the cache left as
   it was.
@@ -65,6 +65,7 @@ if str(REPO / "local") not in sys.path:
     sys.path.insert(0, str(REPO / "local"))
 
 import jev  # noqa: E402
+import jev_doubles  # noqa: E402
 from jev_outcomes import OutcomesWriter, TestRecord, answer_row  # noqa: E402
 from jsonutil import read_json_dict  # noqa: E402
 
@@ -389,7 +390,7 @@ class Session:
 
     def _counted(self) -> dict:
         """The lifetime counter this session measures: the live requests,
-        plus the simulated ones (`jev.DryRun`) in a dry run."""
+        plus the simulated ones (`jev_doubles.DryRun`) in a dry run."""
         return jev.total_usage(include_simulated=self.dry)
 
     def live_usage(self) -> dict:
@@ -398,7 +399,7 @@ class Session:
         return _since(self._usage_start, self._counted())
 
     def simulated_usage(self) -> dict:
-        """{"requests", "input_tokens", "usd"} for the `jev.DryRun` requests
+        """{"requests", "input_tokens", "usd"} for the `jev_doubles.DryRun` requests
         made since the session began: estimated, never sent, never billed."""
         return _since(self._simulated_start, jev.simulated_usage())
 
@@ -430,7 +431,7 @@ class Session:
         if self.replay is None:
             inner = None
             if self.mode == "record":
-                self.cap = jev.SpendCap(jev.DryRun() if self.dry else live_judge(),
+                self.cap = jev.SpendCap(jev_doubles.DryRun() if self.dry else live_judge(),
                                         self.cap_usd)
                 inner = self.cap
             self.replay = jev.ReplayJev(inner, self.cache_path)
@@ -462,7 +463,7 @@ def summary_line(session: Session, hits: int, misses: int, diverged: int) -> str
     """The terminal summary's counts line. Replay sends nothing (and the
     test conftest drops the key outside a recording), so in replay mode it
     says live requests 0, and lists what test doubles counted on the live
-    counter apart as never sent. `jev.DryRun` requests are named as
+    counter apart as never sent. `jev_doubles.DryRun` requests are named as
     simulated, never live."""
     usage = session.live_usage()
     if session.dry:

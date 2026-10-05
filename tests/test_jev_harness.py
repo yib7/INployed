@@ -22,6 +22,7 @@ TESTS = REPO / "tests"
 sys.path.insert(0, str(REPO / "local"))
 
 import jev  # noqa: E402
+import jev_doubles  # noqa: E402
 import jev_harness  # noqa: E402
 import jev_outcomes  # noqa: E402
 
@@ -365,7 +366,7 @@ def test_spend_cap_is_a_replay_miss_for_the_harness_and_a_judge_unavailable_for_
 
 
 def test_dry_run_answers_like_the_fake_and_counts_each_request_at_its_estimate():
-    dry = jev.DryRun()
+    dry = jev_doubles.DryRun()
     answers = dry.judge(STATE, QUESTIONS)
     fake = jev.FakeJev().judge(STATE, QUESTIONS)
     assert {q: a.to_dict() for q, a in answers.items()} == {q: a.to_dict()
@@ -495,7 +496,7 @@ def test_a_dry_record_needs_no_key_and_leaves_the_cache_as_it_was(tmp_path):
     s.begin("t::a")
     s.judge().judge(STATE, QUESTIONS)
     s.end("t::a")
-    assert isinstance(s.cap.inner, jev.DryRun) and s.cap.inner.requests == 1
+    assert isinstance(s.cap.inner, jev_doubles.DryRun) and s.cap.inner.requests == 1
     assert s.requests == 1 and s.spent_usd == pytest.approx(_one_request_usd())
     assert cache.read_bytes() == before
     assert jev_harness.outcomes_path(s.cache_path).parent != cache.parent
@@ -1143,13 +1144,13 @@ def _delta(before, after):
 
 def test_a_dry_run_counts_on_the_simulated_counter_and_never_on_the_live_ones():
     live0, total0, sim0 = jev.usage(), jev.total_usage(), jev.simulated_usage()
-    jev.DryRun().judge(STATE, QUESTIONS)
+    jev_doubles.DryRun().judge(STATE, QUESTIONS)
     size = jev.request_size(STATE, QUESTIONS)[1]
     assert _delta(live0, jev.usage()) == {"requests": 0, "input_tokens": 0}
     assert _delta(total0, jev.total_usage()) == {"requests": 0, "input_tokens": 0}
     assert _delta(sim0, jev.simulated_usage()) == {"requests": 1, "input_tokens": size}
     both0 = jev.total_usage(include_simulated=True)
-    jev.DryRun().judge(STATE, QUESTIONS)
+    jev_doubles.DryRun().judge(STATE, QUESTIONS)
     jev.count_usage(7)
     assert _delta(both0, jev.total_usage(include_simulated=True)) == {
         "requests": 2, "input_tokens": size + 7}
@@ -1160,7 +1161,7 @@ def test_a_live_spend_cap_ignores_simulated_requests_and_still_counts_a_real_one
     live = _Sized()
     cap = jev.SpendCap(live, cap_usd=one * 1.5)
     for _ in range(5):
-        jev.DryRun().judge(STATE, QUESTIONS)     # a dry run elsewhere in the process
+        jev_doubles.DryRun().judge(STATE, QUESTIONS)     # a dry run elsewhere in the process
     assert cap.spent_usd == 0.0 and cap.requests == 0
     cap.judge(STATE, QUESTIONS)
     assert live.calls == 1
@@ -1172,7 +1173,7 @@ def test_a_live_spend_cap_ignores_simulated_requests_and_still_counts_a_real_one
 
 def test_a_dry_spend_cap_counts_its_simulated_requests_and_any_real_one():
     one = _one_request_usd()
-    cap = jev.SpendCap(jev.DryRun(), cap_usd=one * 10)
+    cap = jev.SpendCap(jev_doubles.DryRun(), cap_usd=one * 10)
     cap.judge(STATE, QUESTIONS)
     assert cap.requests == 1 and cap.spent_usd == pytest.approx(one)
     jev.count_usage(jev.request_size(STATE, QUESTIONS)[1])      # a real one besides
@@ -1229,6 +1230,7 @@ def test_spend_cap_checks_and_asks_as_one_step_across_threads():
 
 _INNER_SIMULATED = '''
 import jev
+import jev_doubles
 pytest_plugins = ["conftest_jev"]
 
 STATE = {STATE!r}
@@ -1238,8 +1240,8 @@ def test_replays(jev_judge):
     jev_judge().judge(STATE, QUESTIONS)
 
 def test_simulates(jev_judge):
-    jev.DryRun().judge(STATE, QUESTIONS)
-    jev.DryRun().judge(STATE, QUESTIONS)
+    jev_doubles.DryRun().judge(STATE, QUESTIONS)
+    jev_doubles.DryRun().judge(STATE, QUESTIONS)
 
 def test_counts_like_the_live_client(jev_judge):
     jev.count_usage(5)
@@ -1248,7 +1250,7 @@ def test_counts_like_the_live_client(jev_judge):
 
 def test_the_replay_summary_never_reports_a_simulated_request_as_a_live_one(
         pytester, monkeypatch, tmp_path):
-    # a test in the replay run drove `jev.DryRun` (the scorer's summary
+    # a test in the replay run drove `jev_doubles.DryRun` (the scorer's summary
     # test does): the summary said "live requests 2" though replay sends nothing
     cache = tmp_path / "cache.json"
     jev.ReplayJev(jev.FakeJev(), cache).judge(STATE, QUESTIONS)

@@ -1,7 +1,7 @@
 """scripts/jev_score_calibrate.py (VL-2): the Jev scorer's calibration run.
 
 Hermetic: a synthetic master and résumé in tmp_path, `live_judge` swapped for
-`jev.DryRun(jev.FakeJev())` (it counts each request like a live one, so the
+`jev_doubles.DryRun(jev.FakeJev())` (it counts each request like a live one, so the
 spend cap works, and makes none), and the cache directory moved into tmp_path.
 """
 from __future__ import annotations
@@ -16,6 +16,7 @@ import pandas as pd
 import pytest
 
 import jev
+import jev_doubles
 import jev_score
 
 REPO = Path(__file__).resolve().parent.parent
@@ -80,7 +81,7 @@ def files(tmp_path, monkeypatch):
                       "statistics, dashboards, A/B testing, stakeholders.\n", encoding="utf-8")
     cache = tmp_path / "cache"
     monkeypatch.setattr(calib, "CACHE_DIR", cache)
-    monkeypatch.setattr(calib, "live_judge", lambda: jev.DryRun(jev.FakeJev()))
+    monkeypatch.setattr(calib, "live_judge", lambda: jev_doubles.DryRun(jev.FakeJev()))
     return {"master": master, "resume": resume, "cache": cache,
             "args": ["--master", str(master), "--resume", str(resume)]}
 

@@ -35,6 +35,7 @@ import apply_run  # noqa: E402
 import apply_trace  # noqa: E402
 import ats_accounts  # noqa: E402
 import jev  # noqa: E402
+import jev_doubles  # noqa: E402
 from apply_judge import FillPlan, PlannedField  # noqa: E402
 
 pytest_plugins = ["conftest_browser"]
@@ -366,7 +367,7 @@ def test_stray_controls_beside_the_offsite_apply_do_not_stop_it(_browser, flow_s
 @pytest.mark.parametrize("seed", [None, 1, 2, 3, 4, 5])
 def test_the_gts_shape_reaches_the_company_form_whatever_the_judge_reads(
         _browser, flow_server, tmp_path, seed):
-    judge = jev.FakeJev() if seed is None else jev.NoisyJev(jev.FakeJev(), seed)
+    judge = jev.FakeJev() if seed is None else jev_doubles.NoisyJev(jev.FakeJev(), seed)
     r = _flow("linkedin_gts_other", _browser, flow_server, tmp_path, judge,
               "fake" if seed is None else f"noisy-{seed}")
     assert r.ok and not r.breaks, r
@@ -1681,7 +1682,7 @@ def test_a_screenshot_on_a_page_whose_load_never_fires_is_skipped_quickly(contex
 @pytest.mark.parametrize("seed", [None, 1, 2, 3])
 def test_a_same_tab_apply_whose_interstitial_opens_a_tab_reaches_the_form(
         _browser, flow_server, tmp_path, seed):
-    judge = jev.FakeJev() if seed is None else jev.NoisyJev(jev.FakeJev(), seed)
+    judge = jev.FakeJev() if seed is None else jev_doubles.NoisyJev(jev.FakeJev(), seed)
     r = _flow("linkedin_interstitial_tab", _browser, flow_server, tmp_path, judge,
               "fake" if seed is None else f"noisy-{seed}")
     assert r.ok and not r.breaks, r

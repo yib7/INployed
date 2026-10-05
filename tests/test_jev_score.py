@@ -1121,7 +1121,7 @@ class RefusesStage2For(ScriptedJudge):
 class _CountsLikeLive(RefusesStage2For):
     """`RefusesStage2For` that counts each answered request on the live
     counters at its estimated size, as `jev.TypeSafeJev` counts the
-    service's own count (`jev.DryRun` counts on the simulated one)."""
+    service's own count (`jev_doubles.DryRun` counts on the simulated one)."""
 
     def judge(self, state, questions):
         answers = super().judge(state, questions)

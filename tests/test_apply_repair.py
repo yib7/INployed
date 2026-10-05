@@ -29,6 +29,7 @@ import apply_harness as h  # noqa: E402
 import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
 import jev  # noqa: E402
+import jev_doubles  # noqa: E402
 from apply_judge import FillPlan, PlannedField  # noqa: E402
 
 pytest_plugins = ["conftest_browser"]
@@ -257,7 +258,7 @@ def test_the_noisy_judge_drops_flips_and_scales_a_messages_field():
     dropped = unsure = sure = kept = 0
     for seed in range(1, 401):
         state, questions = apply_judge.error_questions(msgs, fields)
-        out = jev.NoisyJev(jev.FakeJev(), seed).judge(state, questions)
+        out = jev_doubles.NoisyJev(jev.FakeJev(), seed).judge(state, questions)
         a = out.get("error_0_field")
         if a is None:
             dropped += 1
@@ -693,7 +694,7 @@ def test_a_message_names_a_field_only_by_one_whole_literal_label(message, labels
 def test_a_refused_submit_whose_message_both_looks_miss_is_repaired_by_its_label(
         _browser, flow_server, tmp_path, seed):
     # the seeds whose two looks leave "Portfolio URL is required" unmapped
-    r = h.run_flow(h.flow("validation_in_button_box_submit"), jev.NoisyJev(jev.FakeJev(), seed),
+    r = h.run_flow(h.flow("validation_in_button_box_submit"), jev_doubles.NoisyJev(jev.FakeJev(), seed),
                    f"noisy-{seed}", browser=_browser, server=flow_server, workdir=tmp_path)
     assert r.ok and not r.breaks and r.status == "submitted", (r.status, r.reason, r.breaks)
     assert r.sends == 1

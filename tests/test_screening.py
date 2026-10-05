@@ -12,7 +12,7 @@ correctly keeps a run that picks nothing from passing.
   wrong picks are pinned in FAKE_MISREADS with their causes. The run makes
   exactly those; a new one fails, and so does a pinned one that goes away
   (move the pin and the floor together).
-- noisy (`jev.NoisyJev` over the fake, seeds 1 to 5): it weakens and drops
+- noisy (`jev_doubles.NoisyJev` over the fake, seeds 1 to 5): it weakens and drops
   answers and never swaps a field's pick, so its wrong picks stay within the
   fake's.
 - real (the `jev_judge` fixture, `AUTO_APPLY_TEST_JEV` record or replay; the
@@ -45,6 +45,7 @@ sys.path.insert(0, str(REPO / "local"))
 import apply_facts  # noqa: E402
 import apply_screening  # noqa: E402
 import jev  # noqa: E402
+import jev_doubles  # noqa: E402
 import jev_harness  # noqa: E402
 from apply_form import Button, Field, FormDigest  # noqa: E402
 from resume_tailor import apply_answers, apply_config  # noqa: E402
@@ -202,7 +203,7 @@ def test_fake_judge_picks_the_expected_option_or_nothing():
 
 @pytest.mark.parametrize("seed", SEEDS)
 def test_noisy_judge_picks_wrong_only_where_the_fake_does(seed):
-    t = tally(f"noisy-{seed}", jev.NoisyJev(jev.FakeJev(), seed))
+    t = tally(f"noisy-{seed}", jev_doubles.NoisyJev(jev.FakeJev(), seed))
     print(t.line())
     hold(t, FAKE_MISREADS, NOISY_PICK_FLOOR[seed])
 

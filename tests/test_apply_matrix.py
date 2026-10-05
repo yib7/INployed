@@ -28,13 +28,14 @@ import apply_harness as h  # noqa: E402
 import apply_run  # noqa: E402
 import apply_send_words  # noqa: E402
 import jev  # noqa: E402
+import jev_doubles  # noqa: E402
 
 pytest_plugins = ["conftest_browser"]
 
 
 # --- NoisyJev ----------------------------------------------------------------------------------
 
-_STATES = list(jev.PAGE_STATE_NEIGHBOURS)
+_STATES = list(jev_doubles.PAGE_STATE_NEIGHBOURS)
 
 
 def _request(title="Apply", buttons=("Continue", "Back", "Help", "Submit application"),
@@ -88,20 +89,20 @@ class _Scripted:
 
 def test_noisy_answers_are_the_same_for_the_same_request_and_seed():
     state, questions = _request()
-    a = jev.NoisyJev(jev.FakeJev(), 7, swap_p=0.5, drop_p=0.3).judge(state, questions)
-    b = jev.NoisyJev(jev.FakeJev(), 7, swap_p=0.5, drop_p=0.3).judge(state, questions)
-    c = jev.NoisyJev(jev.FakeJev(), 7, swap_p=0.5, drop_p=0.3).judge(state, questions)
+    a = jev_doubles.NoisyJev(jev.FakeJev(), 7, swap_p=0.5, drop_p=0.3).judge(state, questions)
+    b = jev_doubles.NoisyJev(jev.FakeJev(), 7, swap_p=0.5, drop_p=0.3).judge(state, questions)
+    c = jev_doubles.NoisyJev(jev.FakeJev(), 7, swap_p=0.5, drop_p=0.3).judge(state, questions)
     assert a == b == c
 
 
 def test_a_changed_request_or_seed_gets_fresh_noise():
-    judge = jev.NoisyJev(_Scripted(), 3, swap_p=0.5)
+    judge = jev_doubles.NoisyJev(_Scripted(), 3, swap_p=0.5)
     reads = [judge.judge(*_request(title=f"Apply {i}"))["page_state"].choice for i in range(60)]
     assert "application_form" in reads and set(reads) - {"application_form"}, reads
     # the same page re-read: the same answer every time
     again = [judge.judge(*_request(title=f"Apply {i}"))["page_state"].choice for i in range(60)]
     assert again == reads
-    seeds = {jev.NoisyJev(_Scripted(), s, swap_p=0.5).judge(*_request())["page_state"].choice
+    seeds = {jev_doubles.NoisyJev(_Scripted(), s, swap_p=0.5).judge(*_request())["page_state"].choice
              for s in range(1, 40)}
     assert len(seeds) > 1
 
@@ -109,17 +110,17 @@ def test_a_changed_request_or_seed_gets_fresh_noise():
 def test_no_noise_is_the_inner_judge():
     state, questions = _request()
     inner = jev.FakeJev().judge(state, questions)
-    quiet = jev.NoisyJev(jev.FakeJev(), 5, swap_p=0.0, conf_scale=1.0,
+    quiet = jev_doubles.NoisyJev(jev.FakeJev(), 5, swap_p=0.0, conf_scale=1.0,
                          drop_p=0.0).judge(state, questions)
     assert quiet == inner
 
 
 @pytest.mark.parametrize("truth", _STATES)
 def test_a_swapped_page_state_is_a_neighbour_read_between_0_30_and_0_60(truth):
-    judge = jev.NoisyJev(_Scripted(truth), 1, swap_p=1.0)
+    judge = jev_doubles.NoisyJev(_Scripted(truth), 1, swap_p=1.0)
     for i in range(20):
         a = judge.judge(*_request(title=f"Page {i}"))["page_state"]
-        assert a.choice in jev.PAGE_STATE_NEIGHBOURS[truth]
+        assert a.choice in jev_doubles.PAGE_STATE_NEIGHBOURS[truth]
         assert 0.30 <= a.confidence <= 0.60
         assert a.probabilities[a.choice] == max(a.probabilities.values())
         assert a.probabilities[truth] > 0
@@ -128,7 +129,7 @@ def test_a_swapped_page_state_is_a_neighbour_read_between_0_30_and_0_60(truth):
 def test_confidences_are_scaled_within_the_floor_and_nouls_are_left_alone():
     # a Noul outside the page read (a verification, a flag of the mapping) is
     # left alone; the page read's own Nouls are misread (SP4, test_apply_read)
-    judge = jev.NoisyJev(_Scripted(), 2, swap_p=0.0, conf_scale=0.75, drop_p=0.0)
+    judge = jev_doubles.NoisyJev(_Scripted(), 2, swap_p=0.0, conf_scale=0.75, drop_p=0.0)
     seen = []
     for i in range(30):
         state, questions = _request(title=f"Form {i}")
@@ -148,7 +149,7 @@ def test_button_roles_trade_only_between_neighbours_and_a_submit_never_moves():
     moved = 0
     for i in range(80):
         state, questions = _request(title=f"Step {i}")
-        out = jev.NoisyJev(_Scripted(), i, swap_p=1.0, drop_p=0.0).judge(state, questions)
+        out = jev_doubles.NoisyJev(_Scripted(), i, swap_p=1.0, drop_p=0.0).judge(state, questions)
         roles = [out[f"button_{n}_role"].choice for n in range(4)]
         assert roles[3] == "submit"                         # "Submit application"
         assert sorted(roles[:3]) == ["advance", "back", "other"]
@@ -161,7 +162,7 @@ def test_only_field_answers_are_dropped():
     dropped = set()
     for i in range(40):
         state, questions = _request(title=f"Drop {i}")
-        out = jev.NoisyJev(_Scripted(), i, swap_p=0.0, drop_p=0.5).judge(state, questions)
+        out = jev_doubles.NoisyJev(_Scripted(), i, swap_p=0.0, drop_p=0.5).judge(state, questions)
         dropped |= set(questions) - set(out)
     assert dropped and all(q.startswith("field_") for q in dropped), dropped
 
@@ -602,7 +603,7 @@ def test_a_scaled_two_option_answer_keeps_its_winner_most_probable():
             return {"q": jev.Answer(kind="choice", choice="yes",
                                     probabilities={"yes": 0.5, "no": 0.5}, confidence=0.5)}
     for seed in range(1, 30):
-        a = jev.NoisyJev(_Half(), seed, conf_scale=0.6).judge({}, {"q": {"type": "choice"}})["q"]
+        a = jev_doubles.NoisyJev(_Half(), seed, conf_scale=0.6).judge({}, {"q": {"type": "choice"}})["q"]
         assert a.confidence < 0.5
         assert a.probabilities["yes"] > a.probabilities["no"], a
         assert abs(sum(a.probabilities.values()) - 1.0) < 1e-3, a

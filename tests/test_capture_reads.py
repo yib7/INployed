@@ -11,7 +11,7 @@ results, beside them in `_jev/`. `AUTO_APPLY_CAPTURE_JEV` picks the judge:
   `scripts/jev_record.ps1 -Target captures` (it holds the key for that one
   process); the cap is `AUTO_APPLY_RECORD_USD_CAP`, and a read the cap stops
   skips with its reason;
-- `dry`: the fake answers at each request's estimated size (`jev.DryRun`)
+- `dry`: the fake answers at each request's estimated size (`jev_doubles.DryRun`)
   into a temp copy of the cache, under the same cap: the request count and
   the spend a recording would make, with no key.
 
@@ -48,6 +48,7 @@ for sub in ("local", "tests"):
 import apply_judge  # noqa: E402
 import apply_run  # noqa: E402
 import jev  # noqa: E402
+import jev_doubles  # noqa: E402
 import jev_harness  # noqa: E402
 from test_local_captures import CAPTURES, _captures, _snapshot_parts  # noqa: E402
 
@@ -89,7 +90,7 @@ class _Reads:
             self.cache = jev_harness.dry_copy(cache) if mode == "dry" else cache
             # a live recording names its cap (refused without it); a dry run
             # has a default
-            self.cap = jev.SpendCap(jev.DryRun() if mode == "dry" else jev.TypeSafeJev(),
+            self.cap = jev.SpendCap(jev_doubles.DryRun() if mode == "dry" else jev.TypeSafeJev(),
                                     jev.record_cap(live=mode != "dry"))
             inner = self.cap
         self.judge = jev.ReplayJev(inner, self.cache)

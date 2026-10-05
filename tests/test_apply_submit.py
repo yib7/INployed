@@ -49,6 +49,7 @@ import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
 import apply_send_words  # noqa: E402
 import jev  # noqa: E402
+import jev_doubles  # noqa: E402
 from apply_judge import FillPlan  # noqa: E402
 
 pytest_plugins = ["conftest_browser"]
@@ -1772,17 +1773,17 @@ def test_a_confirmation_before_any_submit_never_reads_as_submitted(tmp_path):
         "submitted"
 
 
-@pytest.mark.parametrize("truth", sorted(jev.CONFIRM_MISREADS))
+@pytest.mark.parametrize("truth", sorted(jev_doubles.CONFIRM_MISREADS))
 def test_noisy_reads_a_form_or_a_review_as_a_confirmation_now_and_then(truth):
     from test_apply_matrix import _request, _Scripted
-    reads = [jev.NoisyJev(_Scripted(truth), seed).judge(*_request(title=f"P {i}"))["page_state"]
+    reads = [jev_doubles.NoisyJev(_Scripted(truth), seed).judge(*_request(title=f"P {i}"))["page_state"]
              for seed in range(1, 6) for i in range(40)]
     misreads = [a for a in reads if a.choice == "confirmation"]
     assert 0 < len(misreads) < len(reads) * 0.15, len(misreads)
     for a in misreads:
         assert 0.40 <= a.confidence <= 0.80
         assert sorted(a.probabilities, key=a.probabilities.get)[-2] == truth
-    quiet = jev.NoisyJev(_Scripted(truth), 3, swap_p=0.0)
+    quiet = jev_doubles.NoisyJev(_Scripted(truth), 3, swap_p=0.0)
     assert all(quiet.judge(*_request(title=f"Q {i}"))["page_state"].choice == truth
                for i in range(60))
 
@@ -1790,7 +1791,7 @@ def test_noisy_reads_a_form_or_a_review_as_a_confirmation_now_and_then(truth):
 def test_other_states_are_never_read_as_a_confirmation_by_the_new_misread():
     from test_apply_matrix import _request, _Scripted
     for truth in ("job_posting", "login_wall", "signup_form", "code_gate"):
-        reads = {jev.NoisyJev(_Scripted(truth), s).judge(*_request(title=f"R {i}"))[
+        reads = {jev_doubles.NoisyJev(_Scripted(truth), s).judge(*_request(title=f"R {i}"))[
             "page_state"].choice for s in range(1, 4) for i in range(30)}
         assert "confirmation" not in reads, truth
 

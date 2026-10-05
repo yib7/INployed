@@ -26,7 +26,7 @@ Hooks, active in `record` and `replay` mode only:
   re-record command; a failed `AssertionError` becomes an xfail carrying the
   divergence; either way the test's record goes to `outcomes.jsonl`.
 - terminal summary: replay hits and misses, live requests and spend (replay
-  mode sends none and says so; `jev.DryRun` requests are listed apart as
+  mode sends none and says so; `jev_doubles.DryRun` requests are listed apart as
   simulated, never billed), the outcomes path, and the cap stop if it happened.
 - session finish: when `AUTO_APPLY_JEV_PRUNE` is set, the shared replay's used
   keys are written to `jev_harness.used_keys_path` (SP8, gitignored), and the
@@ -218,7 +218,7 @@ def pytest_terminal_summary(terminalreporter, config):
     diverged = sum(1 for r in session.records.values() if r.divergence)
     terminalreporter.write_sep("-", f"jev {session.mode}{' (dry run)' if session.dry else ''}")
     # the lifetime counters' deltas: a reset never hides a request, and a
-    # simulated `jev.DryRun` request is never reported as a live one
+    # simulated `jev_doubles.DryRun` request is never reported as a live one
     terminalreporter.write_line(jev_harness.summary_line(session, hits, misses, diverged))
     terminalreporter.write_line(f"outcomes: {session.writer.path}")
     if session.stopped:

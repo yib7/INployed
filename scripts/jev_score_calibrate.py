@@ -94,7 +94,7 @@ _COLUMNS = frozenset({"job_posting_id", "score", "deep_score", "recommendation",
 
 
 def live_judge() -> Any:
-    """The live judge (`jev.TypeSafeJev`); tests put `jev.DryRun(jev.FakeJev())` here."""
+    """The live judge (`jev.TypeSafeJev`); tests put `jev_doubles.DryRun(jev.FakeJev())` here."""
     return jev.TypeSafeJev()
 
 

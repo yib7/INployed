@@ -46,7 +46,7 @@ pin.
 | `replay` | `ReplayJev(None, cache.json)`: a miss fails the test naming the fixture and the re-record command | the committed cache |
 
 `AUTO_APPLY_RECORD_DRY=1` turns `record` into a dry run: the fake answers at
-each request's estimated size (`jev.DryRun`) into a temp copy of the cache,
+each request's estimated size (`jev_doubles.DryRun`) into a temp copy of the cache,
 with no key: the request count and the spend a recording would make.
 `AUTO_APPLY_JEV_CACHE` moves the cache file; `outcomes.jsonl` is written
 beside it.

@@ -194,6 +194,12 @@ ATS_SITES = frozenset((
     "catsone.com", "applicantstack.com", "trakstar.com", "careers-page.com", "jobscore.com",
     "peopleadmin.com", "governmentjobs.com", "jazz.co", "harri.com", "fountain.com",
     "gusto.com", "dover.com", "wellfound.com"))
+# Career-site front ends on `ATS_SITES`: a company's job search and posting
+# pages whose Apply hands the application to the company's own application
+# platform (its Workday, SuccessFactors, Taleo or iCIMS). They stay allowed
+# sites, and the job's account is pinned on the platform the hand-off reaches.
+FRONT_END_SITES = frozenset(("phenompeople.com", "eightfold.ai", "avature.net",
+                             "jobs2web.com", "selectminds.com"))
 # Programmatic-ad trackers and link shorteners between a posting's Apply and
 # the careers site: a hop to wait out, never the destination, never
 # a place for the master password.
@@ -209,6 +215,7 @@ AGGREGATOR_SITES = frozenset((
     "jooble.org", "glassdoor.com", "builtin.com", "jobot.com", "welcometothejungle.com",
     "hiring.cafe", "simplyhired.com", "careerbuilder.com", "monster.com", "snagajob.com",
     "adzuna.com", "jobleads.com", "theladders.com"))
+NAV_ATS_MAX = 20                   # ATS hosts a job's tabs were sent to, kept in order
 TRACKER_HOPS_MAX = 3               # tracker hops waited out after one entry click
 AGGREGATOR_BOARDS_MAX = 2          # job boards read for their company link in one job
 # Bot-check providers. Their frames' controls are never filled or clicked: a
@@ -5084,6 +5091,10 @@ class _JobRun:
         self._failed_loads: dict[int, tuple[Any, tuple[str, str, str]]] = {}
         self._unplaced_loads: list[tuple[Any, tuple[str, str, str]]] = []
         self._load_listener: Callable[[Any], None] | None = None
+        # the ATS hosts a tab's main frame was sent to, in order, redirects
+        # the run never saw land included (`_pin_first_tenant`)
+        self._nav_ats: list[str] = []
+        self._nav_listener: Callable[[Any], None] | None = None
         self._error_retried: set[str] = set()      # addresses loaded once more after it
 
     # -- the trace --------------------------------------------------------------------------
@@ -5254,8 +5265,10 @@ class _JobRun:
     def _pinned_hosts(self) -> list[str]:
         """The job's own hosts on an ATS platform: its company's account there,
         from the queue entry, from `_admit_ats_transition`, or the first one
-        the job's page landed on (`_pin_first_tenant`)."""
-        return sorted(h for h in self.ats_hosts if _site(h) in ATS_SITES)
+        the job's page landed on (`_pin_first_tenant`). A career-site front
+        end (`FRONT_END_SITES`) is never one: its Apply hands the job on."""
+        return sorted(h for h in self.ats_hosts
+                      if _site(h) in ATS_SITES and _site(h) not in FRONT_END_SITES)
 
     def _tenant_departure(self, url_or_host: str) -> str:
         """The job's own ATS host that `url_or_host` departs from, "" when it
@@ -5286,13 +5299,23 @@ class _JobRun:
                                       f"{host}")
 
     def _pin_first_tenant(self, url: str) -> None:
-        """The first ATS host the job's page lands on, when no step named
+        """The first ATS host the job's tab was sent to (`_nav_ats`, a
+        redirect it passed through too) or else `url`'s, when no step named
         the job's account on a platform yet, becomes it: another company's
-        account met later departs from it (`_tenant_departure`)."""
-        host = _host(url)
-        if host and _site(host) in ATS_SITES and not self._pinned_hosts():
+        account met later, a redirect onward included, departs from it
+        (`_tenant_departure`). A career-site front end met before then is
+        kept as one of the job's hosts and pins nothing."""
+        if self._pinned_hosts():
+            return
+        for host in [*self._nav_ats, _host(url)]:
+            if not host or _site(host) not in ATS_SITES:
+                continue
             self.ats_hosts.add(host)
-            self._decide("tenant_pinned", f"the application's platform account is on {host}")
+            if _site(host) not in FRONT_END_SITES:
+                break
+        else:
+            return
+        self._decide("tenant_pinned", f"the application's platform account is on {host}")
 
     def _check_host(self, url: str) -> None:
         if _error_page(url):
@@ -5340,13 +5363,31 @@ class _JobRun:
         except Exception:       # noqa: BLE001  (a context double)
             self._load_listener = None
 
-    def _unlisten_loads(self) -> None:
-        fn, self._load_listener = self._load_listener, None
-        if fn is not None:
+        def _sent(request) -> None:
             try:
-                self.ctx.remove_listener("requestfailed", fn)
-            except Exception:   # noqa: BLE001  (the context is gone)
+                if not request.is_navigation_request() or request.frame.parent_frame is not None:
+                    return
+                host = _host(str(request.url))
+                if (host and _site(host) in ATS_SITES and host not in self._nav_ats
+                        and len(self._nav_ats) < NAV_ATS_MAX):
+                    self._nav_ats.append(host)
+            except Exception:       # noqa: BLE001  (a new tab's first load names no frame yet)
                 pass
+        try:
+            self.ctx.on("request", _sent)
+            self._nav_listener = _sent
+        except Exception:       # noqa: BLE001  (a context double)
+            self._nav_listener = None
+
+    def _unlisten_loads(self) -> None:
+        for event, attr in (("requestfailed", "_load_listener"), ("request", "_nav_listener")):
+            fn = getattr(self, attr)
+            setattr(self, attr, None)
+            if fn is not None:
+                try:
+                    self.ctx.remove_listener(event, fn)
+                except Exception:   # noqa: BLE001  (the context is gone)
+                    pass
 
     def _held_load(self, page) -> tuple[str, str, str] | None:
         """The load that failed in `page`, taken from what is held. A new
@@ -6244,8 +6285,8 @@ class _JobRun:
                                              f"({JOB_WALL_CLOCK_S // 60} min; {len(self.pages)} "
                                              f"page(s){self._last_states()})")
             self._take_late_popup()
-            self._check_host(self.page.url)
             self._pin_first_tenant(self.page.url)
+            self._check_host(self.page.url)
             self._filled_here = []
             self._last_filled, self._idle, self._refilled = {}, [], set()
             self._gate_repairs = 0
@@ -9946,7 +9987,7 @@ class _JobRun:
             own.add(_site(page_host))
         if site in _IDENTITY_SITES and site not in own:
             return True
-        if site in ATS_SITES:
+        if site in ATS_SITES and site not in own:
             mine = self._job_ats_sites()
             return bool(mine) and site not in mine
         return False

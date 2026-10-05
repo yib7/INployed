@@ -456,3 +456,65 @@ def test_b_low_the_password_box_check_reads_the_frame_resolve_uses():
     assert apply_form.resolve_frame(page, (1, "#pw")) is login
     run = _job()
     assert run._box_frame(page, (1, "#pw"), page.frames) is login
+
+
+# === a career-site front end hands the job on =============================================
+
+_FRONT = "https://cboe.eightfold.ai/careers/job/42"
+_HANDOFF = f"""<!doctype html><html><head><title>Apply</title></head><body><h1>Apply</h1>
+<script>location.replace({_OWN!r});</script></body></html>"""
+
+
+def _front_end_job() -> "apply_run._JobRun":
+    return _job(apply_url=_FRONT, ats={"domain": "cboe.eightfold.ai", "system": "other"})
+
+
+def test_b3_a_front_end_is_never_the_pin_and_the_platform_it_hands_on_to_is():
+    run = _front_end_job()
+    assert "cboe.eightfold.ai" in run.ats_hosts and not run._pinned_hosts()
+    assert run._tenant_departure("cboe.wd1.myworkdayjobs.com") == ""
+    run._check_host(_OWN)
+    run._pin_first_tenant(_OWN)
+    assert run._pinned_hosts() == ["cboe.wd1.myworkdayjobs.com"]
+    # the front end stays one of the job's hosts; another company's account departs
+    assert run._tenant_departure("cboe.eightfold.ai") == ""
+    assert run._allowed_site("cboe.eightfold.ai")
+    with pytest.raises(apply_run._Parked, match=re.escape(apply_run.TENANT_REASON)):
+        run._check_host(_OTHER)
+    assert not run._sender_refused("no-reply@eightfold.ai")      # the job's own front end
+
+
+def test_b3_a_front_end_landed_on_pins_nothing():
+    run = _job(apply_url="https://careers.fabrikam.example/jobs/42",
+               ats={"domain": "careers.fabrikam.example", "system": "other"})
+    run._pin_first_tenant("https://fabrikam.phenompeople.com/us/en/job/42")
+    assert "fabrikam.phenompeople.com" in run.ats_hosts and not run._pinned_hosts()
+    run._pin_first_tenant("https://careers-fabrikam.icims.com/jobs/42/login")
+    assert run._pinned_hosts() == ["careers-fabrikam.icims.com"]
+
+
+def test_b3_a_front_end_handing_off_to_a_workday_tenant_does_not_park(_browser, flow_server,
+                                                                     tmp_path):
+    f = h.Flow("b3_front_end_handoff", _FRONT, False, "ready_to_submit", ".*", password=True,
+               ats={"system": "other", "domain": "cboe.eightfold.ai"},
+               routes=lambda base: {"https://cboe.eightfold.ai/**": _HANDOFF,
+                                    "https://cboe.wd1.myworkdayjobs.com/**": h._COMBINED})
+    r = h.run_flow(f, jev.FakeJev(), "fake", browser=_browser, server=flow_server,
+                   workdir=tmp_path)
+    assert r.status == "ready_to_submit", r.reason
+    assert {a.host for a in r.actions if a.secret} == {"cboe.wd1.myworkdayjobs.com"}
+
+
+def test_b3_the_handed_on_workday_tenant_moving_to_another_parks(_browser, flow_server,
+                                                                tmp_path):
+    f = h.Flow("b3_front_end_then_switch", _FRONT, False, "needs_human",
+               re.escape(apply_run.TENANT_REASON), password=True,
+               ats={"system": "other", "domain": "cboe.eightfold.ai"},
+               routes=lambda base: {"https://cboe.eightfold.ai/**": _HANDOFF,
+                                    "https://cboe.wd1.myworkdayjobs.com/**": _HOP,
+                                    "https://othercorp.wd5.myworkdayjobs.com/**": h._COMBINED})
+    r = h.run_flow(f, jev.FakeJev(), "fake", browser=_browser, server=flow_server,
+                   workdir=tmp_path)
+    assert r.status == "needs_human", r.reason
+    assert "othercorp.wd5" in r.reason
+    assert not [a for a in r.actions if a.secret]

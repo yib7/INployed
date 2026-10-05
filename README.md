@@ -436,7 +436,7 @@ scripts/build_social_preview.py composes docs/social-preview.png (GitHub's 1280x
 scripts/build_walkthrough.py  records the captioned MP4 tour of the dashboard (synthetic data)
 local/app.py            PySide6/Qt dashboard entry point (triage / tracker / stats + editors)
 local/open_dashboard.pyw  the launcher's target: resolves the synced master, then opens app.py, no console
-local/qt/               Qt UI package (main_window, jobs_model/tab, settings_tab, vm_panel, resume_data_tab, answers_tab, ...)
+local/qt/               Qt UI package (main_window + its mw_* action modules, jobs_model/tab, settings_tab, vm_panel, ...)
 local/jobsdata.py       toolkit-agnostic data + config logic (load/filter/sort/columns/blocklist)
 local/settings.py       the one schema behind the Settings tab: 87 fields, where each is stored
 local/setup_check.py    what's missing or misconfigured, in plain sentences (the Check setup button)
@@ -446,8 +446,16 @@ local/vm_schedule.py    pure crontab / pause / run-label generators
 local/vm_sync.py        gcloud ssh/scp argv builders (pause/resume, crontab, config + outbox pushes)
 local/watcher.py        scheduled watcher: reconciles seen-state, pops the dashboard on new high scores
 local/apply_queue.py    the batch auto-apply queue: atomic JSON store + its CLI (list / stats / requeue / ...)
-local/apply_run.py      the Jev-judged auto-apply drain (drain / one / login / doctor), state machine + submit gate
+local/apply_run.py      the Jev-judged auto-apply drain: its CLI (drain / one / login / doctor / probe), Runner, browser launch
+local/apply_job.py      one job's run, one page per turn (+ apply_job_pages / _form / _submit, its step bases)
+local/apply_route.py    where a page goes next: the order a page's read is checked in
+local/apply_gate.py     the submit gate and the live check that refuses a click on a send
+local/apply_page.py     opening and reading a page; apply_account_flow.py: sign-in and sign-up screens
+local/apply_sites.py    which site a URL belongs to; apply_sendwatch.py: what a page sends
+local/apply_record.py   apply_record.md beside the sheet and the drain's report
+local/apply_limits.py   the run's waits and caps; apply_outcome.py: how a job ends; apply_send_words.py: send words
 local/jev.py            the TypeSafe Jev judge client, the deterministic fake, and the replay cache
+local/jev_doubles.py    the judge's test doubles (NoisyJev, DryRun) for the flow matrix and calibration
 local/jev_switch.py     whether Jev runs for scoring, the tailor, the difficulty check and auto-apply
 local/apply_assess.py   the difficulty check: a 1-10 score per queued job, typing nothing
 local/apply_pause.py    park and resume: a run waits for your answer to a question it needs you for
@@ -455,15 +463,17 @@ local/profile_lock.py   one browser at a time on the auto-apply profile
 local/apply_sheet.py    the apply.md parser the fact catalog reads
 local/apply_judge.py    every Jev question and threshold behind the drain (untuned until the live pass)
 local/apply_form.py     page digest: visible fields, buttons and text per frame, for the judge
+local/apply_form_js.py  the page scripts the digest, the filler and the run hand to the browser
 local/apply_facts.py    the fact catalog (apply.md + answer bank) the judge maps fields onto
-local/apply_fill.py     acts on a fill plan: fill / select / radio / listbox / upload, read-back, click
+local/apply_fill.py     acts on a fill plan: fill / select / radio / listbox / upload, read-back
+local/apply_click.py    the guarded click and the settle wait
 local/apply_inbox.py    emailed verification codes read from Outlook web or Gmail web
 local/apply_answergen.py  flash-lite draft for a free-text question, grounded sentence by sentence by Jev
 local/ats_accounts.py   per-portal account ledger + the master password (Credential Manager)
 local/resume_tailor/    résumé/cover-letter/ATS/prep engine + apply_answers + master_validate
 resume_tailor_files/    master_experience.yaml + LaTeX template (your data is git-ignored)
-tests/                  pytest suite + UI smoke test
-docs/                   USER_GUIDE (every feature), ARCHITECTURE (code tour), CREDITS
+tests/                  pytest suite + UI smoke test + the auto-apply flow harness (apply_harness and its three parts)
+docs/                   USER_GUIDE (every feature), ARCHITECTURE (code tour), CHANGELOG, CREDITS
                         (attribution), the README's media, and the GitHub social card
 ```
 

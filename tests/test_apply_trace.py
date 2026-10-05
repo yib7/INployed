@@ -464,7 +464,7 @@ def test_an_account_screens_box_whose_options_tie_parks_when_required(
     typed = []
     monkeypatch.setattr(apply_run.ats_accounts, "has_password", lambda: True)
     monkeypatch.setattr(apply_run.ats_accounts, "fill_password",
-                        lambda page, loc: typed.append("password") or True)
+                        lambda page, loc, **kw: typed.append("password") or True)
     try:
         run.page = context.new_page()
         url = "https://careers.fabrikam.example/signup"

@@ -518,3 +518,57 @@ def test_b3_the_handed_on_workday_tenant_moving_to_another_parks(_browser, flow_
     assert r.status == "needs_human", r.reason
     assert "othercorp.wd5" in r.reason
     assert not [a for a in r.actions if a.secret]
+
+
+# === the runner's side of the settings and ledger fixes ===================================
+
+def test_load_settings_parks_on_a_config_started_over_beside_a_damaged_copy(monkeypatch):
+    import settings
+    monkeypatch.setattr(settings, "submit_problem",
+                        lambda targets=None: "config.json was started over beside a damaged copy")
+    monkeypatch.setattr(settings, "load", lambda *a, **kw: {apply_run.SUBMIT_KEY: True})
+    cfg = apply_run.load_settings()
+    assert cfg[apply_run.SUBMIT_KEY] is False
+    assert "damaged copy" in cfg[apply_run.PARK_MODE_KEY]
+
+
+def test_the_frame_check_at_the_fill_uses_the_password_rule():
+    run = _job(apply_url="https://careers.fabrikam.example/jobs/42",
+               ats={"domain": "careers.fabrikam.example", "system": "other"})
+    assert run._password_frame_ok("https://careers.fabrikam.example/login")
+    assert run._password_frame_ok("about:srcdoc")             # checked through its parent
+    assert not run._password_frame_ok("http://careers.fabrikam.example/login")
+    assert not run._password_frame_ok("https://www.linkedin.com/login")
+    assert not run._password_frame_ok("https://evil.example/frame")
+
+
+def test_every_password_fill_passes_the_frame_check(_browser, flow_server, tmp_path,
+                                                    monkeypatch):
+    seen: list = []
+    real = apply_run.ats_accounts.fill_password
+
+    def fill(page_or_frame, locator, **kw):
+        seen.append(kw.get("host_ok"))
+        return real(page_or_frame, locator, **kw)
+
+    monkeypatch.setattr(apply_run.ats_accounts, "fill_password", fill)
+    start = "https://careers.fabrikam.example/apply/42"
+    f = h.Flow("fill_frame_check", start, False, "ready_to_submit", ".*", password=True,
+               ats={"system": "other", "domain": "careers.fabrikam.example"},
+               routes=lambda base: {"https://careers.fabrikam.example/**": h._COMBINED})
+    r = h.run_flow(f, jev.FakeJev(), "fake", browser=_browser, server=flow_server,
+                   workdir=tmp_path)
+    assert r.status == "ready_to_submit", r.reason
+    assert seen and all(callable(ok) for ok in seen)
+
+
+def test_a_ledger_that_cannot_be_written_never_stops_the_application(monkeypatch, caplog):
+    run = _job()
+
+    def unreadable(*a, **kw):
+        raise OSError("the ATS account ledger ats_accounts.json could not be read")
+
+    monkeypatch.setattr(apply_run.ats_accounts, "record", unreadable)
+    with caplog.at_level("WARNING", logger="apply_run"):
+        run._record_account("cboe.wd1.myworkdayjobs.com", "jane.doe@example.com")
+    assert "not written to the ledger" in caplog.text

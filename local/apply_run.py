@@ -599,7 +599,8 @@ def submit_on(settings: Mapping[str, Any]) -> bool:
 
 def guard_submit(cfg: dict[str, Any], problem: str = "") -> dict[str, Any]:
     """`cfg` with the submit switch failing closed: when the config file
-    could not be read (`problem`, `settings.read_problem`) or its
+    could not be read or was started over beside a damaged copy
+    (`problem`, `settings.submit_problem`) or its
     `auto_apply_submit` is not a boolean, the switch is False and
     `PARK_MODE_KEY` says why, for the log and the drain report. A switch
     the user turned off stays off with no note."""
@@ -623,7 +624,7 @@ def load_settings() -> dict[str, Any]:
     off and then broke the file never gets an application sent."""
     try:
         import settings
-        problem = settings.read_problem("config")
+        problem = settings.submit_problem()
         stored = settings.load()
     except Exception as e:      # noqa: BLE001  (a bad config file is not a reason to stop)
         log.warning("settings unreadable (%s); using defaults in park mode", type(e).__name__)
@@ -1936,7 +1937,8 @@ class _Accounts:
                     moved = self.run._moved_box(page, frame)
                     if moved:
                         raise _Parked("needs_human", moved, LOGIN_NOTE)
-                    if not ats_accounts.fill_password(page, loc):
+                    if not ats_accounts.fill_password(page, loc,
+                                                      host_ok=self.run._password_frame_ok):
                         return False
                 if passwords:
                     self.password_typed.add((site, "signup" if signup else "login"))
@@ -5525,13 +5527,29 @@ class _JobRun:
         """The account made or signed in to on `host`, in the ledger: under
         `host`, or, when `host` names no tenant and a job host on its site
         does, under that host (a sign-in host every tenant shares must never
-        hand one company's account to another)."""
+        hand one company's account to another). A ledger that cannot be
+        read or kept aside (`ats_accounts.record` raises OSError) is logged
+        and the application goes on: the account itself was made."""
         target = host
         if not ats_accounts.tenant_key(host):
             named = [h for h in self._related_hosts(host) if ats_accounts.tenant_key(h)]
             if named:
                 target = named[0]
-        ats_accounts.record(target, email, **extra)
+        try:
+            ats_accounts.record(target, email, **extra)
+        except OSError as e:
+            self.log.warning("job %s: the account on %s was not written to the ledger (%s: %s)",
+                             self.job_id, target, type(e).__name__, _cap(str(e), 160))
+
+    def _password_frame_ok(self, frame_url: str) -> bool:
+        """`ats_accounts.fill_password`'s check of the frame holding the box,
+        at the moment of the fill: `_password_ok` on its URL. A blank or
+        srcdoc frame (`about:`) has no address of its own and was checked
+        through its parent's (`_frame_address`)."""
+        url = str(frame_url or "")
+        if url.startswith("about:"):
+            return True
+        return self._password_ok(url)
 
     def _check_password_rules(self, digest: apply_form.FormDigest, host: str) -> None:
         """Before the master password makes an account, the rules
@@ -8507,7 +8525,7 @@ class _JobRun:
                 moved = self._moved_box(self.page, frame)
                 if moved:
                     raise _Parked("needs_human", moved)
-                if ats_accounts.fill_password(self.page, loc):
+                if ats_accounts.fill_password(self.page, loc, host_ok=self._password_frame_ok):
                     account_host = account_host or box_host or host
                     typed.append(f)
                     self._filled_here.append(pf.locator)

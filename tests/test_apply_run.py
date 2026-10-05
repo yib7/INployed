@@ -859,7 +859,7 @@ def test_the_password_is_never_typed_on_linkedin_whatever_led_there(
                   lambda route: route.fulfill(body=body, content_type="text/html"))
     monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: "synthetic-password")
     typed = []
-    monkeypatch.setattr(ats_accounts, "fill_password", lambda *a: typed.append(a) or True)
+    monkeypatch.setattr(ats_accounts, "fill_password", lambda *a, **kw: typed.append(a) or True)
     _enqueue(job_folder, html)
     run = apply_run._JobRun(_runner(context, tmp_path), context, _entry())
     run._prepare()
@@ -1304,7 +1304,7 @@ def _count_password_fills(monkeypatch):
     typed = []
     real = ats_accounts.fill_password
     monkeypatch.setattr(ats_accounts, "fill_password",
-                        lambda *a: typed.append(1) or real(*a))
+                        lambda *a, **kw: typed.append(1) or real(*a, **kw))
     return typed
 
 

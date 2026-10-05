@@ -108,6 +108,7 @@ if str(HERE) not in sys.path:
 
 import apply_answergen  # noqa: E402
 import apply_facts  # noqa: E402
+import apply_click  # noqa: E402
 import apply_fill  # noqa: E402
 import apply_form  # noqa: E402
 import apply_judge  # noqa: E402
@@ -1624,8 +1625,8 @@ class _Accounts:
         found: list[tuple[str, str, bool, int]] = []
         for i in range(links.count()):
             link = links.nth(i)
-            text = " ".join((link.inner_text(timeout=apply_fill.ACTION_TIMEOUT_MS) or "").split())
-            href = link.get_attribute("href", timeout=apply_fill.ACTION_TIMEOUT_MS)
+            text = " ".join((link.inner_text(timeout=apply_click.ACTION_TIMEOUT_MS) or "").split())
+            href = link.get_attribute("href", timeout=apply_click.ACTION_TIMEOUT_MS)
             if not href or _NOT_AN_ACCOUNT.search(text) or _THIRD_PARTY.search(text) \
                     or apply_judge.DECLINE_WORDS.search(text):
                 continue
@@ -2393,7 +2394,7 @@ def link_targets(page, digest: apply_form.FormDigest) -> dict[int, str]:
             continue
         try:
             href = str(apply_form.resolve(page, b.locator).first.evaluate(
-                _LINK_TARGET_JS, timeout=apply_fill.ACTION_TIMEOUT_MS) or "")
+                _LINK_TARGET_JS, timeout=apply_click.ACTION_TIMEOUT_MS) or "")
         except Exception:       # noqa: BLE001  (a page double, a detached control)
             continue
         if href.lower().startswith(("http://", "https://")):
@@ -2642,7 +2643,7 @@ def _page_print(page) -> tuple[str, str]:
 
 def _snapshot_or_none(page) -> Any:
     try:
-        return apply_fill._snapshot(page)
+        return apply_click._snapshot(page)
     except Exception:       # noqa: BLE001  (a page double, a page mid-navigation)
         return None
 
@@ -3869,7 +3870,7 @@ def mailto_address(loc) -> str:
     """The address an Apply control mails to (`mailto:` on it or its link),
     without the query; "" when it is no email link."""
     try:
-        href = str(loc.first.evaluate(_MAILTO_JS, timeout=apply_fill.ACTION_TIMEOUT_MS) or "")
+        href = str(loc.first.evaluate(_MAILTO_JS, timeout=apply_click.ACTION_TIMEOUT_MS) or "")
     except Exception:       # noqa: BLE001  (a page double, a detached element)
         return ""
     if not href.lower().startswith("mailto:"):
@@ -3910,13 +3911,13 @@ def click_entry(page, loc, *, timeout_ms: int | None = None,
         try:
             new_tab = bool(loc.first.evaluate(
                 "el => { const a = el.closest('a[href]'); return !!a && a.target === '_blank'; }",
-                timeout=apply_fill.ACTION_TIMEOUT_MS))
+                timeout=apply_click.ACTION_TIMEOUT_MS))
         except Exception:   # noqa: BLE001  (the element is read again by the click)
             new_tab = False
         before = _snapshot_or_none(page)
         url0 = str(page.url)
         try:
-            loc.first.click(timeout=apply_fill.ACTION_TIMEOUT_MS)
+            loc.first.click(timeout=apply_click.ACTION_TIMEOUT_MS)
         except Exception as e:  # noqa: BLE001  (an overlay took the click, the element went)
             if _closed_error(e):
                 raise
@@ -5044,7 +5045,7 @@ class _JobRun:
             pass
         # the page's own sends from its first request: a click's evidence
         # leaves them out
-        apply_fill.watch_requests(page)
+        apply_click.watch_requests(page)
 
     def _reads(self, answers: Mapping[str, Any] | None = None) -> str:
         """The judge's most probable reads of the page state (its own pick,
@@ -5500,7 +5501,7 @@ class _JobRun:
         frame read first only when it is the page's site, an ATS platform or
         the admitted application (`content_frame_site`)."""
         page = page if page is not None else self.page
-        apply_fill.watch_requests(page)
+        apply_click.watch_requests(page)
         return apply_form.extract(page, content_site=lambda url: content_frame_site(
             url, str(page.url), self.ats_hosts))
 
@@ -6395,7 +6396,7 @@ class _JobRun:
         """Whether a loading placeholder shows in the viewport (an `aria-busy`
         region, a skeleton: `apply_fill`'s readiness read)."""
         try:
-            return bool(apply_fill.ready_snapshot(self.page)[1])
+            return bool(apply_click.ready_snapshot(self.page)[1])
         except Exception:       # noqa: BLE001  (a page double, a page mid-navigation)
             return False
 
@@ -6527,7 +6528,7 @@ class _JobRun:
             # the click's effect (the banner gone, a reload, a navigation) is
             # waited for before the page is read
             info = apply_fill.act_and_settle(
-                self.page, lambda: loc.click(timeout=apply_fill.ACTION_TIMEOUT_MS),
+                self.page, lambda: loc.click(timeout=apply_click.ACTION_TIMEOUT_MS),
                 timeout_s=CONSENT_WAIT_S)
         except Exception as e:      # noqa: BLE001  (the banner went away on its own)
             if _closed_error(e):
@@ -8156,7 +8157,7 @@ class _JobRun:
         for pf in wrong:
             try:
                 apply_form.resolve(self.page, pf.locator).first.fill(
-                    "", timeout=apply_fill.ACTION_TIMEOUT_MS)
+                    "", timeout=apply_click.ACTION_TIMEOUT_MS)
                 rec.setdefault("cleared", []).append(pf.label)
             except Exception as e:  # noqa: BLE001  (a box gone: nothing to clear)
                 self._trace("error", step="page_writes.clear", error=type(e).__name__)
@@ -8926,13 +8927,13 @@ class _JobRun:
 
     def _wait_while_busy(self, text: str) -> None:
         """After a click that changed the page, a loading indicator
-        still in view (`aria-busy`, a skeleton: `apply_fill.ready_snapshot`)
+        still in view (`aria-busy`, a skeleton: `apply_click.ready_snapshot`)
         is waited on, up to `BUSY_WAIT_S` (a slow Workday or Taleo step can
         take 30 s), then the page settles; the trace says how long."""
         start = time.monotonic()
         while time.monotonic() - start < BUSY_WAIT_S:
             try:
-                if not apply_fill.ready_snapshot(self.page)[1]:
+                if not apply_click.ready_snapshot(self.page)[1]:
                     break
             except Exception:       # noqa: BLE001  (a page double, a page mid-navigation)
                 break
@@ -9861,7 +9862,7 @@ class _JobRun:
                                          f"boxes)", CODE_NOTE)
 
         def _holds() -> bool:
-            joined = "".join(b.input_value(timeout=apply_fill.ACTION_TIMEOUT_MS) for b in boxes)
+            joined = "".join(b.input_value(timeout=apply_click.ACTION_TIMEOUT_MS) for b in boxes)
             return joined == code
         apply_verify.fill_code(self.page, boxes[0], code)
         if _holds():
@@ -9869,7 +9870,7 @@ class _JobRun:
         self._decide("otp_box_by_box", "the code typed from the first box did not fill the "
                                        "boxes; each box takes its own character")
         for box, char in zip(boxes, code):
-            box.fill(char, timeout=apply_fill.ACTION_TIMEOUT_MS)
+            box.fill(char, timeout=apply_click.ACTION_TIMEOUT_MS)
         if not _holds():
             raise _Parked("needs_human", "emailed code could not be filled (the boxes did not "
                                          "keep it)", CODE_NOTE)

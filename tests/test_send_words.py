@@ -4,6 +4,7 @@ Every pattern and every page-script regex source built from the word lists
 is pinned here to its text, so a change to a list shows up as one red line
 per copy it reaches, and no copy can drift from the lists.
 """
+import apply_click
 import apply_fill
 import apply_form_js
 import apply_judge
@@ -38,7 +39,7 @@ def test_every_page_script_holds_the_built_sources():
     assert f"const SEND_OBJECT = {sw.js_send_object()};" in js
     assert f"submits || {sw.js_submit()}.test(text)" in js
     assert "__SEND_" not in js and "__SUBMIT_WORDS__" not in js
-    assert apply_fill._SEND_JS == sw.js_union()
+    assert apply_click._SEND_JS == sw.js_union()
 
 
 def test_the_old_homes_read_the_same_objects():

@@ -12,6 +12,7 @@ pytest.importorskip("playwright")
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
+import apply_click  # noqa: E402
 import apply_fill  # noqa: E402
 import apply_form  # noqa: E402
 import apply_judge  # noqa: E402
@@ -217,15 +218,15 @@ def test_a_click_outlasts_a_spinner_that_precedes_the_navigation(browser_page, f
 def test_a_click_routes_the_torn_down_frame_path_through_settle(browser_page, fixture_url, monkeypatch):
     browser_page.goto(fixture_url("lever_single.html"))
     d = apply_form.extract(browser_page)
-    real_snapshot = apply_fill._snapshot
+    real_snapshot = apply_click._snapshot
     calls = {"snapshots": 0, "settled": 0}
 
     def torn_down(page):
         calls["snapshots"] += 1
         return (("gone",),) if calls["snapshots"] > 1 else real_snapshot(page)
 
-    monkeypatch.setattr(apply_fill, "_snapshot", torn_down)
-    monkeypatch.setattr(apply_fill, "_settle",
+    monkeypatch.setattr(apply_click, "_snapshot", torn_down)
+    monkeypatch.setattr(apply_click, "_settle",
                         lambda page, timeout_s, **kw: calls.__setitem__("settled", calls["settled"] + 1))
     assert apply_fill.click(browser_page, d, _button(d, "Submit application").n).changed is True
     assert calls["settled"] == 1
@@ -562,7 +563,7 @@ def _unreadable_click(monkeypatch, reads, *, raise_first=False, found=("#next",)
     monkeypatch.setattr(apply_form, "live_text", lambda loc: reads.pop(0) if reads else {})
     monkeypatch.setattr(apply_form, "find_by_text", lambda page, i, text: list(found))
     monkeypatch.setattr(apply_form, "frames", lambda page: (_ for _ in ()).throw(RuntimeError()))
-    monkeypatch.setattr(apply_fill, "_await_change", lambda page, act, t, **k: (act(), True)[1])
+    monkeypatch.setattr(apply_click, "_await_change", lambda page, act, t, **k: (act(), True)[1])
     digest = apply_form.FormDigest(url_host="example.com", title="", text="", buttons=[
         apply_form.Button(n=0, locator=(0, "#next"), text="Next")])
 
@@ -597,7 +598,7 @@ def test_an_unchecked_click_still_goes_ahead_without_a_live_read(monkeypatch):
     monkeypatch.setattr(apply_form, "resolve", lambda page, loc: _ClickLoc(handle))
     monkeypatch.setattr(apply_form, "live_text", lambda loc: {})
     monkeypatch.setattr(apply_form, "frames", lambda page: (_ for _ in ()).throw(RuntimeError()))
-    monkeypatch.setattr(apply_fill, "_await_change", lambda page, act, t, **k: (act(), True)[1])
+    monkeypatch.setattr(apply_click, "_await_change", lambda page, act, t, **k: (act(), True)[1])
     digest = apply_form.FormDigest(url_host="example.com", title="", text="", buttons=[
         apply_form.Button(n=0, locator=(0, "#next"), text="Next")])
     r = apply_fill.click(_ClickPage(), digest, 0)
@@ -650,14 +651,14 @@ r.getElementById('b').addEventListener('click', () => { window.__pageSaw += 1; }
 def test_the_click_guard_sees_and_stops_a_shadow_buttons_click(browser_page):
     browser_page.set_content(_SHADOW_NEXT)
     h = browser_page.locator("#host >> #b").element_handle()
-    h.evaluate(apply_fill._ARM_JS, "Next")
+    h.evaluate(apply_click._ARM_JS, "Next")
     h.click()
-    assert browser_page.evaluate(apply_fill._SEEN_JS) is True
+    assert browser_page.evaluate(apply_click._SEEN_JS) is True
     # its text turns into a send between the check and the click: stopped
-    browser_page.evaluate(apply_fill._UNSEEN_JS)
+    browser_page.evaluate(apply_click._UNSEEN_JS)
     h.evaluate("el => { el.textContent = 'Submit application'; }")
     h.click()
-    assert browser_page.evaluate(apply_fill._BLOCKED_JS) == "Submit application"
+    assert browser_page.evaluate(apply_click._BLOCKED_JS) == "Submit application"
     assert browser_page.evaluate("window.__pageSaw") == 1
 
 

@@ -18,6 +18,7 @@ pytest.importorskip("playwright")
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
+import apply_click  # noqa: E402
 import apply_fill  # noqa: E402
 import apply_form  # noqa: E402
 import apply_harness as h  # noqa: E402
@@ -138,7 +139,7 @@ _COVERS = {
 def test_the_overlay_picker_puts_away_each_cover_its_own_way(browser_page, cover):
     html, want = _COVERS[cover]
     browser_page.set_content(f"<body>{_TARGET}{html}</body>")
-    found = browser_page.locator("#go").evaluate(apply_fill._OVERLAY_JS)
+    found = browser_page.locator("#go").evaluate(apply_click._OVERLAY_JS)
     assert (found["kind"], found["text"], found.get("own")) == want, found
     assert not found["text"].lower().startswith(("accept", "allow all", "agree"))
 
@@ -166,7 +167,7 @@ def test_a_fixed_box_is_the_applications_own_by_the_box_it_shares_with_the_field
         '<button type="button" id="go" style="position: fixed; bottom: 40px; right: 40px; '
         'width: 80px; height: 30px">Next</button>' + (box if box is _FOOTER else "") + '</div>'
         + ("" if box is _FOOTER else box) + '</body>')
-    found = browser_page.locator("#go").evaluate(apply_fill._OVERLAY_JS)
+    found = browser_page.locator("#go").evaluate(apply_click._OVERLAY_JS)
     assert (found["kind"], found["text"], found.get("own")) == want, found
 
 

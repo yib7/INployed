@@ -280,10 +280,10 @@ def hermetic(rundir: Path, *, password: bool = False, today: Any = None):
 # The fixtures are static pages: a short quiet window reads them as well as the
 # production one, and a dead click or a missing popup then costs a few seconds.
 FAST_TIMING = {
-    ("apply_fill", "SETTLE_QUIET_S"): 0.1,        # a flow with a timer keeps its own (`Flow.settle_s`)
-    ("apply_fill", "SETTLE_MAX_S"): 3.0,
-    ("apply_fill", "NETWORK_IDLE_MS"): 50,
-    ("apply_fill", "POLL_S"): 0.05,
+    ("apply_click", "SETTLE_QUIET_S"): 0.1,        # a flow with a timer keeps its own (`Flow.settle_s`)
+    ("apply_click", "SETTLE_MAX_S"): 3.0,
+    ("apply_click", "NETWORK_IDLE_MS"): 50,
+    ("apply_click", "POLL_S"): 0.05,
     ("apply_run", "POPUP_TIMEOUT_MS"): 1_500,
     ("apply_run", "POPUP_GRACE_S"): 0.3,
     ("apply_run", "ENTRY_POLL_MS"): 50,
@@ -341,7 +341,7 @@ CONFIRMATION_HTML = (
     "team will review it and reach out if there is a match.</p></body></html>")
 
 
-# the slow_post flow's answer: past apply_fill.ACTION_TIMEOUT_MS (5 s), so the click
+# the slow_post flow's answer: past apply_click.ACTION_TIMEOUT_MS (5 s), so the click
 # times out with the post in flight; no shorter while that timeout stands
 SLOW_POST_S = 6.0
 

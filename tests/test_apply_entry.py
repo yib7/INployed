@@ -26,6 +26,7 @@ pytest.importorskip("playwright")
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
+import apply_click  # noqa: E402
 import apply_fill  # noqa: E402
 import apply_form  # noqa: E402
 import apply_harness as h  # noqa: E402
@@ -487,8 +488,8 @@ def test_a_linkedin_subdomain_the_job_did_not_start_on_is_linkedin_too(context, 
 # === settling (NAV-01, NAV-02, NAV-03, study G5) ================================================
 
 def test_the_settle_holds_while_a_skeleton_shows(context, monkeypatch):
-    monkeypatch.setattr(apply_fill, "SETTLE_QUIET_S", 0.3)
-    monkeypatch.setattr(apply_fill, "SETTLE_MAX_S", 6.0)
+    monkeypatch.setattr(apply_click, "SETTLE_QUIET_S", 0.3)
+    monkeypatch.setattr(apply_click, "SETTLE_MAX_S", 6.0)
     page = context.new_page()
     page.set_content('<div class="card-skeleton" aria-busy="true" style="height:120px">'
                      'Loading</div><script>setTimeout(() => document.querySelector('
@@ -501,8 +502,8 @@ def test_the_settle_holds_while_a_skeleton_shows(context, monkeypatch):
 
 
 def test_a_placeholder_below_the_fold_does_not_hold_the_settle(context, monkeypatch):
-    monkeypatch.setattr(apply_fill, "SETTLE_QUIET_S", 0.3)
-    monkeypatch.setattr(apply_fill, "SETTLE_MAX_S", 6.0)
+    monkeypatch.setattr(apply_click, "SETTLE_QUIET_S", 0.3)
+    monkeypatch.setattr(apply_click, "SETTLE_MAX_S", 6.0)
     page = context.new_page()
     page.set_content('<p>Top</p><div style="margin-top:3000px" class="skeleton" '
                      'aria-busy="true">Loading more</div>')
@@ -512,8 +513,8 @@ def test_a_placeholder_below_the_fold_does_not_hold_the_settle(context, monkeypa
 
 
 def test_a_placeholder_that_never_clears_is_released_at_the_cap(context, monkeypatch):
-    monkeypatch.setattr(apply_fill, "SETTLE_QUIET_S", 0.3)
-    monkeypatch.setattr(apply_fill, "SETTLE_MAX_S", 1.0)
+    monkeypatch.setattr(apply_click, "SETTLE_QUIET_S", 0.3)
+    monkeypatch.setattr(apply_click, "SETTLE_MAX_S", 1.0)
     page = context.new_page()
     page.set_content('<div aria-busy="true" style="height:40px">Loading</div>')
     start = time.monotonic()
@@ -701,7 +702,7 @@ def test_the_sign_up_page_behind_a_create_account_link_is_read_once_it_renders(
         context, flow_server, tmp_path, monkeypatch):
     # NAV-03: the sign-up page renders its form after `load`; it is read once
     # it holds still (a quiet window that outlasts the 800 ms render)
-    monkeypatch.setattr(apply_fill, "SETTLE_QUIET_S", 1.2)
+    monkeypatch.setattr(apply_click, "SETTLE_QUIET_S", 1.2)
     monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: h.PASSWORD)
     signup = (FORMS / "signup.html").read_text(encoding="utf-8")
     inner = signup.split('<body>', 1)[1].split("<script>", 1)[0].strip()
@@ -875,7 +876,7 @@ def test_an_entry_click_that_does_nothing_waits_the_whole_window(context, monkey
 
 
 def test_an_entry_click_an_overlay_takes_is_reported_failed(context, monkeypatch):
-    monkeypatch.setattr(apply_fill, "ACTION_TIMEOUT_MS", 500)
+    monkeypatch.setattr(apply_click, "ACTION_TIMEOUT_MS", 500)
     page = context.new_page()
     page.set_content('<a id="apply" href="/x">Apply</a><div style="position:fixed;inset:0;'
                      'background:rgba(0,0,0,.3)"></div>')
@@ -1590,7 +1591,7 @@ _LATE_TAB = _POSTING.replace(
 def test_a_tab_the_apply_opens_late_is_adopted(context, tmp_path, monkeypatch):
     # the click changes the page at once and opens the tab 0.7 s later, past
     # the entry race's grace; the settle's quiet window outlasts it
-    monkeypatch.setattr(apply_fill, "SETTLE_QUIET_S", 1.0)
+    monkeypatch.setattr(apply_click, "SETTLE_QUIET_S", 1.0)
     _serve(context, {"/jobs/42": _LATE_TAB,
                      "/apply/form": (FORMS / "lever_single.html").read_text(encoding="utf-8")})
     folder = h.write_job_folder(tmp_path / "job")
@@ -1650,7 +1651,7 @@ def test_a_linkedin_form_after_the_companys_form_says_the_application_went_back(
 # --- the review's notes: a capped settle shows in the trace; screenshots do not stall -----------------
 
 def test_a_settle_released_at_its_cap_says_so_in_the_trace(context, tmp_path, monkeypatch):
-    monkeypatch.setattr(apply_fill, "SETTLE_MAX_S", 0.5)
+    monkeypatch.setattr(apply_click, "SETTLE_MAX_S", 0.5)
     _serve(context, {"/jobs/42": _POSTING.replace(
         "<h1>", "<div aria-busy='true' style='height:30px'>Loading more</div><h1>")})
     folder = h.write_job_folder(tmp_path / "job")

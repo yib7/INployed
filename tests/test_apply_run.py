@@ -1088,7 +1088,7 @@ def test_linkedin_shaped_posting_follows_its_apply_link_through_the_redirect(
     # and the new tab is a redirector whose script moves on to the ATS. Served
     # off LinkedIn, the redirector moves on by its 1.5 s timer alone: the
     # settle keeps a quiet window longer than that
-    monkeypatch.setattr(apply_run.apply_fill, "SETTLE_QUIET_S", 2.0)
+    monkeypatch.setattr(apply_run.apply_click, "SETTLE_QUIET_S", 2.0)
     _enqueue(job_folder, fixture_url("linkedin_posting.html"))
     out = _runner(context, tmp_path).drain(cap=1)[0]
     assert out.status == "submitted", out

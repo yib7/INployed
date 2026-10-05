@@ -4,12 +4,13 @@ Every script that defines `visible` takes it from `VISIBLE_FN_JS` (any box)
 or `VISIBLE_AREA_FN_JS` (width and height), so the two rules cannot drift
 apart copy by copy, and no splice token is left in a script a page runs.
 """
+import apply_click
 import apply_fill
 import apply_form_js
 import apply_linkedin
 
 ANY = [apply_form_js._EXTRACT_JS, apply_form_js._VALIDITY_JS, apply_form_js._SCAN_JS,
-       apply_fill._SNAPSHOT_JS, apply_fill._READY_JS, apply_fill._TYPEAHEAD_OPTIONS_JS]
+       apply_click._SNAPSHOT_JS, apply_click._READY_JS, apply_fill._TYPEAHEAD_OPTIONS_JS]
 AREA = [apply_form_js._CONSENT_CONTROL_JS, apply_linkedin._READ_JS, apply_linkedin._CONTINUE_JS]
 
 

@@ -291,7 +291,7 @@ def popup_refusal(words: dict) -> str:
 def js_union() -> str:
     """SUBMIT and FINAL as a regex source for a JS string literal (each
     backslash doubled): the overlay picker and the click's arm build their
-    `new RegExp` from it (`apply_fill._SEND_JS`)."""
+    `new RegExp` from it (`apply_click._SEND_JS`)."""
     return r"\\b" + _alt(SUBMIT + FINAL) + r"\\b"
 
 

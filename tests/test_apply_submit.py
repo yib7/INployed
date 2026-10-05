@@ -41,6 +41,7 @@ pytest.importorskip("playwright")
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
+import apply_click  # noqa: E402
 import apply_fill  # noqa: E402
 import apply_form  # noqa: E402
 import apply_form_js  # noqa: E402
@@ -521,7 +522,7 @@ def test_a_dispatched_click_whose_navigation_timed_out_has_landed(browser_page, 
                                                                   monkeypatch):
     # a 1 s action timeout and a 2.5 s answer: the click still times out
     # after its dispatch, with the post in flight
-    monkeypatch.setattr(apply_fill, "ACTION_TIMEOUT_MS", 1_000)
+    monkeypatch.setattr(apply_click, "ACTION_TIMEOUT_MS", 1_000)
     monkeypatch.setitem(flow_server.answers, "slow_post", (2.5, None))
     browser_page.goto(flow_server.url("slow_post.html"))
     for sel, value in (("#first_name", "Jane"), ("#last_name", "Doe"),
@@ -1613,9 +1614,9 @@ def test_every_copy_of_the_send_and_step_words_holds_the_loops_own():
     assert _words(_js_regex(apply_form_js._EXTRACT_JS, "SEND_OBJECT")) == _words(
         apply_send_words._POPUP_SEND_OBJECT.pattern)
     # the click's arm and the overlay picker splice every send and last-step word
-    assert _words(apply_fill._SEND_JS) == submit | final
-    for js in (apply_fill._ARM_JS, apply_fill._OVERLAY_JS):
-        assert f"new RegExp('{apply_fill._SEND_JS}', 'i')" in js
+    assert _words(apply_click._SEND_JS) == submit | final
+    for js in (apply_click._ARM_JS, apply_click._OVERLAY_JS):
+        assert f"new RegExp('{apply_click._SEND_JS}', 'i')" in js
 
 
 def test_the_words_reader_fails_on_an_alternative_outside_its_group():
@@ -1654,7 +1655,7 @@ def test_the_popup_names_the_overlays_never_and_the_step_words_pin_each_differen
     # the overlay's NEVER: the send words it holds are the loop's submit
     # words; "finish" and the last-step words are refused through its SEND
     # (`_SEND_JS`); the rest accept, sign up or chat
-    never = _top(_js_regex(apply_fill._OVERLAY_JS, "NEVER"))
+    never = _top(_js_regex(apply_click._OVERLAY_JS, "NEVER"))
     assert set(never) == {"accept", "allow", "agree", "submit", "apply", "send", "sign ?up",
                           "subscribe", "start chat", "chat now"}
     assert set(never) & (submit | final) == submit - {"finish"}
@@ -2355,7 +2356,7 @@ def test_a_node_re_rendered_before_the_click_is_found_again(browser_page, monkey
 
     def _evaluate(self, expression, *a, **kw):
         out = real(self, expression, *a, **kw)
-        if expression == apply_fill._ARM_JS and not rendered:
+        if expression == apply_click._ARM_JS and not rendered:
             # the page re-renders the node once, between the check and the click
             rendered.append(1)
             browser_page.evaluate("var b = document.getElementById('go');"

@@ -471,13 +471,14 @@ class _Walker:
         """The page's digest the way the drain reads it: an empty read or a
         loading placeholder waited on, and the controls of a bot-check frame,
         another site's frame or a LinkedIn widget left out."""
+        import apply_click
         import apply_fill
         import apply_run
         page = self.page
 
         def busy() -> bool:
             try:
-                return bool(apply_fill.ready_snapshot(page)[1])
+                return bool(apply_click.ready_snapshot(page)[1])
             except Exception:       # noqa: BLE001  (a page mid-navigation)
                 return False
 
@@ -511,11 +512,11 @@ class _Walker:
         return digest
 
     def _extract(self):
-        import apply_fill
+        import apply_click
         import apply_form
         import apply_run
         page = self.page
-        apply_fill.watch_requests(page)
+        apply_click.watch_requests(page)
         return apply_form.extract(page, content_site=lambda url: apply_run.content_frame_site(
             url, str(page.url), self.hosts))
 

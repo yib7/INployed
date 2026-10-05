@@ -33,6 +33,7 @@ import apply_harness as h  # noqa: E402
 import apply_linkedin  # noqa: E402
 import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
+import apply_page  # noqa: E402
 import apply_limits  # noqa: E402
 import apply_trace  # noqa: E402
 import ats_accounts  # noqa: E402
@@ -860,7 +861,7 @@ def test_an_entry_click_follows_whatever_it_did_first(context, monkeypatch, whic
     page = context.new_page()
     page.goto(f"{CAREERS}/jobs/1")
     start = time.monotonic()
-    popup, got, waited = apply_run.click_entry(page, page.locator(which))
+    popup, got, waited = apply_page.click_entry(page, page.locator(which))
     took = time.monotonic() - start
     assert got == signal, (got, waited)
     assert took < under_s, took
@@ -872,7 +873,7 @@ def test_an_entry_click_that_does_nothing_waits_the_whole_window(context, monkey
     _serve(context, {"/jobs/1": _ENTRY})
     page = context.new_page()
     page.goto(f"{CAREERS}/jobs/1")
-    popup, got, waited = apply_run.click_entry(page, page.locator("#dead"))
+    popup, got, waited = apply_page.click_entry(page, page.locator("#dead"))
     assert (popup, got) == (None, "none") and waited >= 800
 
 
@@ -881,7 +882,7 @@ def test_an_entry_click_an_overlay_takes_is_reported_failed(context, monkeypatch
     page = context.new_page()
     page.set_content('<a id="apply" href="/x">Apply</a><div style="position:fixed;inset:0;'
                      'background:rgba(0,0,0,.3)"></div>')
-    popup, got, _ = apply_run.click_entry(page, page.locator("#apply"))
+    popup, got, _ = apply_page.click_entry(page, page.locator("#apply"))
     assert popup is None and got.startswith("failed: "), got
 
 
@@ -1507,7 +1508,7 @@ def test_a_consent_click_that_leaves_the_site_parks_before_any_read(context, tmp
                                                                    monkeypatch):
     # an off-site page loses its controls and reads as empty, whose re-read
     # checks the host too: that path stands down, so this check alone is tested
-    monkeypatch.setattr(apply_run, "_empty_read", lambda digest: False)
+    monkeypatch.setattr(apply_page, "_empty_read", lambda digest: False)
     _elsewhere(context)
     _serve(context, {"/jobs/42": _POSTING.replace(
         "</body>", "<div id='cookie-bar' style='position:fixed;bottom:0'>We use cookies."
@@ -1550,7 +1551,7 @@ class _UnsureThenAway(_HostsSeen):
 def test_an_unsure_page_that_moves_off_the_site_is_never_read_again(context, tmp_path,
                                                                     monkeypatch):
     # as above: the empty-read path's own host check stands down
-    monkeypatch.setattr(apply_run, "_empty_read", lambda digest: False)
+    monkeypatch.setattr(apply_page, "_empty_read", lambda digest: False)
     _elsewhere(context)
     _serve(context, {"/jobs/42": _POSTING})
     judge = _UnsureThenAway(context)
@@ -1715,7 +1716,7 @@ def test_the_late_tab_watch_ends_before_the_continues_tab_is_followed(context, t
     run = _page_run(context, tmp_path, f"{CAREERS}/jobs/42")
     tab = context.new_page()
     seen = {}
-    monkeypatch.setattr(apply_run, "click_entry", lambda page, loc, **kw: (None, "navigation", 5))
+    monkeypatch.setattr(apply_page, "click_entry", lambda page, loc, **kw: (None, "navigation", 5))
     monkeypatch.setattr(apply_run.apply_form, "live_text", lambda loc: {"text": "Apply"})
     monkeypatch.setattr(run, "_await_destination", lambda page: (tab, {"settled_ms": 0}))
 

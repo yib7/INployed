@@ -24,6 +24,7 @@ import apply_form  # noqa: E402
 import apply_harness as h  # noqa: E402
 import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
+import apply_page  # noqa: E402
 import apply_limits  # noqa: E402
 import apply_trace  # noqa: E402
 import jev  # noqa: E402
@@ -170,7 +171,7 @@ def test_click_entry_hands_the_popup_over_at_the_address_it_opened_at(context):
     page = context.new_page()
     page.set_content('<a id="go" href="https://hop.example/go" target="_blank">Apply</a>')
     seen: list[str] = []
-    popup, signal, _ = apply_run.click_entry(page, page.locator("#go"),
+    popup, signal, _ = apply_page.click_entry(page, page.locator("#go"),
                                              on_popup=lambda p: seen.append(str(p.url)))
     assert signal == "popup" and popup is not None
     assert seen == ["https://hop.example/go"]

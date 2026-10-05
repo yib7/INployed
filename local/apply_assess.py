@@ -473,7 +473,7 @@ class _Walker:
         another site's frame or a LinkedIn widget left out."""
         import apply_click
         import apply_fill
-        import apply_run
+        import apply_page
         import apply_limits
         page = self.page
 
@@ -490,7 +490,7 @@ class _Walker:
             return digest, (before or after) and not digest.fields
 
         digest, loading = read()
-        empty = apply_run._empty_read(digest)
+        empty = apply_page._empty_read(digest)
         if not empty and not loading:
             return digest
         start = time.monotonic()
@@ -501,7 +501,7 @@ class _Walker:
             digest, loading_now = read()
             now = time.monotonic()
             loading = loading and loading_now and now - start < apply_limits.LOADING_WAIT_S
-            if not apply_run._empty_read(digest) and not loading:
+            if not apply_page._empty_read(digest) and not loading:
                 break
             seen = json.dumps(digest.to_dict(), sort_keys=True)
             if seen != last:
@@ -829,12 +829,13 @@ class _Walker:
     # --- the one click ----------------------------------------------------------------------
 
     def _click(self, loc, text: str) -> bool:
-        """Click an Apply entry (`apply_run.click_entry`) and follow it: a new
+        """Click an Apply entry (`apply_page.click_entry`) and follow it: a new
         tab is taken, the same tab waits out LinkedIn's redirect and a
         tracker's hop, and a tab that opens late is taken when the click left
         the page as it was. True when the walk ends here."""
         import apply_form
         import apply_run
+        import apply_page
         import apply_limits
         live = apply_form.live_text(loc)
         why = apply_run.live_refusal("apply_entry", text, live) if live else ""
@@ -846,7 +847,7 @@ class _Walker:
         if self.walk.clicks >= ENTRY_HOPS_MAX:
             return self._unread(f"no application page after {ENTRY_HOPS_MAX} Apply entries")
         source = str(self.page.url)
-        popup, signal, _waited = apply_run.click_entry(self.page, loc)
+        popup, signal, _waited = apply_page.click_entry(self.page, loc)
         self.walk.clicks += 1
         if signal.startswith("failed"):
             return self._unread(f"the Apply entry did not take the click ({signal[8:]})")
@@ -874,7 +875,7 @@ class _Walker:
     def _arrive(self) -> None:
         """Settle the page an entry led to. LinkedIn's redirect is waited out;
         its safety reminder's Continue link is opened as an address (a load,
-        no click); a tracker's hop is waited out (`apply_run._past_trackers`)."""
+        no click); a tracker's hop is waited out (`apply_page._past_trackers`)."""
         import apply_fill
         import apply_linkedin
         import apply_run

@@ -1416,12 +1416,12 @@ class _Held:
 def test_a_left_tab_whose_clock_or_relative_time_ticks_has_not_moved_on(_browser):
     # SP8a review M3: the print leaves out what changes while a page stands
     # still (`_VOLATILE_TEXT`), and keeps a step marker and the words
-    import apply_run
+    import apply_page
     page = _browser.new_page()
     try:
         def _print(body: str) -> str:
             page.set_content(f"<h1>Apply for Analytics Engineer</h1>{body}")
-            return apply_run._page_print(page)[0]
+            return apply_page._page_print(page)[0]
         before = _print("<p>Posted 3 minutes ago</p><p>Your session ends at 12:04</p>"
                         "<p>Step 1 of 3</p>")
         assert _print("<p>Posted 4 minutes ago</p><p>Your session ends at 12:05</p>"
@@ -1435,10 +1435,10 @@ def test_a_left_tab_whose_clock_or_relative_time_ticks_has_not_moved_on(_browser
 
 def test_a_linkedin_tab_is_never_taken_over_as_the_flow(tmp_path, monkeypatch):
     # SP8a review M4: LinkedIn is an allowed site, and never the company's flow
-    import apply_run
+    import apply_page
     import apply_limits
     monkeypatch.setattr(apply_limits, "TAKEOVER_WAIT_S", 0)
-    monkeypatch.setattr(apply_run, "_page_print", lambda page: ("moved", "text now"))
+    monkeypatch.setattr(apply_page, "_page_print", lambda page: ("moved", "text now"))
     run = _bare_run(tmp_path)
     linkedin = _Tab("https://www.linkedin.com/jobs/view/4000000001/")
     company = _Tab(f"{_CAREERS}/apply/step-2")

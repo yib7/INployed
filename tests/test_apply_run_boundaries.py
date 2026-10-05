@@ -6,6 +6,7 @@ import pytest
 
 import apply_form
 import apply_run
+import apply_page
 import apply_limits
 import apply_send_words
 import jev_harness
@@ -118,7 +119,7 @@ def test_same_tab_linkedin_transition_admits_one_ats_host(monkeypatch):
         page.url = "https://careers.example/apply"
         return None, "navigation", 5
 
-    monkeypatch.setattr(apply_run, "click_entry", _same_tab)
+    monkeypatch.setattr(apply_page, "click_entry", _same_tab)
     monkeypatch.setattr(apply_run.apply_form, "live_text", lambda loc: {"text": "Apply"})
     monkeypatch.setattr(apply_run.apply_fill, "settle", lambda *a: None)
     monkeypatch.setattr(apply_run.apply_queue, "update", lambda *a, **kw: None)
@@ -478,7 +479,7 @@ def test_a_dropped_load_after_a_step_that_may_have_sent_is_never_loaded_again(mo
     job.page = Mock(url="chrome-error://chromewebdata/")
     monkeypatch.setattr(job, "_held_load", lambda page: (
         "https://www.linkedin.com/jobs/2", "GET", "net::ERR_CONNECTION_RESET"))
-    monkeypatch.setattr(apply_run, "_error_page_up", lambda *a: None)
+    monkeypatch.setattr(apply_page, "_error_page_up", lambda *a: None)
     if flag:
         setattr(job, flag, True)
     with pytest.raises(apply_run._Parked) as p:
@@ -496,7 +497,7 @@ def test_an_apply_entry_whose_text_cannot_be_read_is_never_clicked(monkeypatch):
     rec = {"clicked": []}
     job.pages.append(rec)
     clicked = []
-    monkeypatch.setattr(apply_run, "click_entry", lambda *a, **k: clicked.append(a))
+    monkeypatch.setattr(apply_page, "click_entry", lambda *a, **k: clicked.append(a))
     monkeypatch.setattr(apply_run.apply_form, "live_text", lambda loc: {})
     with pytest.raises(apply_run._NotClicked, match="could not be read"):
         job._click_entry(rec, object(), "Apply", how="linkedin_handler")

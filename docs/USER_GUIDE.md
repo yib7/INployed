@@ -965,7 +965,8 @@ external Apply. Then it works page by page:
 it reads the page (Jev's read, weighed against what the page's own structure shows), fills
 the fields from your apply sheet and answer bank, reads every value back, drafts and checks
 the free-text answers, signs in or makes an account with the master password where a
-portal forces one, fetches an emailed code or link from your inbox, and clicks the button
+portal forces one, fetches an emailed code or link from your inbox (never one sent by LinkedIn, your mail
+provider, a sign-in service or another platform than the job's), and clicks the button
 Jev picks as the way on. At the submit step it sends only when submitting is on and every
 required field was filled and read back correctly. Each job ends as **submitted**, **ready
 to submit**, **needs human** or **failed**, and the queue row carries the reason. The tab a
@@ -1007,6 +1008,13 @@ saying why (the reason starts with the words in brackets):
   company's site ("aggregator posting"), an Apply that is an email address ("apply by
   email"), and an Easy Apply job on LinkedIn, which you apply to there ("Easy Apply: apply
   on LinkedIn").
+- A safety stop on the site itself: a page that moves the job to another company's account
+  or to another application platform ("the application left the job's own account on its
+  application platform"), a password box on a page that is not `https` ("this site asks
+  for a password over an unencrypted connection"), or a page with more than 200 boxes
+  ("the page holds more boxes than the run reads on one page"). A career-site front end
+  such as Eightfold or Phenom may hand the job on to the company's own platform; the
+  first platform the job reaches is its account from then on.
 - LinkedIn signed out ("LinkedIn is signed out"): run `login` again.
 - An account the run cannot make: a portal whose only sign-in is another site's account
   ("sign-in only through another site"), or password rules the master password cannot meet

@@ -236,6 +236,9 @@ Settings/Resume Data/Apply Answers editors, and the **Tailor résumé** button. 
 job tables are `QTableView` + `QSortFilterProxyModel` (virtualized, smooth). Pure
 data/config logic is toolkit-agnostic (`local/jobsdata.py`, `local/chrome_launch.py`,
 `local/setup_check.py`, `local/errmsg.py`).
+Text that comes from a page, a scraped row or a model shows as written: every label is a
+`qt/plaintext.py:Label` (plain text from the start), and message boxes and tooltips pass
+such text through `literal()`, so Qt never reads it as HTML.
 Heavy operations (scrape, tailor, prep-sheet, resume.md) run on Qt worker threads
 (`local/qt/workers.py`) and marshal results back via signals, so the window never
 freezes. Tailoring a multi-job selection fans the jobs out **concurrently** on a
@@ -412,7 +415,8 @@ does not fail the cron).
 ### Driving the VM from the dashboard (`local/vm_sync.py` + `local/qt/vm_panel.py`)
 Every VM action the dashboard offers goes through one module. `vm_sync` builds `gcloud compute
 ssh/scp` argv (on Windows it bypasses `gcloud.cmd` and invokes the underlying Python entry point
-directly, because the batch wrapper mangles arguments; see `launch_argv`/`_bypass_argv`), pushes
+directly, because the batch wrapper mangles arguments; see `launch_argv`/`_bypass_argv`; gcloud
+starts without the secret settings in its environment, `_gcloud_env`), pushes
 config and the exclude-id file, drains the outbox, and reads `VMTarget` out of the same
 `settings.load()` the Settings tab writes, so the six `VM_*` keys need no restart.
 

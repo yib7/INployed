@@ -1,6 +1,7 @@
 """Where a page goes next: the state sets, the LinkedIn, unsure,
-confirmation, posting and form routes, `loop_step` (the probe's text of the
-loop's order), and the fill-check helpers.
+confirmation, posting and form routes, `route_turn` (the loop's order for a
+fresh page, which `_JobRun._loop` acts on), `loop_step` (the same order in
+words, for the probe), and the fill-check helpers.
 
 Split out of `apply_run`, which re-exports these names.
 """
@@ -9,7 +10,7 @@ from __future__ import annotations
 import re
 import time
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, NamedTuple
 
 import apply_fill
 import apply_form
@@ -40,7 +41,7 @@ ERROR_PAGE_REASON = _PARK_STATES["error_or_dead"]
 # The send that never reached the site: nothing was sent
 UNSENT_NOTE = "nothing was sent: Re-queue once the site answers again"
 # A page read below `apply_judge.PAGE_STATE_MIN_CONF` is still acted on as one
-# of these (`_JobRun._check_unsure`): each step has gates of its own (the Apply
+# of these (`unsure_step`, in `route_turn`): each step has gates of its own (the Apply
 # entry's confidence, the fill plan's, the submit gate, the accounts hook's
 # site check and `_credential_form`), so a wrong guess stops at one of them or
 # moves the run on (the user's rule, 2026-09-22). An unsure confirmation, bot
@@ -527,6 +528,114 @@ def form_step_entry(digest: apply_form.FormDigest, plan: FillPlan, step: str,
     return None
 
 
+class Turn(NamedTuple):
+    """`route_turn`'s verdict on a fresh page (see there)."""
+    action: str                 # "act", "park", "submitted" or "linkedin_form"
+    state: str                  # the state the page is taken as
+    conf: float                 # that state's probability
+    detail: Any                 # the action's evidence
+    steps: tuple                # what turned the read into `state`, in order
+
+
+def route_turn(url: str, digest: apply_form.FormDigest, state: str, conf: float, *,
+               answers: Mapping[str, Any], facts: apply_judge.PageFacts,
+               submit_clicked: bool = False, code_sent: bool = False,
+               before: str | None = None) -> Turn:
+    """The loop's order for a fresh page read as `state` at `conf`, with no
+    side effect, from the first check to the state the loop acts on: a job
+    the site says was applied to (`apply_judge.already_applied`, before any
+    submit or code click), the remap of a sign-in read of form boxes
+    (`remaps_to_form`), a confirmation read (`confirmation_step`), a form
+    step on LinkedIn, a sign-in with another site's account only
+    (`sso_only`, before any submit or code click), the unsure rule
+    (`unsure_step`), an `other` its structure settles (`other_step`) and a
+    page that says a verification link was emailed (`_LINK_REMAPS`).
+
+    `_JobRun._loop` acts on the verdict and `loop_step` says it in words, so
+    the two keep one order. The action is "act" (go on as `state`), "park"
+    (`detail` is (why, evidence), why one of "already_applied",
+    "confirmation", "sso_only" or "unsure"), "submitted" (`detail` the
+    reason) or "linkedin_form" (`detail` the read that made it a form step on
+    LinkedIn). `steps` holds each change of the read on the way, as a tuple
+    whose first item names it: ("remap", read, conf),
+    ("confirmation_contradicted", conf, next read, its probability),
+    ("structural_fallback", read, conf, kind), ("unsure_goes_on", read,
+    conf), ("structure_over_other", conf, kind) and ("link_sent", read,
+    conf, the page's words)."""
+    steps: list[tuple] = []
+
+    def turn(action: str, detail: Any = None) -> Turn:
+        return Turn(action, state, conf, detail, tuple(steps))
+
+    unsure = conf < apply_judge.PAGE_STATE_MIN_CONF
+    applied = apply_judge.already_applied(answers, facts)
+    if applied and not submit_clicked and not code_sent:
+        return turn("park", ("already_applied", applied))
+    if remaps_to_form(state, digest, url):
+        steps.append(("remap", state, conf))
+        state = "application_form"
+    if state == "confirmation" and not facts.link_sent:
+        step, detail, then = confirmation_step(digest, answers, conf,
+                                               submit_clicked=submit_clicked,
+                                               code_sent=code_sent, before=before)
+        if step == "park" and unsure:
+            pass                # the unsure read parks below with its own words
+        elif step == "go_on":
+            steps.append(("confirmation_contradicted", conf, detail, then))
+            state, conf = detail, then
+            unsure = conf < apply_judge.PAGE_STATE_MIN_CONF
+        elif step == "submitted":
+            return turn("submitted", detail)
+        else:
+            return turn("park", ("confirmation", detail))
+    on_linkedin = apply_linkedin.is_linkedin(url)
+    if on_linkedin and state in _LINKEDIN_FORM_STATES:
+        return turn("linkedin_form", f"read as {state} ({conf:.2f})")
+    if state != "confirmation" and not submit_clicked and not code_sent and not on_linkedin:
+        sites = sso_only(digest)
+        if sites:
+            return turn("park", ("sso_only", sites))
+    if unsure:
+        step, how = unsure_step(state, digest, facts)
+        if step is None:
+            return turn("park", ("unsure", ""))
+        if how == "structure":
+            steps.append(("structural_fallback", state, conf, step))
+            state = step
+        else:
+            steps.append(("unsure_goes_on", state, conf))
+        if on_linkedin and state in _LINKEDIN_FORM_STATES:
+            return turn("linkedin_form", f"read by its structure as {state}")
+    elif state == "other":
+        settled = other_step(facts, digest)
+        if settled is not None:
+            steps.append(("structure_over_other", conf, settled))
+            state = settled
+            if on_linkedin and state in _LINKEDIN_FORM_STATES:
+                return turn("linkedin_form", f"read by its structure as {state}")
+    if state in _LINK_REMAPS and facts.link_sent:
+        steps.append(("link_sent", state, conf, facts.link_sent))
+        state = "code_gate"
+    return turn("act")
+
+
+def _step_words(step: tuple) -> str:
+    """One of `route_turn`'s steps as `loop_step` says it."""
+    kind = step[0]
+    if kind == "remap":
+        return f"read as {step[1]} with no account boxes: it is the form; "
+    if kind == "confirmation_contradicted":
+        return f"read as confirmation on a form: going on as {step[2]}; "
+    if kind == "structural_fallback":
+        return f"unsure ({step[1]}, {step[2]:.2f}), its structure reads {step[3]}; "
+    if kind == "unsure_goes_on":
+        return f"go on with the unsure read ({step[1]}, {step[2]:.2f}); "
+    if kind == "structure_over_other":
+        return f"read as other ({step[1]:.2f}), its structure reads {step[2]}; "
+    return (f"read as {step[1]}; the page says {step[3]!r} and has no box to "
+            "fill: an account check by an emailed link; ")
+
+
 def loop_step(url: str, digest: apply_form.FormDigest, plan: FillPlan, state: str,
               conf: float, reads: str = "", *, park_mode: bool = False,
               linkedin: apply_linkedin.Decision | None = None,
@@ -534,19 +643,15 @@ def loop_step(url: str, digest: apply_form.FormDigest, plan: FillPlan, state: st
               apart: frozenset[int] | set[int] = frozenset(), unclassified: int = 0,
               form_entry: int | None = None,
               facts: apply_judge.PageFacts | None = None) -> str:
-    """What the loop does with a fresh page, in words (`probe` prints it),
-    from the loop's own decision helpers: the LinkedIn handler
-    (`linkedin_step`, on the page's `linkedin` decision), a job the site says
-    was applied to (`apply_judge.already_applied`), the remap of a sign-in
-    read of form boxes, a confirmation read before any submit
-    (`confirmation_step`, over the judge's `answers`), a form step on
-    LinkedIn, a sign-in with another site's account only (`sso_only`), the
-    unsure-read rule (`unsure_step`, over the page's `facts`), a page that
-    says a verification link was emailed (the link step),
-    the posting's entry (with the live page's `apart` and `unclassified`,
-    `posting_context`), a form step's Apply entry (`form_entry`, the shared
-    `form_entry_choice`), the form's route to an advance or the submit gate,
-    a closed posting's park."""
+    """What the loop does with a fresh page, in words (`probe` prints it):
+    the LinkedIn handler (`linkedin_step`, on the page's `linkedin`
+    decision), then the loop's own order (`route_turn`, over the judge's
+    `answers` and the page's `facts`; `reads` ends an unsure park), then the
+    step for the state it settles on: the posting's entry (with the live
+    page's `apart` and `unclassified`, `posting_context`), a form step's
+    Apply entry (`form_entry`, the shared `form_entry_choice`), the form's
+    route to an advance or the submit gate, the account and code steps, a bot
+    check's wait, a closed posting's park."""
     def named(n):
         return f"[{n}] {_button_text(digest, n)!r}"
 
@@ -554,55 +659,25 @@ def loop_step(url: str, digest: apply_form.FormDigest, plan: FillPlan, state: st
     if handled is not None:
         return handled
     facts = facts if facts is not None else apply_judge.page_facts(digest, url)
-    applied = apply_judge.already_applied(answers or {}, facts)
-    if applied:
-        return f"park: {ALREADY_APPLIED_REASON} ({applied})"
-    unsure = conf < apply_judge.PAGE_STATE_MIN_CONF
-    lead = ""
-    if remaps_to_form(state, digest, url):
-        lead = f"read as {state} with no account boxes: it is the form; "
-        state = "application_form"
-    if state == "confirmation" and not facts.link_sent:
-        step, detail, then = confirmation_step(digest, answers or {}, conf, submit_clicked=False)
-        if step == "park" and unsure:
-            pass                # the unsure rule below decides, as the loop's does
-        elif step != "go_on":
-            return lead + (f"park: {detail}" if step == "park" else "finish: submitted")
-        else:
-            lead += f"read as confirmation on a form: going on as {detail}; "
-            state, conf = detail, then
-            unsure = conf < apply_judge.PAGE_STATE_MIN_CONF
-    on_linkedin = apply_linkedin.is_linkedin(url)
-    if on_linkedin and state in _LINKEDIN_FORM_STATES:
+    turn = route_turn(url, digest, state, conf, answers=answers or {}, facts=facts)
+    lead = "".join(_step_words(step) for step in turn.steps)
+    state, conf = turn.state, turn.conf
+    if turn.action == "submitted":
+        return lead + "finish: submitted"
+    if turn.action == "linkedin_form":
         return lead + f"park: {EASY_APPLY_REASON}"
-    if state != "confirmation" and not on_linkedin:
-        sites = sso_only(digest)
-        if sites:
-            return lead + (f"park: {SSO_REASON} ({', '.join(sites)}); the run never signs "
+    if turn.action == "park":
+        why, evidence = turn.detail
+        if why == "already_applied":
+            return lead + f"park: {ALREADY_APPLIED_REASON} ({evidence})"
+        if why == "confirmation":
+            return lead + f"park: {evidence}"
+        if why == "sso_only":
+            return lead + (f"park: {SSO_REASON} ({', '.join(evidence)}); the run never signs "
                            "in with another site")
-    if unsure:
-        step, how = unsure_step(state, digest, facts)
-        if step is None:
-            suffix = f"; reads: {reads}" if reads else ""
-            return lead + f"park: unsure what this page is ({state}, {conf:.2f}){suffix}"
-        if how == "structure":
-            lead += f"unsure ({state}, {conf:.2f}), its structure reads {step}; "
-            state = step
-            if on_linkedin and state in _LINKEDIN_FORM_STATES:
-                return lead + f"park: {EASY_APPLY_REASON}"
-        else:
-            lead += f"go on with the unsure read ({state}, {conf:.2f}); "
-    elif state == "other":
-        settled = other_step(facts, digest)
-        if settled is not None:
-            lead += f"read as other ({conf:.2f}), its structure reads {settled}; "
-            state = settled
-            if on_linkedin and state in _LINKEDIN_FORM_STATES:
-                return lead + f"park: {EASY_APPLY_REASON}"
-    if state in _LINK_REMAPS and facts.link_sent:
-        lead += (f"read as {state}; the page says {facts.link_sent!r} and has no box to "
-                 "fill: an account check by an emailed link; ")
-        state = "code_gate"
+        suffix = f"; reads: {reads}" if reads else ""
+        return lead + f"park: unsure what this page is ({state}, {conf:.2f}){suffix}"
+    on_linkedin = apply_linkedin.is_linkedin(url)
     if state == "job_posting" and on_linkedin:
         if digest.fields and posting_entry_choice(digest, plan)[0] is None:
             return lead + f"park: {EASY_APPLY_REASON}"

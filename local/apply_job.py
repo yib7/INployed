@@ -46,10 +46,8 @@ from apply_sites import (_aggregator, AGGREGATOR_BOARDS_MAX, AGGREGATOR_SITES, A
 from apply_sendwatch import LateWatch, new_confirmation
 from apply_page import (entry_problem, error_frames, _error_page, error_step, MALFORMED_REASON,
                         _page_closed, page_signature)
-from apply_account_flow import (_Accounts, _email_first, _Inbox, _is_email_box, password_rules,
-                                sso_only)
-from apply_route import (ERROR_PAGE_REASON, generated_count, _LINK_REMAPS, _LINKEDIN_FORM_STATES,
-                         other_step, _PARK_STATES, remaps_to_form, UNSENT_NOTE, _usage_delta)
+from apply_account_flow import (_Accounts, _email_first, _Inbox, _is_email_box, password_rules)
+from apply_route import (ERROR_PAGE_REASON, generated_count, _PARK_STATES, UNSENT_NOTE, _usage_delta)
 from apply_gate import submit_on
 from apply_record import write_record
 from apply_job_submit import _SubmitSteps
@@ -1440,82 +1438,12 @@ class _JobRun(_PageSteps, _FormSteps, _SubmitSteps):
                 raise _Parked("needs_human", f"page did not advance (read as {state} "
                                              f"{conf:.2f} again{after})")
             self.last_sig = sig
-            unsure = conf < apply_judge.PAGE_STATE_MIN_CONF
-            applied = apply_judge.already_applied(answers, facts)
-            if applied and not self.submit_clicked and not self._code_sent:
-                # A job the site says was applied to
-                # before is never applied to again
-                self._decide("already_applied", applied)
-                raise _Parked("needs_human", f"{ALREADY_APPLIED_REASON} ({_cap(applied, 160)}; "
-                                             f"{_cap(digest.url_host or _host(self.page.url), 60)})",
-                              ALREADY_APPLIED_NOTE)
-            if remaps_to_form(state, digest, str(self.page.url)):
-                # a page of form boxes is the form, whatever it was read as:
-                # the account step would type the facts in and click its button.
-                # An address screen with another box (a country) goes this way
-                # too, so its site takes the password screen after it.
-                self.log.info("job %s: read as %s (%.2f) with no account boxes; it is the "
-                              "form", self.job_id, state, conf)
-                self._decide("remap", f"read as {state} ({conf:.2f}) with no account boxes; "
-                                      "it is the form", to="application_form")
-                state = "application_form"
-                if any(_is_email_box(f) for f in digest.fields):
-                    self.accounts.email_sites.add(_site(digest.url_host or _host(self.page.url)))
-            # a page that says a link was emailed, with no received words, is
-            # the link step below (`_LINK_REMAPS`), whatever else it was read as
-            if state == "confirmation" and not facts.link_sent:
-                step, detail, then = apply_route.confirmation_step(
-                    digest, answers, conf, submit_clicked=self.submit_clicked,
-                    code_sent=self._code_sent,
-                    before=str((self._before_submit or {}).get("text") or "")
-                    if self.submit_clicked else None)
-                if step == "park" and unsure:
-                    pass                # the unsure read parks below with its own words
-                elif step == "go_on":
-                    self._decide("confirmation_contradicted",
-                                 f"read as confirmation ({conf:.2f}) on a page with a form field "
-                                 f"or a submit button and no received words; going on as the "
-                                 f"next read ({detail} {then:.2f})", to=detail)
-                    state, conf = detail, then
-                    unsure = conf < apply_judge.PAGE_STATE_MIN_CONF
-                else:
-                    raise _Parked("submitted" if step == "submitted" else "needs_human", detail,
-                                  CHECK_SENT_NOTE if step == "park" else "")
-            if state in _LINKEDIN_FORM_STATES:
-                self._no_form_on_linkedin(f"read as {state} ({conf:.2f})")
-            if state != "confirmation" and not self.submit_clicked and not self._code_sent \
-                    and not self._on_linkedin():
-                sites = sso_only(digest)
-                if sites:
-                    # The only way on is a sign-in with another site's
-                    # account, which the run never uses: a dead end
-                    self._decide("sso_only", f"read as {state} ({conf:.2f}); its only way on "
-                                             f"signs in with {', '.join(sites)}")
-                    raise _Parked("needs_human", f"{SSO_REASON} ({', '.join(sites)}); the run "
-                                                 "never signs in with another site", SSO_NOTE)
-            if unsure:
-                state = self._check_unsure(digest, state, conf)
-                if state in _LINKEDIN_FORM_STATES:
-                    self._no_form_on_linkedin(f"read by its structure as {state}")
-            elif state == "other":
-                settled = other_step(facts, digest)
-                if settled is not None:
-                    # `other` is none of the listed kinds; a page whose
-                    # structure settles one of them is that one
-                    self._decide("structure_over_other", f"read as other ({conf:.2f}); its "
-                                                         f"structure reads it as {settled}",
-                                 facts=facts.to_dict(), to=settled)
-                    state = settled
-                    if state in _LINKEDIN_FORM_STATES:
-                        self._no_form_on_linkedin(f"read by its structure as {state}")
-            if state in _LINK_REMAPS and facts.link_sent:
-                # A page with no box that says a verification link was
-                # emailed is the account check, whatever else it was read as;
-                # its way on is the link in the email
-                self._decide("remap", f"read as {state} ({conf:.2f}); the page says "
-                                      f"{facts.link_sent!r} and has no box to fill: an account "
-                                      "check by an emailed link", to="code_gate")
-                state = "code_gate"
+            turn = apply_route.route_turn(
+                str(self.page.url), digest, state, conf, answers=answers, facts=facts,
+                submit_clicked=self.submit_clicked, code_sent=self._code_sent,
+                before=str((self._before_submit or {}).get("text") or "")
+                if self.submit_clicked else None)
+            state = self._take_turn(turn, digest, facts)
             if state == "application_form" and _email_first(digest):
                 # the address screen of a two-step sign-in taken as a form:
                 # its site takes the password screen after it all the same
@@ -1569,6 +1497,87 @@ class _JobRun(_PageSteps, _FormSteps, _SubmitSteps):
                 self.last_sig = None
                 self._decide("replan", f"the page is read and planned again ({why})")
                 continue
+
+    def _take_turn(self, turn: apply_route.Turn, digest: apply_form.FormDigest,
+                   facts: apply_judge.PageFacts) -> str:
+        """Acts on `apply_route.route_turn`'s verdict for this page: each
+        change of the read is logged and decided in the order it was made,
+        then the job parks, ends, or goes on as the state returned."""
+        for step in turn.steps:
+            kind = step[0]
+            if kind == "remap":
+                _, read, conf = step
+                # a page of form boxes is the form, whatever it was read as:
+                # the account step would type the facts in and click its button.
+                # An address screen with another box (a country) goes this way
+                # too, so its site takes the password screen after it.
+                self.log.info("job %s: read as %s (%.2f) with no account boxes; it is the "
+                              "form", self.job_id, read, conf)
+                self._decide("remap", f"read as {read} ({conf:.2f}) with no account boxes; "
+                                      "it is the form", to="application_form")
+                if any(_is_email_box(f) for f in digest.fields):
+                    self.accounts.email_sites.add(_site(digest.url_host or _host(self.page.url)))
+            elif kind == "confirmation_contradicted":
+                _, conf, read, then = step
+                self._decide("confirmation_contradicted",
+                             f"read as confirmation ({conf:.2f}) on a page with a form field "
+                             f"or a submit button and no received words; going on as the "
+                             f"next read ({read} {then:.2f})", to=read)
+            elif kind == "structural_fallback":
+                _, read, conf, to = step
+                self.log.info("job %s: unsure of the page (%s, %.2f); its structure reads %s",
+                              self.job_id, read, conf, to)
+                self._decide("structural_fallback", f"unsure of the page ({read}, {conf:.2f}); "
+                                                    f"its structure reads it as {to}",
+                             reads=self._reads(), facts=facts.to_dict(), to=to)
+            elif kind == "unsure_goes_on":
+                _, read, conf = step
+                self.log.info("job %s: unsure of the page (%s, %.2f); going on with that read",
+                              self.job_id, read, conf)
+                self._decide("unsure_goes_on", f"unsure of the page ({read}, {conf:.2f}); going "
+                                               "on with that read", reads=self._reads())
+            elif kind == "structure_over_other":
+                _, conf, to = step
+                # `other` is none of the listed kinds; a page whose
+                # structure settles one of them is that one
+                self._decide("structure_over_other", f"read as other ({conf:.2f}); its "
+                                                     f"structure reads it as {to}",
+                             facts=facts.to_dict(), to=to)
+            elif kind == "link_sent":
+                _, read, conf, said = step
+                # A page with no box that says a verification link was
+                # emailed is the account check, whatever else it was read as;
+                # its way on is the link in the email
+                self._decide("remap", f"read as {read} ({conf:.2f}); the page says "
+                                      f"{said!r} and has no box to fill: an account "
+                                      "check by an emailed link", to="code_gate")
+        state, conf = turn.state, turn.conf
+        if turn.action == "act":
+            return state
+        if turn.action == "linkedin_form":
+            self._no_form_on_linkedin(turn.detail)
+            return state
+        if turn.action == "submitted":
+            raise _Parked("submitted", turn.detail, "")
+        why, evidence = turn.detail
+        if why == "already_applied":
+            # A job the site says was applied to
+            # before is never applied to again
+            self._decide("already_applied", evidence)
+            raise _Parked("needs_human", f"{ALREADY_APPLIED_REASON} ({_cap(evidence, 160)}; "
+                                         f"{_cap(digest.url_host or _host(self.page.url), 60)})",
+                          ALREADY_APPLIED_NOTE)
+        if why == "confirmation":
+            raise _Parked("needs_human", evidence, CHECK_SENT_NOTE)
+        if why == "sso_only":
+            # The only way on is a sign-in with another site's
+            # account, which the run never uses: a dead end
+            self._decide("sso_only", f"read as {state} ({conf:.2f}); its only way on "
+                                     f"signs in with {', '.join(evidence)}")
+            raise _Parked("needs_human", f"{SSO_REASON} ({', '.join(evidence)}); the run "
+                                         "never signs in with another site", SSO_NOTE)
+        raise _Parked("needs_human", f"unsure what this page is ({state}, {conf:.2f})"
+                                     + self._reads_suffix())
 
     def _reads_suffix(self) -> str:
         reads = self._reads()

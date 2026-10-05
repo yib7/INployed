@@ -33,8 +33,7 @@ from apply_sendwatch import confirmation_words, LateWatch
 from apply_page import (await_destination, mailto_address, open_page, _page_closed, _popups,
                         _settle_capped, _settled_ms, settled_words)
 from apply_account_flow import _AsForm, password_step, sso_fallback_sites
-from apply_route import (linkedin_view, _MAPPED_STATES, posting_context, posting_entry_choice,
-                         unsure_step)
+from apply_route import (linkedin_view, _MAPPED_STATES, posting_context, posting_entry_choice)
 from apply_gate import live_refusal, submit_on
 
 
@@ -599,33 +598,6 @@ class _PageSteps:
             self.trace.screenshot(self.page, f"page-{n}",
                                   extra_mask=self._secret_masks(self.page))
         return rec
-
-    def _check_unsure(self, digest: apply_form.FormDigest, state: str, conf: float) -> str:
-        """A read still below `PAGE_STATE_MIN_CONF` after its second look
-        (`unsure_step`): it goes on as its guess when that is one of
-        `_UNSURE_ACTS` and the page has that step's boxes (a code gate its
-        code box; a sign-in read of form boxes is already the form, and the
-        account step takes a screen of account boxes alone); else as the kind
-        the page's structure gives (`apply_judge.structural_kind`: a code
-        box, an account screen, application boxes, an Apply entry with no
-        box); else it parks with the read's distribution. Returns the state
-        the loop acts on."""
-        step, how = unsure_step(state, digest, self._facts)
-        if step is None:
-            raise _Parked("needs_human", f"unsure what this page is ({state}, {conf:.2f})"
-                                         + self._reads_suffix())
-        if how == "structure":
-            self.log.info("job %s: unsure of the page (%s, %.2f); its structure reads %s",
-                          self.job_id, state, conf, step)
-            self._decide("structural_fallback", f"unsure of the page ({state}, {conf:.2f}); "
-                                                f"its structure reads it as {step}",
-                         reads=self._reads(), facts=self._facts.to_dict(), to=step)
-            return step
-        self.log.info("job %s: unsure of the page (%s, %.2f); going on with that read",
-                      self.job_id, state, conf)
-        self._decide("unsure_goes_on", f"unsure of the page ({state}, {conf:.2f}); going on "
-                                       "with that read", reads=self._reads())
-        return state
 
     def _on_linkedin(self) -> bool:
         page = self.page

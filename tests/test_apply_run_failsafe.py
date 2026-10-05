@@ -15,6 +15,7 @@ sys.path.insert(0, str(REPO / "local"))
 
 import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
+import apply_route  # noqa: E402
 import apply_sendwatch  # noqa: E402
 import apply_limits  # noqa: E402
 import apply_send_words  # noqa: E402
@@ -209,17 +210,17 @@ def _confirmation_answers():
 
 def test_received_words_shown_before_the_click_do_not_confirm_a_standing_form():
     digest = _confirmation_digest()
-    step, why, _ = apply_run.confirmation_step(
+    step, why, _ = apply_route.confirmation_step(
         digest, _confirmation_answers(), 0.9, submit_clicked=True,
         before="Apply. We have received your application. Fill the form.")
     assert step == "park" and why.startswith(apply_run.CHECK_SENT_REASON), why
-    step, _, _ = apply_run.confirmation_step(digest, _confirmation_answers(), 0.9,
+    step, _, _ = apply_route.confirmation_step(digest, _confirmation_answers(), 0.9,
                                              submit_clicked=True, before="Apply. Fill the form.")
     assert step == "submitted"
 
 
 def test_received_words_after_a_code_step_with_a_form_park_as_check_sent():
-    step, why, _ = apply_run.confirmation_step(_confirmation_digest(), _confirmation_answers(),
+    step, why, _ = apply_route.confirmation_step(_confirmation_digest(), _confirmation_answers(),
                                                0.9, submit_clicked=False, code_sent=True)
     assert step == "park" and why.startswith(apply_run.CHECK_SENT_REASON), why
     assert "after the emailed code" in why

@@ -962,7 +962,7 @@ def _walker_category(step):
 ])
 def test_the_walker_decides_each_page_as_the_drains_loop_does(context, flow_server, tmp_path,
                                                                where, read):
-    """The walker's decision and `apply_run.loop_step` (what `probe` says the
+    """The walker's decision and `apply_route.loop_step` (what `probe` says the
     drain's loop does) over the same pages and reads, so a change to the
     loop's order shows here."""
     import io

@@ -49,6 +49,7 @@ import apply_harness as h  # noqa: E402
 import apply_judge  # noqa: E402
 import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
+import apply_route  # noqa: E402
 import apply_sendwatch  # noqa: E402
 import apply_limits  # noqa: E402
 import apply_send_words  # noqa: E402
@@ -1771,9 +1772,9 @@ def test_a_confirmation_before_any_submit_never_reads_as_submitted(tmp_path):
     digest = apply_form.FormDigest("jobs.example", "Thanks", "Thank you for applying.")
     answers = {"page_state": jev.Answer(kind="choice", choice="confirmation", confidence=1.0,
                                         probabilities={"confirmation": 1.0})}
-    step, why, _ = apply_run.confirmation_step(digest, answers, 1.0, submit_clicked=False)
+    step, why, _ = apply_route.confirmation_step(digest, answers, 1.0, submit_clicked=False)
     assert step == "park" and why.startswith("a confirmation page before any submit")
-    assert apply_run.confirmation_step(digest, answers, 1.0, submit_clicked=True)[0] == \
+    assert apply_route.confirmation_step(digest, answers, 1.0, submit_clicked=True)[0] == \
         "submitted"
 
 

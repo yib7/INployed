@@ -1175,7 +1175,7 @@ def damaged_targets(targets: dict[str, Path] | None = None) -> set[str]:
     return out
 
 
-# The auto-apply submit switch: `apply_run.submit_on` sends only on a stored
+# The auto-apply submit switch: `apply_gate.submit_on` sends only on a stored
 # True. Its Field default is on, so a config file that cannot be trusted reads
 # it as off here (`load`, `submit_problem`) and not as the default.
 SUBMIT_KEY = "auto_apply_submit"
@@ -1347,7 +1347,7 @@ def switch_on(value: Any) -> bool:
 
 
 # The bool settings whose runtime readers take only a stored True: the
-# submit switch (`apply_run.submit_on`) and the three billed Jev tailor
+# submit switch (`apply_gate.submit_on`) and the three billed Jev tailor
 # options (`resume_tailor.config._jev_option`). A string there, "true"
 # included, runs off, so the Settings checkbox shows it off too.
 STRICT_SWITCHES = frozenset(("auto_apply_submit", "tailor_best_of_n",

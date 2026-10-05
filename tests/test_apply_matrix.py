@@ -26,6 +26,7 @@ sys.path.insert(0, str(REPO / "local"))
 
 import apply_harness as h  # noqa: E402
 import apply_run  # noqa: E402
+import apply_route  # noqa: E402
 import apply_send_words  # noqa: E402
 import jev  # noqa: E402
 import jev_doubles  # noqa: E402
@@ -479,7 +480,7 @@ def test_a_confident_confirmation_misread_before_any_submit_is_caught(
     # SP3: the loop reads a confirmation before any submit as the form it
     # contradicts (tests/test_apply_submit.py); a loop that took it for the
     # end again would be caught
-    monkeypatch.setattr(apply_run, "confirmation_step",
+    monkeypatch.setattr(apply_route, "confirmation_step",
                         lambda digest, answers, conf, **kw: (
                             "submitted", "confirmation page", conf))
     r = h.run_flow(h.flow("ashby_wizard"), _FormAsConfirmation(), "misread", browser=_browser,

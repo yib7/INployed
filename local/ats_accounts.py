@@ -9,7 +9,7 @@ in code: a password-shaped field name is rejected on write).
 The password leaves the keyring two ways, and neither puts it in a log,
 stdout or a file:
 - `fill_password` types it into one password box on the page the auto-apply
-  run has open. The caller (`apply_run._JobRun._fill_passwords`, and the
+  run has open. The caller (`apply_job_form._FormSteps._fill_passwords`, and the
   account step in `apply_run`) decides the box is a real password input on
   the application's own site before it calls.
 - the clipboard (`copy_password_to_clipboard`), for the Auto-apply tab's copy

@@ -1749,7 +1749,7 @@ def sensitive_reason(label: str) -> str:
 
 # The action of a password box on a page handled as the application form (an
 # account made inside the application). The runner types the master password
-# into it from the keyring (`apply_run._JobRun._fill_passwords`); the plan
+# into it from the keyring (`apply_job_form._FormSteps._fill_passwords`); the plan
 # carries no value and asks the user no question. The master password is for
 # job applications only.
 PASSWORD_ACTION = "password"
@@ -2701,7 +2701,7 @@ def read_inbox(answers: Mapping[str, Answer],
     above `INBOX_MIN`; None when no message qualifies. `refuse(sender)`: a
     sender the code never takes the code or link from, whatever the judge
     answered (LinkedIn, the inbox provider, an identity provider, another
-    ATS than the job's: `apply_run._JobRun._sender_refused`)."""
+    ATS than the job's: `apply_job_submit._SubmitSteps._sender_refused`)."""
     best_n, best_p = None, 0.0
     for m in messages:
         n = int(m["n"])

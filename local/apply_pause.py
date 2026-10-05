@@ -614,7 +614,7 @@ def field_keys(fields: Iterable[Any], path: str) -> dict[int, tuple]:
 
 
 class Pauser:
-    """The pauses of one job run (`apply_run._JobRun`): `jr` gives the page,
+    """The pauses of one job run (`apply_job._JobRun`): `jr` gives the page,
     the settings, the clock and the run's own steps; `parked` is the run's
     park exception, raised with the park's reason when the window closes
     during a wait and the run gives no park of its own (`_closed`)."""

@@ -11,7 +11,7 @@ is no answer).
 
 `screen(question, catalog, judge)` builds the one-field page the question
 stands for and asks `judge` what the runner asks, in the runner's order
-(`apply_run._JobRun._map` and `_complete_option_plan`): the page's mapping
+(`apply_job_pages._PageSteps._map` and `_complete_option_plan`): the page's mapping
 (`apply_judge.page_requests`), the plan, the second look at a required field's
 dropped or weak mapping, the option picks for a mapping the judge made
 (`apply_judge.option_questions`), the plan again, the second look at a

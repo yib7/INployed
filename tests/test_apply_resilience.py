@@ -685,9 +685,9 @@ def test_an_unexpected_error_names_its_type_and_step_and_never_its_message(
         assert "Jane Doe" not in text and "Call log" not in text
     # the step and the code's frames in the trace and the job's log, the message nowhere
     assert '"step": "fill_and_verify"' in pages + run
-    assert "apply_run.py:" in pages + run
+    assert "apply_job_form.py:" in pages + run
     log = (Path(r.trace) / "job.log").read_text(encoding="utf-8")
-    assert "RuntimeError at fill_and_verify" in log and "apply_run.py:" in log
+    assert "RuntimeError at fill_and_verify" in log and "apply_job_form.py:" in log
     assert "Jane Doe" not in log and "Call log" not in log
 
 

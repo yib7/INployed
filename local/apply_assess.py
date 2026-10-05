@@ -679,7 +679,7 @@ class _Walker:
         return apply_linkedin.is_linkedin(str(self.page.url or ""))
 
     def _decision(self, digest) -> Step:
-        """What the drain's loop does with this page (`apply_run._JobRun._loop`,
+        """What the drain's loop does with this page (`apply_job._JobRun._loop`,
         in the order `apply_route.loop_step` describes it), as the walk's step:
         the page read (a read under the floor read once more after a settle),
         a job the site says was applied to, a sign-in read of form boxes
@@ -790,7 +790,7 @@ class _Walker:
 
     def _posting_plan(self, digest, answers):
         """The posting's plan with its buttons' roles mapped, as the drain
-        maps a posting (`apply_run._JobRun._map`: the buttons alone on a
+        maps a posting (`apply_job_pages._PageSteps._map`: the buttons alone on a
         posting with no field, the fields too on one with fields), over an
         empty fact catalog: the walk fills nothing, so only the roles count."""
         import apply_facts

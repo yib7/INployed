@@ -22,7 +22,7 @@ Each capture is read offline with no script running, as
 `test_local_captures` reads it, then asked the run's own page-read request
 (`apply_judge.read_questions`: the page's text as a real run sends it) and
 combined with the page's structure (`apply_judge.read_page`), as
-`apply_run._JobRun._read` does. The labels (`_page_kind_expected.json`,
+`apply_job_pages._PageSteps._read` does. The labels (`_page_kind_expected.json`,
 beside the captures) name the kinds a correct read may give, the page's
 own first. A read outside them is an xfail naming the misread.
 `_jev/results.json` holds every read, and `_jev/summary.txt` the accuracy

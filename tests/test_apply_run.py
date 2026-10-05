@@ -22,6 +22,7 @@ import apply_form  # noqa: E402
 import apply_judge  # noqa: E402
 import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
+import apply_send_words  # noqa: E402
 import ats_accounts  # noqa: E402
 import jev  # noqa: E402
 import jev_switch  # noqa: E402
@@ -1983,17 +1984,17 @@ def test_sends_application_reads_the_button_text():
              "Verify and continue", "Send code", "Send me a link", "Create account"]
     digest = apply_form.FormDigest(url_host="x", title="t", text="", buttons=[
         apply_form.Button(n, (0, f"#b{n}"), text, "") for n, text in enumerate(texts)])
-    assert [apply_run._sends_application(digest, n) for n in range(len(texts))] == [
+    assert [apply_send_words._sends_application(digest, n) for n in range(len(texts))] == [
         True, True, True, True, True, False, False, False, False, False, False, False]
     # with boxes beyond the address and the password, a sign-in word no longer excuses it
-    assert apply_run._sends_application(digest, texts.index("Sign in to apply"),
+    assert apply_send_words._sends_application(digest, texts.index("Sign in to apply"),
                                         account_only=False)
     # a last step's word sends too, unless it names the account itself
     finals = apply_form.FormDigest(url_host="x", title="t", text="", buttons=[
         apply_form.Button(n, (0, f"#f{n}"), text, "") for n, text in enumerate(
             ["Complete application", "Confirm", "Complete registration", "Done",
              "Complete profile"])])
-    assert [apply_run._sends_application(finals, n) for n in range(5)] == [
+    assert [apply_send_words._sends_application(finals, n) for n in range(5)] == [
         True, True, False, True, False]
 
 

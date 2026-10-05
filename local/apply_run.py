@@ -115,6 +115,7 @@ import apply_inbox  # noqa: E402
 import apply_linkedin  # noqa: E402
 import apply_pause  # noqa: E402
 import apply_queue  # noqa: E402
+import apply_send_words  # noqa: E402
 import apply_trace  # noqa: E402
 import apply_verify  # noqa: E402
 import ats_accounts  # noqa: E402
@@ -123,6 +124,8 @@ import jev_switch  # noqa: E402
 import jsonutil  # noqa: E402
 import profile_lock  # noqa: E402
 from apply_judge import FillPlan, VerifyResult  # noqa: E402
+from apply_send_words import (_ACCOUNT_STEP_WORDS, _final_shaped, _send_worded,  # noqa: E402
+                              _sends_application, _submit_shaped, step_only)
 
 log = logging.getLogger("apply_run")
 
@@ -484,12 +487,6 @@ _OPENED_BY_ACCOUNT = frozenset(("application_form", "login_wall", "signup_form")
 # confirm your application" as a confirmation
 _LINK_REMAPS = frozenset(("application_form", "review_page", "login_wall", "signup_form",
                           "confirmation"))
-# The loop's send vocabulary: a button whose text has one of `SUBMIT_WORDS`
-# reads as sending the application (`_submit_shaped`), and one with a
-# `FINAL_WORDS` word as a last step (`_final_shaped`). The flow harness checks
-# every click against the same words.
-SUBMIT_WORDS = re.compile(r"\b(submit|apply|send|finish)\b", re.I)
-FINAL_WORDS = re.compile(r"\b(complete|confirm|finali[sz]e|done)\b", re.I)
 # The words a page shows once an application was received
 # (`apply_judge.CONFIRMATION_WORDS`): with the judge's read, the deterministic
 # half of a confirmation after the submit click, and only when they were not
@@ -3098,7 +3095,7 @@ def sso_only(digest: apply_form.FormDigest) -> list[str]:
         if _sso_chrome(text):
             continue
         if apply_judge.entry_worded(text) or apply_judge.ADVANCE_WORDS.search(text) \
-                or _ACCOUNT_BUTTON.search(text) or apply_judge.SEND_WORDS.search(text) \
+                or _ACCOUNT_BUTTON.search(text) or apply_send_words.SEND_WORDS.search(text) \
                 or _SSO_WAY_ON.search(text) or not _SSO_ASIDE.search(text):
             return []
     return names
@@ -3121,7 +3118,7 @@ def sso_fallback_sites(digest: apply_form.FormDigest) -> list[str]:
         if _THIRD_PARTY.search(text) or _sso_chrome(text):
             continue
         if apply_judge.entry_worded(text) or apply_judge.ADVANCE_WORDS.search(text) \
-                or apply_judge.SEND_WORDS.search(text) or _SSO_WAY_ON.search(text):
+                or apply_send_words.SEND_WORDS.search(text) or _SSO_WAY_ON.search(text):
             return []
     return names
 
@@ -3205,102 +3202,10 @@ def code_advance(digest: apply_form.FormDigest) -> int | None:
     return next(iter(own.values())) if len(own) == 1 else None
 
 
-def _submit_shaped(digest: apply_form.FormDigest, n: int) -> bool:
-    """Whether the text describes a final application submission.
-
-    Native ``type=submit`` is only a form mechanic: multi-step wizards often
-    use it for Continue/Next. Explicit submit/apply/send/finish text remains
-    gated even if the judge labels that control as an advance.
-    """
-    button = next((b for b in digest.buttons if b.n == n), None)
-    return bool(button) and bool(SUBMIT_WORDS.search(button.text))
-
-
-def _final_shaped(digest: apply_form.FormDigest, n: int) -> bool:
-    """Words a last step's button also uses ("Complete", "Confirm",
-    "Finalize", "Done"). In park mode such an advance goes through the submit
-    gate, which parks it: a final button judged advance must not send the
-    application the user asked to review. With submitting on it stays an
-    advance, since "Complete profile" is a step too."""
-    button = next((b for b in digest.buttons if b.n == n), None)
-    return bool(button) and bool(FINAL_WORDS.search(button.text))
-
-
-_ACCOUNT_STEP_WORDS = re.compile(r"\b(registration|register|sign[\s-]*up|account|profile)\b",
-                                 re.I)
-# A step's own words ("Next", "Save and continue", "Sign in", "Log in",
-# "Create account", "Back", "Review application", "Preview"): a submit whose
-# words are only these, and at least one step verb, names no send
-# (`step_only`)
-_STEP_VERB = re.compile(r"\b(next|continue|save|back|previous|proceed|sign|log|login|logon"
-                        r"|create|register|review|preview)\b", re.I)
-_STEP_ONLY = re.compile(r"(?:\b(?:next|continue|save|back|previous|proceed|step|sign|log|in|on"
-                        r"|up|login|logon|create|account|register|review|preview|application"
-                        r"|and|to|the|my|your|an?)\b"
-                        r"|[\W_])+", re.I)
 # an account button's own words: the one step button a page that types the
 # master password may carry as its submit (`_JobRun._gate_read`)
 _ACCOUNT_OWN_WORDS = re.compile(r"\b(?:create|register|join)\b|\bsign[\s-]*(?:up|in|on)\b"
                                 r"|\blog[\s-]*(?:in|on)\b|\blogin\b|\blogon\b", re.I)
-
-
-def step_only(text: str) -> bool:
-    """Are `text`'s words only a step's ("Save and continue", "Sign in",
-    "Create account"), with no send or last-step word (`SUBMIT_WORDS`,
-    `FINAL_WORDS`)? Such a button is never the application's send: in
-    submit mode the gate refuses it (`_JobRun._gate_read`)."""
-    t = " ".join(str(text or "").split())
-    return (bool(_STEP_VERB.search(t)) and bool(_STEP_ONLY.fullmatch(t))
-            and not SUBMIT_WORDS.search(t) and not FINAL_WORDS.search(t))
-
-
-# the "send" of a sign-in's code or link ("Send code", "Send me a link"),
-# the part of `apply_judge.SIGN_IN_WORDS` that holds a submit word
-_SEND_CODE = re.compile(r"\bsend\s+(me\s+)?(an?\s+|the\s+)?(verification\s+|sign[\s-]*in\s+)?"
-                        r"(code|link)\b", re.I)
-
-
-def _sign_in_only(text: str) -> bool:
-    """Does a submit-worded control name a sign-in and nothing more? It
-    holds a sign-in's words (`apply_judge.SIGN_IN_WORDS`) and its only
-    submit words are "apply" ("Sign in to apply") or the "send" of a code
-    or link ("Send code"). "Log in and submit application" and "Sign in and
-    finish" still send."""
-    t = text or ""
-    if not apply_judge.SIGN_IN_WORDS.search(t):
-        return False
-    words = {w.lower() for w in SUBMIT_WORDS.findall(_SEND_CODE.sub(" ", t))}
-    return not (words - {"apply"})
-
-
-def _sends_application(digest: apply_form.FormDigest, n: int, *,
-                       account_only: bool = True) -> bool:
-    """A button the account step may not click: its text reads as sending the
-    application (`_submit_shaped`), unless it names a sign-in and nothing
-    more on a screen of the address and the password alone (`account_only`,
-    `_sign_in_only`: "Sign in to apply" signs in, "Send code" mails one), or
-    as a last step (`_final_shaped`) unless it names the account ("Complete
-    registration"). "Create account and apply" counts as a send: the sign-up
-    may carry the application. Only the submit gate sends an application."""
-    button = next((b for b in digest.buttons if b.n == n), None)
-    text = button.text if button else ""
-    if _submit_shaped(digest, n):
-        return not (account_only and _sign_in_only(text))
-    return _final_shaped(digest, n) and not _ACCOUNT_STEP_WORDS.search(text)
-
-
-def _send_worded(text: str, *, entry: bool = False, account: bool = False) -> bool:
-    """A control's text reads as sending the application or as a last step:
-    a submit word ("apply" too, unless the click is an Apply entry), unless
-    an account step's text names a sign-in and nothing more
-    (`_sign_in_only`); or a final word, unless it names the account
-    ("Complete registration")."""
-    words = {w.lower() for w in SUBMIT_WORDS.findall(text or "")}
-    if entry:
-        words.discard("apply")
-    if words and not (account and _sign_in_only(text)):
-        return True
-    return bool(FINAL_WORDS.search(text or "")) and not _ACCOUNT_STEP_WORDS.search(text or "")
 
 
 def live_refusal(role: str, expected: str, live: Mapping[str, Any], *,
@@ -3489,7 +3394,7 @@ def confirmation_step(digest: apply_form.FormDigest, answers: Mapping[str, Any],
     next read when the loop acts on that one (`_UNSURE_ACTS`); any other
     parks (the job may have been applied to before)."""
     words = confirmation_words(digest.text)
-    form = bool(digest.fields) or any(apply_judge.SEND_WORDS.search(b.text) for b in digest.buttons)
+    form = bool(digest.fields) or any(apply_send_words.SEND_WORDS.search(b.text) for b in digest.buttons)
     # before any submit, a Next or a Continue asks for more too (a wizard's
     # summary step read as a confirmation)
     step_button = any(apply_judge.ADVANCE_WORDS.search(b.text) for b in digest.buttons)
@@ -5700,7 +5605,7 @@ class _JobRun:
                 control.options = apply_fill.open_listbox_options(self.page, control)
                 if control.options:
                     self._options_seen[key] = list(control.options)
-            except apply_fill.PopupRefused as e:
+            except apply_send_words.PopupRefused as e:
                 # its own words send: never opened, left unanswered
                 control.refused = str(e)
                 self._decide("popup_refused", f"a popup was left unopened: {e}",
@@ -9365,7 +9270,7 @@ class _JobRun:
         # save-your-profile password on an application is no account page
         account = bool(typed) and (any(pf.required for pf in typed)
                                    or bool(_ACCOUNT_STEP_WORDS.search(text)
-                                           or apply_judge.SIGN_IN_WORDS.search(text)))
+                                           or apply_send_words.SIGN_IN_WORDS.search(text)))
         try:
             self._after_submit(account=account, handoff=self.handed_off)
         except _Refused as refused:
@@ -9650,7 +9555,7 @@ class _JobRun:
         since the click (`marker`), or the judge's confirmation of this very
         page (`judged`) at `CONFIRMATION_MIN_CONF` with no form field and no
         send button. Raises `submitted`."""
-        send_button = any(apply_judge.SEND_WORDS.search(b.text) for b in digest.buttons)
+        send_button = any(apply_send_words.SEND_WORDS.search(b.text) for b in digest.buttons)
         if not (marker or (state == "confirmation" and judged
                            and conf >= apply_judge.CONFIRMATION_MIN_CONF
                            and not digest.fields and not send_button)):
@@ -9777,7 +9682,7 @@ class _JobRun:
                                          f"({read}); the session may have expired before the "
                                          f"send")
         if sure and state in ("application_form", "review_page") and any(
-                apply_judge.SEND_WORDS.search(b.text) for b in digest.buttons):
+                apply_send_words.SEND_WORDS.search(b.text) for b in digest.buttons):
             raise _Parked("needs_human", f"{CHECK_SENT_REASON}: a request left {when} ({first}) "
                                          f"and the page is a form with its own send button "
                                          f"({read})")

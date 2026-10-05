@@ -175,14 +175,15 @@ SSO_NOTE = "Its only way on signs in with {sites}; the run signs in with no othe
 def account_worded(text: str) -> bool:
     """Does a posting's control read as a way into an account (the walk
     never clicks a sign-in or a sign-up): a sign-in or log-in
-    (`apply_judge.SIGN_IN_WORDS`), a sign-up or a new account
+    (`apply_send_words.SIGN_IN_WORDS`), a sign-up or a new account
     (`apply_run._CREATE_ACCOUNT`), or a Next or Continue with no Apply word
     (`apply_judge.entry_worded`). "Sign in to apply" is one; "Continue
     to apply" is not."""
     import apply_judge
     import apply_run
+    import apply_send_words
     text = " ".join(str(text or "").split())
-    if apply_judge.SIGN_IN_WORDS.search(text) or apply_run._CREATE_ACCOUNT.search(text):
+    if apply_send_words.SIGN_IN_WORDS.search(text) or apply_run._CREATE_ACCOUNT.search(text):
         return True
     return bool(apply_run._NEXT_WORDS.search(text)) and not apply_judge.entry_worded(text)
 

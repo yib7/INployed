@@ -60,7 +60,9 @@ from typing import Any, Callable, Iterable
 
 import apply_form
 import apply_judge
+import apply_send_words
 from apply_judge import PAGE_TEXT_CAP, FillPlan, PlannedField
+from apply_send_words import PopupRefused, popup_refusal
 
 log = logging.getLogger(__name__)
 
@@ -820,68 +822,6 @@ def _popup_options(frame, loc):
         .filter(visible=True)
 
 
-class PopupRefused(LookupError):
-    """A popup whose own words send was not opened (`popup_refusal`)."""
-
-
-# What a popup's own words must not say for the run to open it: a send or a
-# last step, as the run's other clicks read them
-# (`apply_run._send_worded`), a leading "Apply" too ("Apply with LinkedIn");
-# never "Does not apply". They are read as a name (`send_phrase`):
-# - a "submit" or "send" that leads a short name names a send, whatever
-#   follows it ("Submit for review", "Submit resume", "Send to recruiter");
-# - a last-step verb ("finish", "complete", "confirm", "done", "finalize"),
-#   leading or not, and a send verb anywhere else, name one when nothing
-#   follows, or what follows names the application or the send itself
-#   ("Done", "Complete application", "Confirm and submit", "Submit ▾",
-#   "More submit options", "Choose how to submit your application"), never
-#   another thing ("Finish month", "Confirm your citizenship status",
-#   "Expected finish date", "Willing to submit references");
-# - a leading "Apply" names one alone or with "with", "now", "for"... ("Apply
-#   a location" is a placeholder).
-# Words that ask ("... a background check? Select One Required", Workday's
-# aria-label) are no name; a shown value or a title under an outside
-# question label is an answer ("I confirm" under "Do you agree to the
-# terms?", "Send by post" under "Delivery method" or "Document delivery",
-# "Complete" under "Resume status"), and under a label that names the
-# application, a document, a step or an action ("Your application", "Resume
-# *", "Step 3", "Share your profile") it is read.
-_POPUP_VERB = re.compile(r"\b(submit|send|finish|complete|confirm|finali[sz]e|done)\b", re.I)
-_POPUP_LEAD_MAX = 6             # words: a name a leading submit or send makes a send
-_POPUP_LEAD = re.compile(r"^(submit|send)$", re.I)
-_POPUP_APPLY = re.compile(r"^\s*apply\b", re.I)
-# what a send's verb may be followed by and still name the send: the
-# application or its parts, the send's own words, a time, another send verb
-_POPUP_SEND_OBJECT = re.compile(
-    r"^(applications?|forms?|answers?|responses?|options?|request|submission|now|here"
-    r"|everything|all|it|this|submit|send|finish|complete|confirm|finali[sz]e|done|apply)$",
-    re.I)
-_POPUP_APPLY_OBJECT = re.compile(r"^(with|using|via|through|now|here|for|to|online|today)$",
-                                 re.I)
-_POPUP_FILLER = frozenset(("your", "the", "my", "this", "our", "a", "an", "and", "or", "&"))
-_POPUP_QUESTION_TAIL = re.compile(r"\b(select one|required)\s*$", re.I)
-_POPUP_WORD = re.compile(r"[a-z]+", re.I)
-# a label that asks: a "?", "all that apply", Workday's "Select One" tail, or
-# an interrogative first word
-_ASKS = re.compile(
-    r"\?|\ball that apply\b|\bselect one\b|^\s*(how|what|which|when|where|why|who|whom|whose|do|does"
-    r"|did|are|is|was|were|will|would|can|could|have|has|had|should|may|might|shall)\b", re.I)
-# a label that names the application, one of its documents, a step, or an
-# action (a card's heading, a section's name): no question of a value's
-_NAMES_THE_SEND = re.compile(
-    r"\b(applications?|applying|submissions?|resumes?|résumés?|cv|cover\s+letters?"
-    r"|documents?|attachments?|profiles?|candidacy|step\s*\d+)\b"
-    r"|^\s*(share|send|submit|apply|upload|attach|save|review|continue|complete|finish|confirm"
-    r"|finali[sz]e|proceed|next|done)\b", re.I)
-# a label that names a document or the application and then the value asked
-# of it ("Document delivery", "Resume status", "Application source"): a
-# question
-_VALUE_TAIL = re.compile(
-    r"\b(status|delivery|method|type|format|date|preferences?|source|language|option|choice"
-    r"|level|stage|mode|frequency|channel)\s*$", re.I)
-_LEADS_ACTION = re.compile(
-    r"^\s*(share|send|submit|apply|upload|attach|save|review|continue|complete|finish|confirm"
-    r"|finali[sz]e|proceed|next|done)\b", re.I)
 _POPUP_WORDS_JS = """el => {
   const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
   const root = el.getRootNode();
@@ -916,79 +856,6 @@ _POPUP_WORDS_JS = """el => {
           label: norm(labels.map((n) => n.innerText).join(' ')),
           named: norm(named.map((n) => n.innerText).join(' ')), box: box};
 }"""
-
-
-def _question_shaped(text: str) -> bool:
-    """Words that ask: a "?" in them, or Workday's tail ("... Select One
-    Required")."""
-    return "?" in text or bool(_POPUP_QUESTION_TAIL.search(text))
-
-
-def question_label(text: str) -> bool:
-    """Is `text` (a label, a labelling element's or a question box's words)
-    a question a value answers: words that ask (`_ASKS`), words that name no
-    application, document, step or action (`_NAMES_THE_SEND`: "Degree
-    status", "Delivery method" ask for a value; "Your application", "Resume
-    *", "Step 3", "Share your profile" name the thing a send sends), or
-    words that name one and then the value asked of it ("Document
-    delivery", "Resume status": `_VALUE_TAIL`)?"""
-    t = " ".join(str(text or "").split()).strip(" *✱＊")
-    if not t:
-        return False
-    return bool(_ASKS.search(t)) or not _NAMES_THE_SEND.search(t) or (
-        bool(_VALUE_TAIL.search(t)) and not _LEADS_ACTION.search(t))
-
-
-def send_phrase(text: str) -> bool:
-    """Do `text`'s words name a send or a last step (see `_POPUP_VERB`): a
-    "submit" or "send" that leads a name of at most `_POPUP_LEAD_MAX` words,
-    whatever follows it; any other send or last-step verb, leading or not,
-    with nothing after it but fillers or symbols, or followed by the
-    application, the send's own words or another send verb ("Finish month"
-    and "Confirm your citizenship status" ask); a
-    leading "Apply" alone or with "with", "now", "for"..."""
-    words = _POPUP_WORD.findall(str(text or ""))
-    if words and _POPUP_LEAD.fullmatch(words[0]) and len(words) <= _POPUP_LEAD_MAX:
-        return True
-    for i, w in enumerate(words):
-        verb = bool(_POPUP_VERB.fullmatch(w))
-        apply_lead = i == 0 and w.lower() == "apply" and bool(_POPUP_APPLY.search(text))
-        if not (verb or apply_lead):
-            continue
-        rest = [x for x in words[i + 1:] if x.lower() not in _POPUP_FILLER]
-        if not rest:
-            return True
-        if (_POPUP_APPLY_OBJECT if apply_lead else _POPUP_SEND_OBJECT).fullmatch(rest[0]):
-            return True
-    return False
-
-
-def popup_refusal(words: dict) -> str:
-    """Why a popup whose own words read `words` ({shown, aria, title, label,
-    named, box}) must not be opened, or "": its aria-label, its title, the
-    element outside it that names it (`named`, aria-labelledby), its
-    `<label for>` or its shown text names a send or a
-    last step (`send_phrase`). Words that ask (`_question_shaped`) are never
-    read as a name. The shown text and the title are never read under an
-    outside question label (`question_label` of its label, its labelling
-    element or its question box's words) or a question in its own
-    aria-label: they are the answer. Under any other outside label they are
-    read."""
-    aria = " ".join(str(words.get("aria") or "").split())
-    answered = (bool(aria) and _question_shaped(aria)) or any(
-        question_label(words.get(key) or "") for key in ("label", "named", "box"))
-    for key in ("aria", "named", "label", "title", "shown"):
-        text = " ".join(str(words.get(key) or "").split())
-        if not text:
-            continue
-        if key in ("shown", "title") and answered:
-            continue
-        if key != "shown" and _question_shaped(text):
-            continue
-        if send_phrase(text):
-            what = {"shown": "text", "named": "label"}.get(key, key)
-            return f"its {what} reads {text[:60]!r}, a send"
-    return ""
 
 
 def _open_menu(frame, loc, *, popup: bool = False, face=None):
@@ -1916,10 +1783,10 @@ def _norm(text: str) -> str:
 # dialog by that or by what it holds (two or more fields, or a control
 # that applies, uploads or submits). Returns {what, kind:
 # consent|close|none, text, own} or null when nothing covers it.
-# The loop's send and last-step words (`apply_run.SUBMIT_WORDS` and
+# The loop's send and last-step words (`apply_send_words.SUBMIT_WORDS` and
 # `FINAL_WORDS`) as a JS regex source for a string literal: the overlay
 # picker and the click's arm (`_ARM_JS`) splice it.
-_SEND_JS = r"\\b(submit|apply|send|finish|complete|confirm|finali[sz]e|done)\\b"
+_SEND_JS = apply_send_words.js_union()
 _OVERLAY_JS = r"""el => {
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
   el.scrollIntoView({block: 'center', inline: 'center'});

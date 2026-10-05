@@ -26,6 +26,7 @@ sys.path.insert(0, str(REPO / "local"))
 
 import apply_harness as h  # noqa: E402
 import apply_run  # noqa: E402
+import apply_send_words  # noqa: E402
 import jev  # noqa: E402
 
 pytest_plugins = ["conftest_browser"]
@@ -610,8 +611,8 @@ def test_a_scaled_two_option_answer_keeps_its_winner_most_probable():
 # --- M1: the harness reads submit and final words with the loop's own vocabulary --------------------
 
 def test_the_harness_uses_the_loops_submit_and_final_words():
-    assert h.SUBMIT_WORDS is apply_run.SUBMIT_WORDS
-    assert h.FINAL_WORDS is apply_run.FINAL_WORDS
+    assert h.SUBMIT_WORDS is apply_send_words.SUBMIT_WORDS
+    assert h.FINAL_WORDS is apply_send_words.FINAL_WORDS
 
 
 @pytest.mark.parametrize("text, park, breaks", [

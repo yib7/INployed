@@ -49,6 +49,7 @@ import apply_form  # noqa: E402
 import apply_harness as h  # noqa: E402
 import apply_judge  # noqa: E402
 import apply_run  # noqa: E402
+import apply_send_words  # noqa: E402
 import jev  # noqa: E402
 from apply_judge import FillPlan, PlannedField  # noqa: E402
 
@@ -1610,7 +1611,7 @@ def test_a_popup_whose_own_words_send_is_never_opened(browser_page, shape):
     # read as a dropdown field whatever the extractor says: the open is refused
     field = apply_form.Field(n=0, locator=(0, "#arrow"), label="Arrow", type="listbox",
                              required=False, widget="popup")
-    with pytest.raises(apply_fill.PopupRefused):
+    with pytest.raises(apply_send_words.PopupRefused):
         apply_fill.open_listbox_options(browser_page, field)
     assert browser_page.evaluate("document.body.dataset.opened") is None
     # the fill's open too

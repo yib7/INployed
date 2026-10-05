@@ -76,6 +76,7 @@ from apply_facts import (DESCRIPTIONS, NO_FORMS, PLAIN_NUMBER, STORED_YES_NO_KEY
 from apply_facts import asks_own_question as asks_own_question
 from apply_facts import question_fit as question_fit
 from apply_form import FormDigest, password_box
+from apply_send_words import SEND_WORDS, SIGN_IN_WORDS
 from jev import APOSTROPHES, NOT_SETTLED, PAGE_KIND_NOULS, Answer, request_fits
 # pure data (no package imports, no .env): the one US state list the store shares
 from resume_tailor.answer_tables import COUNTRIES as _COUNTRIES
@@ -808,7 +809,7 @@ def page_questions(digest: FormDigest, catalog: FactCatalog,
         # is a regex guess ("Apply now" and a wizard's Continue both read
         # `submit`) and the live judge took the word at face value
         # (apply_entry 0.55 / submit 0.45, advance 0.72 / submit 0.28), so it is
-        # left out; `apply_run._submit_shaped` guards on text. `in_form`: the
+        # left out; `apply_send_words._submit_shaped` guards on text. `in_form`: the
         # button's form holds the fields; `disabled`: it waits for the form to
         # validate; `primary`: styled as the main action
         "buttons": [{"n": b.n, "text": b.text, "in_form": bool(b.in_form),
@@ -977,12 +978,6 @@ THIRD_PARTY = re.compile(
     r"microsoft|github|glassdoor|twitter|x|yahoo|amazon|okta|sso)\b", re.I)
 _APPLY_ENTRY_WORDS = re.compile(r"\bapply\b|\bi'?m interested\b|\bstart (?:your |an |the )?"
                                 r"application\b", re.I)
-# the loop's words for a send and for a sign-in's own button: one name each
-SEND_WORDS = re.compile(r"\b(submit|send|finish)\b", re.I)
-# a sign-in's own words: "Sign in", "Log on", "Send code", "Send me a link"
-SIGN_IN_WORDS = re.compile(r"\b(sign|log)[\s-]*(in|on)\b|\blogin\b"
-                           r"|\bsend\s+(me\s+)?(an?\s+|the\s+)?(verification\s+|sign[\s-]*in\s+)?"
-                           r"(code|link)\b", re.I)
 ADVANCE_WORDS = re.compile(r"\b(next|continue)\b|^\s*(i\s+)?(accept|agree)\b", re.I)
 # A button that accepts an application's privacy agreement or data consent
 # step (Taleo's "I Accept", Jobvite's "Accept"), and one that

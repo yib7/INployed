@@ -15,6 +15,7 @@ sys.path.insert(0, str(REPO / "local"))
 
 import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
+import apply_send_words  # noqa: E402
 import settings  # noqa: E402
 import test_apply_run as base  # noqa: E402
 
@@ -164,8 +165,8 @@ def test_a_sign_in_worded_send_still_reads_as_a_send(text, sends):
     import apply_form
     digest = apply_form.FormDigest(url_host="x.example", title="", text="",
                                    buttons=[apply_form.Button(0, (0, "button"), text, "submit")])
-    assert apply_run._send_worded(text, account=True) is sends
-    assert apply_run._sends_application(digest, 0, account_only=True) is sends
+    assert apply_send_words._send_worded(text, account=True) is sends
+    assert apply_send_words._sends_application(digest, 0, account_only=True) is sends
 
 
 # --- a create-account link with no address of its own is clicked --------------------

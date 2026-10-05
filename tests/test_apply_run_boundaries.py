@@ -6,6 +6,7 @@ import pytest
 
 import apply_form
 import apply_run
+import apply_send_words
 import jev_harness
 
 pytest_plugins = ["conftest_jev"]
@@ -54,8 +55,8 @@ def test_native_continue_is_an_advance_while_final_submit_stays_guarded():
         apply_form.Button(0, (0, "#next"), "Continue", "submit"),
         apply_form.Button(1, (0, "#submit"), "Submit application", "submit"),
     ])
-    assert not apply_run._submit_shaped(digest, 0)
-    assert apply_run._submit_shaped(digest, 1)
+    assert not apply_send_words._submit_shaped(digest, 0)
+    assert apply_send_words._submit_shaped(digest, 1)
 
 
 def test_generic_ats_cannot_extend_allowlist_twice(monkeypatch):

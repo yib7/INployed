@@ -47,6 +47,7 @@ import apply_harness as h  # noqa: E402
 import apply_judge  # noqa: E402
 import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
+import apply_send_words  # noqa: E402
 import jev  # noqa: E402
 from apply_judge import FillPlan  # noqa: E402
 
@@ -715,7 +716,7 @@ def test_the_gate_refuses_an_empty_required_control_the_extractor_leaves_out(
     ("Complete", False), ("Create account and apply", False), ("Send", False), ("", False)])
 def test_a_step_only_button_is_one_of_a_steps_words_alone(text, only):
     # final review B Known Minor 4
-    assert apply_run.step_only(text) is only
+    assert apply_send_words.step_only(text) is only
 
 
 class _StepAsSubmit(jev.FakeJev):
@@ -1590,25 +1591,25 @@ def _js_regex(js: str, name: str) -> str:
 
 def test_every_copy_of_the_send_and_step_words_holds_the_loops_own():
     # final review B-M4: the loop's send and last-step words
-    # (`apply_run.SUBMIT_WORDS`, `FINAL_WORDS`) are the source; a word added
+    # (`apply_send_words.SUBMIT_WORDS`, `FINAL_WORDS`) are the source; a word added
     # there and missing from a copy fails here
-    submit = _words(apply_run.SUBMIT_WORDS.pattern)
-    final = _words(apply_run.FINAL_WORDS.pattern)
+    submit = _words(apply_send_words.SUBMIT_WORDS.pattern)
+    final = _words(apply_send_words.FINAL_WORDS.pattern)
     assert "submit" in submit and "done" in final
     # the judge's send words: the loop's but "apply" (an Apply is an entry
     # until the judge says it sends)
-    assert _words(apply_judge.SEND_WORDS.pattern) == submit - {"apply"}
+    assert _words(apply_send_words.SEND_WORDS.pattern) == submit - {"apply"}
     # the extractor's `submit` hint
     hint = re.search(r"submits \|\| /(.*?)/i\.test\(text\)", apply_form._EXTRACT_JS).group(1)
     assert _words(hint) == submit
     # a popup's send name, the extractor's and `send_phrase`'s
     verbs = (submit - {"apply"}) | final
     assert _words(_js_regex(apply_form._EXTRACT_JS, "SEND_VERB")) == verbs
-    assert _words(apply_fill._POPUP_VERB.pattern) == verbs
+    assert _words(apply_send_words._POPUP_VERB.pattern) == verbs
     assert _words(_js_regex(apply_form._EXTRACT_JS, "SEND_LEAD")) == _words(
-        apply_fill._POPUP_LEAD.pattern)
+        apply_send_words._POPUP_LEAD.pattern)
     assert _words(_js_regex(apply_form._EXTRACT_JS, "SEND_OBJECT")) == _words(
-        apply_fill._POPUP_SEND_OBJECT.pattern)
+        apply_send_words._POPUP_SEND_OBJECT.pattern)
     # the click's arm and the overlay picker splice every send and last-step word
     assert _words(apply_fill._SEND_JS) == submit | final
     for js in (apply_fill._ARM_JS, apply_fill._OVERLAY_JS):
@@ -1627,8 +1628,8 @@ def test_the_popup_names_the_overlays_never_and_the_step_words_pin_each_differen
     # final review B R2 M4: the copies the send-word parity test does not
     # hold equal, each known difference pinned, so a change on either side
     # shows up here
-    submit = _words(apply_run.SUBMIT_WORDS.pattern)
-    final = _words(apply_run.FINAL_WORDS.pattern)
+    submit = _words(apply_send_words.SUBMIT_WORDS.pattern)
+    final = _words(apply_send_words.FINAL_WORDS.pattern)
     js = apply_form._EXTRACT_JS
     # the extractor's `sendName` reads no leading Apply: the live check
     # (`send_phrase`) refuses "Apply now" and "Apply with" as a popup's name,
@@ -1636,13 +1637,13 @@ def test_the_popup_names_the_overlays_never_and_the_step_words_pin_each_differen
     # so the Python side is the stricter and the difference fails safe
     body = re.search(r"const sendName = \(t\) => \{(.*?)\n  \};", js, re.S).group(1)
     assert "apply" not in body.lower()
-    assert apply_fill._POPUP_APPLY.pattern == r"^\s*apply\b"
-    assert _words(apply_fill._POPUP_APPLY_OBJECT.pattern) == {
+    assert apply_send_words._POPUP_APPLY.pattern == r"^\s*apply\b"
+    assert _words(apply_send_words._POPUP_APPLY_OBJECT.pattern) == {
         "with", "using", "via", "through", "now", "here", "for", "to", "online", "today"}
     # the extractor's fillers are `_POPUP_FILLER` but "&": its words are
     # letters only (/[a-z]+/gi), so "&" never reaches FILLER
-    assert _words(_js_regex(js, "FILLER")) == set(apply_fill._POPUP_FILLER) - {"&"}
-    assert "&" in apply_fill._POPUP_FILLER
+    assert _words(_js_regex(js, "FILLER")) == set(apply_send_words._POPUP_FILLER) - {"&"}
+    assert "&" in apply_send_words._POPUP_FILLER
     # POPUP_GO_ON has no Python twin: its words, and its "continue" is the
     # loop's own next word
     go_on = _words(_js_regex(js, "POPUP_GO_ON"))
@@ -1657,9 +1658,9 @@ def test_the_popup_names_the_overlays_never_and_the_step_words_pin_each_differen
     assert set(never) & (submit | final) == submit - {"finish"}
     # the step words: the loop's next words are step verbs, every step verb
     # is a step-only word, and no step-only word sends or ends
-    step_verb = _words(apply_run._STEP_VERB.pattern)
-    only = re.fullmatch(r"\(\?:\\b\(\?:([^()]*)\)\\b\|\[\\W_\]\)\+", apply_run._STEP_ONLY.pattern)
-    assert only, apply_run._STEP_ONLY.pattern
+    step_verb = _words(apply_send_words._STEP_VERB.pattern)
+    only = re.fullmatch(r"\(\?:\\b\(\?:([^()]*)\)\\b\|\[\\W_\]\)\+", apply_send_words._STEP_ONLY.pattern)
+    assert only, apply_send_words._STEP_ONLY.pattern
     step_only = _spelled(only[1].split("|"))
     assert _words(apply_run._NEXT_WORDS.pattern) == {"next", "continue"}
     assert _words(apply_run._NEXT_WORDS.pattern) <= step_verb <= step_only

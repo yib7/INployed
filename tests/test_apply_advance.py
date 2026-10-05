@@ -29,6 +29,7 @@ import apply_fill  # noqa: E402
 import apply_form  # noqa: E402
 import apply_harness as h  # noqa: E402
 import apply_run  # noqa: E402
+import apply_send_words  # noqa: E402
 import jev  # noqa: E402
 from apply_judge import FillPlan, PlannedField  # noqa: E402
 
@@ -196,7 +197,7 @@ def test_a_real_question_whose_words_hold_a_send_verb_is_opened(browser_page, sh
 @pytest.mark.parametrize("shape", sorted(_SENDS))
 def test_every_send_shape_stays_refused(browser_page, shape):
     field = _popup(browser_page, _SENDS[shape])
-    with pytest.raises(apply_fill.PopupRefused):
+    with pytest.raises(apply_send_words.PopupRefused):
         apply_fill.open_listbox_options(browser_page, field)
     assert browser_page.evaluate("document.body.dataset.opened") is None, shape
 
@@ -219,27 +220,27 @@ def test_every_send_shape_stays_refused(browser_page, shape):
     ("Preferred way to send documents", False), ("Select One", False),
 ])
 def test_a_send_phrase_is_a_send_verb_naming_the_send(text, sends):
-    assert apply_fill.send_phrase(text) is sends
+    assert apply_send_words.send_phrase(text) is sends
 
 
 def test_a_question_shaped_aria_label_and_its_answer_are_never_read_as_a_name():
     ask = "Please confirm you are at least 18 years of age Select One Required"
-    assert apply_fill.popup_refusal({"aria": ask, "shown": "Select One"}) == ""
-    assert apply_fill.popup_refusal({"aria": ask, "shown": "I confirm"}) == ""
+    assert apply_send_words.popup_refusal({"aria": ask, "shown": "Select One"}) == ""
+    assert apply_send_words.popup_refusal({"aria": ask, "shown": "I confirm"}) == ""
     # under an outside question label the shown text and the title are the answer
-    assert apply_fill.popup_refusal({"shown": "Done", "label": "Background check status"}) == ""
-    assert apply_fill.popup_refusal({"shown": "Done", "box": "Degree status"}) == ""
-    assert apply_fill.popup_refusal({"title": "Submit a source",
+    assert apply_send_words.popup_refusal({"shown": "Done", "label": "Background check status"}) == ""
+    assert apply_send_words.popup_refusal({"shown": "Done", "box": "Degree status"}) == ""
+    assert apply_send_words.popup_refusal({"title": "Submit a source",
                                      "label": "How did you hear about us?"}) == ""
     # an unlabelled shown send, a label that names the application, and a
     # labelling element or a <label for> that names the send, are read
-    assert apply_fill.popup_refusal({"shown": "Done"})
-    assert apply_fill.popup_refusal({"shown": "Submit", "label": "Your application"})
-    assert apply_fill.popup_refusal({"shown": "", "named": "Submit application"})
-    assert apply_fill.popup_refusal({"shown": "", "label": "Submit application"})
+    assert apply_send_words.popup_refusal({"shown": "Done"})
+    assert apply_send_words.popup_refusal({"shown": "Submit", "label": "Your application"})
+    assert apply_send_words.popup_refusal({"shown": "", "named": "Submit application"})
+    assert apply_send_words.popup_refusal({"shown": "", "label": "Submit application"})
     # a label that asks is never read as a name (SP6 review R2-M4)
-    assert apply_fill.popup_refusal({"shown": "Select", "label": "Expected finish date *"}) == ""
-    assert apply_fill.popup_refusal({"shown": "Complete", "label": "Resume status"}) == ""
+    assert apply_send_words.popup_refusal({"shown": "Select", "label": "Expected finish date *"}) == ""
+    assert apply_send_words.popup_refusal({"shown": "Complete", "label": "Resume status"}) == ""
 
 
 @pytest.mark.parametrize("text, asks", [
@@ -250,7 +251,7 @@ def test_a_question_shaped_aria_label_and_its_answer_are_never_read_as_a_name():
     ("Your application", False), ("Application", False), ("Resume *", False), ("Step 3", False),
     ("Share your profile", False), ("Submit document type", False), ("", False)])
 def test_a_question_label_asks_for_a_value_and_never_names_the_send(text, asks):
-    assert apply_fill.question_label(text) is asks
+    assert apply_send_words.question_label(text) is asks
 
 
 # --- review M2: the extractor reads the send rule too ---------------------------------------------

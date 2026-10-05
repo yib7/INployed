@@ -26,6 +26,8 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Mapping
 from urllib.parse import urlparse
 
+import apply_send_words
+
 log = logging.getLogger(__name__)
 
 FIELD_TYPES = ("text", "email", "tel", "url", "number", "textarea", "select",
@@ -64,7 +66,7 @@ class Field:
     # dropdown's words inside it left out; a consent so read is never routine
     label_partial: bool = False
     # set by the run when the control's own words send and its open was
-    # refused (`apply_fill.PopupRefused`): the plan leaves it
+    # refused (`apply_send_words.PopupRefused`): the plan leaves it
     # unanswered, and a required one parks on its question
     refused: str = ""
     ident: str = ""             # who the control is (tag|type|id|name|aria|...): read again
@@ -1654,14 +1656,14 @@ _EXTRACT_JS = r"""
   const chromePopup = (text) => POPUP_CHROME.test(text) || POPUP_TOOL.test(text);
   // a send or go-on phrase, as a popup's own name ("More submit options",
   // "Save and continue", "Continue with", "Apply with", "Next step")
-  // the send part is `apply_fill.send_phrase`'s rule:
+  // the send part is `apply_send_words.send_phrase`'s rule:
   // a submit or send leading a short name, or a send or last-step verb
   // followed by nothing or by the application or the send itself; "Finish
   // month", "Expected finish date" and "Willing to submit references" name a
   // question
-  const SEND_LEAD = /^(submit|send)$/i;
-  const SEND_VERB = /^(submit|send|finish|complete|confirm|finali[sz]e|done)$/i;
-  const SEND_OBJECT = /^(applications?|forms?|answers?|responses?|options?|request|submission|now|here|everything|all|it|this|submit|send|finish|complete|confirm|finali[sz]e|done|apply)$/i;
+  const SEND_LEAD = __SEND_LEAD__;
+  const SEND_VERB = __SEND_VERB__;
+  const SEND_OBJECT = __SEND_OBJECT__;
   const FILLER = /^(your|the|my|this|our|a|an|and|or)$/i;
   const sendName = (t) => {
     const words = (t || '').match(/[a-z]+/gi) || [];
@@ -1966,7 +1968,7 @@ _EXTRACT_JS = r"""
     const aria = norm(el.getAttribute('aria-label'));
     let kind = '';
     if (NEVER_SUBMIT.test(text + ' ' + aria)) kind = '';
-    else if (submits || /\b(submit|apply|send|finish)\b/i.test(text)) kind = 'submit';
+    else if (submits || __SUBMIT_WORDS__.test(text)) kind = 'submit';
     else if (/\b(next|continue)\b/i.test(text)) kind = 'advance';
     if (!kind && /\b(back|previous)\b/i.test(text)) kind = 'back';
     const owner = el.form || el.closest('form');
@@ -2009,7 +2011,11 @@ _EXTRACT_JS = r"""
            modal: !!modal };
 }
 """.replace("__OPTION_LABEL__", RADIO_OPTION_LABEL_JS).replace("__CONSENT__", CONSENT_ROOTS_JS).replace(
-    "__IDENT__", IDENT_FN_JS).replace("__PLACEHOLDER__", PLACEHOLDER_TEXT_JS)
+    "__IDENT__", IDENT_FN_JS).replace("__PLACEHOLDER__", PLACEHOLDER_TEXT_JS).replace(
+    "__SEND_LEAD__", apply_send_words.js_send_lead()).replace(
+    "__SEND_VERB__", apply_send_words.js_send_verb()).replace(
+    "__SEND_OBJECT__", apply_send_words.js_send_object()).replace(
+    "__SUBMIT_WORDS__", apply_send_words.js_submit())
 
 _TEXT_JS = "() => document.body ? (document.body.innerText || '') : ''"
 

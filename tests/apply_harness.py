@@ -78,6 +78,7 @@ if str(REPO / "local") not in sys.path:
     sys.path.insert(0, str(REPO / "local"))
 
 import apply_run  # noqa: E402
+import apply_send_words  # noqa: E402
 import jev  # noqa: E402
 
 FIXTURES_DIR = REPO / "tests" / "fixtures"
@@ -1715,9 +1716,9 @@ _FOCUS_JS = "() => { const el = document.activeElement; " \
             "return {url: String(location.href), frame: true}; " \
             "return (" + _LIVE_JS + ")(el); }"
 LIVE_TIMEOUT_MS = 1_000
-# The loop's own send vocabulary (`apply_run.SUBMIT_WORDS`, `FINAL_WORDS`).
-SUBMIT_WORDS = apply_run.SUBMIT_WORDS
-FINAL_WORDS = apply_run.FINAL_WORDS
+# The loop's own send vocabulary (`apply_send_words.SUBMIT_WORDS`, `FINAL_WORDS`).
+SUBMIT_WORDS = apply_send_words.SUBMIT_WORDS
+FINAL_WORDS = apply_send_words.FINAL_WORDS
 _ENTER_KEYS = ("Enter", "NumpadEnter")
 _TARGET_ACTIONS = {"click": "click", "dblclick": "click", "tap": "click", "fill": "fill",
                    "type": "fill", "press_sequentially": "fill", "press": "press",
@@ -1736,18 +1737,18 @@ def submit_worded(text: str, *, park_mode: bool, account_step: bool = False,
     posting's entry), unless the click is the account step's and the text
     names a sign-in or a code or link sent for one ("Sign in to apply", "Send
     code", "Send me a link": the account step's own exemption,
-    `apply_run._sends_application`; everywhere else the loop routes those
+    `apply_send_words._sends_application`; everywhere else the loop routes those
     words to the submit gate); or in park mode a last-step word on anything
-    but an account step (`apply_run._final_shaped`). A tick or a toggle
+    but an account step (`apply_send_words._final_shaped`). A tick or a toggle
     (`toggle`: a checkbox, switch, radio or option, or an aria-pressed
     button) is left out of the last-step words only ("I confirm the
     information above is complete" is an answer the loop ticks); a toggle whose own name sends ("Submit application") still
     reads as sending."""
     words = {w.lower() for w in SUBMIT_WORDS.findall(text or "")}
-    if words - {"apply"} and not (account_step and apply_run.apply_judge.SIGN_IN_WORDS.search(text or "")):
+    if words - {"apply"} and not (account_step and apply_send_words.SIGN_IN_WORDS.search(text or "")):
         return True
     return (park_mode and not toggle and bool(FINAL_WORDS.search(text or ""))
-            and not apply_run._ACCOUNT_STEP_WORDS.search(text or ""))
+            and not apply_send_words._ACCOUNT_STEP_WORDS.search(text or ""))
 
 
 _EASY_APPLY_WORDS = re.compile(r"easy\s*apply", re.I)

@@ -26,7 +26,7 @@ correctly keeps a run that picks nothing from passing.
 
 The questions ship with the app (`local/screening_questions.json`, read
 through `apply_screening.load_questions`); the profiles are test data
-(`tests/fixtures/screening/profiles.json`), two typed v2 stores with every
+(`tests/fixtures/screening_profiles.json`), two typed v2 stores with every
 entry confirmed.
 """
 from __future__ import annotations
@@ -51,7 +51,7 @@ from resume_tailor import apply_answers, apply_config  # noqa: E402
 
 pytest_plugins = ["conftest_jev"]
 
-PROFILES_PATH = REPO / "tests" / "fixtures" / "screening" / "profiles.json"
+PROFILES_PATH = REPO / "tests" / "fixtures" / "screening_profiles.json"
 PROFILES: dict[str, dict] = json.loads(PROFILES_PATH.read_text(encoding="utf-8"))
 QUESTIONS = apply_screening.load_questions()
 SEEDS = (1, 2, 3, 4, 5)

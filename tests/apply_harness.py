@@ -48,7 +48,7 @@ Parts (the matrix test, `scripts/apply_matrix.py` and later phases use them):
   registry under many, and the table with success rates.
 
 Hermetic: the job folder, the queue, the account ledger and the logs live in
-a temp dir; the answer bank is `tests/fixtures/apply_matrix/answers.json` and
+a temp dir; the answer bank is `tests/fixtures/apply_matrix_answers.json` and
 the sheet is built here (no `resume_tailor` import, so the matrix script can
 run outside pytest); the master password is a synthetic string; the judge is
 `FakeJev` or `NoisyJev`. No network but the local server and routed hosts.
@@ -81,7 +81,7 @@ import apply_run  # noqa: E402
 import jev  # noqa: E402
 
 FIXTURES_DIR = REPO / "tests" / "fixtures"
-BANK_PATH = FIXTURES_DIR / "apply_matrix" / "answers.json"
+BANK_PATH = FIXTURES_DIR / "apply_matrix_answers.json"
 PASSWORD = "synthetic-matrix-Pw-7Qz4"      # the master password a flow's accounts step types
 SIGNUP_EMAIL = "jane.doe@example.com"
 JOB_ID = "42"

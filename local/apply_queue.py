@@ -82,6 +82,13 @@ class QueueLockTimeout(FileLockTimeout):
     """Could not take the queue's sidecar lock within LOCK_TIMEOUT."""
 
 
+class QueueUnreadable(QueueLockTimeout):
+    """The queue file is there and a mutation could not read it (a sharing
+    violation, an antivirus scan holding it): the mutation stops before it
+    writes, so the queue on disk keeps every job. A caller treats it as the
+    lock's timeout, a busy file to try again."""
+
+
 class UnknownJobError(KeyError):
     """No queue entry with that job_posting_id."""
 
@@ -120,6 +127,8 @@ def locked(path: Optional[Path] = None, timeout: Optional[float] = None):
     try:
         with file_lock(qp, timeout=limit):
             yield
+    except QueueLockTimeout:
+        raise           # the body's own (`QueueUnreadable`), already in its words
     except FileLockTimeout as exc:
         raise QueueLockTimeout(
             f"{exc} (another dashboard/agent process is holding it)") from None
@@ -153,6 +162,8 @@ def _quarantine(qp: Path) -> None:
 # How often load() retries a failed read before treating the queue as empty.
 _READ_TRIES = 3
 _READ_RETRY = 0.02        # seconds between attempts
+# a mutation, holding the lock, waits longer before it gives up and raises
+_READ_TRIES_LOCKED = 25
 
 
 def load(path: Optional[Path] = None, *, quarantine: bool = False) -> Dict[str, Any]:
@@ -160,24 +171,30 @@ def load(path: Optional[Path] = None, *, quarantine: bool = False) -> Dict[str, 
     atomic_write_json means a concurrent reader only ever sees a complete file.
 
     Missing -> fresh. A read OSError (AV scan, sharing violation) is NOT
-    corruption: it is retried briefly, then fresh is returned with the file
-    left untouched. A file that reads but doesn't parse to the right shape
+    corruption: it is retried briefly; then a lock-free reader gets fresh
+    with the file left untouched, and a mutation (quarantine=True) gets
+    `QueueUnreadable`, so it never writes its one change over a queue it
+    could not read. A file that reads but doesn't parse to the right shape
     returns fresh too, and is renamed aside (.corrupt-<stamp>) only when
     quarantine=True, which callers may pass ONLY while holding locked():
     a lock-free reader renaming could race a lock-holding writer that already
     quarantined and rewrote a healthy queue, moving the VALID file aside."""
     qp = queue_path(path)
     raw = None
-    for attempt in range(_READ_TRIES):
+    tries = _READ_TRIES_LOCKED if quarantine else _READ_TRIES
+    for attempt in range(tries):
         if not qp.exists():
             return _fresh()
         try:
             raw = qp.read_text(encoding="utf-8")
             break
         except OSError:
-            if attempt < _READ_TRIES - 1:
+            if attempt < tries - 1:
                 time.sleep(_READ_RETRY)
     if raw is None:
+        if quarantine:
+            raise QueueUnreadable(f"the apply queue {qp.name} could not be read (another "
+                                  "program is holding it); nothing was written")
         warnings.warn(
             f"apply queue {qp} could not be read (transient lock/AV?); "
             "treating as empty, file left in place",
@@ -239,29 +256,41 @@ def _find(data: Dict[str, Any], job_id: str) -> Dict[str, Any]:
 
 # ── entries ──────────────────────────────────────────────────────────────────
 
+# The ATS families `infer_ats` names, by the registrable site their hosts sit
+# under: a host is that site or a name under it, never a host that only
+# contains the word (`linkedin-careers.example` is no LinkedIn host).
+ATS_FAMILY_SITES: Dict[str, str] = {
+    "linkedin.com": "linkedin",
+    "myworkdayjobs.com": "workday", "myworkdaysite.com": "workday",
+    "myworkday.com": "workday", "workday.com": "workday",
+    "greenhouse.io": "greenhouse", "lever.co": "lever", "icims.com": "icims",
+    # Enterprise / legacy account-required ATSes:
+    "sapsf.com": "successfactors", "sapsf.eu": "successfactors",
+    "successfactors.com": "successfactors", "successfactors.eu": "successfactors",
+    "taleo.net": "taleo", "oraclecloud.com": "oracle", "brassring.com": "brassring",
+    # Payroll-HR suites:
+    "adp.com": "adp", "ultipro.com": "ukg", "ukg.com": "ukg", "dayforcehcm.com": "dayforce",
+    # Modern ATSes:
+    "smartrecruiters.com": "smartrecruiters", "jobvite.com": "jobvite",
+    "ashbyhq.com": "ashby", "workable.com": "workable",
+}
+# Oracle's recruiting hosts: its other cloud hosts serve anyone's pages
+_ORACLE_RECRUITING = re.compile(r"^[a-z0-9-]+\.fa\.[a-z0-9-]+\.oraclecloud\.com$")
+
+
 def infer_ats(apply_url: str) -> Dict[str, str]:
-    """{domain, system} guessed from the apply URL's netloc. `other` when the
-    host matches none of the known ATS families (or there is no URL)."""
+    """{domain, system} read from the apply URL's netloc. The system is the
+    family whose site (`ATS_FAMILY_SITES`) the host is or sits under, Oracle
+    only on its recruiting hosts; `other` for any other host (or no URL)."""
     from urllib.parse import urlsplit
     url = str(apply_url or "").strip()
     netloc = urlsplit(url).netloc.lower() if "://" in url else url.split("/")[0].lower()
+    host = netloc.rsplit("@", 1)[-1].split(":")[0].strip(".")
     system = "other"
-    for token, name in (("linkedin", "linkedin"), ("workday", "workday"),
-                        ("greenhouse", "greenhouse"), ("lever.co", "lever"),
-                        ("icims", "icims"),
-                        # Enterprise / legacy account-required ATSes:
-                        ("sapsf", "successfactors"),
-                        ("successfactors", "successfactors"),
-                        ("taleo", "taleo"), ("oraclecloud", "oracle"),
-                        ("brassring", "brassring"),
-                        # Payroll-HR suites:
-                        ("adp.com", "adp"), ("ultipro", "ukg"),
-                        ("ukg.com", "ukg"), ("dayforce", "dayforce"),
-                        # Modern ATSes:
-                        ("smartrecruiters", "smartrecruiters"),
-                        ("jobvite", "jobvite"), ("ashbyhq", "ashby"),
-                        ("workable.com", "workable")):
-        if token in netloc:
+    for site, name in ATS_FAMILY_SITES.items():
+        if host == site or host.endswith("." + site):
+            if name == "oracle" and not _ORACLE_RECRUITING.match(host):
+                continue
             system = name
             break
     return {"domain": netloc, "system": system}

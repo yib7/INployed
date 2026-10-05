@@ -14,6 +14,26 @@ change here can move a recorded key (`scripts/replay_check.py`).
 import apply_send_words
 
 
+# The page scripts' visibility test, in its two forms. `VISIBLE_FN_JS` takes a
+# control as shown when its box has any width or height (a zero-height row or
+# a zero-width line still counts); `VISIBLE_AREA_FN_JS` asks for both (the
+# consent banner's buttons and LinkedIn's Apply controls, where a collapsed
+# box is a hidden one). Both refuse display:none and visibility:hidden.
+# Spliced at `__VISIBLE__` / `__VISIBLE_AREA__`.
+VISIBLE_FN_JS = """(el) => {
+    const st = getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden') return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 || r.height > 0;
+  }"""
+VISIBLE_AREA_FN_JS = """(el) => {
+    const st = getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden') return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }"""
+
+
 # --- the extractor ---------------------------------------------------------------
 
 # One pass over a frame's DOM. Returns {"fields": [...], "buttons": [...], "text": str}
@@ -260,12 +280,7 @@ _CONSENT_CONTROL_JS = r"""() => {
   const consentRoots = __CONSENT__;
   const locatorFor = __LOCATOR__;
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
-  const visible = (el) => {
-    const st = getComputedStyle(el);
-    if (st.display === 'none' || st.visibility === 'hidden') return false;
-    const r = el.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
-  };
+  const visible = __VISIBLE_AREA__;
   const REJECT = /^(reject|decline|refuse|deny)\b|\b(necessary|essential) only\b|\bonly (strictly )?(necessary|essential)\b|\b(necessary|essential) cookies only\b/i;
   const CLOSE = /^(close|dismiss|×|✕|x)$/i;
   const CLOSE_ARIA = /\b(close|dismiss)\b/i;
@@ -294,7 +309,7 @@ _CONSENT_CONTROL_JS = r"""() => {
     }
   }
   return close;
-}"""
+}""".replace("__VISIBLE_AREA__", VISIBLE_AREA_FN_JS)
 
 # The locator of an element: `#id` when unique, else a body-rooted
 # nth-of-type path.
@@ -402,12 +417,7 @@ _EXTRACT_JS = r"""
     try { return Array.from(rootOf(el).querySelectorAll(sel)); } catch (e) { return []; }
   };
 
-  const visible = (el) => {
-    const st = getComputedStyle(el);
-    if (st.display === 'none' || st.visibility === 'hidden') return false;
-    const r = el.getBoundingClientRect();
-    return r.width > 0 || r.height > 0;
-  };
+  const visible = __VISIBLE__;
   const enabled = (el) => !el.disabled && el.getAttribute('aria-disabled') !== 'true'
     && !el.closest('fieldset:disabled');
   const CHROME = 'header, footer, nav, search, [role=banner], [role=contentinfo], '
@@ -1825,7 +1835,7 @@ _EXTRACT_JS = r"""
     "__SEND_LEAD__", apply_send_words.js_send_lead()).replace(
     "__SEND_VERB__", apply_send_words.js_send_verb()).replace(
     "__SEND_OBJECT__", apply_send_words.js_send_object()).replace(
-    "__SUBMIT_WORDS__", apply_send_words.js_submit())
+    "__SUBMIT_WORDS__", apply_send_words.js_submit()).replace("__VISIBLE__", VISIBLE_FN_JS)
 
 _TEXT_JS = "() => document.body ? (document.body.innerText || '') : ''"
 
@@ -1931,12 +1941,7 @@ _FORM_INDEX_JS = r"""(css) => css.map((c) => {
 _VALIDITY_JS = r"""({bcss, fcss}) => {
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
   const identOf = __IDENT__;
-  const visible = (el) => {
-    const st = getComputedStyle(el);
-    if (st.display === 'none' || st.visibility === 'hidden') return false;
-    const r = el.getBoundingClientRect();
-    return r.width > 0 || r.height > 0;
-  };
+  const visible = __VISIBLE__;
   const CHROME = 'header, footer, nav, search, [role=banner], [role=contentinfo], '
     + '[role=navigation], [role=search]';
   const consent = (__CONSENT__)();
@@ -2047,7 +2052,7 @@ _VALIDITY_JS = r"""({bcss, fcss}) => {
                  name: owner ? (owner.getAttribute('name') || owner.id || '') : ''});
   }
   return {invalid: invalid.slice(0, 20), errors: errors.slice(0, 10)};
-}""".replace("__CONSENT__", CONSENT_ROOTS_JS).replace("__IDENT__", IDENT_FN_JS)
+}""".replace("__CONSENT__", CONSENT_ROOTS_JS).replace("__IDENT__", IDENT_FN_JS).replace("__VISIBLE__", VISIBLE_FN_JS)
 
 _VALUES_JS = r"""(css) => css.map((c) => {
   let el = null;
@@ -2077,12 +2082,7 @@ _SCAN_JS = r"""(requiredOnly) => {
   const CHROME = 'header, footer, nav, search, [role=banner], [role=contentinfo], '
     + '[role=navigation], [role=search]';
   const consent = (__CONSENT__)();
-  const visible = (el) => {
-    const st = getComputedStyle(el);
-    if (st.display === 'none' || st.visibility === 'hidden') return false;
-    const r = el.getBoundingClientRect();
-    return r.width > 0 || r.height > 0;
-  };
+  const visible = __VISIBLE__;
   // the parent across a shadow boundary: a shadow root's child goes up to its host
   const up = (n) => n.parentElement || ((n.getRootNode && n.getRootNode().host) || null);
   const closestComposed = (el, sel) => {
@@ -2197,7 +2197,7 @@ _SCAN_JS = r"""(requiredOnly) => {
   };
   walk(document, false);
   return out.slice(0, 40);
-}""".replace("__CONSENT__", CONSENT_ROOTS_JS)
+}""".replace("__CONSENT__", CONSENT_ROOTS_JS).replace("__VISIBLE__", VISIBLE_FN_JS)
 
 # The CAPTCHA widgets of a document by their frames' `src` (read before a
 # frame loads): reCAPTCHA (google.com/recaptcha, recaptcha.net), hCaptcha

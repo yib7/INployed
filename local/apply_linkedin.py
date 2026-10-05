@@ -44,6 +44,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from apply_form import LOCATOR_FN_JS
+from apply_form_js import VISIBLE_AREA_FN_JS
 
 LINKEDIN_SITE = "linkedin.com"
 EASY_APPLY_REASON = "Easy Apply: apply on LinkedIn"
@@ -208,12 +209,7 @@ _READ_JS = r"""
 () => {
   const locatorFor = __LOCATOR__;
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
-  const visible = (el) => {
-    const st = getComputedStyle(el);
-    if (st.display === 'none' || st.visibility === 'hidden') return false;
-    const r = el.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
-  };
+  const visible = __VISIBLE_AREA__;
   const DIALOG = 'dialog, [role=dialog], [role=alertdialog], [aria-modal=true]';
   const CHROME = 'header, footer, nav, search, [role=banner], [role=contentinfo], '
     + '[role=navigation], [role=search]';
@@ -300,19 +296,14 @@ _READ_JS = r"""
   }
   return out;
 }
-""".replace("__LOCATOR__", LOCATOR_FN_JS)
+""".replace("__LOCATOR__", LOCATOR_FN_JS).replace("__VISIBLE_AREA__", VISIBLE_AREA_FN_JS)
 
 # The job-search safety interstitial's "Continue" (a link or a button).
 _CONTINUE_JS = r"""
 () => {
   const locatorFor = __LOCATOR__;
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
-  const visible = (el) => {
-    const st = getComputedStyle(el);
-    if (st.display === 'none' || st.visibility === 'hidden') return false;
-    const r = el.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
-  };
+  const visible = __VISIBLE_AREA__;
   for (const el of document.querySelectorAll('a[href], button, [role=button], input[type=button]')) {
     if (!visible(el)) continue;
     const text = norm(el.innerText) || norm(el.value) || norm(el.getAttribute('aria-label'));
@@ -323,7 +314,7 @@ _CONTINUE_JS = r"""
   }
   return null;
 }
-""".replace("__LOCATOR__", LOCATOR_FN_JS)
+""".replace("__LOCATOR__", LOCATOR_FN_JS).replace("__VISIBLE_AREA__", VISIBLE_AREA_FN_JS)
 
 
 def _control(raw: dict) -> Control:

@@ -59,6 +59,7 @@ from datetime import datetime
 from typing import Any, Callable, Iterable
 
 import apply_form
+import apply_form_js
 import apply_judge
 import apply_send_words
 from apply_judge import PAGE_TEXT_CAP, FillPlan, PlannedField
@@ -153,28 +154,18 @@ _CHECKED_INDEX_JS = "els => els.findIndex(el => el.checked)"
 _SELECT_OPTIONS_JS = "el => Array.from(el.options).map(o => [o.text.trim(), o.value])"
 
 _SNAPSHOT_JS = """() => {
-  const visible = (el) => {
-    const st = getComputedStyle(el);
-    if (st.display === 'none' || st.visibility === 'hidden') return false;
-    const r = el.getBoundingClientRect();
-    return r.width > 0 || r.height > 0;
-  };
+  const visible = __VISIBLE__;
   const ids = Array.from(document.querySelectorAll('input, select, textarea, [role=combobox], button'))
     .filter(visible).map(e => e.id || e.getAttribute('name') || e.tagName).join('|');
   return [document.body ? document.body.outerHTML.length : 0, ids];
-}"""
+}""".replace("__VISIBLE__", apply_form_js.VISIBLE_FN_JS)
 
 # The settle's view of a frame: the snapshot, the visible text's length, and
 # whether a loading placeholder shows in the viewport (an `aria-busy=true`
 # region, a skeleton or shimmer block). A placeholder below the fold, which
 # only loads on scroll, does not count.
 _READY_JS = """() => {
-  const visible = (el) => {
-    const st = getComputedStyle(el);
-    if (st.display === 'none' || st.visibility === 'hidden') return false;
-    const r = el.getBoundingClientRect();
-    return r.width > 0 || r.height > 0;
-  };
+  const visible = __VISIBLE__;
   const ids = Array.from(document.querySelectorAll('input, select, textarea, [role=combobox], button'))
     .filter(visible).map(e => e.id || e.getAttribute('name') || e.tagName).join('|');
   const body = document.body;
@@ -191,7 +182,7 @@ _READY_JS = """() => {
     break;
   }
   return [body ? body.outerHTML.length : 0, ids, body ? (body.innerText || '').length : 0, busy];
-}"""
+}""".replace("__VISIBLE__", apply_form_js.VISIBLE_FN_JS)
 
 
 def _say(log_fn: Callable[[str], Any] | None, msg: str) -> None:
@@ -981,8 +972,7 @@ _TYPEAHEAD_OPTIONS_JS = """el => {
     root.querySelectorAll('*').forEach((n) => { if (n.shadowRoot) clear(n.shadowRoot); });
   };
   clear(el.ownerDocument || document);
-  const visible = (n) => { const st = getComputedStyle(n); const r = n.getBoundingClientRect();
-    return st.display !== 'none' && st.visibility !== 'hidden' && (r.width > 0 || r.height > 0); };
+  const visible = __VISIBLE__;
   let box = el.parentElement;
   for (let i = 0; box && i < 3; i++, box = box.parentElement) {
     const lists = box.querySelectorAll('[role=listbox], [class*=dropdown-results], '
@@ -998,7 +988,7 @@ _TYPEAHEAD_OPTIONS_JS = """el => {
     }
   }
   return [];
-}"""
+}""".replace("__VISIBLE__", apply_form_js.VISIBLE_FN_JS)
 
 
 def _type_ahead(page, frame, loc, value: str) -> None:

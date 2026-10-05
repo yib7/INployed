@@ -1,11 +1,11 @@
 # ── Secrets / credentials ────────────────────────────────────────────────────
 .env
-# Any .env variant (.env.local, .env.vm, …) — but keep the committed template.
+# Any .env variant (.env.local, .env.vm, …); the committed template stays tracked.
 .env.*
 !.env.example
 # Keys, certs, and service-account JSON, wherever they land. why they stay even
 # though no such file exists here and nothing in the repo writes one: this block is
-# prophylactic, not a record. `service-account*.json` is the one with a real
+# prophylactic. `service-account*.json` is the one with a real
 # consumer (score_jobs.py authenticates to Vertex via GOOGLE_APPLICATION_CREDENTIALS);
 # the rest are the shapes a credential arrives in when someone drops it beside the
 # code, and the cost of an unmatched pattern is a leaked key that cannot be unleaked.
@@ -22,6 +22,7 @@ secrets.json
 *.bak
 
 # ── Personal / user-supplied content (commit the *.example templates instead) ─
+# the scorer's résumé text (resume_md.py rebuilds it) and the résumé engine's master
 resume.md
 resume_tailor_files/master_experience.yaml
 # Covers the user's resume_sample.pdf (style example the engine reads via
@@ -30,16 +31,19 @@ resume_tailor_files/resume_*.pdf
 # The curated style exemplar (config.STYLE_EXEMPLAR_TXT): the user's own résumé bullets,
 # one per line, so it is personal content exactly like the PDF it takes priority over.
 resume_tailor_files/style_exemplar.txt
+# The dashboard's own settings (paths, auto-apply switches, Jev): settings.py
+# writes it, apply_queue.py and jev_switch.py read it.
 local/config.json
-# Sidecar lock (locks.file_lock) and the PID-tagged temp an atomic write leaves
-# behind if the replace fails — both land next to the config they guard.
+# Sidecar lock (locks.file_lock), next to the config it guards.
 *.json.lock
-*.json.*.tmp
-# The same stranded temp for every other atomic writer (csv_io, jobsdata,
-# master_edit, merge_incoming, scraper): <stem>.<random>.tmp[.gz] beside a
-# master CSV or the personal master_experience.yaml.
+# The temp an atomic write leaves behind if the replace fails: the PID-tagged
+# <config>.json.<pid>.tmp beside a config, and <stem>.<random>.tmp[.gz] from every
+# other atomic writer (csv_io, jobsdata, master_edit, merge_incoming, scraper)
+# beside a master CSV or the personal master_experience.yaml.
 *.tmp
 *.tmp.gz
+# The scraper's search terms and the scorer's settings, written by the dashboard's
+# Settings tab (settings.TARGET_FILES) and read by scraper.py and score_jobs.py.
 search_config.json
 scoring_config.json
 # Legacy flat answer file: apply_answers.py migrates a pre-existing one on first
@@ -54,13 +58,13 @@ apply_answers.json
 # the user who repoints that env var at a path inside the repo.
 *.aux
 # why so broad: `*.log` also covers the pipeline's runtime logs (scraper.log,
-# watcher.log, open_dashboard crash log) — no log file in this project is committed.
+# watcher.log, open_dashboard crash log); no log file in this project is committed.
 *.log
 *.synctex.gz
 *.out
 
 # ── Generated / runtime data ─────────────────────────────────────────────────
-# why *.db rather than the old `seen.db`: the live application tracker has never
+# why the extension `*.db` and no `seen.db` line: the live application tracker has never
 # lived in the tree (seen_db.py has resolved it under %LOCALAPPDATA% since the
 # first commit), so that one name could never match. What CAN land here is a
 # Tracker -> Export backup of the same personal history: main_window.py offers a
@@ -78,7 +82,7 @@ company_blocklist.txt
 # local scrape rows queued for the VM (deleted after confirmed push)
 outbox/
 # local pipeline output dirs: per-run-label scrape/score results and
-# manually-added jobs (real scraped data — the *.csv rules above already
+# manually-added jobs (real scraped data: the *.csv rules above already
 # cover their contents; this keeps stray non-CSV run files out too)
 morning/
 afternoon/
@@ -105,11 +109,11 @@ dist/
 
 # ── OS / editor / IDE ────────────────────────────────────────────────────────
 # why these stay when none has ever been committed here: they are per-contributor
-# junk rather than project files, so today's absence says nothing about the next
+# junk, so today's absence says nothing about the next
 # clone. .DS_Store is kept even though macOS sits outside the support matrix,
 # because osopen.py carries a darwin branch and the tree gets read on Macs.
+# Windows' Thumbs.db is matched by `*.db` above.
 .DS_Store
-Thumbs.db
 .vscode/
 .idea/
 *.swp

@@ -351,6 +351,7 @@ def test_a_retried_draft_call_spends_a_draft_of_the_jobs_budget(monkeypatch):
     from unittest.mock import Mock
 
     import apply_run
+    import apply_limits
     from apply_judge import FillPlan, PlannedField
     calls = _busy_then(monkeypatch, [llm.LLMError("503 UNAVAILABLE", kind="overload")])
     runner = apply_run.Runner(jev=jev.FakeJev(), context=Mock(), run_context={},
@@ -369,7 +370,7 @@ def test_a_retried_draft_call_spends_a_draft_of_the_jobs_budget(monkeypatch):
     run._resolve_generation(digest, plan, {"generated": []})
     # the first field's draft took two calls, the second's one: the job's
     # three drafts are spent and the third field gets none
-    assert len(calls) == apply_run.GENERATE_MAX == 3
+    assert len(calls) == apply_limits.GENERATE_MAX == 3
     assert run.gen_budget == 0
     assert [pf.action for pf in plan.fields] == ["fill", "fill", "skip"]
 

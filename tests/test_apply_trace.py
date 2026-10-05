@@ -24,6 +24,7 @@ import apply_form  # noqa: E402
 import apply_harness as h  # noqa: E402
 import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
+import apply_limits  # noqa: E402
 import apply_trace  # noqa: E402
 import jev  # noqa: E402
 from apply_judge import FillPlan, PlannedField  # noqa: E402
@@ -864,7 +865,7 @@ def test_the_page_budget_names_the_last_pages(context, flow_server, tmp_path, mo
 
 
 def test_the_time_budget_names_the_minutes_and_the_last_pages(context, flow_server, tmp_path):
-    ticks = iter([0.0, 0.0, 0.0, 0.0] + [apply_run.JOB_WALL_CLOCK_S + 1.0] * 400)
+    ticks = iter([0.0, 0.0, 0.0, 0.0] + [apply_limits.JOB_WALL_CLOCK_S + 1.0] * 400)
     _enqueue(h.write_job_folder(tmp_path / "job"), flow_server.url("ashby_steps.html"))
     runner = _runner(context, tmp_path)
     runner.clock = lambda: next(ticks)
@@ -880,7 +881,7 @@ def test_evidence_is_capped(context, tmp_path):
     _enqueue(h.write_job_folder(tmp_path / "job"), "https://careers.fabrikam.example/review")
     out = _runner(context, tmp_path, _ReviewJudge()).drain(cap=1)[0]
     assert out.reason.startswith("no submit button (buttons: ")
-    assert len(out.reason) <= apply_run.EVIDENCE_CAP + 40, len(out.reason)
+    assert len(out.reason) <= apply_limits.EVIDENCE_CAP + 40, len(out.reason)
 
 
 # --- the probe prints the loop's step; only a plain Apply is followed --------------------------------

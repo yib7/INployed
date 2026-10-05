@@ -78,6 +78,7 @@ if str(REPO / "local") not in sys.path:
     sys.path.insert(0, str(REPO / "local"))
 
 import apply_run  # noqa: E402
+import apply_limits  # noqa: E402
 import apply_send_words  # noqa: E402
 import jev  # noqa: E402
 import jev_doubles  # noqa: E402
@@ -284,31 +285,31 @@ FAST_TIMING = {
     ("apply_click", "SETTLE_MAX_S"): 3.0,
     ("apply_click", "NETWORK_IDLE_MS"): 50,
     ("apply_click", "POLL_S"): 0.05,
-    ("apply_run", "POPUP_TIMEOUT_MS"): 1_500,
-    ("apply_run", "POPUP_GRACE_S"): 0.3,
-    ("apply_run", "ENTRY_POLL_MS"): 50,
-    ("apply_run", "GOTO_RETRY_S"): 0.1,
-    ("apply_run", "CLICK_TIMEOUT_S"): 3,
-    ("apply_run", "SUBMIT_SETTLE_S"): 5,
+    ("apply_limits", "POPUP_TIMEOUT_MS"): 1_500,
+    ("apply_limits", "POPUP_GRACE_S"): 0.3,
+    ("apply_limits", "ENTRY_POLL_MS"): 50,
+    ("apply_limits", "GOTO_RETRY_S"): 0.1,
+    ("apply_limits", "CLICK_TIMEOUT_S"): 3,
+    ("apply_limits", "SUBMIT_SETTLE_S"): 5,
     # a quiet step click that set a request going: no flow's step answers
     # later than 5 s (`test_a_slow_step_posts_once_and_is_waited_for` answers
     # at 5 s), so 8 s keeps every wait while a dead step parks in 8 s, not 20
-    ("apply_run", "STEP_SETTLE_S"): 8,
-    ("apply_run", "REDIRECT_TIMEOUT_S"): 6,
+    ("apply_limits", "STEP_SETTLE_S"): 8,
+    ("apply_limits", "REDIRECT_TIMEOUT_S"): 6,
     # the empty-read and top-card waits keep room for the fixtures that render
     # late (0.8 s and 2.5 s after `load`)
-    ("apply_run", "EMPTY_READ_MAX_S"): 4.0,
-    ("apply_run", "EMPTY_READ_STABLE_S"): 1.2,
-    ("apply_run", "EMPTY_READ_POLL_S"): 0.1,
-    ("apply_run", "LINKEDIN_READY_S"): 5.0,
-    ("apply_run", "LINKEDIN_POLL_MS"): 100,
-    ("apply_run", "LINKEDIN_EASY_RECHECK_S"): 1.0,
-    ("apply_run", "CONSENT_WAIT_S"): 1.5,
+    ("apply_limits", "EMPTY_READ_MAX_S"): 4.0,
+    ("apply_limits", "EMPTY_READ_STABLE_S"): 1.2,
+    ("apply_limits", "EMPTY_READ_POLL_S"): 0.1,
+    ("apply_limits", "LINKEDIN_READY_S"): 5.0,
+    ("apply_limits", "LINKEDIN_POLL_MS"): 100,
+    ("apply_limits", "LINKEDIN_EASY_RECHECK_S"): 1.0,
+    ("apply_limits", "CONSENT_WAIT_S"): 1.5,
     # the post-submit read: the slow_post flow's answer comes SLOW_POST_S after
     # its click, inside the click's own waits and this one
-    ("apply_run", "POST_SUBMIT_WAIT_S"): 10.0,
-    ("apply_run", "POST_SUBMIT_POLL_S"): 0.2,
-    ("apply_run", "POST_SUBMIT_QUIET_S"): 0.3,
+    ("apply_limits", "POST_SUBMIT_WAIT_S"): 10.0,
+    ("apply_limits", "POST_SUBMIT_POLL_S"): 0.2,
+    ("apply_limits", "POST_SUBMIT_QUIET_S"): 0.3,
     # an inbox page's rows: the slow inbox fixture renders them 1.5 s after
     # its load; an inbox with no row at all is read as empty after this
     ("apply_inbox", "ROWS_WAIT_MS"): 4_000,
@@ -1160,7 +1161,7 @@ FLOWS: tuple[Flow, ...] = (
          # the skeleton stays until the run has read it, and the form comes
          # 800 ms later: the read waits for the skeleton to clear, never for a
          # clock, so its caps sit far past any busy machine's delay
-         timing=((("apply_run", "LOADING_WAIT_S"), 30.0), (("apply_run", "EMPTY_READ_MAX_S"), 30.0)),
+         timing=((("apply_limits", "LOADING_WAIT_S"), 30.0), (("apply_limits", "EMPTY_READ_MAX_S"), 30.0)),
          on_read="() => window.__appRead && window.__appRead()",
          covers="a loading skeleton (aria-busy, a Cancel) that stays until the page is read, "
                 "then the form: the skeleton is never read as the page"),
@@ -2335,7 +2336,7 @@ _POLICY_PARKS = tuple(re.compile(p) for p in (
     # connection, most often the network's
     "^" + re.escape(apply_run.JUDGE_DOWN_REASON) + r": (?!Connection|BrokenPipe)\S+"
     r"(?: (?:408|5(?!03|29)\d\d))? (?:at .+ )?after [1-9]\d* answers? in this drain; "
-    + re.escape(apply_run.OUTAGES_PARKED) + "$"))
+    + re.escape(apply_limits.OUTAGES_PARKED) + "$"))
 
 
 def policy_park(status: str, reason: str) -> bool | None:

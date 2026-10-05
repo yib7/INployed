@@ -597,6 +597,7 @@ def test_a_job_that_cannot_be_set_up_logs_its_frames_and_retries_its_queue_write
     import logging
 
     import apply_run
+    import apply_limits
     queue, apply_queue = _queue(tmp_path, _plain("a", tmp_path / "a"))
 
     def _init(self, runner, ctx, entry):
@@ -620,7 +621,7 @@ def test_a_job_that_cannot_be_set_up_logs_its_frames_and_retries_its_queue_write
     finally:
         ctx.close()
     assert [(o.job_id, o.status) for o in outcomes] == [("a", "failed")]
-    assert tries == ["a", "a"] and sleeps == [apply_run.FINISH_RETRY_S]
+    assert tries == ["a", "a"] and sleeps == [apply_limits.FINISH_RETRY_S]
     assert apply_queue.load(queue)["jobs"][0]["status"] == "failed"
     assert "private" not in caplog.text and "Traceback" not in caplog.text
     assert "RuntimeError while the job was set up" in caplog.text
@@ -790,10 +791,11 @@ def test_the_module_docstring_names_the_wall_clock_by_its_constant():
     import re
 
     import apply_run
+    import apply_limits
     doc = apply_run.__doc__ or ""
     assert "JOB_WALL_CLOCK_S" in doc
     assert not re.search(r"\b(?:eight|8)[- ]minute", doc, re.I)
-    assert apply_run.JOB_WALL_CLOCK_S == 15 * 60
+    assert apply_limits.JOB_WALL_CLOCK_S == 15 * 60
 
 
 # --- the judge's outage (RES-02) ---------------------------------------------------------------
@@ -1062,6 +1064,7 @@ def test_a_job_whose_own_request_downs_the_judge_twice_parks_and_the_queue_moves
     # this one's request in two drains: it parks at the cap; without the cap
     # it would stop every drain once it reached the queue's head
     import apply_run
+    import apply_limits
     sleeps: list[float] = []
     judge = _DownFor({"Fabrikam B"})
     runs, jobs, _ = _two_jobs([judge, judge, judge], _browser, flow_server, tmp_path, sleeps,
@@ -1073,7 +1076,7 @@ def test_a_job_whose_own_request_downs_the_judge_twice_parks_and_the_queue_moves
                                                       ("b", "needs_human")], second
     reason = second[1].reason
     assert reason.startswith(f"{apply_run.JUDGE_DOWN_REASON}: _Busy 500 at "), reason
-    assert reason.endswith(apply_run.OUTAGES_PARKED), reason
+    assert reason.endswith(apply_limits.OUTAGES_PARKED), reason
     assert h.policy_park("needs_human", reason) is True
     assert second[1].judge_down                  # the drain stopped all the same
     assert third == []
@@ -1108,10 +1111,11 @@ def test_the_harness_accepts_a_cap_park_only_for_a_requests_error_after_an_answe
     # the judge answered in the drain, and only for an error a request can
     # cause; a park in a global outage or a busy service is outside the policy
     import apply_run
+    import apply_limits
 
     def cap(kind: str, after: str = " after 3 answers in this drain") -> bool:
         return h.policy_park("needs_human", f"{apply_run.JUDGE_DOWN_REASON}: {kind} at fill"
-                                            f"{after}; {apply_run.OUTAGES_PARKED}")
+                                            f"{after}; {apply_limits.OUTAGES_PARKED}")
     assert cap("_Busy 500", "") is False
     assert cap("_Busy 500", " after 0 answers in this drain") is False
     assert cap("_Busy 500") is True
@@ -1432,7 +1436,8 @@ def test_a_left_tab_whose_clock_or_relative_time_ticks_has_not_moved_on(_browser
 def test_a_linkedin_tab_is_never_taken_over_as_the_flow(tmp_path, monkeypatch):
     # SP8a review M4: LinkedIn is an allowed site, and never the company's flow
     import apply_run
-    monkeypatch.setattr(apply_run, "TAKEOVER_WAIT_S", 0)
+    import apply_limits
+    monkeypatch.setattr(apply_limits, "TAKEOVER_WAIT_S", 0)
     monkeypatch.setattr(apply_run, "_page_print", lambda page: ("moved", "text now"))
     run = _bare_run(tmp_path)
     linkedin = _Tab("https://www.linkedin.com/jobs/view/4000000001/")

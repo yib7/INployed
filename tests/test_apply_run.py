@@ -22,6 +22,7 @@ import apply_form  # noqa: E402
 import apply_judge  # noqa: E402
 import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
+import apply_limits  # noqa: E402
 import apply_send_words  # noqa: E402
 import ats_accounts  # noqa: E402
 import jev  # noqa: E402
@@ -232,7 +233,7 @@ def test_a_quiet_submit_is_clicked_exactly_once_and_the_late_confirmation_is_rea
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
     # the fixture's submit changes nothing for 3 s; apply_fill.click's window is cut
     # to 1 s so the click reads as "quiet", which is no proof it failed
-    monkeypatch.setattr(apply_run, "CLICK_TIMEOUT_S", 1)
+    monkeypatch.setattr(apply_limits, "CLICK_TIMEOUT_S", 1)
     _enqueue(job_folder, fixture_url("slow_submit.html"))
     out = _runner(context, tmp_path).drain(cap=1)[0]
     assert out.status == "submitted" and out.reason == "confirmation page", out
@@ -258,7 +259,7 @@ def test_native_submit_continue_advances_before_final_submit(
 
 def test_submit_click_is_never_retried(context, fixture_url, job_folder, catalog_builder,
                                        tmp_path, monkeypatch):
-    monkeypatch.setattr(apply_run, "CLICK_TIMEOUT_S", 1)
+    monkeypatch.setattr(apply_limits, "CLICK_TIMEOUT_S", 1)
     clicks = []
     real = apply_run.apply_fill.click
 
@@ -391,7 +392,7 @@ def test_generation_on_uses_the_answergen_hook_and_fills_the_essay(
     runner = _runner(context, tmp_path)
     runner.answergen = Gen()
     out = runner.drain(cap=1)[0]
-    assert Gen.calls == [("Describe a project you are proud of and your motivation for this role", apply_run.GENERATE_MAX)]
+    assert Gen.calls == [("Describe a project you are proud of and your motivation for this role", apply_limits.GENERATE_MAX)]
     record = Path(out.record_path).read_text(encoding="utf-8")
     assert "Describe a project you are proud of and your motivation for this role: Built the ingestion pipeline at Acme Corp." in record
     assert _entry()["missing_answers"] == []
@@ -586,7 +587,7 @@ def test_max_pages_exhaustion_parks(context, fixture_url, job_folder, catalog_bu
 
 def test_wall_clock_exhaustion_parks(context, fixture_url, job_folder, catalog_builder,
                                      tmp_path):
-    ticks = iter([0.0, 0.0, apply_run.JOB_WALL_CLOCK_S + 1.0] + [10_000.0] * 50)
+    ticks = iter([0.0, 0.0, apply_limits.JOB_WALL_CLOCK_S + 1.0] + [10_000.0] * 50)
     _enqueue(job_folder, fixture_url("ashby_steps.html"))
     runner = apply_run.Runner(jev=jev_harness.judge(), profile_dir=tmp_path / "profile",
                               settings={"auto_apply_headless": True}, context=context,
@@ -612,7 +613,7 @@ def test_wall_clock_passing_mid_fill_stops_the_fill_on_the_runner_clock(
     real = apply_run.apply_fill.apply
 
     def _late(page, plan, **kw):
-        now[0] = base + apply_run.JOB_WALL_CLOCK_S + 1.0     # the clock jumps during the fill
+        now[0] = base + apply_limits.JOB_WALL_CLOCK_S + 1.0     # the clock jumps during the fill
         return real(page, plan, **kw)
     runner_apply = apply_run.apply_fill
     orig = runner_apply.apply
@@ -2351,8 +2352,8 @@ def test_finish_retries_the_queue_write_once_after_a_second(
     assert out.status == "needs_human"
     # the one finish retry waits FINISH_RETRY_S; the other naps are the headless
     # captcha page's moment to clear itself (HUMAN_CHECK_POLL_S each)
-    assert len(calls) == 2 and naps[-1] == apply_run.FINISH_RETRY_S
-    assert naps.count(apply_run.FINISH_RETRY_S) == 1
+    assert len(calls) == 2 and naps[-1] == apply_limits.FINISH_RETRY_S
+    assert naps.count(apply_limits.FINISH_RETRY_S) == 1
     assert _entry()["status"] == "needs_human"
 
 
@@ -2429,7 +2430,7 @@ def test_hold_returns_when_every_page_is_closed(tmp_path):
     runner = apply_run.Runner(jev=None, profile_dir=tmp_path, settings={}, sleep=_sleep,
                               context=ctx)
     runner._hold(ctx)
-    assert naps == [apply_run.HOLD_POLL_S] * 2
+    assert naps == [apply_limits.HOLD_POLL_S] * 2
 
     ctx = Ctx()
     naps.clear()
@@ -2440,7 +2441,7 @@ def test_hold_returns_when_every_page_is_closed(tmp_path):
     runner = apply_run.Runner(jev=None, profile_dir=tmp_path, settings={},
                               sleep=_close_then_sleep, context=ctx)
     runner._hold(ctx)
-    assert naps == [apply_run.HOLD_POLL_S]
+    assert naps == [apply_limits.HOLD_POLL_S]
 
 
 def test_hold_waits_inside_playwright_so_a_closed_window_is_seen(tmp_path):
@@ -2465,7 +2466,7 @@ def test_hold_waits_inside_playwright_so_a_closed_window_is_seen(tmp_path):
 
     ctx = Ctx()
     apply_run.hold_until_closed(ctx, sleep=_sleep)
-    assert ctx.waits == [("close", apply_run.HOLD_POLL_S * 1000)]
+    assert ctx.waits == [("close", apply_limits.HOLD_POLL_S * 1000)]
 
 
 def test_hold_ends_when_a_real_page_closes_on_its_own(_browser):

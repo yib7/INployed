@@ -49,6 +49,7 @@ import apply_harness as h  # noqa: E402
 import apply_judge  # noqa: E402
 import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
+import apply_limits  # noqa: E402
 import apply_send_words  # noqa: E402
 import jev  # noqa: E402
 import jev_doubles  # noqa: E402
@@ -139,8 +140,8 @@ class _Posts:
 
 def _quiet_click(monkeypatch) -> None:
     """Short waits for a submit click that changes nothing on the page."""
-    monkeypatch.setattr(apply_run, "CLICK_TIMEOUT_S", 1)
-    monkeypatch.setattr(apply_run, "SUBMIT_SETTLE_S", 1)
+    monkeypatch.setattr(apply_limits, "CLICK_TIMEOUT_S", 1)
+    monkeypatch.setattr(apply_limits, "SUBMIT_SETTLE_S", 1)
 
 
 def _form(button: str, script: str, extra: str = "") -> str:
@@ -2576,7 +2577,7 @@ def test_a_page_the_judge_never_read_is_read_once_more(context, tmp_path, monkey
     # the judge's budget is spent on the first look (a progress note); the
     # page then turns into a review step with its own send button: read
     # once more, it is the person's to check, never "submitted"
-    monkeypatch.setattr(apply_run, "POST_SUBMIT_READS", 1)
+    monkeypatch.setattr(apply_limits, "POST_SUBMIT_READS", 1)
     _Posts(context, {"/apply/42": _form("Submit application", """
       document.getElementById('go').onclick = function () {
         fetch('/api/applications', {method: 'POST', body: '{}'}).then(function () {
@@ -2673,7 +2674,7 @@ def test_a_warning_notice_is_an_error_text(browser_page):
 
 def test_a_stale_last_read_that_is_a_confirmation_reads_as_submitted(context, tmp_path,
                                                                      monkeypatch):
-    monkeypatch.setattr(apply_run, "POST_SUBMIT_READS", 1)
+    monkeypatch.setattr(apply_limits, "POST_SUBMIT_READS", 1)
     _Posts(context, {"/apply/42": _form("Submit application", """
       document.getElementById('go').onclick = function () {
         fetch('/api/applications', {method: 'POST', body: '{}'}).then(function () {
@@ -2771,7 +2772,7 @@ def test_a_final_worded_advance_parks_on_the_gates_live_checks_before_any_click(
         monkeypatch, live, captcha, words):
     job, digest, plan = _code_job("Confirm", "advance")
     job.form_filled = True
-    job._gate_repairs = apply_run.REPAIR_ROUNDS      # no repair left: the check decides
+    job._gate_repairs = apply_limits.REPAIR_ROUNDS      # no repair left: the check decides
     clicks: list = []
     monkeypatch.setattr(job, "_form_live", lambda b: live)
     monkeypatch.setattr(job, "_human_check_showing", lambda **kw: captcha)

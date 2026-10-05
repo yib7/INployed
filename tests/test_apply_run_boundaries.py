@@ -6,6 +6,7 @@ import pytest
 
 import apply_form
 import apply_run
+import apply_limits
 import apply_send_words
 import jev_harness
 
@@ -346,7 +347,7 @@ def test_a_challenge_headless_or_unsolved_parks(monkeypatch):
         _human_check_job(monkeypatch, [480], headless=True)._wait_for_human_check(
             "a CAPTCHA challenge is showing")
     job = _human_check_job(monkeypatch, [480])
-    monkeypatch.setattr(apply_run, "HUMAN_CHECK_WAIT_S", 3 * apply_run.HUMAN_CHECK_POLL_S)
+    monkeypatch.setattr(apply_limits, "HUMAN_CHECK_WAIT_S", 3 * apply_limits.HUMAN_CHECK_POLL_S)
     with pytest.raises(apply_run._Parked, match="not solved in time"):
         job._wait_for_human_check("a CAPTCHA challenge is showing")
 

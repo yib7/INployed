@@ -15,6 +15,7 @@ sys.path.insert(0, str(REPO / "local"))
 
 import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
+import apply_limits  # noqa: E402
 import apply_send_words  # noqa: E402
 import settings  # noqa: E402
 import test_apply_run as base  # noqa: E402
@@ -276,7 +277,7 @@ def test_the_linkedin_wait_ends_with_the_jobs_deadline(monkeypatch):
 
     page = _Page()
     apply_run.linkedin_view(page, wait_s=20, clock=lambda: now[0], deadline=101.0)
-    assert 0 < sum(page.waits) <= 1000 + apply_run.LINKEDIN_POLL_MS
+    assert 0 < sum(page.waits) <= 1000 + apply_limits.LINKEDIN_POLL_MS
     page.waits.clear()
     apply_run.linkedin_view(page, wait_s=20, clock=lambda: now[0], deadline=now[0] - 5)
     assert page.waits == []

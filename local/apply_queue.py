@@ -610,7 +610,7 @@ def unclaim(job_id: str, *, notes: Optional[str] = None, give_back: bool = True,
         return dict(e)
 
 
-# The run's words for a job that may have been sent (`apply_run.CHECK_SENT_REASON`,
+# The run's words for a job that may have been sent (`apply_outcome.CHECK_SENT_REASON`,
 # which is this string; a test pins the two together)
 CHECK_SENT_WORDS = "check whether the application went through"
 

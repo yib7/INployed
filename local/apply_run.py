@@ -95,7 +95,6 @@ import sys
 import time
 import traceback
 from contextlib import contextmanager
-from dataclasses import dataclass, field
 from datetime import datetime
 from html import unescape
 from pathlib import Path
@@ -128,54 +127,35 @@ from apply_judge import FillPlan, VerifyResult  # noqa: E402
 from apply_send_words import (_ACCOUNT_STEP_WORDS, _final_shaped, _send_worded,  # noqa: E402
                               _sends_application, _submit_shaped, step_only)
 
+# The run's lower layers, split out of this file; an import only goes down:
+# limits, outcome and send words, then sites, sendwatch, page, account flow,
+# route, and gate and record. The names below are re-exported for this file
+# and for readers in tests, scripts/ and apply_assess.py; a test patches the
+# module that defines a name (tests/test_apply_run_facade.py checks it).
+import apply_limits  # noqa: E402
+from apply_outcome import (ACCOUNT_EXISTS_REASON, ACCOUNT_PARK_REASONS, AGGREGATOR_NOTE,  # noqa: E402, F401
+                           AGGREGATOR_REASON, ALREADY_APPLIED_NOTE, ALREADY_APPLIED_REASON,
+                           _cap, CHECK_SENT_NOTE, CHECK_SENT_REASON, CHECKBOX_NOTE,
+                           _closed_error, CLOSED_POSTING_REASON, CLOSED_REASON, CODE_NOTE,
+                           _context_gone, EASY_APPLY_NOTE, EASY_APPLY_REASON,
+                           FIELDS_MAX_REASON, JUDGE_DOWN_REASON, KEY_REFUSED_NOTE,
+                           LINK_BOT_NOTE, LINK_BOT_WORDS, LINK_CHALLENGE_STATUS,
+                           LINK_DOWN_WORDS, LINK_FAILED_WORDS, LINK_HELD_NOTE,
+                           LINK_MOVES_MAX, LINK_NOTE, LINK_REASON, LINK_SUBMIT_NOTE,
+                           LINK_USED_NOTE, LINK_VERIFIED_WORDS, LINKEDIN_LOGIN_NOTE,
+                           LINKEDIN_RETURN_REASON, LOGIN_NOTE, MAILTO_NOTE, MAILTO_REASON,
+                           _no_connection, NOT_SENT_REASON, _NotClicked, OPTION_TIE_WORDS,
+                           OPTIONS_UNREAD_WORDS, Outcome, _Parked, PASSWORD_HTTP_REASON,
+                           PASSWORD_RULE_NOTE, PASSWORD_RULE_REASON,
+                           PAUSE_UNANSWERED_REASON, _PauseClosed, _Refused, REQUEUED_NOTE,
+                           REVIEW_NOTE, _SentSeen, SSO_NOTE, SSO_REASON,
+                           SUBMIT_FAILED_NOTE, TAB_CLOSED_REASON, TENANT_REASON, _Unsent,
+                           WRONG_ANSWER_STAYS)
+
 log = logging.getLogger("apply_run")
 
-JOB_WALL_CLOCK_S = 15 * 60         # per job, on the injectable clock (a solved CAPTCHA's wait is added back)
-GENERATE_MAX = 3                   # generated answers per job (spec 3.7)
-POPUP_TIMEOUT_MS = 5_000           # for the Apply entry to open a new tab
-POPUP_GRACE_S = 0.5                # after a same-tab DOM change, for a popup that follows it
-ENTRY_POLL_MS = 100                # the entry click's watch for a popup, a navigation or a change
-GOTO_TIMEOUT_MS = 45_000           # the first load, to `domcontentloaded`
-GOTO_RETRY_S = 2.0                 # before the one retry of a first load that failed on the network
-GOTO_ERROR_PAGE_S = 10.0           # at most, for Chromium's error page to be up before that retry
-EMPTY_TEXT_MIN = 200               # a fieldless read with less visible text is read again
-EMPTY_READ_MAX_S = 10.0            # an empty read is re-read after a settle for up to this long
-EMPTY_READ_STABLE_S = 3.0          # or until the page has held the same empty read this long
-EMPTY_READ_POLL_S = 0.5
-LOADING_WAIT_S = 3.0               # a read with a loading placeholder up waits this long, once
-                                   # per page (an ad or widget region may never clear)
-LINKEDIN_READY_S = 12.0            # for a LinkedIn job page's top card to render
-LINKEDIN_POLL_MS = 250
-LINKEDIN_EASY_RECHECK_S = 1.5      # an Easy Apply read is read again after this, and a settle
-LINKEDIN_CLICKS_MAX = 3            # offsite Apply clicks the handler makes per job
-CONSENT_MAX = 3                    # consent banners dismissed per job
-CONSENT_WAIT_S = 5                 # for a consent click's effect (the banner gone, a reload)
-CLICK_TIMEOUT_S = 20               # apply_fill.click's wait for a change
-FILL_ROUNDS_MAX = 3                # re-reads after a page's fill: revealed fields, the page's
-                                   # own changes
-DISABLED_WAIT_S = 2.0              # a way on still disabled after the fill: waited on this long
-REPAIR_ROUNDS = 2                  # repairs of the fields a form refused, per step
-BUSY_WAIT_S = 60                   # a loading indicator after a click: waited on this long
-STEP_SETTLE_S = 20                 # a quiet click that set a request going: waited on this long
-                                   # more, never clicked again
-BUSY_POLL_S = 0.25
-SUBMIT_SETTLE_S = 10               # after a quiet submit click: wait this long for the page
-POST_SUBMIT_WAIT_S = 45            # after the submit click, the page is read again while a
-                                   # request it sent is in flight or the page still moves
-POST_SUBMIT_POLL_S = 1.0
-POST_SUBMIT_QUIET_S = 2.0          # a page this still, with no request in flight, is read as is
-POST_SUBMIT_READS = 5              # judge requests the post-submit read makes at most
-HOLD_POLL_S = 1.0                  # while holding the window open
-FINISH_RETRY_S = 1.0               # before the one retry of a failed queue finish
-TAKEOVER_WAIT_S = 3.0              # for a tab the flow may go on in to move, once the site
-TAKEOVER_POLL_S = 0.25             # closed the job's
 LINKEDIN_LOGIN_URL = "https://www.linkedin.com/login"
 LINKEDIN_HOSTS = ("linkedin.com", "www.linkedin.com")
-REDIRECT_TIMEOUT_S = 20            # for that hop's script to send the tab on
-HUMAN_CHECK_WAIT_S = 5 * 60        # for the user to solve a CAPTCHA in the visible window
-HUMAN_CHECK_POLL_S = 2.0
-HUMAN_CHECK_AUTO_S = 16            # headless: for a whole-page check to clear itself
-HUMAN_CHECK_MIN_PX = 150           # a bot-check frame this tall is a challenge, not a badge
 # The sites (registrable domains) of the platforms most applications run on. A
 # page or a frame on one of them is part of the application wherever the flow
 # met it: a company page embeds Greenhouse, a careers site hands off to Workday,
@@ -310,124 +290,6 @@ BROWSER_CHANNEL = "chrome"         # the installed Google Chrome; the bundled Ch
 RECORD_NAME = "apply_record.md"
 HIDDEN = "<hidden>"
 
-LOGIN_NOTE = "log in manually, then Re-queue"
-LINKEDIN_LOGIN_NOTE = "run `python local/apply_run.py login`, sign in to LinkedIn, then Re-queue"
-EASY_APPLY_REASON = apply_linkedin.EASY_APPLY_REASON
-EASY_APPLY_NOTE = apply_linkedin.EASY_APPLY_NOTE
-LINKEDIN_RETURN_REASON = "the application went back to LinkedIn after the company's form"
-CODE_NOTE = "enter the emailed code manually, then Re-queue"
-LINK_REASON = "emailed verification link needed"
-# a page that moved the job onto another company's account on its ATS, or
-# onto another platform, after the job's own was known
-TENANT_REASON = "the application left the job's own account on its application platform"
-PASSWORD_HTTP_REASON = "this site asks for a password over an unencrypted connection"
-FIELDS_MAX_REASON = "the page holds more boxes than the run reads on one page"
-ACCOUNT_EXISTS_REASON = "an account exists"
-SSO_REASON = "sign-in only through another site"
-SSO_NOTE = "sign in once in the auto-apply profile, then Re-queue"
-# the parks of an account screen the run could not pass, which fall back to
-# the SSO one on a screen whose only way on is a sign-in with another site
-# (`sso_fallback_sites`, `_JobRun._account_park`). A dead end (the page did
-# not advance, no way forward, a way on that did nothing) keeps its own park:
-# its words cannot tell a dead control of the page's own way on ("Proceed")
-# from a sign-in's
-ACCOUNT_PARK_REASONS = ("login wall", "account signup needed")
-PASSWORD_RULE_REASON = "the master password does not meet the password rules"
-PASSWORD_RULE_NOTE = ("make the account yourself with another password, or change the "
-                      "master password, then Re-queue")
-LINK_NOTE = "open the verification link in the email, then Re-queue"
-# park mode's submit end at an emailed link after the application's answers:
-# the link may be what sends the application
-LINK_SUBMIT_NOTE = "review, then open the link in the email to send the application"
-# submit mode's park at an emailed link the run did not use once the
-# application's answers are on the site: the link may
-# send the application, so the person opens it and marks the job; a Re-queue
-# after it would apply a second time
-LINK_HELD_NOTE = "the emailed link may send the application: open it yourself, then Mark applied"
-# the server redirects a verification link may take, as a browser's limit
-LINK_MOVES_MAX = 20
-# a verification link's page that refused it
-LINK_FAILED_WORDS = re.compile(
-    r"\b(?:link|token|code)\s+(?:has\s+|is\s+)?(?:expired|invalid|no longer valid)\b"
-    r"|\b(?:expired|invalid)\s+(?:link|token)\b|\balready\s+been\s+used\b"
-    r"|\bcould\s+not\s+(?:be\s+)?verif", re.I)
-# a verification link's page that is the site's bot check:
-# the statuses a check answers with (`_link_challenge`: a status alone is no
-# check), and the words of a check's page
-LINK_CHALLENGE_STATUS = (403, 429, 503)
-# the words of such a status's page that say what it is first: the address
-# verified already (the link's work done), and the site
-# down or busy
-LINK_VERIFIED_WORDS = re.compile(
-    r"\balready\s+(?:been\s+)?(?:verified|confirmed|activated)\b"
-    r"|\b(?:e-?mail(?:\s+address)?|address|account)\s+(?:(?:has|have)\s+(?:now\s+)?been\s+"
-    r"|is\s+(?:now\s+)?|was\s+)?(?:successfully\s+)?(?:verified|confirmed|activated)\b", re.I)
-LINK_DOWN_WORDS = re.compile(
-    r"\b(?:down\s+for\s+|under\s+|scheduled\s+)?maintenance\b"
-    r"|\b(?:temporarily|service)\s+unavailable\b|\btoo\s+many\s+requests\b"
-    r"|\btry\s+again\s+later\b", re.I)
-LINK_BOT_WORDS = re.compile(
-    r"\bverify(?:ing)?\s+(?:that\s+)?you\s+are\s+(?:a\s+)?human\b"
-    r"|\bchecking\s+(?:your\s+browser|if\s+the\s+site\s+connection\s+is\s+secure)\b"
-    r"|\bare\s+you\s+a\s+robot\b|\bi(?:'m|\u2019m|\s+am)\s+not\s+a\s+robot\b", re.I)
-LINK_BOT_NOTE = "open the emailed link yourself, then Re-queue"
-# a check met after the link's own address answered: the link may have done
-# its work
-LINK_USED_NOTE = "Re-queue first; if the site still asks for the link, open it yourself"
-REVIEW_NOTE = "review and submit"
-SUBMIT_FAILED_NOTE = "submit did not register; review and submit"
-NOT_SENT_REASON = "the submit did not go through"
-CHECK_SENT_REASON = "check whether the application went through"
-CHECK_SENT_NOTE = "check whether the application went through, then Mark applied or Re-queue"
-CHECKBOX_NOTE = "a CAPTCHA checkbox is on the form: tick it, then submit"
-# a box whose options tie on the answer (`apply_fill.OptionTie`): none was
-# chosen
-OPTION_TIE_WORDS = "the options that hold its answer tie and differ in meaning"
-# a list whose options were never read ahead, and none of them is the answer
-# in code (`apply_fill.OptionsUnread`): none was chosen
-OPTIONS_UNREAD_WORDS = "its options could not be read"
-# an optional field's answer that failed its check and stays on the page
-# (a radio group keeps its choice)
-WRONG_ANSWER_STAYS = "a wrong answer could not be removed"
-# The site's own dead ends: a job it says was applied to before
-# (on the ATS), a posting that takes no more applications.
-ALREADY_APPLIED_REASON = "already applied: the site says this job was applied to before"
-ALREADY_APPLIED_NOTE = "the site shows this job as applied; Mark applied if you sent it"
-CLOSED_POSTING_REASON = "closed: the posting no longer takes applications"
-# A posting the run cannot apply to itself: an aggregator's with no link
-# to the company's site, an Apply that is an email address.
-AGGREGATOR_REASON = "aggregator posting"
-AGGREGATOR_NOTE = "a job board's posting: apply on the company's own site"
-MAILTO_REASON = "apply by email"
-MAILTO_NOTE = "the posting asks for an email application: send it yourself"
-CLOSED_REASON = "the browser window was closed"
-TAB_CLOSED_REASON = "the job's tab was closed"
-# A pause's wait failed with the window and the tab both still open (a
-# renderer crash, a dropped connection): ended as a close (`_pause_closed`)
-PAUSE_UNANSWERED_REASON = "the job's page stopped answering during the wait"
-# The judge stayed down through the retries: the job goes back to
-# `queued` with its attempt not counted and the drain stops; no park.
-JUDGE_DOWN_REASON = "judge unavailable"
-REQUEUED_NOTE = "re-queued, this attempt not counted"
-# A refused key (401, 402, 403) or a retired model (404, 410) is none of the
-# job's doing and no wait mends it: the job goes back with this attempt
-# counted and no outage, and the drain stops
-KEY_REFUSED_NOTE = ("re-queued, this attempt counted (the judge refused the key or the "
-                    "account, or no longer has the model)")
-# The judge down under the same job a second time parks it: a failure
-# its own request causes would otherwise stop every drain at the queue's head.
-# An outage counts only after the judge answered in the drain: one
-# down for every job is no job's doing, and the park's reason names the count.
-# It counts only for an error a request can cause
-# (`jev.Guarded.request_fault`): never a busy or overloaded service
-OUTAGES_MAX = 2
-OUTAGES_PARKED = (f"the judge went down under this job {OUTAGES_MAX} times; parked so the "
-                  f"queue moves on")
-OUTAGES_NOTE = "Re-queue once the judge answers again"
-EVIDENCE_CAP = 300                # characters of evidence a park reason carries
-PROBE_SETTLE_S = 10                # the probe's wait for a page to hold still
-PROBE_GOTO_MS = 30_000
-
 DEFAULT_SETTINGS: dict[str, Any] = {
     "auto_apply_submit": True,
     "auto_apply_headless": False,
@@ -499,12 +361,6 @@ confirmation_words = apply_judge.confirmation_words
 # third-party apply may send a stored profile at once.
 _PLAIN_APPLY = re.compile(r"^\s*apply(\s+(now|here|online|for\s+this\s+(job|position|role)"
                           r"|on\s+(the\s+)?company(['’]s)?\s+(website|site)))?\s*$", re.I)
-
-
-def _cap(text: str, limit: int = EVIDENCE_CAP) -> str:
-    """Evidence cut to `limit` characters, so queue reasons stay readable."""
-    text = " ".join(str(text or "").split())
-    return text if len(text) <= limit else text[:limit - 3].rstrip() + "..."
 
 
 def launch_profile(pw, profile_dir: Path, *, headless: bool, log=None):
@@ -1500,7 +1356,7 @@ class _Accounts:
         request going (a slow sign-up) is waited on `STEP_SETTLE_S` more,
         never made again; a loading indicator after it is waited on
         (`_wait_while_busy`)."""
-        timeout = max(1.0, min(CLICK_TIMEOUT_S, self.run.deadline - self.run.r.clock()))
+        timeout = max(1.0, min(apply_limits.CLICK_TIMEOUT_S, self.run.deadline - self.run.r.clock()))
         text = next((b.text for b in digest.buttons if b.n == n), "")
         result = apply_fill.click(page, digest, n, timeout_s=timeout,
                                   check=self.run._live_check("advance", account=True))
@@ -1515,9 +1371,9 @@ class _Accounts:
             if not went:
                 return result
             self.run.log.info("job %s: the account click set %s going; waiting up to %s s",
-                              self.run.job_id, went[0], STEP_SETTLE_S)
-            changed = apply_fill.wait_for_change(page, timeout_s=STEP_SETTLE_S)
-            self.run._trace("step_settle", changed=changed, waited_s=STEP_SETTLE_S,
+                              self.run.job_id, went[0], apply_limits.STEP_SETTLE_S)
+            changed = apply_fill.wait_for_change(page, timeout_s=apply_limits.STEP_SETTLE_S)
+            self.run._trace("step_settle", changed=changed, waited_s=apply_limits.STEP_SETTLE_S,
                             sent=went[:3])
             if not changed:
                 return result
@@ -1670,7 +1526,7 @@ class _Accounts:
         self.run._check_host(page.url)
         # the sign-up page renders like any other: it is read once it
         # holds still
-        info = apply_fill.settle(page, CLICK_TIMEOUT_S)
+        info = apply_fill.settle(page, apply_limits.CLICK_TIMEOUT_S)
         self.run._decide_next("settled", f"settled {_settled_ms(info)} ms after the "
                                          "create-account link")
         fresh = self.run._drop_foreign_controls(self.run._extract(page))
@@ -1740,7 +1596,7 @@ class _Accounts:
     def _nav_timeout(self) -> int:
         """Milliseconds for a page load, which takes longer than an action and
         gets the loop's own click budget (`CLICK_TIMEOUT_S`)."""
-        return max(1, int(min(CLICK_TIMEOUT_S,
+        return max(1, int(min(apply_limits.CLICK_TIMEOUT_S,
                               self.run.deadline - self.run.r.clock()) * 1000))
 
     def _record(self, digest, email: str, advance_n: int, passwords: int,
@@ -2039,109 +1895,6 @@ class _Inbox:
         return link
 
 
-# --- outcomes and the record ----------------------------------------------------------
-
-@dataclass
-class Outcome:
-    job_id: str
-    status: str
-    reason: str
-    record_path: str
-    pages: int
-    jev_usage: dict[str, Any] = field(default_factory=dict)
-    browser_closed: bool = False    # the window closed under the job: the drain stops
-    judge_down: bool = False        # the judge went down under the job: the drain stops
-    trace_dir: str = ""             # this attempt's trace folder, when one was written
-
-
-def _closed_error(e: BaseException) -> bool:
-    """An error Playwright raises once the page, the context or the browser
-    is gone (`TargetClosedError`, or its message on an older driver)."""
-    text = str(e)
-    return (type(e).__name__ == "TargetClosedError" or "has been closed" in text
-            or "Browser closed" in text or "Target closed" in text)
-
-
-def _context_gone(ctx) -> bool:
-    """Is the browser context closed or its browser gone? A cheap round trip
-    (`cookies()`) also lets the sync API deliver a pending close event."""
-    try:
-        browser = getattr(ctx, "browser", None)
-        if browser is not None and not browser.is_connected():
-            return True
-    except Exception as e:      # noqa: BLE001
-        return _closed_error(e)
-    try:
-        ctx.cookies()
-    except Exception as e:      # noqa: BLE001
-        return _closed_error(e)
-    return False
-
-
-class _Parked(Exception):
-    """Raised inside the state loop to end the job in a terminal status."""
-
-    def __init__(self, status: str, reason: str, tab_note: str = ""):
-        super().__init__(reason)
-        self.status = status
-        self.reason = reason
-        self.tab_note = tab_note
-
-
-class _Unsent(_Parked):
-    """A park after the submit click whose send never reached the site (a
-    refused connection, a name that did not resolve: `_no_connection`): it
-    stands as raised, never read as a possible send."""
-
-
-class _PauseClosed(_Parked):
-    """The window or the tab closed during a pause's wait
-    (`_JobRun._pause_closed`): already the check-whether end with its note,
-    so the run's handler finishes it as raised. `window` says the whole
-    window went (the drain stops)."""
-
-    def __init__(self, status: str, reason: str, tab_note: str = "", *, window: bool = False):
-        super().__init__(status, reason, tab_note)
-        self.window = window
-
-
-class _SentSeen(_Parked):
-    """A "submitted (unconfirmed)" end whose only evidence is a request the
-    submit's watch saw go to the application's sites (`SendWatch.sent`).
-    A form post the guard stopped is such a row too, when its host is an
-    admitted job board (`_JobRun._stopped_post`)."""
-
-
-class _NotClicked(_Parked):
-    """A click the live check stopped before it was made
-    (`_JobRun._refused_click`): a step that marked the job a possible send
-    before its click takes the mark back."""
-
-
-# Chrome's errors for a request that never reached its site: the connection
-# was refused or its address unreachable, or the name did not resolve. A
-# reset, a timeout or an empty answer may come after the request
-# left, so none of them is here.
-_NO_CONNECTION = ("ERR_CONNECTION_REFUSED", "ERR_ADDRESS_UNREACHABLE", "ERR_NAME_NOT_RESOLVED",
-                  "ERR_NAME_RESOLUTION_FAILED")
-
-
-def _no_connection(failure: str) -> bool:
-    """Did the load fail before any connection to its site was made?"""
-    return any(code in str(failure or "") for code in _NO_CONNECTION)
-
-
-class _Refused(Exception):
-    """The form refused the submit as typed and nothing left the page
-    (`_JobRun._not_sent`): `problems` are the form's messages, `park` the
-    park it would be without a repair."""
-
-    def __init__(self, problems: list[dict[str, Any]], park: _Parked):
-        super().__init__(park.reason)
-        self.problems = problems
-        self.park = park
-
-
 def _host(url_or_netloc: str) -> str:
     """The lowercased hostname of a URL or a netloc, without a port."""
     raw = str(url_or_netloc or "").strip()
@@ -2437,7 +2190,7 @@ def _empty_read(digest: apply_form.FormDigest) -> bool:
         return True
     if digest.fields:
         return False
-    return len((digest.text or "").strip()) < EMPTY_TEXT_MIN
+    return len((digest.text or "").strip()) < apply_limits.EMPTY_TEXT_MIN
 
 
 def _dropped_load(e: BaseException) -> bool:
@@ -2561,7 +2314,7 @@ def open_page(page, url: str, *, timeout_ms: int | None = None,
     screen read as it is; then the page settles. Returns the decisions
     taken ({what, why, ...}); a load that failed raises."""
     rows: list[dict[str, Any]] = []
-    timeout = GOTO_TIMEOUT_MS if timeout_ms is None else int(timeout_ms)
+    timeout = apply_limits.GOTO_TIMEOUT_MS if timeout_ms is None else int(timeout_ms)
     for attempt in (1, 2):
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=timeout)
@@ -2583,9 +2336,9 @@ def open_page(page, url: str, *, timeout_ms: int | None = None,
             # navigation would cut the retry short, so the retry waits for it
             # to be up (a fixed pause lost that race on a busy machine), then
             # pauses
-            _error_page_up(page, GOTO_ERROR_PAGE_S)
-            page.wait_for_timeout(int(GOTO_RETRY_S * 1000))
-    info = apply_fill.settle(page, CLICK_TIMEOUT_S if settle_s is None else settle_s)
+            _error_page_up(page, apply_limits.GOTO_ERROR_PAGE_S)
+            page.wait_for_timeout(int(apply_limits.GOTO_RETRY_S * 1000))
+    info = apply_fill.settle(page, apply_limits.CLICK_TIMEOUT_S if settle_s is None else settle_s)
     rows.append({"what": "settled", "why": settled_words(info, "after the first load"),
                  **(info if isinstance(info, Mapping) else {})})
     return rows
@@ -3275,8 +3028,8 @@ def linkedin_view(page, *, wait_s: float, job_title: str = "", company: str = ""
         return apply_linkedin.read(page, job_title=job_title, company=company)
 
     def _recheck() -> apply_linkedin.View:
-        page.wait_for_timeout(int(LINKEDIN_EASY_RECHECK_S * 1000))
-        apply_fill.settle(page, CLICK_TIMEOUT_S)
+        page.wait_for_timeout(int(apply_limits.LINKEDIN_EASY_RECHECK_S * 1000))
+        apply_fill.settle(page, apply_limits.CLICK_TIMEOUT_S)
         return _read()
 
     view = _read()
@@ -3290,7 +3043,7 @@ def linkedin_view(page, *, wait_s: float, job_title: str = "", company: str = ""
             checked = True
             view = _recheck()
         else:
-            page.wait_for_timeout(LINKEDIN_POLL_MS)
+            page.wait_for_timeout(apply_limits.LINKEDIN_POLL_MS)
             view = _read()
     d = apply_linkedin.decide(view)
     if not checked and (d.kind == "easy_apply" or d.tentative):
@@ -3891,7 +3644,7 @@ def click_entry(page, loc, *, timeout_ms: int | None = None,
     popup later still is the caller's (`LateWatch`). `on_popup` gets the new
     tab at its popup event, while it still shows the address it opened at
     (LinkedIn's `/safety/go/` hop moves on within a second)."""
-    window_s = (POPUP_TIMEOUT_MS if timeout_ms is None else int(timeout_ms)) / 1000
+    window_s = (apply_limits.POPUP_TIMEOUT_MS if timeout_ms is None else int(timeout_ms)) / 1000
     popups: list = []
 
     def _on_popup(p) -> None:
@@ -3933,13 +3686,13 @@ def click_entry(page, loc, *, timeout_ms: int | None = None,
                 break
             if changed_at is None and _snapshot_or_none(page) != before:
                 changed_at = now
-            if changed_at is not None and not new_tab and now - changed_at >= POPUP_GRACE_S:
+            if changed_at is not None and not new_tab and now - changed_at >= apply_limits.POPUP_GRACE_S:
                 signal = "dom"
                 break
             if now - start >= window_s:
                 signal = "dom" if changed_at is not None else "none"
                 break
-            page.wait_for_timeout(ENTRY_POLL_MS)
+            page.wait_for_timeout(apply_limits.ENTRY_POLL_MS)
         return (popups[0] if popups else None), signal, int((time.monotonic() - start) * 1000)
     finally:
         try:
@@ -3958,7 +3711,7 @@ def await_destination(page, log: logging.Logger | None = None,
     never moves on stays on LinkedIn and admits nothing. Returns (the page
     the destination is on, {"settled_ms", "continue"})."""
     logger = log or logging.getLogger("apply_run")
-    first = apply_fill.settle(page, CLICK_TIMEOUT_S)
+    first = apply_fill.settle(page, apply_limits.CLICK_TIMEOUT_S)
     info: dict[str, Any] = {"settled_ms": _settled_ms(first), "capped": _settle_capped(first),
                             "continue": ""}
     if not _on_linkedin_redirector(page.url):
@@ -3972,23 +3725,23 @@ def await_destination(page, log: logging.Logger | None = None,
         info["continue_signal"] = signal
         if popup is not None:
             try:
-                popup.wait_for_load_state("domcontentloaded", timeout=CLICK_TIMEOUT_S * 1000)
+                popup.wait_for_load_state("domcontentloaded", timeout=apply_limits.CLICK_TIMEOUT_S * 1000)
             except Exception:   # noqa: BLE001
                 pass
             return popup, info
     if _on_linkedin_redirector(page.url):
         try:
             page.wait_for_url(lambda u: not _on_linkedin_redirector(u),
-                              timeout=REDIRECT_TIMEOUT_S * 1000)
+                              timeout=apply_limits.REDIRECT_TIMEOUT_S * 1000)
         except Exception as e:      # noqa: BLE001  (the loop reads whatever the tab shows)
             logger.info("job %s: the LinkedIn redirect did not move on (%s)", job_id,
                         type(e).__name__)
             if _dropped_load(e):
                 # the hop's load of the company's site was dropped: the tab is
                 # left once Chrome's error page is up, for its retry
-                _error_page_up(page, GOTO_ERROR_PAGE_S)
+                _error_page_up(page, apply_limits.GOTO_ERROR_PAGE_S)
             return page, info
-    again = apply_fill.settle(page, CLICK_TIMEOUT_S)
+    again = apply_fill.settle(page, apply_limits.CLICK_TIMEOUT_S)
     info["settled_ms"] += _settled_ms(again)
     info["capped"] = info["capped"] or _settle_capped(again)
     return page, _past_trackers(page, info, logger, job_id)
@@ -4005,14 +3758,14 @@ def _past_trackers(page, info: dict[str, Any], logger: logging.Logger,
     while _tracker(page.url) and len(hops) < TRACKER_HOPS_MAX:
         hops.append(_host(page.url))
         try:
-            page.wait_for_url(lambda u: not _tracker(u), timeout=REDIRECT_TIMEOUT_S * 1000)
+            page.wait_for_url(lambda u: not _tracker(u), timeout=apply_limits.REDIRECT_TIMEOUT_S * 1000)
         except Exception as e:      # noqa: BLE001  (the loop parks on a hop that stays)
             logger.info("job %s: the tracker hop %s did not move on (%s)", job_id, hops[-1],
                         type(e).__name__)
             if _dropped_load(e):
-                _error_page_up(page, GOTO_ERROR_PAGE_S)     # for its retry
+                _error_page_up(page, apply_limits.GOTO_ERROR_PAGE_S)     # for its retry
             break
-        again = apply_fill.settle(page, CLICK_TIMEOUT_S)
+        again = apply_fill.settle(page, apply_limits.CLICK_TIMEOUT_S)
         info["settled_ms"] = info.get("settled_ms", 0) + _settled_ms(again)
     if hops:
         info["trackers"] = hops
@@ -4567,7 +4320,7 @@ def hold_until_closed(ctx, *, sleep: Callable[[float], None] = time.sleep,
                 break
         except Exception:       # noqa: BLE001  (the context is gone)
             break
-        if _wait_for_close(ctx, HOLD_POLL_S, sleep):
+        if _wait_for_close(ctx, apply_limits.HOLD_POLL_S, sleep):
             break
 
 
@@ -4855,8 +4608,8 @@ class Runner:
             except Exception as e:      # noqa: BLE001  (the queue write must not end the drain)
                 if attempt == 1:
                     self.log.warning("job %s: queue %s failed (%s: %s); retrying in %s s",
-                                     job_id, what, type(e).__name__, e, FINISH_RETRY_S)
-                    self.sleep(FINISH_RETRY_S)
+                                     job_id, what, type(e).__name__, e, apply_limits.FINISH_RETRY_S)
+                    self.sleep(apply_limits.FINISH_RETRY_S)
                 else:
                     self.log.error("job %s: queue %s failed twice (%s: %s); %s", job_id, what,
                                    type(e).__name__, e, left)
@@ -4885,7 +4638,7 @@ class _JobRun:
         self._form_retyped: set[str] = set()        # sites whose form took it twice
         self.form_had_password = False  # a form page carried a password box, typed or not
         self.handed_off = False         # the page at the gate came from the account step
-        self.gen_budget = GENERATE_MAX
+        self.gen_budget = apply_limits.GENERATE_MAX
         # the job's pauses for the person: a question it can ask waits
         # for the answer in place of a park
         self.pause = apply_pause.Pauser(self, _Parked)
@@ -4902,7 +4655,7 @@ class _JobRun:
         self.start = runner.clock()
         # the wall-clock start: mail from before it is never the job's
         self.started_at = datetime.now()
-        self.deadline = self.start + JOB_WALL_CLOCK_S
+        self.deadline = self.start + apply_limits.JOB_WALL_CLOCK_S
         # a malformed entry's paths are never used: `run` ends it
         self.folder = None if entry_problem(entry) else self._folder()
         self.accounts = runner.accounts if runner.accounts is not None else _Accounts(self)
@@ -5402,11 +5155,11 @@ class _JobRun:
         self._decide_next("error_page_retry", f"{what}; the tab showed Chrome's error page; "
                                               f"one retry of the GET", url=_cap(bare, 160))
         self.log.info("job %s: Chrome's error page after %s; one retry", self.job_id, what)
-        _error_page_up(page, GOTO_ERROR_PAGE_S)
-        page.wait_for_timeout(int(GOTO_RETRY_S * 1000))
+        _error_page_up(page, apply_limits.GOTO_ERROR_PAGE_S)
+        page.wait_for_timeout(int(apply_limits.GOTO_RETRY_S * 1000))
         left_ms = int(max(1.0, self.deadline - self.r.clock()) * 1000)
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=min(GOTO_TIMEOUT_MS, left_ms))
+            page.goto(url, wait_until="domcontentloaded", timeout=min(apply_limits.GOTO_TIMEOUT_MS, left_ms))
         except Exception as e:      # noqa: BLE001  (Playwright's Error and TimeoutError)
             if _closed_error(e):
                 raise
@@ -5999,8 +5752,8 @@ class _JobRun:
         refused = getattr(self.r.jev, "refused", False) is True
         fault = getattr(self.r.jev, "request_fault", False) is True
         counted = not refused and answers > 0 and fault
-        if counted and apply_queue.outages(self.entry) + 1 >= OUTAGES_MAX:
-            return self._finish("needs_human", f"{down}; {OUTAGES_PARKED}", OUTAGES_NOTE)
+        if counted and apply_queue.outages(self.entry) + 1 >= apply_limits.OUTAGES_MAX:
+            return self._finish("needs_human", f"{down}; {apply_limits.OUTAGES_PARKED}", apply_limits.OUTAGES_NOTE)
         reason = f"{down}; {KEY_REFUSED_NOTE if refused else REQUEUED_NOTE}"
         usage = _usage_delta(self.usage_before, jev.total_usage())
         usage["generated"] = generated_count(self.pages)
@@ -6100,7 +5853,7 @@ class _JobRun:
                 if row[1] and not _page_closed(row[0])]
         if not rows:
             return None
-        end = time.monotonic() + TAKEOVER_WAIT_S
+        end = time.monotonic() + apply_limits.TAKEOVER_WAIT_S
         while True:
             for page, before, then in rows:
                 url = str(getattr(page, "url", ""))
@@ -6114,9 +5867,9 @@ class _JobRun:
             if time.monotonic() >= end:
                 return None
             try:
-                rows[0][0].wait_for_timeout(TAKEOVER_POLL_S * 1000)
+                rows[0][0].wait_for_timeout(apply_limits.TAKEOVER_POLL_S * 1000)
             except Exception:       # noqa: BLE001  (the tab closed too)
-                time.sleep(TAKEOVER_POLL_S)
+                time.sleep(apply_limits.TAKEOVER_POLL_S)
 
     def _confirmed_elsewhere(self) -> Outcome | None:
         """After a send: the job's tab closed after the submit click
@@ -6206,7 +5959,7 @@ class _JobRun:
             self._turn = page_no
             if self.r.clock() >= self.deadline:
                 raise _Parked("needs_human", f"time budget exhausted "
-                                             f"({JOB_WALL_CLOCK_S // 60} min; {len(self.pages)} "
+                                             f"({apply_limits.JOB_WALL_CLOCK_S // 60} min; {len(self.pages)} "
                                              f"page(s){self._last_states()})")
             self._take_late_popup()
             self._pin_first_tenant(self.page.url)
@@ -6448,7 +6201,7 @@ class _JobRun:
         start = time.monotonic()
         last = json.dumps(digest.to_dict(), sort_keys=True)
         stable_since = start
-        info = apply_fill.settle(self.page, CLICK_TIMEOUT_S) if empty else {"ms": 0}
+        info = apply_fill.settle(self.page, apply_limits.CLICK_TIMEOUT_S) if empty else {"ms": 0}
         lingered = False
         while True:
             # the page may have moved on while it settled or between reads:
@@ -6458,7 +6211,7 @@ class _JobRun:
             now = time.monotonic()
             empty = _empty_read(digest)
             loading = loading and self._loading(digest, busy)
-            if loading and now - start >= LOADING_WAIT_S:
+            if loading and now - start >= apply_limits.LOADING_WAIT_S:
                 # the placeholder had its one short wait: it no longer holds
                 # the read (the empty-read rules still do)
                 loading, lingered = False, True
@@ -6467,10 +6220,10 @@ class _JobRun:
             seen = json.dumps(digest.to_dict(), sort_keys=True)
             if seen != last:
                 last, stable_since = seen, now
-            if now - start >= EMPTY_READ_MAX_S or (
-                    not loading and now - stable_since >= EMPTY_READ_STABLE_S):
+            if now - start >= apply_limits.EMPTY_READ_MAX_S or (
+                    not loading and now - stable_since >= apply_limits.EMPTY_READ_STABLE_S):
                 break
-            self.page.wait_for_timeout(int(EMPTY_READ_POLL_S * 1000))
+            self.page.wait_for_timeout(int(apply_limits.EMPTY_READ_POLL_S * 1000))
         waited = int((time.monotonic() - start) * 1000)
         then = ("and read again" if not lingered else
                 f"and read as it was: a loading placeholder stayed up past {waited} ms")
@@ -6486,7 +6239,7 @@ class _JobRun:
         further settle: a fresh extract and a fresh judge request (for
         a page read mid-render, an interstitial that clears itself)."""
         first, reads = f"{state} {conf:.2f}", self._reads(answers)
-        info = apply_fill.settle(self.page, CLICK_TIMEOUT_S)
+        info = apply_fill.settle(self.page, apply_limits.CLICK_TIMEOUT_S)
         self._check_host(self.page.url)     # the page may have moved on while it settled
         digest = self._read_digest()
         answers = self._read(digest)
@@ -6506,7 +6259,7 @@ class _JobRun:
         Then the page settles and its host is checked again. At most
         `CONSENT_MAX` per job, so a banner that comes back cannot hold the
         run."""
-        if self._consent_clicks >= CONSENT_MAX:
+        if self._consent_clicks >= apply_limits.CONSENT_MAX:
             return
         try:
             frames = apply_form.frames(self.page)
@@ -6529,12 +6282,12 @@ class _JobRun:
             # waited for before the page is read
             info = apply_fill.act_and_settle(
                 self.page, lambda: loc.click(timeout=apply_click.ACTION_TIMEOUT_MS),
-                timeout_s=CONSENT_WAIT_S)
+                timeout_s=apply_limits.CONSENT_WAIT_S)
         except Exception as e:      # noqa: BLE001  (the banner went away on its own)
             if _closed_error(e):
                 raise
             error = type(e).__name__
-            info = apply_fill.settle(self.page, CLICK_TIMEOUT_S)
+            info = apply_fill.settle(self.page, apply_limits.CLICK_TIMEOUT_S)
         text = str(control.get("text") or "")
         self.log.info("job %s: consent banner: clicked %r (%s)", self.job_id, text,
                       control.get("kind"))
@@ -6584,7 +6337,7 @@ class _JobRun:
             self._check_host(self.page.url)
             self.last_sig = None
             return True
-        view, waited = linkedin_view(self.page, wait_s=LINKEDIN_READY_S if kind == "job" else 0,
+        view, waited = linkedin_view(self.page, wait_s=apply_limits.LINKEDIN_READY_S if kind == "job" else 0,
                                      job_title=str(self.entry.get("title") or ""),
                                      company=str(self.entry.get("company") or ""),
                                      clock=self.r.clock, deadline=self.deadline)
@@ -6628,9 +6381,9 @@ class _JobRun:
         if clicks > 1:
             raise _Parked("needs_human", f"the offsite Apply ({control.label}) did not open the "
                                          f"company's site (clicked twice)")
-        if total > LINKEDIN_CLICKS_MAX:
+        if total > apply_limits.LINKEDIN_CLICKS_MAX:
             raise _Parked("needs_human", f"the offsite Apply ({control.label}) did not open the "
-                                         f"company's site ({LINKEDIN_CLICKS_MAX} LinkedIn "
+                                         f"company's site ({apply_limits.LINKEDIN_CLICKS_MAX} LinkedIn "
                                          f"Apply clicks in this job)")
         loc = self.page.main_frame.locator(control.css)
         self._click_entry(rec, loc, control.label, how="linkedin_handler")
@@ -6790,7 +6543,7 @@ class _JobRun:
                 box = element.bounding_box()
             except Exception:       # noqa: BLE001  (a frame detached while looking)
                 continue
-            if box and box["height"] >= HUMAN_CHECK_MIN_PX and box["y"] + box["height"] > 0:
+            if box and box["height"] >= apply_limits.HUMAN_CHECK_MIN_PX and box["y"] + box["height"] > 0:
                 return True
         return checkbox and bool(apply_form.unsolved_checkbox(self.page))
 
@@ -6819,15 +6572,15 @@ class _JobRun:
         if not framed and before is None:
             self.last_sig = None
             self.log.info("job %s: the check closed before the wait; going on", self.job_id)
-            apply_fill.settle(self.page, CLICK_TIMEOUT_S)
+            apply_fill.settle(self.page, apply_limits.CLICK_TIMEOUT_S)
             return
         headless = bool(self.r.settings.get("auto_apply_headless"))
         clears_itself = (checkbox and framed and not self._human_check_showing()
                          and apply_form.unsolved_checkbox(self.page) == "turnstile")
         if headless and framed and not clears_itself:
             raise _Parked("needs_human", reason)
-        limit = HUMAN_CHECK_AUTO_S if headless else HUMAN_CHECK_WAIT_S
-        polls = int(limit / HUMAN_CHECK_POLL_S)
+        limit = apply_limits.HUMAN_CHECK_AUTO_S if headless else apply_limits.HUMAN_CHECK_WAIT_S
+        polls = int(limit / apply_limits.HUMAN_CHECK_POLL_S)
         start = self.r.clock()
         for i in range(polls + 1):
             if framed:
@@ -6840,12 +6593,12 @@ class _JobRun:
                 raise _Parked("needs_human", reason if headless else f"{reason}; not solved in time")
             if i == 0 and not headless:
                 self.log.warning("job %s: %s; solve it in the browser window (waiting up to "
-                                 "%d min)", self.job_id, reason, HUMAN_CHECK_WAIT_S // 60)
-            self.r.sleep(HUMAN_CHECK_POLL_S)
+                                 "%d min)", self.job_id, reason, apply_limits.HUMAN_CHECK_WAIT_S // 60)
+            self.r.sleep(apply_limits.HUMAN_CHECK_POLL_S)
         self.deadline += max(0.0, self.r.clock() - start)
         self.last_sig = None
         self.log.info("job %s: the check is done; going on", self.job_id)
-        apply_fill.settle(self.page, CLICK_TIMEOUT_S)
+        apply_fill.settle(self.page, apply_limits.CLICK_TIMEOUT_S)
 
     def _read(self, digest: apply_form.FormDigest) -> dict:
         """The page read: its own small request
@@ -7071,7 +6824,7 @@ class _JobRun:
             self._check_host(self.page.url)
             return
         try:
-            popup.wait_for_load_state("domcontentloaded", timeout=CLICK_TIMEOUT_S * 1000)
+            popup.wait_for_load_state("domcontentloaded", timeout=apply_limits.CLICK_TIMEOUT_S * 1000)
         except Exception:       # noqa: BLE001
             pass
         self.log.info("job %s: Apply opened %s", self.job_id, popup.url)
@@ -7345,9 +7098,9 @@ class _JobRun:
                 return digest, plan, verification, n
             self._wait_for_human_check("a CAPTCHA check is on the form before the step",
                                        checkbox=True)
-        for round_no in range(REPAIR_ROUNDS + 1):
+        for round_no in range(apply_limits.REPAIR_ROUNDS + 1):
             loc = apply_form.resolve(self.page, button.locator)
-            deadline = time.monotonic() + DISABLED_WAIT_S
+            deadline = time.monotonic() + apply_limits.DISABLED_WAIT_S
             while True:
                 try:
                     if loc.count() == 1 and loc.first.is_enabled():
@@ -7368,7 +7121,7 @@ class _JobRun:
                          if r.get("required") and r.get("empty")]
             except Exception as e:      # noqa: BLE001  (a page double)
                 self._trace("error", step="still_disabled", error=type(e).__name__)
-            if invalid and round_no < REPAIR_ROUNDS:
+            if invalid and round_no < apply_limits.REPAIR_ROUNDS:
                 problems = [{**r, "text": r.get("message") or "", "kind": "invalid"}
                             for r in invalid]
                 who = self._button_identity(digest, button.n)
@@ -7791,7 +7544,7 @@ class _JobRun:
         empty)."""
         text = _button_text(digest, n)
         carried: set[str] = set()
-        for round_no in range(REPAIR_ROUNDS + 1):
+        for round_no in range(apply_limits.REPAIR_ROUNDS + 1):
             # submit mode clicks a final-worded advance ("Confirm",
             # "Complete", "Done") as a step (park mode sends it to the gate);
             # once the application's answers are on the site it may send, so
@@ -7833,7 +7586,7 @@ class _JobRun:
                                          f"(round {round_no + 1})",
                          problems=[_cap(p.get("text") or p.get("label") or "", 80)
                                    for p in problems])
-            if round_no == REPAIR_ROUNDS:
+            if round_no == apply_limits.REPAIR_ROUNDS:
                 break
             digest, plan, verification = self._repair(digest, plan, verification, problems, rec)
             if not self._repaired:
@@ -7859,7 +7612,7 @@ class _JobRun:
             raise spared
         said = self._refused_words(problems, [f.label for f in digest.fields])
         raise _Parked("needs_human", f"the form refused the {_cap(text, 40)} step after "
-                                     f"{REPAIR_ROUNDS} repair(s): {said}")
+                                     f"{apply_limits.REPAIR_ROUNDS} repair(s): {said}")
 
     def _form_entry(self, digest: apply_form.FormDigest, plan: FillPlan,
                     step: str) -> apply_form.Button | None:
@@ -8061,8 +7814,8 @@ class _JobRun:
         if self.page is None:           # a unit test's run with no page
             return digest, plan, verification
         url = str(self.page.url)
-        for _ in range(FILL_ROUNDS_MAX):
-            info = apply_fill.settle(self.page, CLICK_TIMEOUT_S)
+        for _ in range(apply_limits.FILL_ROUNDS_MAX):
+            info = apply_fill.settle(self.page, apply_limits.CLICK_TIMEOUT_S)
             if str(self.page.url) != url:
                 self._check_host(self.page.url)     # the fill took the page elsewhere
             fresh = self._drop_foreign_controls(self._extract())
@@ -8839,7 +8592,7 @@ class _JobRun:
         text = button.text if button else f"button {n}"
         rec["clicked"].append(f"{text} ({role})")
         self._last_click = (text, role)
-        timeout = max(1.0, min(CLICK_TIMEOUT_S, self.deadline - self.r.clock()))
+        timeout = max(1.0, min(apply_limits.CLICK_TIMEOUT_S, self.deadline - self.r.clock()))
         check = self._live_check(role)
         # a loading indicator already up before the click is the page's own
         # (an ad's placeholder that never clears): no wait for it after
@@ -8850,7 +8603,7 @@ class _JobRun:
                     and not result.refused and result.clicked):
                 # a tab that opens a moment after the click comes before any
                 # second click
-                self.page.wait_for_timeout(int(POPUP_GRACE_S * 1000))
+                self.page.wait_for_timeout(int(apply_limits.POPUP_GRACE_S * 1000))
         self._trace("click", n=n, text=text, role=role, confidence=conf,
                     clicked=result.clicked, changed=result.changed, url=str(self.page.url),
                     refused=result.refused, late=result.late, popups=len(opened),
@@ -8871,9 +8624,9 @@ class _JobRun:
         if role == "submit":
             if result.clicked and not result.changed:
                 self.log.info("job %s: the submit click changed nothing; waiting up to %s s",
-                              self.job_id, SUBMIT_SETTLE_S)
-                changed = apply_fill.wait_for_change(self.page, timeout_s=SUBMIT_SETTLE_S)
-                self._trace("submit_settle", changed=changed, waited_s=SUBMIT_SETTLE_S)
+                              self.job_id, apply_limits.SUBMIT_SETTLE_S)
+                changed = apply_fill.wait_for_change(self.page, timeout_s=apply_limits.SUBMIT_SETTLE_S)
+                self._trace("submit_settle", changed=changed, waited_s=apply_limits.SUBMIT_SETTLE_S)
                 return apply_fill.ClickResult(clicked=True, changed=changed, late=result.late)
             return result
         if result.changed and not busy_before:
@@ -8890,9 +8643,9 @@ class _JobRun:
             # twice, a send made twice). The page is waited for, never
             # clicked again.
             self.log.info("job %s: the %s click set %s going; waiting up to %s s for the page",
-                          self.job_id, role, went[0], STEP_SETTLE_S)
-            changed = apply_fill.wait_for_change(self.page, timeout_s=STEP_SETTLE_S)
-            self._trace("step_settle", changed=changed, waited_s=STEP_SETTLE_S, sent=went[:3])
+                          self.job_id, role, went[0], apply_limits.STEP_SETTLE_S)
+            changed = apply_fill.wait_for_change(self.page, timeout_s=apply_limits.STEP_SETTLE_S)
+            self._trace("step_settle", changed=changed, waited_s=apply_limits.STEP_SETTLE_S, sent=went[:3])
             if changed:
                 self._wait_while_busy(text)
             if changed or (refused_by_form is not None and refused_by_form()):
@@ -8931,20 +8684,20 @@ class _JobRun:
         is waited on, up to `BUSY_WAIT_S` (a slow Workday or Taleo step can
         take 30 s), then the page settles; the trace says how long."""
         start = time.monotonic()
-        while time.monotonic() - start < BUSY_WAIT_S:
+        while time.monotonic() - start < apply_limits.BUSY_WAIT_S:
             try:
                 if not apply_click.ready_snapshot(self.page)[1]:
                     break
             except Exception:       # noqa: BLE001  (a page double, a page mid-navigation)
                 break
-            self.page.wait_for_timeout(int(BUSY_POLL_S * 1000))
+            self.page.wait_for_timeout(int(apply_limits.BUSY_POLL_S * 1000))
         waited = time.monotonic() - start
-        if waited >= BUSY_POLL_S:
-            info = apply_fill.settle(self.page, CLICK_TIMEOUT_S)
+        if waited >= apply_limits.BUSY_POLL_S:
+            info = apply_fill.settle(self.page, apply_limits.CLICK_TIMEOUT_S)
             self._decide("busy_after_click", f"a loading indicator showed after {_cap(text, 40)}; "
                                              f"waited {waited:.1f} s, then "
                                              + settled_words(info),
-                         waited_s=round(waited, 1), capped=waited >= BUSY_WAIT_S)
+                         waited_s=round(waited, 1), capped=waited >= apply_limits.BUSY_WAIT_S)
 
     def _adopt_click_popup(self, popup, text: str, role: str) -> bool:
         """A click that opened a new tab: True when the tab is now
@@ -8955,7 +8708,7 @@ class _JobRun:
         tab (a help page, an answer that says nothing, a browser error page)
         leaves the page the submit was made on, and what left, to decide."""
         try:
-            popup.wait_for_load_state("domcontentloaded", timeout=CLICK_TIMEOUT_S * 1000)
+            popup.wait_for_load_state("domcontentloaded", timeout=apply_limits.CLICK_TIMEOUT_S * 1000)
         except Exception:       # noqa: BLE001  (the tab is read as it is)
             pass
         url = str(getattr(popup, "url", ""))
@@ -9079,7 +8832,7 @@ class _JobRun:
                 return digest, plan, verification, n
             live = self._form_live(button)
             invalid = live.get("invalid") or []
-            if not invalid or self._gate_repairs >= REPAIR_ROUNDS:
+            if not invalid or self._gate_repairs >= apply_limits.REPAIR_ROUNDS:
                 break
             self._gate_repairs += 1
             who = self._button_identity(digest, n)
@@ -9165,7 +8918,7 @@ class _JobRun:
         self._no_form_on_linkedin("the submit gate")
         live = self._gate_read(digest, plan)
         if live.get("invalid") and not live.get("no_application") \
-                and self._gate_repairs < REPAIR_ROUNDS and plan.buttons.get("submit"):
+                and self._gate_repairs < apply_limits.REPAIR_ROUNDS and plan.buttons.get("submit"):
             # The form reports a control that would not validate:
             # it is repaired before the gate decides, never sent as it is
             self._gate_repairs += 1
@@ -9447,7 +9200,7 @@ class _JobRun:
                 last_seen, changed_at = seen, now
             text = self._page_text()
             marker = new_confirmation(str(before.get("text") or ""), text)
-            if seen != judged and (judged is None or held) and reads < POST_SUBMIT_READS:
+            if seen != judged and (judged is None or held) and reads < apply_limits.POST_SUBMIT_READS:
                 # the judge reads the page once it holds between two looks,
                 # and at most `POST_SUBMIT_READS` times
                 reads += 1
@@ -9523,7 +9276,7 @@ class _JobRun:
                 raise _Parked("needs_human", f"an error page after the submit click "
                                              f"({conf:.2f}; {_cap(digest.title, 80)}); "
                                              f"{CHECK_SENT_REASON}")
-            busy = bool(watch.pending) or now - changed_at < POST_SUBMIT_QUIET_S
+            busy = bool(watch.pending) or now - changed_at < apply_limits.POST_SUBMIT_QUIET_S
             if in_flight and not watch.pending and not late_look:
                 # The answer came during this look; the page
                 # is read again (a confirmation that came with it) before any
@@ -9534,11 +9287,11 @@ class _JobRun:
                     self._decide("after_submit", "a request's answer came during the look; "
                                                  "the page is read once more")
                 changed_at = time.monotonic()
-                late_look = now - start >= POST_SUBMIT_WAIT_S
+                late_look = now - start >= apply_limits.POST_SUBMIT_WAIT_S
                 continue
-            if not busy or now - start >= POST_SUBMIT_WAIT_S:
+            if not busy or now - start >= apply_limits.POST_SUBMIT_WAIT_S:
                 break
-            self.page.wait_for_timeout(int(POST_SUBMIT_POLL_S * 1000))
+            self.page.wait_for_timeout(int(apply_limits.POST_SUBMIT_POLL_S * 1000))
         if judged != seen:
             # the last look was never judged (the budget ran out, or the page
             # moved on the last look): the requests decide on a fresh read
@@ -10029,14 +9782,14 @@ class _JobRun:
         try:
             # a GET of the URL with no fragment is a new document; with the
             # fragment it would be a move inside this one
-            self.page.goto(bare, wait_until="domcontentloaded", timeout=GOTO_TIMEOUT_MS)
+            self.page.goto(bare, wait_until="domcontentloaded", timeout=apply_limits.GOTO_TIMEOUT_MS)
             if bare != url:
-                self.page.goto(url, wait_until="domcontentloaded", timeout=GOTO_TIMEOUT_MS)
+                self.page.goto(url, wait_until="domcontentloaded", timeout=apply_limits.GOTO_TIMEOUT_MS)
         except Exception as e:      # noqa: BLE001  (the page is read as it is)
             if _closed_error(e):
                 raise
             self._trace("error", step="verify_link.goto", error=type(e).__name__)
-        info = apply_fill.settle(self.page, CLICK_TIMEOUT_S)
+        info = apply_fill.settle(self.page, apply_limits.CLICK_TIMEOUT_S)
         self._decide_next("settled", f"settled {_settled_ms(info)} ms after the page was loaded "
                                      f"again")
         self._check_host(self.page.url)
@@ -10130,7 +9883,7 @@ class _JobRun:
                 route.abort()
                 return
             try:
-                answer = route.fetch(max_redirects=0, timeout=GOTO_TIMEOUT_MS)
+                answer = route.fetch(max_redirects=0, timeout=apply_limits.GOTO_TIMEOUT_MS)
             except Exception as e:  # noqa: BLE001  (a network error may quote the link's token)
                 broken.append(type(e).__name__)
                 route.abort()
@@ -10188,15 +9941,15 @@ class _JobRun:
             tab.on("popup", close)
             tab.on("request", hop)
             tab.route("**/*", guard)
-            tab.goto(link, wait_until="domcontentloaded", timeout=GOTO_TIMEOUT_MS)
-            end = time.monotonic() + GOTO_TIMEOUT_MS / 1000
+            tab.goto(link, wait_until="domcontentloaded", timeout=apply_limits.GOTO_TIMEOUT_MS)
+            end = time.monotonic() + apply_limits.GOTO_TIMEOUT_MS / 1000
             while moves and not landed[0] and not stopped and not broken and not challenged \
                     and time.monotonic() < end:
                 tab.wait_for_timeout(100)   # the script's move to the redirect's target
             if broken and not stopped:
                 raise RuntimeError(broken[0])
             if not stopped and not challenged and not left(tab.url):
-                apply_fill.settle(tab, CLICK_TIMEOUT_S)
+                apply_fill.settle(tab, apply_limits.CLICK_TIMEOUT_S)
             if not stopped and not challenged and not left(tab.url):
                 text = apply_fill.page_text(tab)
                 check = _link_check_text(tab)
@@ -10532,7 +10285,7 @@ def _probe_linkedin(page) -> tuple[apply_linkedin.Decision | None, str]:
         return None, "not on LinkedIn"
     if kind in ("signed_out", "redirector"):
         return None, str(linkedin_step(str(page.url), None))
-    view, waited = linkedin_view(page, wait_s=LINKEDIN_READY_S if kind == "job" else 0)
+    view, waited = linkedin_view(page, wait_s=apply_limits.LINKEDIN_READY_S if kind == "job" else 0)
     d = apply_linkedin.decide(view)
     step = linkedin_step(str(page.url), d)
     return d, (f"{step}; {d.why}; waited {waited} ms" if step
@@ -10653,7 +10406,7 @@ def _probe(ctx, url: str, *, follow_apply: bool, judge: Any, out, settle_s: floa
     try:
         # the run's own first load (`open_page`): domcontentloaded, one retry
         # of a dropped load, then the settle
-        for row in open_page(page, url, timeout_ms=PROBE_GOTO_MS, settle_s=settle_s):
+        for row in open_page(page, url, timeout_ms=apply_limits.PROBE_GOTO_MS, settle_s=settle_s):
             _line(f"  load: {row['why']}", out=out)
     except Exception as e:      # noqa: BLE001  (a dead or slow page is the answer)
         _line(f"probe: the page did not load ({type(e).__name__})", out=out)
@@ -10676,7 +10429,7 @@ def _probe(ctx, url: str, *, follow_apply: bool, judge: Any, out, settle_s: floa
 
 def probe(url: str, *, follow_apply: bool = False, judge: Any = None, headed: bool = False,
           profile_dir: Path | None = None, context: Any = None, out=None,
-          settle_s: float = PROBE_SETTLE_S, park_mode: bool = False) -> int:
+          settle_s: float = apply_limits.PROBE_SETTLE_S, park_mode: bool = False) -> int:
     """Read `url` the way the run would and print it: the digest, the judge's
     read (`judge`, asked once per page), what the LinkedIn shortcut and the
     fieldless-posting fallback would click, and with a judge the step the

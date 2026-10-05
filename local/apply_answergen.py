@@ -13,7 +13,7 @@ the whole draft. The runner then leaves an optional field blank and flagged,
 or parks a required one with the note.
 
 Every draft is a Gemini call and every gate is a Jev call, so a field gets
-one attempt and a job gets `apply_run.GENERATE_MAX` drafts. A transient
+one attempt and a job gets `apply_limits.GENERATE_MAX` drafts. A transient
 model error gets one more draft call after a wait, which spends a draft of
 that budget.
 

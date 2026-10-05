@@ -412,7 +412,7 @@ def test_a_step_that_posted_and_never_moved_parks_without_a_second_click(_browse
         run.page = page
         digest = apply_form.extract(page)
         n = next(b.n for b in digest.buttons if b.text == "Save and continue")
-        settle = (("apply_run", "STEP_SETTLE_S"), 1)      # after FAST_TIMING's own 8 s
+        settle = (("apply_limits", "STEP_SETTLE_S"), 1)      # after FAST_TIMING's own 8 s
         with h.fast_timing(extra=(settle,)), \
                 pytest.raises(apply_run._Parked, match="it was not clicked again"):
             run._click(digest, n, "advance", {"clicked": []}, conf=0.9)

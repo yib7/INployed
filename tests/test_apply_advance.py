@@ -29,6 +29,7 @@ import apply_fill  # noqa: E402
 import apply_form  # noqa: E402
 import apply_harness as h  # noqa: E402
 import apply_run  # noqa: E402
+import apply_limits  # noqa: E402
 import apply_send_words  # noqa: E402
 import jev  # noqa: E402
 from apply_judge import FillPlan, PlannedField  # noqa: E402
@@ -590,7 +591,7 @@ def test_a_draft_is_made_once_per_question_and_reused_when_the_page_comes_back(t
         run._resolve_generation(digest, p, rec)
         assert p.fields[0].action == "fill" and p.fields[0].value.startswith("Two years")
         pages.append(rec)
-    assert Gen.calls == 1 and run.gen_budget == apply_run.GENERATE_MAX - 1
+    assert Gen.calls == 1 and run.gen_budget == apply_limits.GENERATE_MAX - 1
     assert pages[1]["generated"][0]["reused"] is True
     assert apply_run.generated_count(pages) == 1
 

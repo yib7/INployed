@@ -474,6 +474,7 @@ class _Walker:
         import apply_click
         import apply_fill
         import apply_run
+        import apply_limits
         page = self.page
 
         def busy() -> bool:
@@ -495,20 +496,20 @@ class _Walker:
         start = time.monotonic()
         last, stable_since = json.dumps(digest.to_dict(), sort_keys=True), start
         if empty:
-            apply_fill.settle(page, apply_run.CLICK_TIMEOUT_S)
+            apply_fill.settle(page, apply_limits.CLICK_TIMEOUT_S)
         while True:
             digest, loading_now = read()
             now = time.monotonic()
-            loading = loading and loading_now and now - start < apply_run.LOADING_WAIT_S
+            loading = loading and loading_now and now - start < apply_limits.LOADING_WAIT_S
             if not apply_run._empty_read(digest) and not loading:
                 break
             seen = json.dumps(digest.to_dict(), sort_keys=True)
             if seen != last:
                 last, stable_since = seen, now
-            if now - start >= apply_run.EMPTY_READ_MAX_S or (
-                    not loading and now - stable_since >= apply_run.EMPTY_READ_STABLE_S):
+            if now - start >= apply_limits.EMPTY_READ_MAX_S or (
+                    not loading and now - stable_since >= apply_limits.EMPTY_READ_STABLE_S):
                 break
-            page.wait_for_timeout(int(apply_run.EMPTY_READ_POLL_S * 1000))
+            page.wait_for_timeout(int(apply_limits.EMPTY_READ_POLL_S * 1000))
         return digest
 
     def _extract(self):
@@ -562,6 +563,7 @@ class _Walker:
         a challenge, or with `checkbox` an unticked CAPTCHA checkbox."""
         import apply_form
         import apply_run
+        import apply_limits
         try:
             frames = list(self.page.frames)
         except Exception:       # noqa: BLE001
@@ -576,7 +578,7 @@ class _Walker:
                 box = element.bounding_box()
             except Exception:       # noqa: BLE001  (a frame detached while looking)
                 continue
-            if box and box["height"] >= apply_run.HUMAN_CHECK_MIN_PX and box["y"] + box["height"] > 0:
+            if box and box["height"] >= apply_limits.HUMAN_CHECK_MIN_PX and box["y"] + box["height"] > 0:
                 return True
         return checkbox and bool(apply_form.unsolved_checkbox(self.page))
 
@@ -585,8 +587,9 @@ class _Walker:
     def _linkedin(self, kind: str) -> bool | None:
         import apply_linkedin
         import apply_run
+        import apply_limits
         view, _waited = apply_run.linkedin_view(
-            self.page, wait_s=apply_run.LINKEDIN_READY_S if kind == "job" else 0,
+            self.page, wait_s=apply_limits.LINKEDIN_READY_S if kind == "job" else 0,
             job_title=str(self.entry.get("title") or ""),
             company=str(self.entry.get("company") or ""))
         d = apply_linkedin.decide(view)
@@ -693,10 +696,11 @@ class _Walker:
         import apply_judge
         import apply_linkedin
         import apply_run
+        import apply_limits
         answers, facts = self._read(digest)
         state, conf = apply_judge.read_page_state(answers)
         if conf < apply_judge.PAGE_STATE_MIN_CONF:
-            apply_fill.settle(self.page, apply_run.CLICK_TIMEOUT_S)
+            apply_fill.settle(self.page, apply_limits.CLICK_TIMEOUT_S)
             digest = self._digest()
             answers, facts = self._read(digest)
             state, conf = apply_judge.read_page_state(answers)
@@ -831,6 +835,7 @@ class _Walker:
         the page as it was. True when the walk ends here."""
         import apply_form
         import apply_run
+        import apply_limits
         live = apply_form.live_text(loc)
         why = apply_run.live_refusal("apply_entry", text, live) if live else ""
         if why:
@@ -848,7 +853,7 @@ class _Walker:
         if popup is not None:
             try:
                 popup.wait_for_load_state("domcontentloaded",
-                                          timeout=apply_run.CLICK_TIMEOUT_S * 1000)
+                                          timeout=apply_limits.CLICK_TIMEOUT_S * 1000)
             except Exception:       # noqa: BLE001
                 pass
             self.page = popup
@@ -873,8 +878,9 @@ class _Walker:
         import apply_fill
         import apply_linkedin
         import apply_run
+        import apply_limits
         page = self.page
-        apply_fill.settle(page, apply_run.CLICK_TIMEOUT_S)
+        apply_fill.settle(page, apply_limits.CLICK_TIMEOUT_S)
         if apply_run._on_linkedin_redirector(str(page.url)):
             cont = apply_linkedin.continue_control(page)
             href = urljoin(str(page.url), cont.href) if cont is not None and cont.href else ""
@@ -888,8 +894,8 @@ class _Walker:
             else:
                 try:
                     page.wait_for_url(lambda u: not apply_run._on_linkedin_redirector(u),
-                                      timeout=apply_run.REDIRECT_TIMEOUT_S * 1000)
-                    apply_fill.settle(page, apply_run.CLICK_TIMEOUT_S)
+                                      timeout=apply_limits.REDIRECT_TIMEOUT_S * 1000)
+                    apply_fill.settle(page, apply_limits.CLICK_TIMEOUT_S)
                 except Exception as e:      # noqa: BLE001  (the next read says it stayed)
                     if apply_run._closed_error(e):
                         raise

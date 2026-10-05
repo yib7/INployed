@@ -33,6 +33,7 @@ import apply_harness as h  # noqa: E402
 import apply_linkedin  # noqa: E402
 import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
+import apply_limits  # noqa: E402
 import apply_trace  # noqa: E402
 import ats_accounts  # noqa: E402
 import jev  # noqa: E402
@@ -663,7 +664,7 @@ def test_the_wait_for_the_error_page_ends_at_its_cap(monkeypatch, page_type):
     page = page_type() if page_type is _ErrorPageNeverLoads else page_type(lag_ms=0)
     apply_run.open_page(page, f"{CAREERS}/apply/42")
     assert page.gotos == 2
-    cap_ms = int(apply_run.GOTO_ERROR_PAGE_S * 1000) + int(apply_run.GOTO_RETRY_S * 1000)
+    cap_ms = int(apply_limits.GOTO_ERROR_PAGE_S * 1000) + int(apply_limits.GOTO_RETRY_S * 1000)
     assert page.clock <= cap_ms + 100, page.clock
     if page_type is _ErrorPageNeverLoads:
         assert page.load_waits == 1
@@ -675,7 +676,7 @@ def test_the_retry_of_a_dropped_first_load_waits_for_chromiums_error_page(monkey
     error page committed after it and cut the retry short. The retry now
     waits for the error page to be up, then its pause."""
     monkeypatch.setattr(apply_run.apply_fill, "settle", lambda page, timeout_s: {"ms": 0})
-    page = _SlowErrorPage(lag_ms=int(apply_run.GOTO_RETRY_S * 1000) + 400)
+    page = _SlowErrorPage(lag_ms=int(apply_limits.GOTO_RETRY_S * 1000) + 400)
     rows = apply_run.open_page(page, f"{CAREERS}/apply/42")
     assert page.gotos == 2
     assert [r["what"] for r in rows] == ["goto_retry", "settled"]
@@ -822,7 +823,7 @@ Qualifications.</p><div id="host"></div>
 
 
 def test_a_banner_that_comes_back_is_dismissed_at_most_the_limit(context, tmp_path, monkeypatch):
-    monkeypatch.setattr(apply_run, "CONSENT_MAX", 2)
+    monkeypatch.setattr(apply_limits, "CONSENT_MAX", 2)
     _serve(context, {"/jobs/42": _BANNER_AGAIN})
     folder = h.write_job_folder(tmp_path / "job")
     _enqueue(folder, f"{CAREERS}/jobs/42")
@@ -853,8 +854,8 @@ _ENTRY = """<body><h1>Analytics Engineer</h1>
     ("#same", "navigation", 2.0), ("#inplace", "dom", 2.0), ("#tab", "popup", 2.0)])
 def test_an_entry_click_follows_whatever_it_did_first(context, monkeypatch, which, signal,
                                                      under_s):
-    monkeypatch.setattr(apply_run, "POPUP_TIMEOUT_MS", 5_000)
-    monkeypatch.setattr(apply_run, "POPUP_GRACE_S", 0.5)
+    monkeypatch.setattr(apply_limits, "POPUP_TIMEOUT_MS", 5_000)
+    monkeypatch.setattr(apply_limits, "POPUP_GRACE_S", 0.5)
     _serve(context, {"/jobs/1": _ENTRY, "/apply": "<body><h1>Apply</h1></body>"})
     page = context.new_page()
     page.goto(f"{CAREERS}/jobs/1")
@@ -867,7 +868,7 @@ def test_an_entry_click_follows_whatever_it_did_first(context, monkeypatch, whic
 
 
 def test_an_entry_click_that_does_nothing_waits_the_whole_window(context, monkeypatch):
-    monkeypatch.setattr(apply_run, "POPUP_TIMEOUT_MS", 800)
+    monkeypatch.setattr(apply_limits, "POPUP_TIMEOUT_MS", 800)
     _serve(context, {"/jobs/1": _ENTRY})
     page = context.new_page()
     page.goto(f"{CAREERS}/jobs/1")
@@ -1368,7 +1369,7 @@ _NEXT_JOB = (FORMS / "linkedin_posting.html").read_text(encoding="utf-8").replac
 
 def test_the_handler_clicks_at_most_its_cap_per_job(context, tmp_path, monkeypatch):
     # every click leads to another job's page: the per-job cap ends it
-    monkeypatch.setattr(apply_run, "LINKEDIN_CLICKS_MAX", 3)
+    monkeypatch.setattr(apply_limits, "LINKEDIN_CLICKS_MAX", 3)
     context.route("https://www.linkedin.com/**",
                   lambda route: route.fulfill(body=_NEXT_JOB, content_type="text/html"))
     out, rec = _drain(context, tmp_path, "https://www.linkedin.com/jobs/view/100/")
@@ -1617,7 +1618,7 @@ def test_an_offsite_apply_button_that_opens_a_tab_by_script(_browser, flow_serve
 # --- M-9: the probe opens a page the run's way --------------------------------------------------------
 
 def test_the_probe_reads_a_page_whose_load_never_fires(context, monkeypatch):
-    monkeypatch.setattr(apply_run, "PROBE_GOTO_MS", 3_000)
+    monkeypatch.setattr(apply_limits, "PROBE_GOTO_MS", 3_000)
     _serve(context, {"/apply/42": _HANGING})
     context.route(f"{CAREERS}/slow.png", lambda route: None)
     out = io.StringIO()

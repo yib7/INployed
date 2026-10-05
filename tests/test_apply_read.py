@@ -39,6 +39,7 @@ import apply_harness as h  # noqa: E402
 import apply_judge  # noqa: E402
 import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
+import apply_limits  # noqa: E402
 import jev  # noqa: E402
 from apply_judge import FillPlan  # noqa: E402
 from apply_form import Button, Field, FormDigest  # noqa: E402
@@ -864,7 +865,7 @@ def test_each_step_of_a_wizard_at_one_url_gets_its_own_placeholder_wait():
 def test_a_placeholder_that_stays_up_on_one_step_is_waited_on_once(monkeypatch):
     """M10 still holds within a step: a re-read of the same step (the loop's
     `_reread`, `last_sig` unchanged) does not wait on the placeholder again."""
-    monkeypatch.setattr(apply_run, "LOADING_WAIT_S", 0.0)     # the wait runs out at once
+    monkeypatch.setattr(apply_limits, "LOADING_WAIT_S", 0.0)     # the wait runs out at once
     run = _ScriptedRead([True, True, True], [_SKELETON] * 3)
     apply_run._JobRun._read_digest(run)
     apply_run._JobRun._read_digest(run)
@@ -880,7 +881,7 @@ def test_a_wizard_whose_second_step_loads_at_the_same_url_waits_out_both_skeleto
     wait (ADV-07) is cut short here, so the second skeleton reaches the read."""
     f = dataclasses.replace(
         h.flow("skeleton_then_form"), name="skeleton_wizard", start="skeleton_wizard.html",
-        timing=(*h.flow("skeleton_then_form").timing, (("apply_run", "BUSY_WAIT_S"), 0.3)))
+        timing=(*h.flow("skeleton_then_form").timing, (("apply_limits", "BUSY_WAIT_S"), 0.3)))
     r = h.run_flow(f, _SkeletonAsSignUp(), "skeleton-wizard", browser=_browser,
                    server=flow_server, workdir=tmp_path)
     assert r.ok and not r.breaks, r
@@ -967,8 +968,8 @@ def test_a_placeholder_that_never_clears_costs_one_short_wait_per_page(context, 
                                                                      monkeypatch):
     # review M10: a widget's region stays busy; the read goes on after
     # LOADING_WAIT_S, once for the page, and the trace says so
-    monkeypatch.setattr(apply_run, "EMPTY_READ_MAX_S", 8.0)
-    monkeypatch.setattr(apply_run, "LOADING_WAIT_S", 1.0, raising=False)
+    monkeypatch.setattr(apply_limits, "EMPTY_READ_MAX_S", 8.0)
+    monkeypatch.setattr(apply_limits, "LOADING_WAIT_S", 1.0, raising=False)
     _serve(context, {"/jobs/7": _LINGERING, "/apply": (FORMS / "lever_single.html").read_text(
         encoding="utf-8")})
     judge = _reads({"Analyst - Fabrikam": ("other", 0.30)}, nouls="neutral")

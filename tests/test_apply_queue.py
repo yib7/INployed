@@ -127,7 +127,9 @@ def test_load_transient_oserror_retries_then_succeeds(tmp_path, monkeypatch):
 
 def test_load_persistent_oserror_never_quarantines(tmp_path, monkeypatch):
     # A transient read failure (AV scan, sharing violation) is NOT corruption:
-    # even the locked flavor must not rename a healthy queue over an OSError.
+    # the locked flavor raises (a mutation never writes over a queue it could
+    # not read) and never renames a healthy queue; a lock-free reader gets
+    # an empty queue with a warning.
     q = _q(tmp_path)
     apply_queue.enqueue(_entry("1"), path=q)
     before = q.read_text(encoding="utf-8")
@@ -137,8 +139,10 @@ def test_load_persistent_oserror_never_quarantines(tmp_path, monkeypatch):
 
     monkeypatch.setattr(Path, "read_text", always)
     monkeypatch.setattr(apply_queue.time, "sleep", lambda s: None)
+    with pytest.raises(apply_queue.QueueUnreadable):
+        apply_queue.load(q, quarantine=True)
     with pytest.warns(RuntimeWarning):
-        data = apply_queue.load(q, quarantine=True)
+        data = apply_queue.load(q)
     assert data == {"version": 1, "jobs": []}
     monkeypatch.undo()
     assert q.read_text(encoding="utf-8") == before          # untouched

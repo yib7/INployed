@@ -113,7 +113,7 @@ def _isolate(tmp: Path, *, appdata: str = "appdata") -> None:
 def _default_flow_timeout(judge_count: int) -> float:
     """`_BASELINE_FLOW_S` scaled to this run's judge count, times
     `_TIMEOUT_FACTOR`: generous enough that a busy machine's real run does
-    not trip it, bounded enough that a genuinely hung worker does not stall
+    not trip it, bounded enough that a hung worker does not stall
     the batch for long. `--flow-timeout` overrides it."""
     return max(_MIN_FLOW_TIMEOUT_S,
               _BASELINE_FLOW_S * (judge_count / _BASELINE_JUDGES) * _TIMEOUT_FACTOR)

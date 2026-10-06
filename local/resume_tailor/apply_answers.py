@@ -563,7 +563,7 @@ def _plural(n: int, one: str, many: str) -> str:
 
 
 def warnings(answers: List[Dict[str, Any]]) -> List[str]:
-    """Things worth a look that never block a save: the authorization and
+    """Warnings that never block a save: the authorization and
     sponsorship answers that disagree, built-ins not set, and a count of set
     built-ins not confirmed yet."""
     rows = {str(e.get("id", "")).strip(): e for e in answers if isinstance(e, dict)}

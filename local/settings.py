@@ -779,7 +779,7 @@ SETTINGS_SCHEMA: list[Field] = [
     # --- Connection & paths: non-secret identity / locations, also in .env -----
     Field("BRIGHT_DATA_DATASET_ID", "Job-data dataset ID", "str", "",
           "Connection & paths", "env", optional=True, restart=True,
-          help="The job-postings dataset to query - an identifier, not a secret."),
+          help="The job-postings dataset to query: an identifier, not a secret."),
     Field("GOOGLE_CLOUD_PROJECT", "Google Cloud project ID", "str", "",
           "Connection & paths", "env", optional=True, restart=True,
           help="Project with Vertex AI enabled (for Gemini scoring + tailoring). Leave blank "

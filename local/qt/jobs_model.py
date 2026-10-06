@@ -83,7 +83,7 @@ class JobsTableModel(QtCore.QAbstractTableModel):
             # instead of spelling it "nan", so without this the view handed Qt
             # a float: the cell printed "nan", the Deep bar drew FULL for a job
             # with no deep score (min(1.0, nan) is 1.0), and the sort role's
-            # .lower() raised on a text column. Seen in c14's Phase 7 frames.
+            # .lower() raised on a text column.
             self._col_lists = [
                 df[c].astype(str).where(df[c].notna(), "").tolist()
                 if c in df.columns else [""] * n

@@ -229,7 +229,7 @@ def has_unseen_high_score(path: Path, min_score: int) -> bool:
     """Whether any row is unseen with score >= min_score.
 
     Reads ONLY the two needed columns, in bounded chunks, stopping at the first
-    hit (audit P2-21): this fires 6+ times a day against a ~90 MB decompressed
+    hit: this fires 6+ times a day against a ~90 MB decompressed
     master, so a full-frame load here was the watcher's biggest allocation."""
     try:
         for chunk in pd.read_csv(path, usecols=["score", "is_seen"],

@@ -46,7 +46,7 @@ def replace_with_retry(src, dst, *, retries: int = _REPLACE_TRIES) -> None:
     shared retrying-replace used by every atomic tmp+replace writer here
     (atomic_write_json, csv_io.write_csv_gz_atomic, the apply.md / outbox rows
     writers) so the fix lives in exactly one place."""
-    # Clamp (audit C6-7): retries=0 made `range(0)` skip the loop entirely, so
+    # Clamp: retries=0 made `range(0)` skip the loop entirely, so
     # the function returned having never called os.replace — the caller then
     # deleted its tmp file in `finally` and the write vanished with no error.
     # One attempt is the floor; "no retries" still means "try once".

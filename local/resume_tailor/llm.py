@@ -772,7 +772,7 @@ def _call_claude(
                     raise LLMError(
                         f"Claude rate/usage limit persisted through {rl_used} "
                         f"waits ({model}); giving up (a subscription window "
-                        f"limit resets on its own -- retry later): {exc}"
+                        f"limit resets on its own; retry later): {exc}"
                     ) from exc
                 wait = _rate_limit_delay(exc, rl_used)
                 log.warning("llm: claude %s rate-limited (wait %d/%d), "

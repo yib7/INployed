@@ -39,7 +39,7 @@ def snapshot_run_files(base: Path | None = None) -> dict[Path, tuple[float, int]
     """{scored-run-file: (mtime, size)} for every local run file, taken BEFORE a
     scrape so new_run_ids can tell which files the scrape produced or rewrote (a
     same-day re-run overwrites the same filename, so presence alone is not
-    enough). Size rides along (audit P2-12): a rewrite landing within one mtime
+    enough). Size rides along: a rewrite landing within one mtime
     tick — or on a coarse-resolution filesystem — would otherwise read as
     unchanged and its fresh rows would wait for the sweep."""
     import jobsdata
@@ -67,7 +67,7 @@ def new_run_ids(before: dict, base: Path | None = None) -> list[str]:
         except OSError:
             continue
         prev = before.get(p)
-        # Tolerate a pre-P2-12 float (mtime-only) snapshot from an old caller.
+        # Tolerate an older float (mtime-only) snapshot from an old caller.
         if prev == sig or (isinstance(prev, float) and prev == sig[0]):
             continue
         try:
@@ -96,7 +96,7 @@ def write_rows_outbox(ids, master_csv: Path | None = None,
     master = Path(master_csv) if master_csv is not None else MASTER_CSV
     if not master.exists():
         return None
-    # Chunked by-id scan (audit P2-22, the score_jobs._load_rows_by_id idiom):
+    # Chunked by-id scan (the score_jobs._load_rows_by_id idiom):
     # only the matching rows are ever held, not the whole ~90 MB master frame.
     id_set = set(ids)
     parts: list[pd.DataFrame] = []

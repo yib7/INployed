@@ -87,7 +87,7 @@ def resolve_generated_dir(job_id: Optional[str] = None,
 
     where = output.base_dir(company, title) if (company and title) else config.OUTPUT_ROOT
     raise FileNotFoundError(
-        f"No tailored résumé found for job {job_id or f'{company} — {title}'} under {where}. "
+        f"No tailored résumé found for job {job_id or f'{title} at {company}'} under {where}. "
         "Tailor this job first (Tailor resume), then retry."
     )
 

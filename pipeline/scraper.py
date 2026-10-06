@@ -192,7 +192,7 @@ TOKEN_HINT = (
     "A Bright Data token that can READ (catalog, snapshots) can still be refused "
     "permission to START a billed collection, and the API reports that as 'Invalid "
     "credentials'. If you recently replaced your API key, issue one with full "
-    "permissions -- not read-only -- at https://brightdata.com/cp/setting/users, "
+    "permissions (not read-only) at https://brightdata.com/cp/setting/users, "
     "then put it in .env as BRIGHT_DATA_API_TOKEN."
 )
 
@@ -1048,7 +1048,7 @@ def _assert_collected_something(progress: dict, snapshot_id: str) -> None:
     if not records and errors:
         print(f"  WARNING: collection {snapshot_id} returned 0 rows with {errors} "
               f"error(s): {codes}. No input was rejected, so this is most likely a "
-              f"quiet 24 hours -- but check scraper.log if it repeats.")
+              f"quiet 24 hours. Check scraper.log if it repeats.")
 
 
 async def wait_until_ready(session: aiohttp.ClientSession, snapshot_id: str) -> None:
@@ -1187,7 +1187,7 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
                 # or it is lost.
                 results = collected.rows
                 print(f"Collected {len(results)} rows synchronously "
-                      f"(no snapshot issued -- nothing to poll)")
+                      f"(no snapshot issued, nothing to poll)")
                 if not results:
                     # The /progress payload is where input-rejection codes live,
                     # and this branch never fetches one, so say plainly that the

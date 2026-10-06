@@ -128,7 +128,10 @@ def test_no_shipped_string_literal_carries_an_em_dash():
     """Census over every shipped package: the only em dash a string may hold is the
     lone glyph a table draws for an empty cell (DASH on its own) or a regex that
     detects the dash (compose._STYLE_BANS, the years-of-experience pattern).
-    theme.py's stylesheet strings hold CSS comments and are the one file skipped."""
+    theme.py's stylesheet strings hold CSS comments and are the one file skipped.
+    A spaced " DASH " separator counts as prose; the apply sheet's entry header and
+    education line (apply_data.py) keep theirs as data typography, so a re-shot
+    demo.gif is the only thing that changes them."""
     import re
     from pathlib import Path
     repo = Path(__file__).resolve().parents[1]
@@ -138,7 +141,9 @@ def test_no_shipped_string_literal_carries_an_em_dash():
     offenders = []
     for path in files:
         for line, text in _string_literals(path):
-            if DASH not in text or text.strip("\"'fFrRbBuU ") == DASH:
+            if DASH not in text or text.strip("\"'fFrRbBuU") == DASH:
+                continue
+            if path.name == "apply_data.py" and text.strip("\"'fFrRbBuU") == f" {DASH} ":
                 continue
             if re.match(r"^[rR][bB]?['\"]", text):       # a regex pattern, not prose
                 continue

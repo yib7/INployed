@@ -71,7 +71,7 @@ def claude_cli_warnings(tailor_provider: str, scoring_provider: str,
                     "on PATH. Install Claude Code and run `claude` once to log in.")
     if scoring_provider == "claude":
         out.append("Scoring provider is 'claude' but the `claude` CLI is not on "
-                    "PATH -- local scoring will fall back to Gemini.")
+                    "PATH, so local scoring will fall back to Gemini.")
     return out
 
 

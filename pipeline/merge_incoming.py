@@ -152,7 +152,7 @@ def _process_row_files(paths: list[Path], bad_dir: Path) -> tuple[list[pd.DataFr
     good_paths: list[Path] = []
     for path in paths:
         try:
-            # dtype=str + keep_default_na=False (audit P2-26/P2-7): these rows
+            # dtype=str + keep_default_na=False: these rows
             # are appended straight into the master, so they must read the same
             # way the master reader below reads it. With inferred dtypes a
             # `score` column holding one blank infers float64 and writes 5 back
@@ -291,7 +291,7 @@ def main(
                 try:
                     wrote_header = False
                     if master_csv.exists():
-                        # dtype=str + keep_default_na=False (audit P2-26):
+                        # dtype=str + keep_default_na=False:
                         # byte-stable master round-trip, like prune_master.py.
                         for chunk in pd.read_csv(master_csv, dtype=str,
                                                  keep_default_na=False,

@@ -1099,7 +1099,7 @@ def make_pool(required: bool = True):
                     timeout_s=timeout_s,
                     max_procs=max(STAGE1_CONCURRENCY, STAGE2_CONCURRENCY))
             print("Scoring provider is 'claude' but the `claude` CLI is not on "
-                  "PATH -- falling back to Gemini.")
+                  "PATH; falling back to Gemini.")
         _use_gemini_models()
     limits = configured_limits(_SCORING)
     # Say so when a stage is about to be governed by DEFAULT_LIMITS. That downgrade
@@ -1111,7 +1111,7 @@ def make_pool(required: bool = True):
             if model in limits or model in LIMITS:
                 continue
             print(f"{stage} model {model!r} has no configured rate limits and no "
-                  f"built-in entry -- gating at {DEFAULT_LIMITS['rpm']} rpm / "
+                  f"built-in entry; gating at {DEFAULT_LIMITS['rpm']} rpm / "
                   f"{DEFAULT_LIMITS['rpd']} rpd, which may be far below its real "
                   f"free-tier allowance. Add a 'Per-model rate limits' row for "
                   f"it in Settings -> Scoring.")
@@ -2144,7 +2144,7 @@ def reuse_repost_scores(df: pd.DataFrame, master: pd.DataFrame | None, reuse_day
     master row has a real score AND its `extracted_date` is within
     `reuse_days` of `today`, AND that master row is not the SAME id (a
     re-scrape of a still-open posting is folded back by update_master_scores
-    already; this path is only for a genuinely different posting that
+    already; this path is only for a different posting that
     happens to fingerprint-match). The newest matching master row wins when
     several share a fingerprint. Reused rows are marked with `score_reused=True` (so
     run_scoring skips both LLM stages for them) and `score_reused_from` set to
@@ -2821,7 +2821,7 @@ async def rescore_master_failures(pool, resume: str, *,
     if not MASTER_CSV.exists():
         return 0, 0
     # A malformed master must produce the same fix-or-restore message the fold path
-    # gives, not a raw pandas ParserError traceback out of a cron run (audit C6-6).
+    # gives, not a raw pandas ParserError traceback out of a cron run.
     def _unreadable(e):
         return OSError(
             f"cannot scan {MASTER_CSV.name} for rows needing a rescore: the master "
@@ -2836,7 +2836,7 @@ async def rescore_master_failures(pool, resume: str, *,
         # Candidate-finding never needs the two ~90 MB job-text columns — but
         # `reason` is itself a free-text column, so even the "light" projection of
         # a tens-of-thousands-row master is not small. Stream it in CHUNK pieces
-        # and keep only the rescore candidates from each (audit C6-4). Peak memory
+        # and keep only the rescore candidates from each. Peak memory
         # is the chunk plus the (RESCORE_CAP-bounded) candidate set.
         parts = []
         for chunk in pd.read_csv(MASTER_CSV, usecols=light_cols,
@@ -2879,7 +2879,7 @@ async def rescore_master_failures(pool, resume: str, *,
 def load_resume() -> str:
     """Read resume.md, or exit with a friendly message instead of a raw traceback."""
     if not RESUME_PATH.exists():
-        sys.exit("resume.md not found - generate it from the dashboard's Resume Data tab")
+        sys.exit("resume.md not found: generate it from the dashboard's Resume Data tab")
     # utf-8-sig: a BOM would otherwise ride into the scoring prompt as a stray
     # character on the resume's first heading.
     return RESUME_PATH.read_text(encoding="utf-8-sig")

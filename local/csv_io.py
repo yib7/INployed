@@ -121,13 +121,13 @@ def _needs_reconcile(path: Path, seen_ids: set) -> bool:
 def reconcile_file(path: Path, registry: SeenRegistry) -> int:
     """Read + reconcile + write back. Returns rows changed (0 if no rewrite needed).
 
-    Streams the file in bounded chunks (audit P2-21): the watcher runs this
+    Streams the file in bounded chunks: the watcher runs this
     against the ~90 MB decompressed master on every fire, and the old full
     read + full rewrite held the whole frame in memory. The rewrite lands via
     tmp + retrying replace, and is skipped entirely when nothing changed."""
     seen_ids = registry.all_ids()
 
-    # Cheap two-column probe FIRST (audit C6-3). The rewrite below was already
+    # Cheap two-column probe FIRST. The rewrite below was already
     # skipped when nothing changed — but only the os.replace was: the full
     # decompress + re-serialize + gzip of a ~90 MB master still ran on every
     # watcher fire, and "nothing changed" is the overwhelmingly common case.
@@ -149,7 +149,7 @@ def reconcile_file(path: Path, registry: SeenRegistry) -> int:
                   lambda: open(tmp_path, "w", encoding="utf-8", newline=""))
         with opener() as out:
             wrote_header = False
-            # dtype=str + keep_default_na=False (audit C6-1, extending P2-26):
+            # dtype=str + keep_default_na=False:
             # the watcher reconciles on every fire, so inferred per-chunk dtypes
             # would rewrite the whole master's formatting (score 5 -> 5.0) on a
             # pass that is supposed to touch only is_seen. keep_default_na=False
@@ -171,7 +171,7 @@ def reconcile_file(path: Path, registry: SeenRegistry) -> int:
                     total += n
                 chunk.to_csv(out, index=False, header=not wrote_header)
                 wrote_header = True
-        # `or normalized` (audit P2-3): the pass also rewrites literal
+        # `or normalized`: the pass also rewrites literal
         # ""/"nan"/"None" in is_seen to "no", and _needs_reconcile enters it on
         # a read error or a missing column too, not only on a pending seen flag.
         # Gating the replace on `total` alone built that normalized file and

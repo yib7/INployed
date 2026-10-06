@@ -422,7 +422,7 @@ def _prose_gate(answer: str) -> str:
     own.
 
     A long answer that quotes a posting phrase carrying a banned word buys the
-    one repair call same as a genuine violation, and that repair is free to
+    one repair call same as a true violation, and that repair is free to
     reword the quote; an accepted cost, since the gate cannot tell a quoted
     phrase from the model's own writing.
     """

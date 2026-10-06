@@ -415,7 +415,7 @@ def _qss() -> str:
         background: transparent; padding: 6px 2px; text-align: left; }}
     QToolButton[sectionHeader="true"]:hover {{ color: {ACCENT}; }}
 
-    /* Containers: cards, warning callouts, chip/identity strips (Phase 3). */
+    /* Containers: cards, warning callouts, chip/identity strips. */
     QFrame[card="true"] {{ background: {PANEL}; border: 1px solid {BORDER};
         border-radius: {RADII["card"]}px; }}
     QFrame[callout="warning"] {{ background: {rgba(AMBER, 0.08)};

@@ -123,7 +123,7 @@ python ~/score_jobs.py >> ~/scraper.log 2>&1
 #     confirm `ls ~/prune_master.py` on the VM and grep the log for a real prune line, not 127.
 python ~/prune_master.py --master ~/linkedin_jobs_master.csv >> ~/scraper.log 2>&1 || echo "$(date -Is) prune_master non-fatal (exit $?)" >> ~/scraper.log
 
-# 3. Master CSV upload FIRST (audit P2-29) — the cumulative master is the most
+# 3. Master CSV upload FIRST — the cumulative master is the most
 #    important artifact, so it must not be gated behind the more failure-prone
 #    per-label copies (one Drive throttle there used to skip it via set -e).
 gzip -c ~/linkedin_jobs_master.csv > /tmp/linkedin_jobs_master.csv.gz

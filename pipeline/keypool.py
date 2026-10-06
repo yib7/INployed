@@ -288,7 +288,7 @@ class UsageState:
 
     # Save every N reservations rather than every call: the write happens inside
     # the pool's async lock, so per-call file IO blocks the event loop, and the
-    # RPD counter tolerates a small undercount on crash (audit P2-23). Exhaustion
+    # RPD counter tolerates a small undercount on crash. Exhaustion
     # marks and pool teardown always force a save.
     _SAVE_EVERY = 10
 
@@ -305,7 +305,7 @@ class UsageState:
     def _merge_disk(self) -> None:
         """Fold the on-disk counters into memory (per-key max) before writing, so
         two concurrent scoring processes don't last-writer-wins each other's RPD
-        counts into avoidable 429s (audit P2-23). Both sides only increment, so
+        counts into avoidable 429s. Both sides only increment, so
         max is the conservative union."""
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
@@ -436,9 +436,9 @@ class KeyPool:
         self._tlock = threading.Lock()
         self._free_calls = 0
         self._vertex_calls = 0
-        # Saves are debounced (P2-23), so flush the tail when the process exits —
+        # Saves are debounced, so flush the tail when the process exits —
         # an unattended VM run must still persist its final RPD counts.
-        # Registered once PER STATE, not per KeyPool (audit C6-8): the dashboard
+        # Registered once PER STATE, not per KeyPool: the dashboard
         # builds a fresh pool per scoring run over one long-lived process, and an
         # unguarded atexit.register leaked a duplicate handler each time —
         # unbounded growth, and N redundant disk writes at shutdown.
@@ -806,7 +806,7 @@ class KeyPool:
         if not models:
             raise PoolError("generate called with no model")
         limits = self._limits_by_model(models)
-        # Separate retry budgets (audit P2-1): Vertex quota/429s get 4 long-sleep
+        # Separate retry budgets: Vertex quota/429s get 4 long-sleep
         # attempts, generic transient errors get 3 short ones. One shared counter
         # made two 429s + one transient error give up early under mixed failures.
         quota_retries = 0

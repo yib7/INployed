@@ -1,54 +1,55 @@
 # INployed
 
-> Job discovery & résumé tailoring, end to end.
+> Find, rank, tailor and apply to jobs from one desktop app.
 
 [![CI status](https://github.com/yib7/INployed/actions/workflows/ci.yml/badge.svg)](https://github.com/yib7/INployed/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Python 3.14](https://img.shields.io/badge/python-3.14-blue.svg)
 
-A scheduled cloud discovery step feeds a two-stage LLM scorer, which syncs to a
-desktop app that drives a LaTeX résumé engine. 17,366 postings collected as of
-September 2026; 8% of them earn a second-stage recommendation and 5% come back
-*apply*, so that is all you read.
+INployed is a Windows desktop app with a cloud pipeline behind it. It collects job
+postings, ranks each one against your background, writes a one-page résumé for the
+jobs you pick, and fills in and sends the applications you queue.
 
-The résumé engine's rule is **select and re-phrase, never invent**. Every
-résumé bullet traces back to a fact you wrote, and a deterministic grounding gate
-(no LLM) drops any bullet that doesn't.
+Two rules keep it to what you wrote, and code enforces both:
 
-The scorer runs on a pool of free-tier Gemini keys, and the résumé engine can share
-it. Each stage walks a ranked list of models, quota is metered per key and model,
-and a paid Cloud project is billed only when every free pair is spent or refusing.
+- **Select and re-phrase, never invent.** Every résumé bullet traces to a fact in your
+  experience file. A deterministic grounding gate (no LLM) drops any bullet that doesn't.
+- **Only the submit gate sends.** Auto-apply sends from one place in code, and only when
+  every required field is filled from your data and read back. Anything less pauses for
+  your answer or parks the job with the reason.
 
-3,909 tests cover the pipeline, the Qt UI and the résumé engine. They run on every
-push against Windows and Linux, plus a clean-room job that installs from this
-README's own setup steps.
+17,366 postings collected as of September 2026. 8% earn a second-stage recommendation
+and 5% come back *apply*, so that is all you read.
 
-Three pieces do the work:
+Over 11,000 tests run on every push: the full suite on Windows, the pipeline and the
+auto-apply browser tests on Linux, and a clean-room job that installs from this README's
+own setup steps.
 
-1. **Job discovery** (`pipeline/scraper.py`): collects postings from the job-data provider
-   and dedupes them against everything collected before.
-2. **Scorer** (`pipeline/score_jobs.py`): a two-stage Gemini relevance filter that
-   ranks each job against your background.
-3. **Desktop dashboard** (`local/app.py`): a Windows PySide6/Qt app for triage, an
-   application tracker, run statistics, and an on-demand résumé-tailoring engine
-   (`local/resume_tailor/`) that produces a one-page LaTeX résumé, cover letter,
-   ATS keyword report, and interview-prep sheet for the selected job.
+Four pieces do the work:
+
+1. **Discovery** (`pipeline/scraper.py`) collects postings from Bright Data and drops
+   every one it has collected before.
+2. **Scoring** (`pipeline/score_jobs.py`) ranks each job in two stages on Gemini or
+   Claude, with TypeSafe's Jev model making the calls first when it is on.
+3. **The dashboard** (`local/app.py`, PySide6/Qt) is where you triage and track. It runs
+   the **résumé engine** (`local/resume_tailor/`): a one-page LaTeX résumé, cover letter,
+   ATS keyword report and `apply.md` apply sheet per job.
+4. **Auto-apply** (`local/apply_run.py`) works through your queue one job at a time in
+   Chrome. Jev reads each page, code fills it from your apply sheet and saved answers,
+   and the submit gate decides whether it sends.
 
 ---
 
 ## Screenshots
 
-| Triage: **High Score** | Follow through: **Tracker** |
+| Triage: **High Score** | Apply: **Auto-apply** |
 |---|---|
-| ![The High Score tab. Thirteen ranked postings, each row tinted by recommendation and carrying a score badge, a deep-score bar, and an Apply, Consider, Tailored or Tailor failed pill; a legend under the table maps the five tints back to those states. The selected job's detail card shows the model's reason, strengths and gaps beside the Tailor résumé and Apply buttons.](docs/dashboard.png) | ![The Tracker tab. Filter chips count five applications by state: Applied 2, Interviewing 1, Offer 1, Rejected 1, Follow-up due 1. The table lists status, updated and applied dates, days elapsed and follow-up state, and the detail card for the oldest application, unanswered for 88 days, spells out a NEXT STEP: send a follow-up note.](docs/tracker.png) |
-| Your source of truth: **Resume Data** | Every knob: **Settings** |
-| ![The Resume Data tab. A form editor over master_experience.yaml: name, email, phone, location, LinkedIn and GitHub above an Experience entry whose achievement is broken into what, angles and impact atom fields. A banner warns that resume.md is older than this data.](docs/resume-data.png) | ![The Settings tab. A search box and a Show advanced settings toggle sit above ten collapsible sections. Credentials and Connection & paths stay folded; Engine is expanded, showing the Resume tailor engine dropdown (vertex, api_key or pool), the provider dropdown and the simple-or-per-stage model switch, each tagged with the file it writes to, config.json or .env, and each with a help paragraph under it. Dashboard, Job discovery and Scoring follow below, still folded.](docs/settings.png) |
+| ![The High Score tab. Thirteen ranked postings, each row tinted by recommendation and carrying a score badge, a deep-score bar, and an Apply, Consider, Tailored or Tailor failed pill; a legend under the table maps the tints back to those states. The selected job's detail card shows the model's reason, strengths and gaps beside the Tailor résumé and Apply buttons.](docs/dashboard.png) | ![The Auto-apply tab. A Waiting for you card at the top asks one question a run could not answer from the saved answers, with its options as radio buttons, a Save for future runs box, and the Fill and continue, I filled it in the browser, and Park it buttons. Below it the queue table lists each job's company, title, status pill, attempts, missing answers and a Difficulty score from 1 to 10, with Start auto-apply run and Check difficulty above it.](docs/auto-apply.png) |
+| Your source of truth: **Resume Data** | Follow through: **Tracker** |
+| ![The Resume Data tab. A form editor over master_experience.yaml: name, email, phone, location, LinkedIn and GitHub above an Experience entry whose achievement is broken into what, angles and impact atom fields. A banner warns that resume.md is older than this data.](docs/resume-data.png) | ![The Tracker tab. Filter chips count five applications by state: Applied 2, Interviewing 1, Offer 1, Rejected 1, Follow-up due 1. The table lists status, updated and applied dates, days elapsed and follow-up state, and the detail card for the oldest application, unanswered for 88 days, spells out a NEXT STEP: send a follow-up note.](docs/tracker.png) |
 
-**High Score** surfaces only unseen postings scoring ≥4, newest discovery day first and
-highest score within the day. Click any column header to re-sort.
-
-*(All four shown with representative sample data: fictional companies, a fictional
-`master_experience.yaml`, and placeholder keys.)*
+*(All four use sample data: fictional companies, a fictional `master_experience.yaml`,
+and placeholder keys.)*
 
 ---
 
@@ -57,28 +58,30 @@ highest score within the day. Click any column header to re-sort.
 ```mermaid
 flowchart TD
     subgraph Cloud["GCP VM (cron, on the schedule you set)"]
-        M["merge_incoming.py<br/>fold in rows from the PC"] --> A["pipeline/scraper.py<br/>job discovery"] --> B["pipeline/score_jobs.py<br/>2-stage Gemini scorer"]
+        M["merge_incoming.py<br/>fold in rows from the PC"] --> A["scraper.py<br/>job discovery"] --> B["score_jobs.py<br/>2-stage scorer"]
     end
     B -->|scored master| C[("Google Drive")]
     C -->|Drive desktop sync| E
     subgraph Desktop["Windows PC"]
-        E["app.py dashboard (Qt)<br/>triage / tracker / stats"] -->|Tailor resume| F["resume_tailor/<br/>select - rephrase - verify - LaTeX<br/>PDF, cover letter, ATS report, apply.md"]
-        F -->|Apply| H["browser agent fills the form,<br/>parks at the review page"] --> T[("Tracker<br/>local SQLite")]
+        E["dashboard (Qt)<br/>triage, tracker, stats"] -->|Tailor resume| F["resume_tailor/<br/>select, rephrase, verify, LaTeX<br/>PDF, cover letter, apply.md"]
+        F -->|Queue for auto-apply| R["apply_run.py drain<br/>Jev reads each page,<br/>code fills it from apply.md"]
+        R --> G{"submit gate"}
+        G -->|passes| S["submitted"]
+        G -->|fails| K["paused for you,<br/>or parked with the reason"]
+        S -->|Mark applied| T[("Tracker<br/>local SQLite")]
         E -->|Find new jobs| L["local scrape<br/>outbox/*.csv.gz"]
     end
-    L -->|scp to the VM incoming folder| M
-    E -.->|schedule, pause, config, key rotation| Cloud
-    B & F -->|every model call| P["Gemini model pool<br/>free-tier keys x ranked models per stage<br/>paid Vertex only when every pair is spent"]
+    M ---|rows from the PC, by scp| L
+    Cloud -.-|the dashboard sets schedule, pause,<br/>config, key rotation| E
 ```
 
-One master CSV, two writers. The VM owns it; anything discovered on the PC rides
-the outbox back up and is merged in before the next scrape, so a job is only ever
-paid for once.
+One master CSV, two writers. The VM owns it. Anything found on the PC rides the outbox
+up and is merged before the next scrape, so a posting is paid for once.
 
-One model pool, two callers. Free-tier quota is metered per key and model, so a
-second model on a stage is a second daily allowance. A 503 parks the model for a
-minute, a 429 parks the pair, and the paid Vertex lane is tried last. The tailor
-joins the pool with one Settings row; by default it bills the project.
+The scorer's Gemini calls go through one key pool: free-tier keys first, metered per key
+and model, and a paid Cloud project only when every free pair is spent. The tailor joins
+the pool with one Settings row. Jev, when it is on, makes the yes-or-no calls in scoring,
+tailoring and auto-apply, and Gemini or Claude writes the text.
 
 ---
 
@@ -215,127 +218,85 @@ names whichever piece is still missing.
 
 ## What it does
 
-- **Discover:** job discovery runs on the VM's cron schedule, or on demand from the
-  dashboard's **Find new jobs**. It never pays twice for the same posting: the exclude list
-  it sends the job-data provider is capped at the newest 2,000 ids, evicted by date. A run
-  that collects nothing while the provider reports input errors fails with those error codes
-  (it never logs as a clean success), and a collection that finishes inside the provider's
-  one-minute sync window is read as rows.
-- **Triage:** the **High Score** tab ranks unseen postings by the two-stage score and tints
-  each row by recommendation (apply / consider / skip) and by whether a tailored résumé
-  already exists. Selecting one opens a detail card with the model's reason, strengths, and gaps.
-- **Skip repeats:** a posting sharing a title, company and location with one you already
-  marked stays out of High Score for a configurable window, and unseen reposts of the same
-  job collapse to the newest copy.
-- **Tailor:** one click writes a one-page LaTeX résumé for that posting, plus an optional
-  cover letter (PDF and editable `.tex`), an ATS keyword report, and an interview-prep
-  sheet. Batches run in parallel in the background with live progress. The PDF is laid out
-  for a parser as much as a reader: the education block extracts as school, degree and a
-  `GPA: x/4.0` line, project links print their own address, and the file carries a title
-  and author.
-- **Clean up:** a last pass reads each résumé entry as a whole and repairs the tells a
-  per-bullet check cannot see (one sentence shape down the list, every bullet the same
-  length). It costs one model call per entry and is on by default; a rewrite is kept only
-  if it still fits its line budget and keeps every number and name.
-- **Ask:** right-click any job for a chat scoped to it. The question goes to the model with
-  that job's apply sheet and description as context, so answers come from your own material,
-  and it says so plainly when the sheet doesn't cover something.
-- **Track:** applications move through applied → interviewing → offer / rejected, with
-  follow-up nudges. The whole history is a local SQLite file you can export and import.
-- **Apply:** every tailored folder gets a self-contained `apply.md` sheet that a
-  browser agent fills page by page and then stops at the review screen. It never logs in, and it never clicks submit.
-- **Auto-apply:** queue tailored jobs and a code-owned drain works through them in its
-  own browser profile, with TypeSafe's Jev model judging every page kind, field mapping,
-  option and button. It submits when every required field is filled and verified and no
-  CAPTCHA, payment or blocked question is on the page; anything less parks at review with
-  the reason, and an `apply_record.md` per job says what was typed where.
-- **Operate:** Settings is one schema-driven form over every key, path, and tunable the
-  project has (no file editing), including the schedule, pause, config pushes, and API-key
-  rotation for the cloud discovery VM. A rotated key lands in a mode-600
-  `~/scraper_secrets.env` that the cron script sources; the value travels by `scp` and
-  stays out of argv, so it never reaches a gcloud log. Stats reports per-run volume, token
-  spend and rescore outcomes, with a staleness badge when a cron run goes missing.
+- **Discover:** on the VM's cron schedule, or on demand with **Find new jobs**. The
+  exclude list sent to Bright Data keeps the newest 2,000 ids, so a posting is never
+  bought twice.
+- **Score:** a cheap first stage drops the clear misses; a deeper second stage gives the
+  rest a 1 to 10 fit, strengths, gaps and apply / consider / skip. **About you** (school
+  status, graduation month, clearance) feeds both stages.
+- **Triage:** **High Score** lists unseen postings scoring 4 or more, tinted by
+  recommendation. A repost of a job you already marked stays out.
+- **Tailor:** one click writes a one-page LaTeX résumé, a cover letter, an ATS keyword
+  report, an interview-prep sheet and `apply.md`. Batches run in parallel.
+- **Check difficulty:** Jev reads a queued job's first application page, typing nothing,
+  and scores it 1 to 10. Up to 10 jobs check at once.
+- **Auto-apply:** **Start auto-apply run** works through the queue in the run's own Chrome
+  profile. A question it needs you for shows up as a **Waiting for you** card. Each job
+  gets an `apply_record.md` of what was typed where.
+- **Apply Answers:** your reusable answers (work authorization, sponsorship, relocation,
+  EEO, address). The run fills only answers you have set and confirmed.
+- **Track:** applied, interviewing, offer, rejected, with follow-up nudges, in a local
+  SQLite file you can export.
+- **Ask:** right-click a job for a chat scoped to its apply sheet and description.
+- **Operate:** one Settings form covers every key, path and option, plus the VM's
+  schedule, pause, config push and key rotation.
 
-Full walkthrough of every tab, CLI, and setting: [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
+Every tab, CLI and setting: [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 
 ---
 
 ## Demo
 
-The whole loop in 42 seconds: rank a scored run, read one posting's analysis, filter the
-list live, open the apply sheet the tailor wrote for one job, walk the tracker, then
-look at the data every generated bullet had to come from.
+The loop: rank a scored run, read one posting's analysis, filter the list, open the
+apply sheet the tailor wrote, answer a paused auto-apply question, then walk the tracker
+and the data every bullet comes from.
 
-![Animated tour of the INployed dashboard, sixteen scenes. It starts on High Score and changes the selected row four times so the detail card swaps its reason, strengths and gaps; types "engineer" into the search box one letter at a time while the table sheds rows from thirteen to nine, then clears it; opens the Apply panel for the tailored job and scrolls its apply.md through the candidate details, work experience, projects and skills; then walks All Jobs, the Tracker with a follow-up flagged due, the Auto-apply queue stepping through its per-status rows, per-run Stats, Resume Data scrolled down into the achievement atoms, Apply Answers, and Settings, where the Engine section is expanded and the page scrolls to the last of the ten sections.](docs/demo.gif)
+![Animated tour of the INployed dashboard. It starts on High Score and changes the selected row so the detail card swaps its reason, strengths and gaps; types a search that filters the ranked table live; opens the apply sheet the tailor wrote for one job; then moves to the Auto-apply tab, where the queue shows each job's status and difficulty score and a Waiting for you card asks one question with Fill and continue and Park it; then walks the Tracker with a follow-up due, Resume Data's achievement atoms, Apply Answers, and the Settings tab's Jev and Auto-apply sections.](docs/demo.gif)
 
-- **High Score** ranks every discovered posting and color-codes the recommendation.
-- Selecting a job opens its **detail card**: reason, strengths, gaps, tailor and apply.
-- **Tailor** writes the résumé, cover letter and a self-contained `apply.md` for that job.
-- **All Jobs** is the same table over everything scraped, seen or not.
-- **Tracker** follows each application from applied through interviewing, offer, rejected.
-- **Auto-apply** is the batch queue the Jev-judged drain works through, one job at a time.
-- **Stats** reports per-run pipeline metrics.
-- **Resume Data** is the select-and-rephrase source of truth, plus the bullet-sizing editor.
-- **Apply Answers** holds the reusable answers the apply helper fills into forms.
-- **Settings** configures the whole pipeline.
-
-*(Shown with representative sample data.)*
+*(Shown with sample data.)*
 
 ---
 
 ## Limitations
 
-- **Windows-first, single-user:** the dashboard, launcher, and setup script are tested on
-  Windows only; Linux runs the pipeline scripts (that is the VM); macOS is untested. There
-  are no accounts and no server: one experience file, one local SQLite tracker.
-- **It costs money to run at full tilt.** Discovery bills per collected posting and scoring
-  bills per token, which is why `--max-keywords`, `--limit` and the spend guards exist. The
-  tailor bills your Cloud project by default; in `pool` mode the paid Vertex lane still takes
-  a call once every free key and model is spent, unless the project ID is blank.
-- **Two passes add model calls of their own:** the AI-writing cleanup is one call per résumé
-  entry per run (switch it off in Settings), and a bullet the gate drops buys one re-ask.
-- **Discovery is one provider deep:** postings come from a Bright Data LinkedIn dataset, and
-  a broken dataset or a schema change stops the front of the pipeline. The provider does not
-  publish its request-size limit, so the 2,000-id exclude cap was measured against the live
-  API and a change on their side can move it.
-- **The auto-apply thresholds are untuned, and it is not a résumé writer:** the per-job
-  Apply flow parks at review; the batch drain submits behind a confidence gate whose
-  thresholds wait for the first live pass (switch **Submit when verified** off to park
-  every job). The tailor can only select and re-phrase facts you wrote yourself. It will
-  never fill a thin experience file with impressive-sounding text.
-- **The grounding gate has known gaps, so read the output before you send it.** It traces
-  distinctive tokens only, so an overstatement made of ordinary lowercase words passes. A
-  bare `30m` reads as thirty million, not thirty minutes. A plural is bridged to its singular
-  for the plain `s` form only (`APIs` from `API`), and two- and three-letter acronyms are its
-  weakest match (`MS` traces to `systems`).
-- **The job detail card clips when the window is short**, worst at 150% interface scale:
-  the strengths list is cut mid-line and does not scroll. Drag the divider or open the
-  description to grow it. The scrolling fix is parked because it changes the card's size contract.
+- **Windows, one user, your own cloud.** The dashboard, launcher and setup script are
+  tested on Windows only. Linux runs the pipeline scripts and the auto-apply browser
+  tests; macOS is untested. There is no server: the cloud half is a VM you create and
+  deploy yourself.
+- **It costs money at volume.** Bright Data bills per collected posting, Gemini per token
+  (the tailor bills your Cloud project by default), and Jev $0.042 per million input
+  tokens for scoring, tailoring, the difficulty check and every auto-apply page.
+- **Auto-apply knows the pages it has met.** LinkedIn Easy Apply jobs are left to you, a
+  CAPTCHA or payment page parks the job, and a required question your answers don't
+  cover pauses the run, then parks. A portal that changes its pages can park jobs that
+  used to go through.
+- **One master password for every job site.** The run signs up and signs in with it, so
+  a fake posting's sign-up page would learn it. Use a password you keep for job
+  applications only.
+- **The scorer's prompts describe one candidate:** early-career, data and engineering
+  roles, authorized to work in the U.S. **About you** covers school status and clearance;
+  for anything else, edit the prompts in `pipeline/score_jobs.py`.
+- **The grounding gate traces distinctive tokens only.** An overstatement in ordinary
+  lowercase words passes, a bare `30m` reads as thirty million, and two- and three-letter
+  acronyms are its weakest match (`MS` traces to `systems`). Read the output before you
+  send it.
 
 ---
 
-## How the résumé engine stays honest
+## How it stays honest
 
-The composition pipeline (in `local/resume_tailor/`) is built around one rule,
-**select and re-phrase, never invent**:
+### The résumé engine
 
-1. **select** (standard tier): pick the best experiences/projects and group their atoms.
-   Selection can only choose from your atoms, so every bullet is grounded by
-   construction.
-2. **rephrase** (deep tier): write one bullet per group, fusing only that group's facts.
-   The gate runs on the draft. A bullet it drops is re-asked once from the same atoms
-   with the unsupported term banned, gated again, and only then dropped for good.
-3. **bullet passes** (standard tier), in order: verb dedupe, an underfull bullet filled
-   from a spare fact in its own entry, a deterministic style gate, and last the AI-writing
-   sweep, which reads the whole entry and repairs the tells a per-bullet check cannot see.
-   The gate runs after every pass; a rewrite that fails it reverts to the last grounded text.
-4. **layout**: bullets are driven to measured printed-line budgets so the résumé
-   fills one page cleanly. Line length is modelled from real Times glyph widths
-   calibrated against the compiled PDF, so the budget holds for a wide-word bullet too
-   (a single-line bullet aims to fill at least 90% of its line, a wrapping bullet's
-   last line 75%; below 50% the engine folds in a spare fact from the same entry).
-   No pass can grow an entry's printed line count.
-5. **compile**: render LaTeX and enforce one page.
+The engine (`local/resume_tailor/`) can only select and re-phrase:
+
+1. **select:** pick the experiences and projects that fit the job and group their atoms.
+   It can only choose from your atoms.
+2. **rephrase:** write one bullet per group from that group's facts alone.
+3. **bullet passes:** verb dedupe, an underfull bullet filled from a spare fact in its
+   own entry, a deterministic style gate, and an AI-writing sweep over each whole entry.
+4. **layout:** fit each bullet to a printed-line budget measured from real Times glyph
+   widths. No pass can grow an entry's line count.
+5. **compile:** render LaTeX and enforce one page.
 
 ```mermaid
 flowchart LR
@@ -351,67 +312,83 @@ flowchart LR
     C --> P["tailored PDF"]
 ```
 
-Three model tiers back those stages: fast, standard and deep. Out of the box only the
-fast tier drops to a cheaper model (`gemini-3.5-flash-lite`), and it carries the small
-calls: entry briefs and verb swaps. Standard and deep both sit on
-`gemini-3.5-flash`. Standard does selection, the bullet passes and the sweep; deep
-writes the first draft and the cover letter. You raise the deep tier yourself when you
-want stronger writing.
+**The gate** (`local/resume_tailor/verify.py`) runs after every pass, with no LLM. Every
+number, proper noun and tool name in a bullet must trace to the atoms it came from. A
+first draft that fails gets one re-ask; after that a bullet goes back to its last
+grounded wording or is dropped, and the run report quotes what it dropped. A job
+description is untrusted text inside the prompt, which is why the check is code.
 
-One setting (Settings → Résumé tailor, *Tailor models: simple or per stage*) points every
-stage at a single model instead. In `pool` mode each tier has its own fallback list,
-so the high-volume fast calls never spend the 20-a-day allowance the deep tier needs.
-The same three tiers map onto Claude models when the tailor provider is set to
-`claude`; see [the user guide](docs/USER_GUIDE.md).
+With Jev on, Jev also picks the skills and each project's lead bullet, and checks every
+rewritten bullet against its atoms. Gemini or Claude still writes every word.
 
-**A deterministic grounding gate enforces it** (`local/resume_tailor/verify.py`).
+**Your own edits get the same check.** `python scripts/atom_audit.py gate --old ...
+--new ...` names every number or proper noun a new version of your experience file
+states that the old one did not.
 
-A job description is untrusted internet text riding inside the generation prompt, so
-the prompt alone is not a guarantee. After generation, with no LLM involved, every
-bullet's distinctive tokens (numbers, proper nouns, tool names) must trace back to the
-atoms that bullet was built from. A bullet that introduces an unseen token is reverted
-to its last grounded version, or dropped.
+Three model tiers back the stages. Out of the box the fast tier (entry briefs, verb
+swaps) is `gemini-3.5-flash-lite`, and the standard tier (selection, the bullet passes)
+and deep tier (first drafts, the cover letter) are `gemini-3.5-flash`. The same tiers map
+onto Claude models when the provider is `claude`; see
+[the user guide](docs/USER_GUIDE.md#one-model-for-every-step-or-one-per-stage).
 
-The run report names every bullet it recovered or lost and quotes the rejected text, so
-a tokenizer false positive and a fabricated fact can be told apart.
+### Auto-apply
 
-The gate's own docstring names its blind spot: an invented claim made of ordinary
-lowercase words has no distinctive token to check.
+```mermaid
+flowchart TD
+    Q[("apply queue")] -->|Start auto-apply run| O["open the job in the run's<br/>own Chrome profile"]
+    O --> J["Jev reads the page;<br/>code fills it from apply.md + answers<br/>and reads every value back"]
+    J -->|a next button| J
+    J -->|a question your answers cannot fill| W["Waiting for you card"]
+    W -->|you answer| J
+    J -->|submit step| G{"submit gate: sending on,<br/>every required field<br/>filled and verified,<br/>Jev sure of the button?"}
+    G -->|yes| S["submitted"]
+    G -->|no| K["parked with the reason;<br/>its tab stays open"]
+    J -->|a page it cannot pass| K
+    W -->|Park it, or no answer in time| K
+    S & K --> RC["apply_record.md + the queue row"]
+```
 
-**The atom layer gets the same guarantee** (`python scripts/atom_audit.py gate --old ...
---new ...`). Editing your yaml edits the ground truth `verify.py` checks against, so a fact
-invented while rewriting it would be grounded by definition. Snapshot the file first, and the
-gate names every number or proper noun the new version states that the old one did not. The
-same script's `census` and `slop` audit that file for facts written twice and for AI-writing
-tells.
+Jev answers questions and writes nothing. Code decides what happens on the page:
 
-The skills section follows the same rule:
+- **One place sends.** The submit step clicks a send control only when
+  `apply_gate.can_submit` passes: **Submit when verified** is on, every required field
+  is filled and read back, and Jev is sure of the button. Every other click reads the
+  control's live words first and refuses one that now reads as a send.
+- **It asks before it guesses.** A required question your answers can't fill, a tie
+  between options, or a sensitive required field pauses the run on a **Waiting for you**
+  card. No answer in 10 minutes (the default) parks the job.
+- **Some boxes are never filled:** a social security number, a birthdate, bank or card
+  details, an ID number.
+- **It stays on the job's own account.** Once a job reaches its application platform
+  (Workday, iCIMS, Greenhouse and the rest), a page that moves it to another company's
+  account or another platform parks it.
+- **The master password goes only over https,** into a password box on the
+  application's own site, and never reaches a log, the record or Jev.
+- **A drafted free-text answer is checked sentence by sentence** against your apply
+  sheet. One unsupported sentence drops the draft, and the field is left for you.
+- **Emailed codes come only from the job's own senders**, and Chrome runs with its
+  sandbox on and takes no downloads.
 
-- A **Methods** line surfaces the concept keywords an ATS screens for ("ETL",
-  "A/B testing"), drawn only from concepts you declared.
-- An **anchored alias map** prints the JD's own spelling of a skill you own
-  ("Postgres" for your "PostgreSQL"). An alias is used only when its canonical is a
-  real skill in your data, so it can never inject a keyword you don't have.
-- An underfull bullet is filled only from unused facts in its own entry.
-
-Layout is **config-driven** (the `tailor:` block in your yaml). Which sections are
-required, and their line budgets, are declared in that data, so the engine works for
-anyone's résumé.
+Switch **Submit when verified** off and every job stops at its submit step. The full park
+policy: [docs/USER_GUIDE.md](docs/USER_GUIDE.md#auto-apply-batch-jev-judged).
 
 ---
 
 ## Tech stack
-Python 3.14 · Gemini (Vertex AI) · Claude Code CLI *(optional second provider)* ·
-Bright Data · pandas · SQLite · LaTeX (MiKTeX) · PySide6/Qt · Google Drive ·
-GCP Compute Engine + cron · pytest · ruff.
+Python 3.14 · PySide6/Qt · Playwright + Chrome · TypeSafe Jev · Gemini (API keys + Vertex
+AI) · Claude Code CLI *(optional)* · Bright Data · pandas · SQLite · LaTeX (MiKTeX) ·
+Windows Credential Manager (keyring) · Google Drive · GCP Compute Engine + cron · pytest ·
+ruff.
 
 ## Tests
 ```bash
-python -m pytest            # unit + regression + Qt UI suite (runs Qt headless by itself)
+python -m pytest -n auto    # unit, regression, Qt UI and auto-apply harness suite (Qt runs headless by itself)
 python tests/smoke_qt.py    # Qt dashboard smoke test
 ```
-The suite sets `QT_QPA_PLATFORM=offscreen` itself, so the same two commands work in
-PowerShell, cmd, and bash. (CI exports it explicitly; see `.github/workflows/ci.yml`.)
+The suite sets `QT_QPA_PLATFORM=offscreen` itself, keeps off the network, and replays
+recorded Jev answers, so it needs no key. The VM-script tests need a working `bash`: they
+skip when there is none, and fail when `bash` is WSL's stub with no distro installed, so
+run the suite from Git Bash on such a machine.
 
 Both pipeline scripts load `.env` when they are imported, so clearing a key in your shell
 does not disarm them and a "no credentials" run bills a real collection. Set
@@ -419,69 +396,22 @@ does not disarm them and a "no credentials" run bills a real collection. Set
 
 ## Project layout
 ```
-Open INployed Dashboard.cmd   double-click to launch the dashboard (no terminal)
-pyproject.toml          the project's only tool config: ruff rule selection + pytest options
-requirements.txt        pinned desktop/dev dependencies (the set CI tests)
-.github/                SECURITY.md + the CI workflow (Windows + Linux matrix)
-pipeline/               headless pipeline scripts, flat so the VM can run them standalone:
-  scraper.py            job discovery (fetches + normalizes postings)
-  score_jobs.py         two-stage Gemini relevance scorer (Jev first when it is on)
-  jev_score.py          Jev's stage 1 and stage 2 scoring, composed in code (optional on the VM)
-  run_labels.py         shared run-label buckets (morning/afternoon/evening/night)
-  keypool.py            Gemini key/credential pool + rotation for the scorer
-  claude_cli.py         optional Claude Code CLI backend (tailor + local scorer)
-  merge_incoming.py     folds locally-added jobs into the master CSV on the VM
-  prune_master.py       retention prune: blanks old jobs' full HTML description (the master's biggest column)
-scripts/run_scraper.sh  VM cron orchestration (discover -> score -> Drive)
-scripts/requirements-vm.txt  pinned VM venv (Python 3.11, pipeline scripts only)
-scripts/setup.ps1       first-run config writer (.env / config.json / master_experience.yaml)
-scripts/atom_audit.py   audits your atoms: repeat + figure census, AI-writing scan, no-new-facts gate
-scripts/ui_screenshots.py  maintainer tool: offscreen dashboard screenshots (synthetic data)
-scripts/build_demo_media.py stamps the four README stills + renders docs/demo.gif
-scripts/build_social_preview.py composes docs/social-preview.png (GitHub's 1280x640 card)
-scripts/build_walkthrough.py  records the captioned MP4 tour of the dashboard (synthetic data)
-local/app.py            PySide6/Qt dashboard entry point (triage / tracker / stats + editors)
-local/open_dashboard.pyw  the launcher's target: resolves the synced master, then opens app.py, no console
-local/qt/               Qt UI package (main_window + its mw_* action modules, jobs_model/tab, settings_tab, vm_panel, ...)
-local/jobsdata.py       toolkit-agnostic data + config logic (load/filter/sort/columns/blocklist)
-local/settings.py       the one schema behind the Settings tab: 87 fields, where each is stored
-local/setup_check.py    what's missing or misconfigured, in plain sentences (the Check setup button)
-local/errmsg.py         the single renderer for user-facing exception text (no home paths, no secrets)
-local/chrome_launch.py  open job/resume links in the configured Chrome profile
-local/vm_schedule.py    pure crontab / pause / run-label generators
-local/vm_sync.py        gcloud ssh/scp argv builders (pause/resume, crontab, config + outbox pushes)
-local/watcher.py        scheduled watcher: reconciles seen-state, pops the dashboard on new high scores
-local/apply_queue.py    the batch auto-apply queue: atomic JSON store + its CLI (list / stats / requeue / ...)
-local/apply_run.py      the Jev-judged auto-apply drain: its CLI (drain / one / login / doctor / probe), Runner, browser launch
-local/apply_job.py      one job's run, one page per turn (+ apply_job_pages / _form / _submit, its step bases)
-local/apply_route.py    where a page goes next: the order a page's read is checked in
-local/apply_gate.py     the submit gate and the live check that refuses a click on a send
-local/apply_page.py     opening and reading a page; apply_account_flow.py: sign-in and sign-up screens
-local/apply_sites.py    which site a URL belongs to; apply_sendwatch.py: what a page sends
-local/apply_record.py   apply_record.md beside the sheet and the drain's report
-local/apply_limits.py   the run's waits and caps; apply_outcome.py: how a job ends; apply_send_words.py: send words
-local/jev.py            the TypeSafe Jev judge client, the deterministic fake, and the replay cache
-local/jev_doubles.py    the judge's test doubles (NoisyJev, DryRun) for the flow matrix and calibration
-local/jev_switch.py     whether Jev runs for scoring, the tailor, the difficulty check and auto-apply
-local/apply_assess.py   the difficulty check: a 1-10 score per queued job, typing nothing
-local/apply_pause.py    park and resume: a run waits for your answer to a question it needs you for
-local/profile_lock.py   one browser at a time on the auto-apply profile
-local/apply_sheet.py    the apply.md parser the fact catalog reads
-local/apply_judge.py    every Jev question and threshold behind the drain (untuned until the live pass)
-local/apply_form.py     page digest: visible fields, buttons and text per frame, for the judge
-local/apply_form_js.py  the page scripts the digest, the filler and the run hand to the browser
-local/apply_facts.py    the fact catalog (apply.md + answer bank) the judge maps fields onto
-local/apply_fill.py     acts on a fill plan: fill / select / radio / listbox / upload, read-back
-local/apply_click.py    the guarded click and the settle wait
-local/apply_inbox.py    emailed verification codes read from Outlook web or Gmail web
-local/apply_answergen.py  flash-lite draft for a free-text question, grounded sentence by sentence by Jev
-local/ats_accounts.py   per-portal account ledger + the master password (Credential Manager)
-local/resume_tailor/    résumé/cover-letter/ATS/prep engine + apply_answers + master_validate
-resume_tailor_files/    master_experience.yaml + LaTeX template (your data is git-ignored)
-tests/                  pytest suite + UI smoke test + the auto-apply flow harness (apply_harness and its three parts)
-docs/                   USER_GUIDE (every feature), ARCHITECTURE (code tour), CHANGELOG, CREDITS
-                        (attribution), the README's media, and the GitHub social card
+Open INployed Dashboard.cmd  double-click to launch the dashboard (no terminal)
+pipeline/            the headless scripts the VM runs, flat so they run standalone:
+                     scraper.py, score_jobs.py + jev_score.py, keypool.py, claude_cli.py,
+                     merge_incoming.py, prune_master.py
+local/app.py         the PySide6/Qt dashboard; its UI is local/qt/
+local/resume_tailor/ the résumé engine: selection, compose, verify.py (the gate), LaTeX
+local/apply_run.py   the auto-apply drain; each apply_*.py holds one concern
+                     (apply_gate.py is the submit gate)
+local/jev.py         the TypeSafe Jev client, its test fake and the replay cache
+local/settings.py    the one schema behind the Settings tab
+scripts/             setup.ps1, run_scraper.sh (VM cron), atom_audit.py, README media builders
+tests/               pytest suite, Qt smoke test, auto-apply harness over local fixture pages
+docs/                USER_GUIDE, ARCHITECTURE, CHANGELOG, CREDITS, README media
+resume_tailor_files/ LaTeX template + an example experience file (yours is git-ignored)
 ```
+Module by module: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## License
 Released under the [MIT License](LICENSE). The LaTeX résumé template is derived

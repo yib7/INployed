@@ -87,7 +87,7 @@ BLOCKED_LEAD = "Auto-apply runs on Jev. "
 _FIXES = {
     "switch": "Turn Jev on in Settings > Jev.",
     "key": "Add the TypeSafe API key in Settings > Jev.",
-    "sdk": "Install typesafe-sdk (pip install -r requirements.txt).",
+    "sdk": r"Install typesafe-sdk (venv\Scripts\python.exe -m pip install -r requirements.txt).",
 }
 # `apply_run.py drain` and `one` refuse a test judge before their Jev gate,
 # and a mode `jev.get` does not build (a hand-edited Auto-apply judge

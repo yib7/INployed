@@ -425,7 +425,8 @@ class TypeSafeJev:
         except ImportError as exc:
             raise JevUnavailable(
                 "The typesafe_sdk package is not installed: run "
-                "`pip install typesafe-sdk` (it is in requirements.txt).") from exc
+                r"`venv\Scripts\python.exe -m pip install -r requirements.txt` in the "
+                "project folder (README Step 2 installs it).") from exc
         self.model = model
         self.last_model: str | None = None
         extra = {"transport": transport} if transport is not None else {}

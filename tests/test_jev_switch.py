@@ -271,7 +271,7 @@ def test_a_find_spec_that_raises_reads_as_no_sdk(monkeypatch, error):
     monkeypatch.setattr(jev_switch.importlib.util, "find_spec", fail)
     assert jev_switch.sdk_installed() is False
     assert jev_switch.apply_blocked(config=ON, env=KEY) == \
-        "Auto-apply runs on Jev. Install typesafe-sdk (pip install -r requirements.txt)."
+        "Auto-apply runs on Jev. Install typesafe-sdk (venv\\Scripts\\python.exe -m pip install -r requirements.txt)."
 
 
 def test_the_sdk_probe_asks_find_spec_for_typesafe_sdk(monkeypatch):
@@ -351,7 +351,7 @@ def test_apply_blocked_names_the_fix_for_each_reason(sdk):
         lead + "Add the TypeSafe API key in Settings > Jev."
     sdk(False)
     assert jev_switch.apply_blocked(config=ON, env=KEY) == \
-        lead + "Install typesafe-sdk (pip install -r requirements.txt)."
+        lead + "Install typesafe-sdk (venv\\Scripts\\python.exe -m pip install -r requirements.txt)."
 
 
 def test_apply_blocked_counts_a_key_saved_in_settings(sdk):
@@ -413,7 +413,7 @@ def test_start_blocked_is_the_jev_gate_for_the_live_judge(sdk):
         lead + "Turn Jev on in Settings > Jev."
     sdk(False)
     assert jev_switch.start_blocked(config=ON, env=KEY) == \
-        lead + "Install typesafe-sdk (pip install -r requirements.txt)."
+        lead + "Install typesafe-sdk (venv\\Scripts\\python.exe -m pip install -r requirements.txt)."
 
 
 _UNKNOWN_JUDGE = ("Unknown Auto-apply judge 'typesaf'; tick \"Show advanced settings\" "
@@ -490,7 +490,7 @@ def test_difficulty_blocked_names_the_key_and_the_sdk_for_the_live_judge(sdk):
     assert jev_switch.difficulty_blocked(config=ON, env={}, saved_key=True) == ""
     sdk(False)
     assert jev_switch.difficulty_blocked(config=ON, env=KEY) == \
-        lead + "Install typesafe-sdk (pip install -r requirements.txt)."
+        lead + "Install typesafe-sdk (venv\\Scripts\\python.exe -m pip install -r requirements.txt)."
 
 
 def test_difficulty_blocked_skips_the_key_and_sdk_for_a_test_judge(sdk):

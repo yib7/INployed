@@ -162,8 +162,8 @@ PROFILE_BUSY = profile_lock.BUSY_LEAD + " Check difficulty once that window clos
 NO_BROWSER = ("The browser did not start ({why}): Google Chrome and the bundled Chromium both "
               "failed to open the auto-apply profile, so the difficulty check stops here.")
 NO_PLAYWRIGHT = ("Playwright is not installed, so the difficulty check cannot open a browser. "
-                 "Run: pip install playwright==1.61.0, then python -m playwright install "
-                 "chromium.")
+                 r"Run: powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -AutoApply "
+                 "in the project folder (README Step 7).")
 QUEUE_LOCKED = ("the queue file stayed locked (the dashboard or a drain was writing it), so "
                 "the result was not saved")
 ACCOUNT_NOTE = "An account step comes first: its questions show once you sign in"

@@ -1473,6 +1473,9 @@ def test_a_check_without_playwright_names_the_install_command(browser_cli, capsy
     assert aa.main(["42"]) == 1
     err = capsys.readouterr().err
     assert aa.NO_PLAYWRIGHT in err and "Traceback" not in err
+    import setup_check      # the one install command README Step 7 and Check setup name
+    assert setup_check.AUTO_APPLY_INSTALL in aa.NO_PLAYWRIGHT
+    assert "pip install" not in aa.NO_PLAYWRIGHT
 
 
 def test_a_worker_without_playwright_marks_a_refusal_so_the_pool_stops(worker, capsys):

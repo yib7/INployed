@@ -2530,6 +2530,66 @@ def test_main_prints_an_errors_type_and_step_never_its_message(hermetic_cli, mon
     assert "RuntimeError" in logged and "synthetic-typed-value" not in logged
 
 
+@pytest.mark.parametrize("verb", [["drain"], ["one", "j1"], ["login"]])
+def test_main_without_playwright_names_the_install_and_exits_2(hermetic_cli, monkeypatch,
+                                                              capsys, verb):
+    """A first-time user who clicks Start before README Step 7 got a bare
+    "ModuleNotFoundError at ..." line. The run now names the one command that
+    installs Playwright and its browser, and exits 2 (not configured). The
+    `one` verb hands its claim back first, as for any browser that never
+    opened."""
+    import setup_check
+    monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev_harness.judge())
+    missing = ModuleNotFoundError("No module named 'playwright'", name="playwright")
+
+    class R:
+        job_started = False
+
+        def __init__(self, **kw):
+            pass
+
+        def announce_park_mode(self):
+            pass
+
+        def load_answers(self):
+            return []
+
+        def drain(self, cap):
+            raise missing
+
+        def run_job(self, entry):
+            raise missing
+    monkeypatch.setattr(apply_run, "Runner", R)
+    monkeypatch.setattr(apply_run.apply_queue, "claim", lambda *a, **k: {"id": "j1"})
+    gave_back = []
+    monkeypatch.setattr(apply_run.apply_queue, "unclaim",
+                        lambda job_id, **k: gave_back.append(job_id))
+
+    def _login(profile=None):
+        raise missing
+    monkeypatch.setattr(apply_run, "login", _login)
+    assert apply_run.main(verb) == 2
+    err = capsys.readouterr().err
+    assert setup_check.PLAYWRIGHT_MISSING in err, err
+    assert "ModuleNotFoundError" not in err
+    assert gave_back == (["j1"] if verb[0] == "one" else [])
+
+
+def test_main_an_unrelated_missing_module_is_still_an_unexpected_error(hermetic_cli,
+                                                                       monkeypatch, capsys):
+    monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev_harness.judge())
+
+    class R:
+        def __init__(self, **kw):
+            pass
+
+        def drain(self, cap):
+            raise ModuleNotFoundError("No module named 'nothere'", name="nothere")
+    monkeypatch.setattr(apply_run, "Runner", R)
+    assert apply_run.main(["drain"]) == 1
+    assert "apply_run: error: ModuleNotFoundError at " in capsys.readouterr().err
+
+
 def test_main_drain_exits_2_when_the_judge_is_unavailable(hermetic_cli, monkeypatch, capsys):
     def _get(mode=""):
         raise jev.JevUnavailable("No TypeSafe API key. Create one at console.typesafe.ai/keys")
@@ -2614,7 +2674,7 @@ def test_doctor_prints_one_line_per_row_and_the_profile(tmp_path, capsys, monkey
     profile.mkdir()
     assert apply_run.doctor(profile) == 2
     out = capsys.readouterr().out
-    assert "MISSING  chromium" in out and "playwright install chromium" in out
+    assert "MISSING  chromium" in out and setup_check.BROWSER_MISSING in out
     assert "ok       browser profile" in out
 
     monkeypatch.setattr(setup_check, "chrome_installed", lambda: True)
@@ -2715,7 +2775,7 @@ def test_the_drain_refuses_while_jev_is_switched_off(hermetic_cli, monkeypatch, 
 
 @pytest.mark.parametrize("missing, fix", [
     ("key", "Add the TypeSafe API key in Settings > Jev."),
-    ("sdk", "Install typesafe-sdk (pip install -r requirements.txt)."),
+    ("sdk", "Install typesafe-sdk (venv\\Scripts\\python.exe -m pip install -r requirements.txt)."),
 ])
 def test_the_drain_names_a_missing_key_or_sdk_in_the_panels_words(
         hermetic_cli, monkeypatch, capsys, missing, fix):

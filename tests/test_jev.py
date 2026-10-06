@@ -629,7 +629,8 @@ def test_typesafe_without_the_sdk_installed_raises_jev_unavailable(monkeypatch):
     monkeypatch.setitem(sys.modules, "typesafe_sdk", None)   # import raises
     with pytest.raises(jev.JevUnavailable) as exc:
         jev.TypeSafeJev(api_key="k-test")
-    assert "pip install typesafe-sdk" in str(exc.value)
+    # README Step 2's own command: a bare `pip` is the global interpreter's
+    assert r"venv\Scripts\python.exe -m pip install -r requirements.txt" in str(exc.value)
 
 
 def test_typesafe_never_calls_the_api_at_construction(monkeypatch):

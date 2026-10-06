@@ -1156,8 +1156,8 @@ def test_showing_the_tab_checks_the_jev_gate_again(qtbot, tmp_path, monkeypatch)
     tabs.show()
     assert not p.start_run_btn.isEnabled()
     assert p.start_run_btn.toolTip() == (
-        "Auto-apply runs on Jev. Install typesafe-sdk (pip install -r requirements.txt).")
-    sdk[0] = True                                # pip install -r requirements.txt
+        "Auto-apply runs on Jev. Install typesafe-sdk (venv\\Scripts\\python.exe -m pip install -r requirements.txt).")
+    sdk[0] = True                                # the SDK got installed
     tabs.setCurrentWidget(p)
     assert p.start_run_btn.isEnabled() and p.jev_notice.isHidden()
     jev_switch.config_path().write_text('{"jev_enabled": false}', encoding="utf-8")
@@ -1488,7 +1488,7 @@ def test_the_check_is_hidden_while_its_switch_is_off(qtbot, tmp_path):
 
 
 def test_the_check_is_off_with_the_reason_while_jev_cannot_run(qtbot, tmp_path):
-    why = ["Auto-apply runs on Jev. Install typesafe-sdk (pip install -r requirements.txt)."]
+    why = ["Auto-apply runs on Jev. Install typesafe-sdk (venv\\Scripts\\python.exe -m pip install -r requirements.txt)."]
     p = _dpanel(qtbot, _qfile(tmp_path), difficulty_blocked=lambda: why[0])
     assert not p.check_difficulty_btn.isHidden()
     assert not p.check_difficulty_btn.isEnabled()

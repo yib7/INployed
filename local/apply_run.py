@@ -968,8 +968,9 @@ def probe(url: str, *, follow_apply: bool = False, judge: Any = None, headed: bo
 def main(argv: list[str] | None = None) -> int:
     """Exit codes: 0 drained (or nothing queued), 1 unexpected error, 2 not
     configured (Jev switched off or unusable, no judge, the job id is not
-    queued, the Apply Answers file is damaged, or another browser holds the
-    auto-apply profile: nothing is claimed then)."""
+    queued, the Apply Answers file is damaged, another browser holds the
+    auto-apply profile, or Playwright is not installed: nothing is claimed
+    then)."""
     ap = argparse.ArgumentParser(prog="apply_run",
                                  description="Jev-judged auto-apply: drain the queue.")
     sub = ap.add_subparsers(dest="verb", required=True)
@@ -1101,16 +1102,28 @@ def main(argv: list[str] | None = None) -> int:
     except profile_lock.ProfileBusy as e:
         print(e, file=sys.stderr)       # another browser opened the profile first
         return 2
+    except ModuleNotFoundError as e:
+        if (e.name or "").split(".")[0] != "playwright":
+            return _unexpected(e)
+        # README Step 7 not run yet: the browser never opened, so nothing was
+        # claimed (`one` handed its job back above). Name the install.
+        import setup_check
+        print(setup_check.PLAYWRIGHT_MISSING, file=sys.stderr)
+        return 2
     except Exception as e:      # noqa: BLE001  (one line, documented exit 1)
-        # the type and the step only: a
-        # Playwright message carries the page's words and the values typed;
-        # the frames go to the log
-        print(f"apply_run: error: {type(e).__name__} at {error_step(e)} (the traceback is in "
-              f"the log)", file=sys.stderr)
-        logging.getLogger("apply_run").error("apply_run: %s at %s; traceback (the message left "
-                                             "out):\n  %s", type(e).__name__, error_step(e),
-                                             "\n  ".join(error_frames(e)))
-        return 1
+        return _unexpected(e)
+
+
+def _unexpected(e: BaseException) -> int:
+    """main's exit 1: the error's type and step on stderr, its frames in the log.
+    The type and the step only: a Playwright message carries the page's words
+    and the values typed."""
+    print(f"apply_run: error: {type(e).__name__} at {error_step(e)} (the traceback is in "
+          f"the log)", file=sys.stderr)
+    logging.getLogger("apply_run").error("apply_run: %s at %s; traceback (the message left "
+                                         "out):\n  %s", type(e).__name__, error_step(e),
+                                         "\n  ".join(error_frames(e)))
+    return 1
 
 
 if __name__ == "__main__":

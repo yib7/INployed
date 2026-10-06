@@ -234,6 +234,24 @@ def claude_version_problems() -> list[str]:
 
 # --- Auto-apply: the Jev judge and the Playwright browser ------------------------
 
+# The one command that installs Playwright (at the version scripts/setup.ps1
+# pins) and its Chromium into the project venv: README Step 7. The runner and
+# the difficulty check print the same command when Playwright is missing.
+AUTO_APPLY_INSTALL = r"powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -AutoApply"
+# README Step 2's install. Step 2 never activates the venv, so a bare `pip`
+# would be the global interpreter's and install where the dashboard never looks.
+VENV_INSTALL = r"venv\Scripts\python.exe -m pip install -r requirements.txt"
+
+SDK_MISSING = ("The typesafe_sdk package is not installed: run "
+               f"`{VENV_INSTALL}` in the project folder (README Step 2 installs it).")
+PLAYWRIGHT_MISSING = ("Playwright is not installed, and auto-apply drives its browser "
+                      f"through it: run `{AUTO_APPLY_INSTALL}` in the project folder "
+                      "(README Step 7).")
+BROWSER_MISSING = ("Playwright is installed, but neither Google Chrome nor Playwright's "
+                   f"Chromium is: install Chrome, or run `{AUTO_APPLY_INSTALL}` in the "
+                   "project folder (README Step 7).")
+
+
 def auto_apply_warnings(has_key: bool, jev_mode: str, sdk_found: bool,
                         playwright_found: bool, chromium_found: bool,
                         jev_enabled: bool = True) -> list[str]:
@@ -263,15 +281,11 @@ def auto_apply_warnings(has_key: bool, jev_mode: str, sdk_found: bool,
                        "Create one at console.typesafe.ai/keys and paste it into "
                        "Settings -> Jev -> TypeSafe API key (Jev judge).")
         if not sdk_found:
-            out.append("The typesafe_sdk package is not installed: run "
-                       "`pip install typesafe-sdk` (it is in requirements.txt).")
+            out.append(SDK_MISSING)
     if not playwright_found:
-        out.append("Playwright is not installed, and auto-apply runs drive a Playwright "
-                   "Chromium: run `pip install playwright==1.61.0`, then "
-                   "`playwright install chromium`.")
+        out.append(PLAYWRIGHT_MISSING)
     elif not chromium_found:
-        out.append("Playwright is installed but its Chromium is not: run "
-                   "`playwright install chromium`.")
+        out.append(BROWSER_MISSING)
     return out
 
 

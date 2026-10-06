@@ -191,24 +191,37 @@ def test_auto_apply_warnings_missing_key_names_the_console_and_the_settings_row(
     assert "Settings -> Jev -> TypeSafe API key (Jev judge)" in out[0]
 
 
-def test_auto_apply_warnings_missing_sdk_says_pip_install():
+_VENV_INSTALL = r"venv\Scripts\python.exe -m pip install -r requirements.txt"
+_AUTO_APPLY_INSTALL = r"powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -AutoApply"
+
+
+def test_auto_apply_warnings_missing_sdk_names_the_venv_install():
+    """README Step 2 builds a venv it never activates, so a bare `pip` is the
+    global interpreter's and installs where the dashboard never looks. The
+    fix names Step 2's own command."""
     out = _aa(sdk_found=False)
-    assert len(out) == 1
-    assert "pip install typesafe-sdk" in out[0]
+    assert out == [setup_check.SDK_MISSING]
+    assert _VENV_INSTALL in out[0] and "README Step 2" in out[0]
 
 
-def test_auto_apply_warnings_missing_playwright_says_pip_and_install_chromium():
+def test_auto_apply_warnings_missing_playwright_names_the_setup_switch():
+    """One command installs both halves into the venv (README Step 7), with
+    the Playwright pin the script holds."""
     out = _aa(playwright_found=False, chromium_found=False)
     assert len(out) == 1, "no separate Chromium row when playwright itself is missing"
-    assert "pip install playwright" in out[0]
-    assert "playwright install chromium" in out[0]
+    assert out == [setup_check.PLAYWRIGHT_MISSING]
+    assert setup_check.AUTO_APPLY_INSTALL == _AUTO_APPLY_INSTALL
+    assert _AUTO_APPLY_INSTALL in out[0] and "README Step 7" in out[0]
+    assert "pip install" not in out[0]
 
 
-def test_auto_apply_warnings_missing_chromium_alone():
+def test_auto_apply_warnings_missing_browser_alone_names_chrome_and_the_switch():
+    """Playwright present, no browser: the run takes Google Chrome first and
+    the bundled Chromium after, so either fixes it."""
     out = _aa(chromium_found=False)
-    assert len(out) == 1
-    assert "playwright install chromium" in out[0]
-    assert "pip install playwright" not in out[0]
+    assert out == [setup_check.BROWSER_MISSING]
+    assert "Google Chrome" in out[0] and _AUTO_APPLY_INSTALL in out[0]
+    assert out[0] != setup_check.PLAYWRIGHT_MISSING
 
 
 def test_auto_apply_warnings_everything_missing_is_three_rows():
@@ -229,7 +242,7 @@ def test_auto_apply_warnings_name_the_drains_refusal_of_a_test_judge(mode):
     assert _aa(jev_mode=mode) == [_FIXTURE_ONLY]
     assert _aa(jev_mode=mode, has_key=False, sdk_found=False) == [_FIXTURE_ONLY]
     out = _aa(jev_mode=mode, playwright_found=False, chromium_found=False)
-    assert len(out) == 2 and out[0] == _FIXTURE_ONLY and "pip install playwright" in out[1]
+    assert out == [_FIXTURE_ONLY, setup_check.PLAYWRIGHT_MISSING]
 
 
 def test_auto_apply_warnings_never_refuse_the_live_judge_as_fixture_only():
@@ -264,7 +277,7 @@ def test_auto_apply_warnings_name_the_drains_refusal_of_an_unknown_judge():
     assert _aa(jev_mode="typesaf", has_key=False, sdk_found=False) == [_UNKNOWN_JUDGE]
     assert _aa(jev_mode="typesaf", jev_enabled=False) == [_UNKNOWN_JUDGE, _JEV_OFF]
     out = _aa(jev_mode="typesaf", playwright_found=False, chromium_found=False)
-    assert len(out) == 2 and out[0] == _UNKNOWN_JUDGE and "pip install playwright" in out[1]
+    assert out == [_UNKNOWN_JUDGE, setup_check.PLAYWRIGHT_MISSING]
 
 
 # --- chromium_installed: playwright importable AND a chromium-* build dir ---------

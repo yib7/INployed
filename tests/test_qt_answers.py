@@ -1378,7 +1378,7 @@ def test_test_answers_is_off_with_the_start_buttons_sentence_while_jev_is_off(
 
 @pytest.mark.parametrize("missing, fix", [
     ("key", "Add the TypeSafe API key in Settings > Jev."),
-    ("sdk", "Install typesafe-sdk (pip install -r requirements.txt)."),
+    ("sdk", "Install typesafe-sdk (venv\\Scripts\\python.exe -m pip install -r requirements.txt)."),
 ])
 def test_test_answers_names_a_missing_key_or_sdk_in_the_start_buttons_words(
         qtbot, tmp_path, monkeypatch, missing, fix):

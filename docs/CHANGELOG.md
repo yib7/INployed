@@ -124,7 +124,7 @@ that imported their internals has to follow them.
   tailored letter warned that its background was truncated, and the Ask AI chat was cut
   mid-note, so it never saw the last projects, the leadership entries or the skills list,
   with no warning at all. Both caps are now 80,000 characters.
-- **`interview_notes` on an atom really stays off the resume now.** The header comment and
+- **`interview_notes` on an atom stays off the résumé now.** The header comment and
   the atom audit called it inert, but every bullet prompt received the whole atom, notes
   included, and the grounding gate accepted facts that lived only there. A note could end
   up in a bullet. The bullet prompts and the grounding gate now skip `interview_notes`;
@@ -172,6 +172,8 @@ that imported their internals has to follow them.
   `seen.db` when it closes.
 - **`seen.db` keeps merged rows.** An import now checkpoints the database and backs it up, so
   rows it merged survive a lost `-wal` file.
+- **Two stale doc facts.** The user guide lists five Jev tailor steps, with no lead pick, and
+  `docs/CREDITS.md` says the cover-letter style pass is on by default.
 
 ### Removed
 

@@ -35,10 +35,12 @@ INK = (240, 246, 252)
 MUTED = (139, 148, 158)
 ACCENT = (88, 166, 255)    # the dashboard's link/primary blue
 
-TAGLINE = "Job discovery & résumé tailoring, end to end."
+# The README's own tagline, so a link unfurl and the page say the same thing.
+TAGLINE = "Find, rank, tailor and apply to jobs from one desktop app."
 BULLETS = [
-    "Scheduled cloud discovery → two-stage Gemini scorer → desktop triage",
+    "Scheduled cloud discovery → two-stage scorer → desktop triage",
     "One-click LaTeX résumé built only from facts you wrote yourself",
+    "Auto-apply in Chrome that sends only through a code-owned submit gate",
 ]
 FOOTER = "github.com/yib7/INployed"
 

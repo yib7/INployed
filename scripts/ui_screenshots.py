@@ -44,24 +44,91 @@ try:
     dotenv.load_dotenv = lambda *a, **k: False
 except ImportError:
     pass
+# Keys a maintainer's shell may export. Nothing here calls a service, but a key
+# in the environment would read as "set" on the Settings tab and open gates the
+# frames should show from the synthetic files alone.
+for _leaked in list(os.environ):
+    if _leaked.startswith("AUTO_APPLY_") or _leaked in (
+            "GEMINI_API_KEYS", "GEMINI_API_KEY", "BRIGHT_DATA_API_TOKEN", "ANTHROPIC_API_KEY",
+            "RESUME_TAILOR_GEMINI_API_KEY", "GOOGLE_CLOUD_PROJECT", "GOOGLE_API_KEY",
+            "TYPESAFE_API_KEY", "TYPESAFE_BASE_URL", "APPLY_QUEUE_PATH",
+            "PLAYWRIGHT_BROWSERS_PATH"):
+        os.environ.pop(_leaked, None)
 os.environ["RESUME_TAILOR_CANDIDATE"] = "Jane_Doe"
 os.environ["RESUME_TAILOR_OUTPUT"] = r"C:\Users\jane\Downloads\Generated_Resumes"
+
+# The app keeps seen.db, the apply queue's default path and the pause folder
+# under %LOCALAPPDATA%. A capture writes a synthetic pause request there, and the
+# dashboard the maintainer has open reads the real folder, so every run gets its
+# own app-data folder: INPLOYED_MEDIA_APPDATA when set, else a fresh temp dir.
+APPDATA = Path(os.environ.get("INPLOYED_MEDIA_APPDATA")
+               or tempfile.mkdtemp(prefix="inployed_media_appdata_"))
+APPDATA.mkdir(parents=True, exist_ok=True)
+os.environ["LOCALAPPDATA"] = str(APPDATA)
 
 sys.path.insert(0, str(REPO / "local"))
 
 import pandas as pd  # noqa: E402
 from PySide6 import QtWidgets  # noqa: E402
 
+import apply_assess  # noqa: E402
+import apply_pause  # noqa: E402
 import apply_queue  # noqa: E402
+import ats_accounts  # noqa: E402
 import jobsdata  # noqa: E402
 import resume_md  # noqa: E402
 import settings as _settings  # noqa: E402
+import watcher  # noqa: E402
 from resume_tailor import apply_answers as _apply_answers  # noqa: E402
 from resume_tailor import config as _rt_config  # noqa: E402
+from qt import apply_queue_panel as _aqp  # noqa: E402
 from qt import theme  # noqa: E402
 from qt.jobs_tab import JobsTab  # noqa: E402
 from qt.main_window import TAB_TITLES, MainWindow  # noqa: E402
 from qt.settings_tab import SECTION_ORDER  # noqa: E402
+
+
+class _FakeKeyring:
+    """Stands in for the Windows Credential Manager: the Auto-apply tab reads
+    whether a master password is stored, and a frame must never record the
+    maintainer's own answer to that. It reports one stored and holds no value."""
+
+    def get_password(self, service, user):
+        return "synthetic"
+
+    def set_password(self, service, user, password):
+        pass
+
+
+def _isolate_window_seams() -> None:
+    """Point every outward-facing seam the window reads at a fixed, local answer.
+
+    Google Drive detection says there is no Drive, so no frame shows the
+    maintainer's drive or its offline banner. The keyring is `_FakeKeyring`. The
+    Auto-apply tab's gates read open, as on an install with Jev set up, so Start
+    and Check difficulty show the way they do in use; and every button that would
+    launch a console (a run, a difficulty check, a sign-in) is a no-op, so no
+    click in a tour could reach the Jev API or a job site.
+    """
+    watcher.detect_gdrive_root = lambda: None
+    watcher.FALLBACK_PATHS = []
+    ats_accounts._keyring = lambda: _FakeKeyring()
+    _aqp._default_jev_blocked = lambda: ""
+    _aqp._default_difficulty_blocked = lambda: ""
+    _aqp._default_difficulty_hidden = lambda: False
+    _aqp._default_profile_busy = lambda: False
+    _aqp._default_alert = lambda _w: None
+    _aqp._spawn_kickoff = lambda: None
+    _aqp._spawn_login = lambda: None
+    _aqp._spawn_check = lambda _ids: None
+    _aqp._spawn_console = lambda _argv: None
+    from qt import main_window as _mw
+    from qt import mw_pipeline as _mwp
+    _mw.find_google_drive_app = lambda: None
+    _mwp.gdrive_root_dir = lambda _paths: APPDATA
+
+
+_isolate_window_seams()
 
 OUT_DIR = REPO / ".screenshots"
 SCALES = (0.75, 1.0, 1.5)
@@ -193,29 +260,99 @@ def _status_rows() -> list[dict]:
     ]
 
 
+def _iso_hours_ago(hours: float) -> str:
+    return (datetime.now() - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _difficulty(score: int | None, *, failed_why: str = "",
+                reasons: tuple[str, ...] = ()) -> dict:
+    """A difficulty-check result in the shape `apply_assess` stores, read an
+    hour ago (so the cell prints no age); `score=None` with `failed_why` is a
+    check that read nothing."""
+    d: dict = {}
+    if score is not None:
+        d.update({"score": score, "band": apply_assess.band_for(score),
+                  "checked_at": _iso_hours_ago(1), "system": "greenhouse",
+                  "reasons": list(reasons), "questions": [], "jev_usd": 0.004})
+    if failed_why:
+        d.update({"last_failed_at": _iso_hours_ago(3), "last_failed_why": failed_why})
+    return d
+
+
+# The job the run is on when it stops to ask (`_write_demo_pause`), and the
+# question it asks. One question with two options, so the Waiting for you card
+# draws them as radio buttons and leaves the queue room on screen.
+PAUSED_JOB = {"job_posting_id": "q3", "company": "Vectorly", "title": "Applied Scientist"}
+PAUSE_QUESTION = "Are you able to work on-site in Austin, TX three days a week?"
+
+# The queue: jobs from the same fictional companies as the High Score tab, one
+# row per state a run leaves, each with a difficulty result the way Check
+# difficulty leaves them (easy green, middling amber, hard red, one failed read).
+_QUEUE = [
+    # jid, company, title, status, attempts, notes, missing, difficulty
+    ("q1", "Signalcraft AI", "LLM Application Engineer", "queued", 0, "", [],
+     _difficulty(2, reasons=("Greenhouse form; your answers cover every question",))),
+    ("q2", "Helios Data Labs", "Machine Learning Engineer", "queued", 0, "", [],
+     _difficulty(5, reasons=("Two screening questions your answers do not cover",))),
+    ("q3", "Vectorly", "Applied Scientist", "in_progress", 1, "", [],
+     _difficulty(3, reasons=("One question about on-site days",))),
+    ("q4", "Copperleaf Systems", "Data Platform Engineer", "tailoring", 0, "", [], {}),
+    ("q5", "Umbra Analytics", "ML Engineer, Ranking", "queued", 0, "", [],
+     _difficulty(None, failed_why="the posting page did not load")),
+    ("q6", "Larkspur Bio", "NLP Engineer", "needs_human", 1,
+     "required field without an answer: Notice period",
+     [{"question": "Notice period", "context": "", "suggestion": "", "type": "choice",
+       "options": ["Immediately", "2 weeks", "1 month", "More"]}],
+     _difficulty(4, reasons=("One question your answers do not cover",))),
+    ("q7", "Acme Analytics", "Senior Data Engineer", "submitted", 1, "", [],
+     _difficulty(1)),
+    ("q8", "Globex", "ML Platform Engineer", "submitted", 1, "", [], _difficulty(2)),
+    ("q9", "Aurora Insights", "Decision Scientist", "failed", 2,
+     "error or dead page; nothing was sent: Re-queue once the site answers again", [],
+     _difficulty(8, reasons=("Workday asks you to create an account first",))),
+]
+
+
 def _queue_jobs() -> list[dict]:
-    """One auto-apply queue entry per status."""
+    """The auto-apply queue: one entry per row of `_QUEUE`."""
     entries = []
-    statuses = ("queued", "tailoring", "in_progress", "ready_to_submit",
-                "needs_human", "submitted", "failed")
-    for i, status in enumerate(statuses):
-        jid = f"q{i + 1}"
-        # new_entry rejects nothing in STATUSES; "tailoring" etc. all valid.
+    for i, (jid, company, title, status, attempts, notes, missing, diff) in enumerate(_QUEUE):
+        slug = company.lower().replace(" ", "")
         e = apply_queue.new_entry(
-            jid, company=f"Queue Co {i + 1}", title=f"{status.replace('_', ' ').title()} Role",
-            apply_url=f"https://boards.greenhouse.io/queueco{i + 1}/jobs/{jid}",
-            status="queued")
-        e["status"] = status
-        e["attempts"] = i % 3
-        e["notes"] = f"synthetic {status} entry"
-        if status == "needs_human":
-            e["missing_answers"] = ["desired_salary", "notice_period"]
-        # Relative, like every other fixture date: a queue whose rows are all
-        # stamped with one long-past day reads as an abandoned run.
-        e["updated_at"] = (datetime.now() - timedelta(hours=2 + i)
-                           ).strftime("%Y-%m-%dT%H:%M:%S")
+            jid, company=company, title=title,
+            apply_url=f"https://boards.greenhouse.io/{slug}/jobs/{jid}", status="queued")
+        e.update({"status": status, "attempts": attempts, "notes": notes,
+                  "missing_answers": missing,
+                  # Relative, like every other fixture date: a queue whose rows are
+                  # all stamped with one long-past day reads as an abandoned run.
+                  "updated_at": _iso_hours_ago(1 + i)})
+        if diff:
+            e["difficulty"] = diff
+        e["artifacts"]["folder"] = str(Path(SHOWN_OUTPUT_ROOT) / company / title)
         entries.append(e)
     return entries
+
+
+def _write_demo_pause() -> None:
+    """The request a paused run writes, through the run's own writer, into this
+    process's redirected pause folder (see `APPDATA`). This process is the
+    "run" it names, so the card counts it as live while the capture lasts."""
+    _clear_demo_pauses()
+    apply_pause.write_request(
+        PAUSED_JOB, f"https://boards.greenhouse.io/vectorly/jobs/{PAUSED_JOB['job_posting_id']}",
+        f"required field without an answer: {PAUSE_QUESTION}",
+        [{"key": "1", "field_id": "q_onsite", "label": PAUSE_QUESTION,
+          "help": "", "placeholder": "", "type": "text", "field_type": "radio",
+          "widget": apply_pause.W_CHOICE, "options": ["Yes", "No"], "required": True,
+          "sensitive": False}],
+        pause_id="demo-pause")
+
+
+def _clear_demo_pauses() -> None:
+    folder = apply_pause.pause_dir()
+    if folder.is_dir():
+        for p in folder.glob("*.json"):
+            p.unlink()
 
 
 def _write_run_stats(path: Path) -> None:
@@ -314,6 +451,7 @@ def _sanitize_personal_tabs(tmp_dir: Path) -> None:
         "BRIGHT_DATA_API_TOKEN=synthetic-placeholder-token\n"
         "BRIGHT_DATA_DATASET_ID=gd_exampledataset0001\n"
         "GEMINI_API_KEYS=synthetic-placeholder-key\n"
+        "TYPESAFE_API_KEY=synthetic-placeholder-key\n"
         "GOOGLE_CLOUD_PROJECT=example-project\n"
         "RESUME_TAILOR_CANDIDATE=Jane_Doe\n"
         "RESUME_TAILOR_OUTPUT=C:/Users/jane/Downloads/Generated_Resumes\n",
@@ -463,6 +601,12 @@ def _freeze_auto_reload(win: MainWindow) -> None:
     win._poll_for_changes = lambda *a, **k: None
     win._on_fs_change = lambda *a, **k: None
     win._rearm_watcher = lambda *a, **k: None
+    # The Auto-apply tab polls its queue file and the pause folder on its own
+    # timer; a tour sets both itself, so the poll would only race it.
+    panel = getattr(win, "apply_queue_panel", None)
+    if panel is not None:
+        panel._poll.stop()
+        panel._debounce.stop()
     watcher = getattr(win, "_fs_watcher", None)
     if watcher is not None:
         if watcher.files():
@@ -486,8 +630,15 @@ def _select_row0(win: MainWindow) -> None:
     for tab in (win.high_tab, win.all_tab, win.tracker_tab):
         if isinstance(tab, JobsTab) and tab.table.model().rowCount() > 0:
             tab.table.selectRow(0)
-    if win.apply_queue_panel.table.rowCount() > 0:
-        win.apply_queue_panel.table.selectRow(0)
+    _select_queue_job(win, PAUSED_JOB["job_posting_id"])
+
+
+def _select_queue_job(win: MainWindow, job_id: str) -> None:
+    """Select the queue row of `job_id` (row 0 when it is not queued)."""
+    panel = win.apply_queue_panel
+    rows = [r for r in range(panel.table.rowCount()) if panel._row_job_id(r) == job_id]
+    if rows or panel.table.rowCount() > 0:
+        panel.table.selectRow(rows[0] if rows else 0)
 
 
 def _capture_all(app, win: MainWindow, prefix: str, tag: str, scales) -> int:
@@ -560,12 +711,16 @@ def main() -> int:
     win._refresh_stats()
     _write_queue(queue_path, _queue_jobs())
     win.apply_queue_panel.refresh()
+    _write_demo_pause()
+    win.apply_queue_panel._check_pauses()
     _select_row0(win)
     _expand_settings_section(win)
     app.processEvents()
     written += _capture_all(app, win, prefix, "", SCALES)
 
-    print(f"{written} PNG(s) written to {OUT_DIR} (prefix '{prefix}').")
+    _clear_demo_pauses()
+    print(f"{written} PNG(s) written to {OUT_DIR} (prefix '{prefix}'); "
+          f"app data in {APPDATA}.")
     return 0
 
 

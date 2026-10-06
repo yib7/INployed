@@ -2,8 +2,8 @@
 
 Two products, both from fixtures, neither touching the network or real data:
 
-* **The four README stills** (`docs/dashboard.png`, `docs/tracker.png`,
-  `docs/resume-data.png`, `docs/settings.png`) are stamped from the PNGs that
+* **The four README stills** (`docs/dashboard.png`, `docs/auto-apply.png`,
+  `docs/resume-data.png`, `docs/tracker.png`) are stamped from the PNGs that
   `scripts/ui_screenshots.py` writes into the gitignored `.screenshots/`. Run
 
       python scripts/ui_screenshots.py p8
@@ -11,16 +11,18 @@ Two products, both from fixtures, neither touching the network or real data:
   first, then pass the same prefix here.
 
 * **`docs/demo.gif`** is rendered live, from the storyboard in
-  `scripts/build_walkthrough.py` -- the same scene list the MP4 uses, re-timed
+  `scripts/build_walkthrough.py`: the same scene list the MP4 uses, re-timed
   for a loop. It changes state inside a screen (row selection, a live search
-  filter) instead of cutting between eight static tabs, so it reads as motion.
+  filter, a question arriving and being answered), so it reads as motion.
 
     python scripts/build_demo_media.py p8
 
 Every frame carries the "representative sample data" watermark and the fixtures
-are fictional (Acme / Globex / Initech / Hooli / Vandelay, run label
-"synthetic", Jane Doe's example résumé). Keep it that way: no grab of this
-dashboard may ever show a real posting or the author's own data.
+are fictional (Acme / Globex / Initech / Hooli / Vectorly and the rest, run
+label "synthetic", Jane Doe's example résumé, a placeholder key). Both run with
+their own app-data folder (`ui_screenshots.APPDATA`); point it at a scratch
+folder with INPLOYED_MEDIA_APPDATA to keep what a run wrote. Keep it that way:
+no grab of this dashboard may ever show a real posting or the author's own data.
 """
 
 from __future__ import annotations
@@ -45,12 +47,12 @@ WATERMARK = "representative sample data"
 STILLS = [
     ("high_score", "High Score - LLM-ranked postings with a score breakdown",
      "dashboard.png"),
-    ("tracker", "Tracker - application statuses + follow-up nudges",
-     "tracker.png"),
+    ("auto_apply", "Auto-apply - the queue with difficulty scores, and a question for you",
+     "auto-apply.png"),
     ("resume_data", "Resume Data - the atoms every bullet must trace back to",
      "resume-data.png"),
-    ("settings", "Settings - every key, path and option, no file editing",
-     "settings.png"),
+    ("tracker", "Tracker - application statuses + follow-up nudges",
+     "tracker.png"),
 ]
 
 # GIF timing. Every frame keeps the RELATIVE length the storyboard gave it, taken

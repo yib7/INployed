@@ -2144,8 +2144,6 @@ First public release: an end-to-end job-discovery and résumé-tailoring pipelin
 - Cross-platform dashboard + engine (Windows / macOS / Linux); the setup scripts and VM
   automation are Windows-first.
 
-[1.15.0]: https://github.com/yib7/INployed/compare/v1.14.0...v1.15.0
-[1.14.0]: https://github.com/yib7/INployed/compare/v1.13.0...v1.14.0
 [1.13.0]: https://github.com/yib7/INployed/compare/v1.12.1...v1.13.0
 [1.12.1]: https://github.com/yib7/INployed/compare/v1.12.0...v1.12.1
 [1.12.0]: https://github.com/yib7/INployed/compare/v1.11.0...v1.12.0

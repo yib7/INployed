@@ -1,9 +1,10 @@
 """Maintainer tool: render the README walkthrough video from the real dashboard.
 
-Same idea as `scripts/ui_screenshots.py` -- it builds the real MainWindow
-offscreen against that module's synthetic fixtures -- but instead of one grab per
-tab it drives a scripted tour (select a job, read its score breakdown, filter,
-walk the tracker, look at the run metrics) and encodes the result as an MP4.
+It builds the real MainWindow against the synthetic fixtures in
+`scripts/ui_screenshots.py`, drives a scripted tour (select a job, read its score
+breakdown, filter, open the apply sheet, answer a paused auto-apply question, walk
+the tracker and the data behind every bullet, look at the Jev and Auto-apply
+settings) and encodes it as an MP4.
 
     python scripts/build_walkthrough.py
 
@@ -17,10 +18,12 @@ Requires `imageio-ffmpeg` (maintainer-only, not in requirements.txt):
     pip install imageio-ffmpeg
 
 Nothing here touches the network, the user's data, or any paid API. The tour DOES
-show the tailoring step, because it is the middle of the primary user journey, but
-it shows a pre-built tailored folder (`ui_screenshots._tailored_folder`) rather
-than a live run: a real run costs API credits and would put real personal data on
-screen.
+show the tailoring step and an auto-apply pause, because both are on the primary
+user journey, but from fixtures: a pre-built tailored folder
+(`ui_screenshots._tailored_folder`) and a pause request written by the run's own
+writer into this process's private app-data folder (`ui_screenshots.APPDATA`). A
+real run costs API credits, sends applications and would put personal data on
+screen; the window's run, check and sign-in buttons are no-ops here.
 """
 
 from __future__ import annotations
@@ -99,17 +102,39 @@ def _scroll(widget, steps: int) -> None:
     bar.setValue(bar.value() + steps * max(1, bar.singleStep()))
 
 
-def _scroll_frac(widget, frac: float) -> None:
-    """Drive a scroll bar to `frac` of its own range.
+def _show_pause(win) -> None:
+    """The run on the selected job stops to ask: its request lands in the pause
+    folder and the tab reads it, as its poll would."""
+    uis._select_queue_job(win, uis.PAUSED_JOB["job_posting_id"])
+    uis._write_demo_pause()
+    win.apply_queue_panel._check_pauses()
 
-    Fixed step counts are how a scroll beat goes dead: `scripts/build_demo_media`
-    quantizes to a shared palette and Pillow then MERGES two identical frames into
-    one long hold, so a step past the bottom silently turns a beat into a pause.
-    A fraction of the live range always moves while the range is non-zero.
+
+def _pause_row(win) -> dict:
+    return win.apply_queue_panel.pause_card.rows[0]
+
+
+def _settings_jev_and_auto_apply(win) -> None:
+    """Unfold Jev and Auto-apply, fold every other section (Credentials and
+    Connection & paths stay folded), and start at the top."""
+    for name, sec in win.settings_tab._section_widgets.items():
+        sec.set_collapsed(name not in ("Jev", "Auto-apply"))
+    win.settings_tab._scroll.verticalScrollBar().setValue(0)
+
+
+def _scroll_to_section(win, name: str, below: int = 0) -> None:
+    """Scroll Settings so section `name` starts at the top, then `below` px more.
+
+    Clamped to the bar's range, so a beat asked to go past the bottom lands on
+    the frame before it. `scripts/build_demo_media` quantizes to a shared palette
+    and Pillow MERGES two identical frames into one long hold, which turns such a
+    beat into a pause: check the GIF for repeated frames after a storyboard edit.
     """
-    bar = widget.verticalScrollBar()
-    lo, hi = bar.minimum(), bar.maximum()
-    bar.setValue(round(lo + frac * (hi - lo)))
+    scroll = win.settings_tab._scroll
+    sec = win.settings_tab._section_widgets[name]
+    y = sec.mapTo(scroll.widget(), sec.rect().topLeft()).y()
+    bar = scroll.verticalScrollBar()
+    bar.setValue(min(bar.maximum(), max(0, y - 8 + below)))
 
 
 TYPED_QUERY = "engineer"
@@ -130,12 +155,11 @@ def scenes(win):
     rows = "Every row carries the model's reason, strengths and gaps"
     sheet = "apply.md - one self-contained sheet, every bullet traced to your data"
     atoms = "Resume Data - the atoms every generated bullet must trace back to"
-    queue = "Auto-apply queue - batch tailoring that stops short of submitting"
-    runs = "Stats - per-run counts, token spend and rescore outcomes"
-    every = "All Jobs - every posting collected, scored or not"
+    queue = "Auto-apply - each queued job's status and difficulty score, 1 to 10"
+    waiting = "Waiting for you - a question your saved answers cannot fill"
     statuses = "Statuses run applied through interviewing, offer and rejected"
     answers = "Apply Answers - reusable responses for application forms"
-    knobs = "Settings - keys, paths, schedule and engine options, no file editing"
+    knobs = "Settings - Jev and Auto-apply, every option in one form"
     return [
         ("High Score (Unseen)", lambda: _pick(win.high_tab, 0),
          "High Score - what a scored run leaves you to actually look at", 4.0),
@@ -164,23 +188,24 @@ def scenes(win):
         ("High Score (Unseen)", lambda: _scroll(win.apply_panel._sheet, 5), sheet, 1.6),
         ("High Score (Unseen)", lambda: _scroll(win.apply_panel._sheet, 5), sheet, 1.6),
         ("High Score (Unseen)", lambda: _scroll(win.apply_panel._sheet, 5),
-         "The browser agent fills a form from this, and stops before Submit", 3.0),
-        ("All Jobs", lambda: (win._close_apply_panel(), _pick(win.all_tab, 0)),
-         every, 3.0),
-        ("All Jobs", lambda: _pick(win.all_tab, 4), every, 1.8),
-        ("All Jobs", lambda: _pick(win.all_tab, 9), every, 2.2),
+         "Auto-apply fills each form from this sheet and your saved answers", 3.0),
+        # Queue it, then the run: the difficulty check's 1-10 per job, and a
+        # question the run stops to ask, answered on the card.
+        ("Auto-apply", lambda: (win._close_apply_panel(),
+                                uis._select_queue_job(win, "q1")), queue, 3.0),
+        ("Auto-apply", lambda: uis._select_queue_job(win, "q2"), queue, 1.6),
+        ("Auto-apply", lambda: uis._select_queue_job(win, "q9"), queue, 2.0),
+        ("Auto-apply", lambda: _show_pause(win), waiting, 3.4),
+        ("Auto-apply", lambda: win.apply_queue_panel.pause_card.set_value("1", "Yes"),
+         waiting, 1.6),
+        ("Auto-apply", lambda: _pause_row(win)["save"].setChecked(True), waiting, 1.6),
+        ("Auto-apply", lambda: win.apply_queue_panel.pause_card.fill_btn.click(),
+         "Fill and continue hands your answer to the run, which goes on", 2.8),
         ("Tracker", lambda: _pick(win.tracker_tab, 0),
          "Tracker - application status, with follow-ups flagged when due", 4.2),
         ("Tracker", lambda: _pick(win.tracker_tab, 2), statuses, 1.8),
         ("Tracker", lambda: _pick(win.tracker_tab, 3), statuses, 1.8),
         ("Tracker", lambda: _pick(win.tracker_tab, 4), statuses, 2.4),
-        ("Auto-apply", lambda: None, queue, 3.0),
-        ("Auto-apply", lambda: _pick(win.apply_queue_panel, 3), queue, 1.8),
-        ("Auto-apply", lambda: _pick(win.apply_queue_panel, 4), queue, 1.8),
-        ("Auto-apply", lambda: _pick(win.apply_queue_panel, 6), queue, 2.2),
-        ("Stats", lambda: None, runs, 3.4),
-        ("Stats", lambda: _pick(win.stats_tab, 3), runs, 1.8),
-        ("Stats", lambda: _pick(win.stats_tab, 6), runs, 2.2),
         ("Resume Data", lambda: None, atoms, 3.4),
         ("Resume Data", lambda: _scroll(win.resume_data_tab.scroll, 6), atoms, 1.6),
         ("Resume Data", lambda: _scroll(win.resume_data_tab.scroll, 6), atoms, 1.6),
@@ -190,13 +215,13 @@ def scenes(win):
         # scroll beat there produced a byte-identical frame and Pillow folded it
         # into the hold before it -- a pause dressed up as motion.
         ("Apply Answers", lambda: None, answers, 3.4),
-        # Scrolling Settings is what shows that the ten sections are all there;
-        # Credentials and Connection & paths stay FOLDED throughout (only Engine
-        # is expanded), so no secret field is ever on screen.
-        ("Settings", lambda: None, knobs, 3.2),
-        ("Settings", lambda: _scroll_frac(win.settings_tab._scroll, 1 / 3), knobs, 1.6),
-        ("Settings", lambda: _scroll_frac(win.settings_tab._scroll, 2 / 3), knobs, 1.6),
-        ("Settings", lambda: _scroll_frac(win.settings_tab._scroll, 1.0), knobs, 2.8),
+        # Jev (the judge auto-apply and the difficulty check run on) and
+        # Auto-apply unfolded, everything else folded: Credentials and
+        # Connection & paths stay FOLDED throughout. Jev's own key row shows the
+        # synthetic .env's placeholder, masked.
+        ("Settings", lambda: _settings_jev_and_auto_apply(win), knobs, 3.4),
+        ("Settings", lambda: _scroll_to_section(win, "Auto-apply"), knobs, 2.4),
+        ("Settings", lambda: _scroll_to_section(win, "Auto-apply", 360), knobs, 2.8),
     ]
 
 
@@ -242,6 +267,7 @@ def render_scenes(tmp_dir: Path) -> tuple[list[Image.Image], list[float], list[s
     # master_experience.yaml, and a .env full of placeholders.
     queue_path = tmp_dir / "apply_queue.json"
     uis._write_queue(queue_path, [])
+    uis._clear_demo_pauses()
     import os
     os.environ["APPLY_QUEUE_PATH"] = str(queue_path)
     resume_dir = tmp_dir / "resume_j1"
@@ -292,6 +318,7 @@ def render_scenes(tmp_dir: Path) -> tuple[list[Image.Image], list[float], list[s
         holds.append(_band(Image.open(raw).convert("RGB"), caption))
         secs.append(dur)
         captions.append(caption)
+    uis._clear_demo_pauses()
     return holds, secs, captions
 
 

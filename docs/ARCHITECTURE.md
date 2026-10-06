@@ -101,7 +101,7 @@ half (Qt dashboard, résumé engine, VM control). `scripts/` is ops and maintain
 ### 1. Job discovery (`pipeline/scraper.py`)
 The discovery step is an async Bright Data client. Triggers keyword × remote-type searches, polls the
 snapshot to "ready", downloads rows, dedupes, drops blocklisted companies, and
-appends to a cumulative master CSV. Four cost-aware details:
+appends to a cumulative master CSV. Five cost-aware details:
 - It excludes job ids already collected within a recency window (the last
   `EXCLUDE_WINDOW_DAYS` days, default 90) from re-collection (Bright Data bills
   per collected posting, so re-fetching a job we already have wastes money). The set
@@ -155,8 +155,8 @@ stage 2 (flash) deep-scores the survivors. A deterministic `min_required_years`
 regex pre-filter drops over-senior roles *before* any LLM sees them (the highest-risk
 function here, and the most heavily tested; see `tests/test_min_required_years.py`).
 Locally the scorer can also run through the Claude Code CLI (Settings → Scoring provider); the VM
-always scores with Gemini. A `claude` provider that falls back to Gemini now also switches the
-stage model chains to the Gemini models (SC-6), so the fallback never sends a Claude id to Gemini.
+always scores with Gemini. A `claude` provider that falls back to Gemini also switches the
+stage model chains to the Gemini models, so the fallback never sends a Claude id to Gemini.
 
 **Jev scoring** (`pipeline/jev_score.py`). When Jev is on, `score_jobs.py` asks Jev
 first for each job's stage, and the LLM stage runs only for the jobs Jev returned `None` on.
@@ -165,21 +165,22 @@ request about `{candidate, resume, job}` and compose the same columns the LLM pa
 the same rubric wording the LLM stage prompts use:
 
 - **Stage 1** asks one `fit` Score on `FIT_LEVELS` (five levels, "No match" to "Strong match",
-  the stage 1 prompt's own wording) and one `main_factor` Choice among eight deciding factors.
+  the stage 1 prompt's own wording) and one `main_factor` Choice among nine deciding factors.
   `compose_stage1` maps `fit`'s level to the score (`floor(value + 0.5) + 1`, 1-5); a code cap
   from `jev_facts` can then lower it: `YEARS_CAPS` caps at 1 / 2 / 3 for 5+ / 3+ / 1+ years, a
-  required clearance caps at 1, a required master's or PhD caps at 2. The reason is
+  required clearance caps at 1, a required master's or PhD caps at 2, and a `not_eligible`
+  factor (an enrollment or graduation-date rule that excludes the candidate) caps at 1 when the
+  posting carries a student cue. The reason is
   `"{label}: {text}."`; a cap that lowered the score names the posting's requirement in place
   of `main_factor`.
 - **Stage 2** asks `deep_fit` (a Score on `DEEP_FIT_LEVELS`, "Poor fit" to "Excellent fit") plus
   a met noul, and a must noul where the code gives no must/nice-to-have cue, for each line
-  `requirement_lines()` finds (0 to 30 lines; a job with fewer than 3 requirement lines no
-  longer goes to the LLM path for that reason alone). The deep score is
+  `requirement_lines()` finds (0 to 30 lines; a job with fewer than 3 requirement lines stays
+  on the Jev path). The deep score is
   `floor(DEEP_BASE + DEEP_SPAN * level / 4 + 0.5)`, `DEEP_BASE` 6.5 and `DEEP_SPAN` 3.5, landing
   on 7 to 10, so skip is unreachable at these values. `recommend()` reads the recommendation off
   the composed deep score in code (apply at `RECOMMEND_APPLY`, 8, or more; consider below it,
-  a composed 7; the 7 to 10 range leaves no skip band): Jev no longer picks the recommendation as a
-  Choice. Strengths are the met lines and gaps the unmet must-have lines, up to 5 each, cut to
+  a composed 7; the 7 to 10 range leaves no skip band). Jev does not pick the recommendation. Strengths are the met lines and gaps the unmet must-have lines, up to 5 each, cut to
   90 characters.
 
 **The writer** (`score_jobs.write_notes`). For a job Jev scored in stage 2 whose
@@ -195,7 +196,7 @@ in the writer's output are replaced mechanically (`_strip_em_dashes`). The switc
 Scoring row, **Jev writer for high scores**, under advanced. Jobs the LLM path scored in stage
 2 never get a writer call.
 
-The scorer is its own process and runs on the VM, so it decides Jev use itself (JS-4):
+The scorer is its own process and runs on the VM, so it decides Jev use itself:
 `SCORE_USE_JEV` in the environment, else `jev_enabled` and `jev_scoring` from the repo's own
 `local/config.json` when that file exists, else off. A missing key, SDK or `local/jev.py` prints one
 line naming the reason and the run stays on the LLM path. The dashboard passes `SCORE_USE_JEV`
@@ -211,13 +212,13 @@ counts once per stage; the writer adds no run-stats column of its own). The run 
 scored stage 1: N, stage 2: M (R requests, $X); LLM fallback stage 1: K, stage 2: L`, and, once
 the writer has made an attempt, `; Jev writer: N written, M kept code text`.
 
-Hand-added jobs (`manual-*` ids, MA-3) are never scored: `rows_needing_rescore` skips them, and
+Hand-added jobs (`manual-*` ids) are never scored: `rows_needing_rescore` skips them, and
 `prune_master.py` keeps their description past the retention window.
 
 **Operator note: VM redeploy.** Hand-added rows reach the VM master through the outbox. The
 VM's older `score_jobs.py` reads their blank scores as rescore candidates (billed calls) and its
 older `prune_master.py` blanks their description after 3 days. Before the next cron run after
-this release, copy the new `pipeline/score_jobs.py` and `pipeline/prune_master.py` to the VM.
+an upgrade, copy the new `pipeline/score_jobs.py` and `pipeline/prune_master.py` to the VM.
 `pipeline/jev_score.py` is optional there: `score_jobs.py` wraps its import and prints "Jev
 scoring off (jev_score.py is not beside score_jobs.py)." without it, and the VM has no
 `local/jev.py` or `local/config.json`, so it stays on Gemini either way. Never wholesale-copy
@@ -228,7 +229,7 @@ scoring off (jev_score.py is not beside score_jobs.py)." without it, and the VM 
 [--sample 400] [--seed 19] [--master PATH] [--resume PATH]` compares Jev's scores against the
 Gemini scores already in a master. It spends money (it refuses without `--live`), caches answers
 under `%LOCALAPPDATA%\INployed\jev_calibration\` and prints aggregates only. Version 2.0 dropped
-the stage 2 requirement-line minimum, so the script now runs stage 2 wherever Gemini ran it, and
+the stage 2 requirement-line minimum, so the script runs stage 2 wherever Gemini ran it, and
 it leaves out rows Jev already scored: by a reason that starts with a `jev_score.SCORE_LABELS`
 label and a colon or with "Skills fit " (the earlier Jev scorer's prefix), and by an
 `extracted_date` on or after 2026-09-28.
@@ -249,7 +250,8 @@ to an unmet requirement line and no banned-topic gap; cost runs about $0.04 per 
 list prices, 30 to 100 seconds per call.
 
 The tunables are `DEEP_BASE`, `DEEP_SPAN`, `RECOMMEND_APPLY`, `MET_YES`,
-`MUST_YES`, `YEARS_CAPS`, `CLEARANCE_CAP` and `ADVANCED_DEGREE_CAP` in `pipeline/jev_score.py`.
+`MUST_YES`, `YEARS_CAPS`, `CLEARANCE_CAP`, `NOT_ELIGIBLE_CAP` and `ADVANCED_DEGREE_CAP` in
+`pipeline/jev_score.py`.
 
 **Repost score reuse** (`reuse_repost_scores`, gated by `SCORE_REPOST_REUSE_DAYS` / Settings
 → Scoring → "Repost score reuse window (days)", default 30) runs before either LLM stage.
@@ -366,7 +368,8 @@ Two of those toolkit-agnostic modules carry policy the Qt layer would otherwise 
 per call site. **`local/setup_check.py`** answers "what is missing or misconfigured" as plain
 problem strings for the **Check setup** button, split by *cost*:
 `local_problems()` is file and environment reads (it runs `resume_tailor/master_validate.py`'s
-`check_setup()` over the master and the answer store, then adds the engine-credential checks)
+`check_setup()` over the master and the answer store, then adds the engine-credential checks
+and `auto_apply_problems()`)
 and is safe inline, while `worker_problems()` belongs on a worker thread: it runs
 `job_data_problems()` (one unbilled network probe of the job-data account) and
 `claude_version_problems()` (one `claude --version` subprocess, started only when a selected
@@ -375,7 +378,7 @@ Claude model has a minimum CLI version in `pipeline/claude_cli.py`'s `MIN_CLI_VE
 `setup_check`'s four `*_warnings` helpers take every input as an argument and do no I/O, so the whole
 matrix is unit-tested with no `QApplication` (`tests/test_setup_check.py`).
 **`local/errmsg.py`** is the single renderer for exception text a *user* will see: `for_user` keeps
-the exception class and its message and reduces every absolute
+the message (and the exception class too, with `with_type=True`) and reduces every absolute
 path inside it to a bare file name. `PermissionError: [Errno 13] Permission denied:
 'C:\Users\<name>\My Drive\linkedin_jobs_master.csv.gz'` is what an antivirus scanner or an
 open Excel window produces, and that string names the person, often their employer, and travels
@@ -390,7 +393,8 @@ byte lock) plus a small queue CLI (`list` / `stats` / `enqueue` / `remove` / `re
 (`local/qt/apply_queue_panel.py`) is a read-only, file-watched mirror of it with the few human
 controls (re-queue, remove, the sign-in, the kickoff command, the difficulty check and the
 **Waiting for you** card, `local/qt/apply_pause_card.py`). Start stays off, with the reason beside
-it, while Jev cannot run (`jev_switch.apply_blocked`) or a browser holds the profile.
+it, while Jev cannot run or the judge mode is a test or unknown one (`jev_switch.start_blocked`),
+or a browser holds the profile.
 Start launches the drain, `local/apply_run.py` (section 4 below).
 
 **Local scrapes feed the VM master** (the outbox/incoming bridge): a dashboard "Find new
@@ -478,7 +482,8 @@ A few **durability/visibility** affordances: the Tracker tab can **Export / Impo
 `status_date` winning, earliest `applied_date` kept, seen unioned). The Stats tab shows a fresh/stale
 **pipeline badge** (`jobsdata.run_staleness` + the `stale_after_hours` setting). The Resume Data tab
 warns when `resume.md` has drifted behind `master_experience.yaml` (`resume_md.resume_md_stale`,
-mtime compare) with a one-click Regenerate; the rebuild (`local/resume_md.py`, injected Gemini call;
+mtime compare) with a one-click Regenerate; the rebuild (`local/resume_md.py`, an injected Gemini
+call, or Claude's fast-tier model on the `claude` provider;
 tests never spend a credit) deterministically re-appends any `concepts_and_methodologies` item the
 model dropped (`_ensure_concepts`), so the scorer always matches against the full concepts pool.
 It also carries a collapsible **Resume Layout** editor (`ResumeDataEditor._layout_block`) for the
@@ -491,7 +496,7 @@ targets, enabling an A/B test of custom-vs-default layout. The same `resume_layo
 gates `project_bullet_tiers` (config.json), an optional list of `{projects, bullets}` tiers that sizes
 projects by strength rank (top tier = more bullets), overriding the flat per-project default;
 `config.py:project_bullet_tiers`/`project_rank_bullets` expand it to a per-rank count and
-`compose._cap_projects` applies it, with an explicit `project_layout` entry taking precedence. It is
+`selection._cap_projects` applies it, with an explicit `project_layout` entry taking precedence. It is
 edited in the same tab's projects control (`_projects_control`) via the "Bullets by strength" box, where
 tiers are typed as `projects:bullets` pairs and round-tripped by `jobsdata.load/save_project_bullet_tiers`.
 With zero jobs loaded the High Score tab shows a first-run get-started hint (`JobsTab.set_empty_widget`).
@@ -537,11 +542,11 @@ left alone), and a drag of the outer divider while the description is open retir
 (`_on_preview_splitter_moved`), so the collapse leaves a hand-set height standing. The description
 pane is a read-only `QPlainTextEdit`: it keeps
 the posting's paragraphs and bullets, scrolls internally so the card never grows without bound,
-is selectable/copyable, and is plain text *by construction*, a stronger form of the P2-19 guarantee
+is selectable/copyable, and is plain text *by construction*, a stronger guarantee
 than a label's text-format flag, since scraped `<b>`/`<img>` can never be parsed as markup. Its text
-comes from `jobsdata.job_detail_fields`, which prefers `job_description_formatted` →
-`job_description` → `job_summary` (first one over 40 characters, the same order the résumé tailor
-uses) and passes the markup through `jobsdata.html_to_text`: non-content elements (`script`,
+comes from `jobsdata.job_detail_fields`, which prefers `job_description_md` (below), then
+`job_description_formatted` → `job_description` → `job_summary` (first one over 40 characters,
+the same order the résumé tailor uses), and passes the HTML columns through `jobsdata.html_to_text`: non-content elements (`script`,
 `style`, `button`, `icon`, `svg`, `nav`, `header`, `footer`, `noscript`, `form`, `select`) are
 dropped **with their text** first, so LinkedIn's "Show more"/"Show less" chrome does not reach
 the card (each pattern spans an opener to its own closer; a self-closing or unclosed opener falls
@@ -552,8 +557,8 @@ indentation is stripped per line, and entities are unescaped *after* the tag str
 tag in the posting's own prose stays inert text. The cleanup is structural only: it never
 pattern-matches prose, so EEO statements and agency notices survive.
 
-That precedence changed in v1.13.0: `job_detail_fields` now prefers `job_description_md`
-(`score_jobs.py`'s markdownify output) whenever it clears 40 characters, run through the new
+`job_detail_fields` prefers `job_description_md`
+(`score_jobs.py`'s markdownify output) whenever it clears 40 characters, run through
 `jobsdata.md_to_text`; the column holds markdown, and running `html_to_text`'s tag stripping
 over it would eat a literal "<"/">" in the posting's own prose. Only when that column is short or missing
 does it fall back through `job_description_formatted` → `job_description` → `job_summary`,
@@ -571,9 +576,10 @@ process after the single-instance lock is released.
 Each job tab folds its discovery filters (plus the Tracker's *Follow-up due
 only*, via `JobsTab.add_filter_row`) into a single **Filters** popup with an active-count badge. Row
 tints are **tab-specific** (`JobsTableModel(mode=...)` keyed off `table_key`): High Score keys the
-recommendation + tailored-résumé (green apply / blue résumé-ready / yellow consider / neutral gray
-"don't consider"), the Tracker keys the application status + follow-up state (blue applied / orange
-follow-up due / pink follow-up sent / yellow interviewing / green offer / red rejected), and All Jobs
+recommendation + tailored-résumé (green apply / blue résumé-ready / red tailor failed / yellow
+consider / neutral gray "don't consider"), the Tracker keys the application status + follow-up state
+(blue applied / pink follow-up due / purple follow-up sent / yellow interviewing / green offer / red
+rejected), and All Jobs
 is a deliberately untinted plain list. Each tinted tab shows a matching `ColorLegend`
 (`jobs_tab.legend_items_for`) under its table; All Jobs has none. An app-wide **wheel guard**
 (`qt/wheelguard.py`) stops a stray scroll from editing a combo/spin/slider regardless of focus, so the
@@ -625,7 +631,7 @@ logger), so `apply_trace.LOGGERS` and the job's trace keep every line. The modul
 | `local/apply_form_js.py` | The page scripts: every JavaScript function the digest, the filler, the LinkedIn reader and the run hand to Playwright's `evaluate`, with the shared snippets (`VISIBLE_FN_JS`, the send-word sources) spliced in when the module loads. The scripts feed the digest and the digest feeds the judge's requests, so a change here can move a replay cache key (`scripts/replay_check.py`). |
 | `local/apply_facts.py` | The fact catalog Jev chooses from: `apply.md` (candidate, address, education, current job, signature, cover letter) plus the answer bank as `answer_<id>` facts, each with a label-shaped description; `to_criteria()` sends keys and descriptions only; the values stay on this side. `quick_map` is the deterministic label table that wins over the judge for the obvious fields. The own-question gate (`OWN_QUESTIONS`, `question_fit`, `answers_question`) lets a saved yes / no or years answer settle a field only when every content word of its label and help is that fact's own question (a narrower form only for the value that answers every narrower form); a custom answer holding a yes / no or a number settles only its saved question word for word (`same_question`), and two derived facts answer "authorized without sponsorship" and "remote only". |
 | `local/apply_judge.py` | Every question and every threshold in one place, with a header block that records the live Jev distribution behind every threshold: `page_questions` (page kind, per-field source with `leave_blank` and `needs_generation` always present, per-field option, per-button role, the prohibited / account / CAPTCHA nouls), `option_questions`, `settle_questions` (a relocation, on-site, work authorization or sponsorship answer the own-question gate held back, asked whether it settles the field's reworded question, filled only when the judge is sure; `_unsaid` keeps out a question whose right option turns on something the saved answers do not say, such as another country, the present job or a visa held now; `settle_key` reads a question whose own sentence asks the move against the relocation answer when the first read took it for on-site work; a relocation or on-site read ends with where the candidate lives now, `where_they_live` giving the confirmed mailing address's city and state or else the résumé location, so an option such as "I am in NYC" is read against it), `verify_questions`, `inbox_questions`, `code_pick_questions`, `grounding_questions`, and the readers that turn answers into a `FillPlan`, a `VerifyResult` list, an inbox pick or a grounding verdict. |
-| `local/apply_screening.py` | The screening set behind Apply Answers' **Test my answers** and `tests/test_screening.py`: `screening_questions.json` beside it holds real-world screening fields, and `screen` runs one through the runner's own mapping, plan and option pick for one answer list, returning what the run would put in the field or None. Pure: no Qt, no browser. |
+| `local/apply_screening.py` | The screening set behind Apply Answers' **Test my answers** and `tests/test_screening.py`: `screening_questions.json` beside it holds real-world screening fields, and `screen` runs one through the runner's own mapping, plan and option pick for one answer list, returning an `Outcome`: what the run would put in the field (or None), the fact it used, and whether code settled the pick. Pure: no Qt, no browser. |
 | `local/apply_fill.py` | Acts on a `FillPlan`: fill, native select, radio and checkbox by label, React-style listbox by click, `set_input_files` for uploads, and a read-back after each. It re-exports `apply_click`'s click and settle. |
 | `local/apply_click.py` | The guarded click and the settle wait. `click` reads the control's live text first (an unreadable control is refused when a check is given), clicks, and waits for a navigation or a settled DOM; a click a banner or a chat window took is made once more after `clear_overlay` puts the cover away. `settle`, `act_and_settle` and `wait_for_change` wait on the page; `watch_requests` and `background_sends` tell the page's own requests from the ones a click set going. It logs as `apply_fill`. |
 | `local/apply_limits.py` | The run's tunables: its waits, caps and polls (`JOB_WALL_CLOCK_S`, `CLICK_TIMEOUT_S` and the rest). Every reader reads them qualified, so a test that shortens a wait patches this module. |
@@ -635,7 +641,7 @@ logger), so `apply_trace.LOGGERS` and the job's trace keep every line. The modul
 | `local/apply_page.py` | Opening and reading a page: the page signature, the empty, loading and error page reads, `open_page`, the run's own step and frames of an error (`error_step`, `error_frames`), popups, an email Apply's address, `click_entry` and the tracker hops after it. |
 | `local/apply_account_flow.py` | Sign-in and sign-up screens: the account form readers, `_Accounts` (the account address and the keyring password typed on an account screen), `_Inbox`, the password rules a page states, single sign-on (`sso_only`), and the account and code step advances. Named apart from `ats_accounts`, the credential ledger. |
 | `local/apply_route.py` | Where a page goes next. `route_turn` checks a fresh page's read in the loop's order with no side effect (already applied, the remap of a sign-in read of form boxes, a confirmation read, a form step on LinkedIn, a sign-in with another site only, the unsure rule, an `other` its structure settles, an emailed link) and returns what to do; `_JobRun._loop` acts on it and `loop_step` says it in words for `probe`. Also the state sets and the LinkedIn, unsure, confirmation, posting and form routes. |
-| `local/apply_gate.py` | The click guards: the submit switch (`submit_on`, `guard_submit`); the submit gate, `can_submit(plan, verification, settings, live)`, which returns the first failing reason (the setting, no park reason, every required field filled and verified, prohibited and CAPTCHA below their caps, a confident submit button); and `live_refusal`, which refuses a click whose control now reads as a send. |
+| `local/apply_gate.py` | The click guards: the submit switch (`submit_on`, `guard_submit`); the submit gate, `can_submit(plan, verification, settings, live)`, which returns the first failing reason (the setting, no park reason, every required field filled and verified, a submit button at `BUTTON_SUBMIT_MIN_CONF` or above, then the live page: readable, an application on it, no Apply or step button in the submit's place, no invalid or empty required control); and `live_refusal`, which refuses a click whose control now reads as a send. |
 | `local/apply_record.py` | `write_record` writes `apply_record.md` beside the sheet and keeps the earlier attempts' records; the drain's report is `summary_line`, `drain_table` and `write_drain_report`. |
 | `local/apply_job.py` | `_JobRun`, the state machine for one queue entry. Per job: open the posting in the persistent Chromium profile, follow the external Apply button (popup adopted, ATS host allowlisted), then one page per turn (`_loop`): extract, judge, `apply_route.route_turn`, act; up to `apply_judge.MAX_PAGES` and a wall clock. Every terminal path goes through `_finish`. Its safety rails park with a plain reason: the job's account on an ATS platform is pinned once known (from the queue entry, from the step LinkedIn's Apply or a job board led to, or from the first ATS host the job's tab is sent to, a redirect it passed through included; a career-site front end such as Phenom, Eightfold, Avature, a SuccessFactors career site or Taleo's SelectMinds stays allowed and pins nothing, so the platform its Apply hands the job to becomes the pin), and a move to another company's account or another platform by any other step parks (`TENANT_REASON`), for the page, a password box's frame, an emailed link and the navigation guard alike; a platform that names the company on its URL path (Greenhouse, Lever) has no host to pin. The master password goes only over https: the page, the box's frame and the form's action must all be https, this machine's loopback aside (`PASSWORD_HTTP_REASON`), and it is typed only into the frame the box was read in (`apply_form.resolve_frame`). A page with more than `apply_judge.FIELDS_MAX` (200) boxes parks before the judge is asked (`FIELDS_MAX_REASON`). |
 | `local/apply_job_pages.py` | `_PageSteps`, a base of `_JobRun`: opening and reading a page, the busy and loading waits, the consent banner, the LinkedIn and job board steps, the account step and its park, the human check, the job posting and its entry click, the popups a click opens, and the guarded click. |
@@ -647,10 +653,10 @@ logger), so `apply_trace.LOGGERS` and the job's trace keep every line. The modul
 | `local/ats_accounts.py` | The per-portal account ledger: one master password in the Windows Credential Manager, a JSON ledger that records email and method and rejects any password-shaped field on write, `fill_password` (typed into a `type=password` control only, compared by length after the fill, absent from every log line) and the clipboard as the password's other exit. |
 | `local/apply_queue.py` | The store above, plus `build_context()` (batch cap, signup email, inbox URL by email domain) and `infer_ats`, which reads the system from the apply host's registrable site (`ATS_FAMILY_SITES`), so `linkedin-careers.example` reads as `other`. A mutation that cannot read the queue file after its retries (another program holding it) raises `QueueUnreadable`, a `QueueLockTimeout`, and writes nothing; the drain stops with the jobs still queued. Each entry can carry the difficulty check's result (`set_difficulty`), and `note_difficulty_failure` keeps an earlier result beside when and why a later check read nothing. |
 | `local/apply_sheet.py` | The `apply.md` parser (`parse_apply_md`, `split_name`), moved here from the removed `apply_playwright.py`; `apply_facts.py` is its one production caller. |
-| `local/jev_switch.py` | One answer to "does Jev run here?" for the four areas (`scoring`, `tailor`, `difficulty`, `apply`): the `jev_enabled` master switch and the `jev_scoring` / `jev_tailor` / `jev_difficulty` area switches (all default on, read from `config.json` at call time), `TYPESAFE_API_KEY` and an importable `typesafe_sdk`. `client(area)` builds the judge or returns None, and `jev_why_off(area)` gives the reason ("Jev is switched off in Settings", "no TypeSafe API key", "typesafe-sdk is not installed"); the tailor is its one production caller, and gets short retry delays so an outage falls back fast (the scorer's own `jev_score.make_judge` uses the same delays). Auto-apply has no area switch and no LLM fallback: `apply_blocked` gives the "Auto-apply runs on Jev. ..." sentence Start, the drain, `one`, Check setup, the doctor, Test my answers and `probe --judge` show. `difficulty_blocked` gates the difficulty check, and `mode_refusal` / `unknown_mode` name a test judge or an unknown judge mode. |
+| `local/jev_switch.py` | One answer to "does Jev run here?" for the four areas (`scoring`, `tailor`, `difficulty`, `apply`): the `jev_enabled` master switch and the `jev_scoring` / `jev_tailor` / `jev_difficulty` area switches (all default on, read from `config.json` at call time), `TYPESAFE_API_KEY` and an importable `typesafe_sdk`. `client(area)` builds the scoring or tailor judge or returns None (and raises ValueError for `apply` and `difficulty`, whose judge `jev.get` builds), and `jev_why_off(area)` gives the reason ("Jev is switched off in Settings", "no TypeSafe API key", "typesafe-sdk is not installed"); the tailor is its one production caller, and gets short retry delays so an outage falls back fast (the scorer's own `jev_score.make_judge` uses the same delays). Auto-apply has no area switch and no LLM fallback: `apply_blocked` gives the "Auto-apply runs on Jev. ..." sentence Start, the drain, `one`, Check setup, the doctor, Test my answers and `probe --judge` show. `difficulty_blocked` gates the difficulty check, and `mode_refusal` / `unknown_mode` name a test judge or an unknown judge mode. |
 | `local/apply_pause.py` | Park and resume. A required field with no answer, an option tie, a required sensitive field and a way on still disabled after the fill pause the job; every other park stays immediate, and no pause starts once something may have been sent. The run writes `<job id>.json` into `%LOCALAPPDATA%\linkedin_watcher\apply_pause\` and waits (off the job clock, up to `auto_apply_pause_minutes`, at most `MAX_PAUSES` = 5 per job) for `<job id>.answer.json` in mode `fill`, `browser` or `park`. `Pauser` puts a `fill` value in its own field on the page the run paused on (`USER_SOURCE`; `_keep_for_replan` drops the card's values when that page moved on, `_moved_on`: its full URL changed or any labelled field of the paused page is gone, so a same-address single-page app's next step that lacks one of them reads as moved; a step that re-shows all of them with more added keeps the answer for the box with the asked field's id and label, an accepted residual), keeps a field the person filled in the browser (`KEPT`) and replans a page that changed. A timeout or `park` parks with the earlier reason. A window or tab closed during the wait, or found closed right after it (`Pauser._closed`), raises `apply_job_form._FormSteps._pause_closed`'s `_PauseClosed`: possibly sent on any page, with `CHECK_SENT_REASON` and `CHECK_SENT_NOTE` already on it, which the run's handler finishes as raised (a closed window still stops the drain). `apply_job_form._FormSteps._pause_moved` parks a send page that moved on as possibly sent while a Next the person clicked is planned again. `save_answer` keeps a flagged value as a confirmed custom answer ("Saved from <company> on <date>"), refused as Add answer refuses it, and writes the store's review list back as read; the save happens before `_keep_for_replan` decides, so a dropped card answer is still saved and reaches later fields only through the own-question gate; the store is reloaded after each resume. `NEVER_WAIT` (`INPLOYED_PAUSE_NEVER_WAIT`, set by the conftest) keeps the suite from pausing. |
 | `local/profile_lock.py` | Who holds the auto-apply profile: Chrome's own lock (`lockfile` on Windows, `SingletonLock` elsewhere) or the sentinel `browser_profile.inuse` beside the profile, a `locks.SingleInstance` that `apply_run.launch_profile` holds for every browser it opens there (drain, `one`, sign-in, a probe on the profile, the difficulty check). `busy` is either sign; the panel, the drain, `one`, `login` and `apply_assess.py` refuse with "The auto-apply browser is open: a run, a sign-in or a difficulty check holds its profile." |
-| `local/apply_assess.py` | The difficulty check (DF-1 to DF-6): `python local/apply_assess.py [--all \| <id> ...] [--headless] [--queue PATH] [--profile DIR] [--verbose]` (exit 0 ok, 1 error, 2 refused; `--parallel N` and the internal `--worker` go with `assess_pool.py` below). It opens each posting on the auto-apply profile, clicks only the Apply entry (never one whose words read as a sign-in, sign-up or a Next with no Apply word, a word match in code: `account_worded`), and reads the first application page with the drain's own questions, typing nothing. DF-3's score is code: a base by system (`SYSTEM_BASE`: Greenhouse / Lever / Ashby 2, Workable / SmartRecruiters / Jobvite / BambooHR 3, unknown 4, Workday / iCIMS 6, Taleo / SuccessFactors / Oracle 7) plus 1.5 per unanswered required question (cap 5), 0.5 per required essay (cap 2), 3 for a required sensitive field, 2 for a CAPTCHA, 1 for an account wall, and +1 / -1 from this system's past runs (parked twice / finished twice with no park), rounded half up and clamped to 1-10. Easy Apply, a closed posting, a dead end and a payment page are `STOP_SCORE` 10. `BANDS`: 1-3 "Queue it", 4-6 "May need an answer or two", 7-10 "Do it yourself"; a result older than `STALE_DAYS` (7) shows its age. About 2 to 4 Jev requests per job. |
+| `local/apply_assess.py` | The difficulty check: `python local/apply_assess.py [--all \| <id> ...] [--headless] [--queue PATH] [--profile DIR] [--verbose]` (exit 0 ok, 1 error, 2 refused; `--parallel N` and the internal `--worker` go with `assess_pool.py` below). It opens each posting on the auto-apply profile, clicks only the Apply entry (never one whose words read as a sign-in, sign-up or a Next with no Apply word, a word match in code: `account_worded`), and reads the first application page with the drain's own questions, typing nothing. The score is code: a base by system (`SYSTEM_BASE`: Greenhouse / Lever / Ashby 2, Workable / SmartRecruiters / Jobvite / BambooHR 3, unknown 4, Workday / iCIMS 6, Taleo / SuccessFactors / Oracle 7) plus 1.5 per unanswered required question (cap 5), 0.5 per required essay (cap 2), 3 for a required sensitive field, 2 for a CAPTCHA, 1 for an account wall, and +1 / -1 from this system's past runs (parked twice / finished twice with no park), rounded half up and clamped to 1-10. Easy Apply, a closed posting, a dead end and a payment page are `STOP_SCORE` 10. `BANDS`: 1-3 "Queue it", 4-6 "May need an answer or two", 7-10 "Do it yourself"; a result older than `STALE_DAYS` (7) shows its age. About 2 to 4 Jev requests per job. |
 | `local/assess_pool.py` | The parallel difficulty check. `apply_assess.main` hands two or more jobs, with `auto_apply_check_parallel` above 1 (default 10, 1-10; `--parallel N` overrides it), to `run_pool` once `apply_assess._main` has run the usual gates (the mode, the Jev refusal, the profile busy); `run_pool` reads the Apply Answers file, then holds the real profile's `profile_lock` sentinel for the whole run so a drain, a sign-in or another check refuses meanwhile. `snapshot_profile` copies the profile into `%LOCALAPPDATA%\linkedin_watcher\assess_profiles\slot-<k>` (k = 1..min(setting, jobs)), skipping caches (`CACHE_DIRS`) and lock files (`lockfile`, `Singleton*`, `*.inuse`); `sweep_slots` deletes leftover slots at the start and in the `finally` of every pool run, because the copies hold session cookies; the last sweep retries for up to `FINAL_SWEEP_S` (12 s) while a browser closes, and a copy still left is named in a `LEFT_BEHIND` line. A copy that outlives its run (a console closed with X) is swept by the next holder of the real profile's sentinel: `apply_run.launch_profile` on the real profile (`_sweep_check_copies`: a drain, `one`, the sign-in, the one-job check) and the dashboard at start (`app._sweep_profile_copies`, a daemon thread calling `sweep_if_free`, which takes the sentinel for the sweep or skips it while a browser holds it). Nothing sweeps without that sentinel, so a live pool's slots are never touched. One thread per slot pulls the next job from a shared list and runs it as `apply_assess.py --worker --profile <slot> <id>`, a subprocess that is the single-job path on its slot and ends with the line `@@assess-result {json}` (job_id, outcome `scored` / `unread` / `outage` / `closed` / `error`, score, band, why, requests, usd, and on an error one mark: `refusal` for a gate or no browser starting, `failed` for a worker that crashed or whose slot stayed busy past `SLOT_BUSY_WAIT_S`). The coordinator prints one line per finished job in finish order with the summed Jev totals, and for a job that did not score, the worker's WARNING / ERROR lines and traceback frames on stderr (`worker_log`); `--verbose` reaches every worker. A Jev outage, a closed window or a `refusal` starts no new job and exits 1; a `failed` job gets its not-checked line, its failure noted on the queue, and the pool goes on. Ctrl+C terminates the workers and sweeps the slots. A worker that exits with no result line is reported with its last stderr line. One job, or the setting at 1, never reaches the pool. |
 
 Version 2.0 removed the Claude-in-Chrome auto-apply. `local/apply_driver.py` (the file-driven
@@ -681,12 +687,11 @@ network) either target.
   the harness does not account for; for the matrix, on a narrowed `--flows` or a flow still
   marked `recorded=False` in `tests/apply_flows.py`.
 - **Spend cap:** `jev.SpendCap` measures its spend, request count and failed requests as a
-  delta of the lifetime counter `total_usage()`, which `reset_usage()` never touches. Before
-  commit 3d0ea37 it read `usage()`, so a runner test that called `reset_usage()` inside a live
-  recording clamped the spend to 0 and raised the cap by everything spent before it; the
-  recording summary undercounted the same way (9 live requests reported as 2). The recording
-  summary (`jev_harness.Session.live_usage`), `apply_matrix --real` and the capture reads now
-  read `total_usage()` too. `usage()` and `reset_usage()` keep their per-run meaning for the
+  delta of the lifetime counter `total_usage()`, which `reset_usage()` never touches. Reading
+  `usage()` would let a runner test that calls `reset_usage()` inside a live recording clamp the
+  spend to 0 and raise the cap by everything spent before it. The recording summary
+  (`jev_harness.Session.live_usage`), `apply_matrix --real` and the capture reads read
+  `total_usage()` too. `usage()` and `reset_usage()` keep their per-run meaning for the
   per-run reports (the difficulty check, the drain, the dashboard, the scorer).
   `jev_doubles.DryRun`
   requests count on a third counter, `simulated_usage()`: `total_usage()` and a live
@@ -709,7 +714,7 @@ bullet must be traceable to a fact ("atom") the user wrote in
 | `selection.py` | Stage 1. `select` asks the model which atoms to use and how to group them, then makes the answer safe deterministically: `_normalize_selection` drops ids the model invented, `_ensure_required_blocks` forces the yaml's `tailor.required` blocks to render, `_order_fixed_blocks` restores template order, and `_enforce_fixed_counts` / `_cap_projects` / `_resize_to_count` pin each block to its configured bullet count. Also owns `bullet_line_targets`. |
 | `compose.py` | The bullet stages: `block_briefs` (one cohesion brief per block), `rephrase`, `lead_with_overview` (every entry's first master atom prints as its first bullet, by rule), `dedupe_leading_verbs` / `reverb` (no opener reused across the page), `fill_underfull`, and `enforce_style`. |
 | `skills.py` | The four technical-skills lines and the optional 5th "Methods" concepts line. `compress_skills` ranks each category's pool against the JD; the anchoring layer (`_anchored`, `_base_anchors`, `_merged_members`, `_complete_to_count`, `_cap_items`) is what stops a skill the user does not own from reaching the page. `methods_line` prints concepts from the master's `concepts_and_methodologies` pool that the JD actually references, in the JD's own spelling on an alias hit. |
-| `jev_assist.py` | The tailor's Jev requests (TL-1 to TL-9). Jev answers typed questions and writes no text, so each helper returns data for code to compose, and the LLM still writes every bullet. On whenever Jev runs for the tailor: TL-1 `skills_pick` rates each skill in the user's pools against the job (one noul per skill) and picks `skill_focus`, and each skills line fills in probability order within `compress_skills`' count and width; TL-2 `atom_relevance` rates each atom's `what` (one noul per atom, batched to fit) for the shortlist `select` sees; TL-3 (the lead-bullet pick) is retired, since `compose.lead_with_overview` leads every entry with its first master atom by rule; TL-4 `faithfulness` asks per bullet whether it is `supported` by its atoms and whether it `inflates` or `adds_claim`, and a flagged bullet (a sure "unsupported" or "contradicted", or `inflates`) gets one reground call with the finding before it is reverted or dropped; TL-5 `sweep_flags` reads each entry for the banned tells (`SWEEP_QUESTIONS`), so the AI-writing sweep calls the model only for an entry with a tell or a detector finding; TL-6 `pick_verb` picks a repeated opener's palette category, then a verb among its unused ones, halving that list only when the request would not fit. Settings options, off by default and shown only while `jev_tailor` is on (`config.py`: env, then `config.json` `is True`, then False): TL-7 `best_variant` ("Best of 3 bullet drafts (Jev picks)", `tailor_best_of_n` / `RESUME_TAILOR_BEST_OF_N`) keeps one of three rephrase drafts that pass the grounding gate and TL-4; TL-8 `letter_unsupported` ("Jev checks the cover letter's claims", `cover_letter_jev_check` / `RESUME_TAILOR_COVER_LETTER_JEV_CHECK`) sends each flagged letter sentence to the letter's repair, which goes back through the style gate; TL-9 `keyword_meaning` ("ATS report: coverage by meaning (Jev)", `tailor_ats_meaning` / `RESUME_TAILOR_ATS_MEANING`) adds a meaning-level coverage line to `ats_report.txt`. Each takes `judge=` (default `jev_switch.client("tailor")`) and returns `None` when Jev is off or the request fails, so its caller keeps its pre-Jev path (TL-4's is the deterministic grounding gate alone); `run.tailor` hands one judge to every step, so an outage moves the rest of the run to the LLM path. `usage_line(step)` is the run report's line per step (requests, estimated tokens, USD), counted per thread since the dashboard tailors several jobs at once. |
+| `jev_assist.py` | The tailor's Jev requests. Jev answers typed questions and writes no text, so each helper returns data for code to compose, and the LLM still writes every bullet. On whenever Jev runs for the tailor: `skills_pick` rates each skill in the user's pools against the job (one noul per skill) and picks `skill_focus`, and each skills line fills in probability order within `compress_skills`' count and width; `atom_relevance` rates each atom's `what` (one noul per atom, batched to fit) for the shortlist `select` sees; the lead-bullet pick is gone, since `compose.lead_with_overview` leads every entry with its first master atom by rule; `faithfulness` asks per bullet whether it is `supported` by its atoms and whether it `inflates` or `adds_claim`, and a flagged bullet (a sure "unsupported" or "contradicted", or `inflates`) gets one reground call with the finding before it is reverted or dropped; `sweep_flags` reads each entry for the banned tells (`SWEEP_QUESTIONS`), so the AI-writing sweep calls the model only for an entry with a tell or a detector finding; `pick_verb` picks a repeated opener's palette category, then a verb among its unused ones, halving that list only when the request would not fit. Settings options, off by default and shown only while `jev_tailor` is on (`config.py`: env, then `config.json` `is True`, then False): `best_variant` ("Best of 3 bullet drafts (Jev picks)", `tailor_best_of_n` / `RESUME_TAILOR_BEST_OF_N`) keeps one of three rephrase drafts that pass the grounding gate and `faithfulness`; `letter_unsupported` ("Jev checks the cover letter's claims", `cover_letter_jev_check` / `RESUME_TAILOR_COVER_LETTER_JEV_CHECK`) sends each flagged letter sentence to the letter's repair, which goes back through the style gate; `keyword_meaning` ("ATS report: coverage by meaning (Jev)", `tailor_ats_meaning` / `RESUME_TAILOR_ATS_MEANING`) adds a meaning-level coverage line to `ats_report.txt`. Each takes `judge=` (default `jev_switch.client("tailor")`) and returns `None` when Jev is off or the request fails, so its caller keeps its pre-Jev path (`faithfulness`'s is the deterministic grounding gate alone); `run.tailor` hands one judge to every step, so an outage moves the rest of the run to the LLM path. `usage_line(step)` is the run report's line per step (requests, estimated tokens, USD), counted per thread since the dashboard tailors several jobs at once. |
 | `layout.py` | The count spec: best-N items per skill line (`skill_targets`, env-overridable) and the leadership per-entry line budget. Printed-line *widths* are `measure.py`'s job. |
 | `measure.py` | Width-aware line measurement: per-character Times-Roman advance widths greedily wrapped against the calibrated column capacity, so a bullet's printed line count is modeled from the actual render, not a flat character count. `char_budget` converts that width budget back into the character ceiling the prompt has to state; `FULL_LINE_FILL` / `LAST_LINE_FILL` / `UNDERFULL_FILL` are the fill fractions (see "The length budget"). |
 | `render.py` | Assembles the `.tex`: header + Education + body, all generated from the yaml. The header's LinkedIn and GitHub fields render as `\href` links in the template's link colour, a project's `repo` becomes a link whenever it is shaped like a host address (any host with a dot in it, github.com included), and `_education` lays each entry out for an ATS parser as much as a reader: school and location on one row, the degree on its own row, GPA and honors on a third, because a GPA glued to the date column extracted as `GPAAugust 2021` and a location at the end of the degree row was read as part of the degree. |
@@ -718,10 +723,10 @@ bullet must be traceable to a fact ("atom") the user wrote in
 | `output.py` | Where the PDF goes; candidate name from the yaml. |
 | `ats.py` | Deterministic ATS keyword-coverage report, plus the **anchored alias layer**: the master's optional `skill_aliases` (matched *and* printable: Methods line / tech-line swap) and `skill_aliases_match_only` (matched, never printed) maps, where a group only survives if its canonical is a real skill in the taxonomy, so an alias can never inject an untethered keyword. |
 | `coverletter.py`, `prep.py`, `research.py`, `apply_data.py` | Optional artifacts: cover letter, interview-prep sheet, grounded company research, and the self-contained `apply.md` apply sheet. |
-| `aiwriting.py` | The vendored extract of the MIT-licensed *avoid-ai-writing* skill (v3.18.0, Conor Bronsdon; attribution in its docstring and `docs/CREDITS.md`), in two arms that share one copy of the vocabulary so the two cannot drift. The **cover-letter arm** (`RULES_PROMPT` / `EXTRA_BANS` / `violations()`, plus the letter-level `bullet_echo()` and `uniform_rhythm()` detectors) rides in every letter prompt; the Settings toggle (default **on** since v1.13.0) decides only whether `violations()` joins the deterministic gate, and the two detectors join it regardless. `RULES_PROMPT` also rides in `chat.py`'s system prompt now, guiding every Ask AI answer. The **résumé arm** (`RESUME_PROFILE` / `RESUME_RULES_PROMPT` / `RESUME_EXTRA_BANS` / `resume_violations()`) serves the item sweep below. A bullet is a subjectless fragment that opens on a past-tense verb, which matches none of the skill's six context profiles, so `RESUME_PROFILE` is a seventh column of its tolerance matrix: it switches off the rules that fire on correct résumé grammar (subjectless fragments, missing first person, copula avoidance) and tightens the ones a résumé really does fail (promotional language, significance inflation, hedging), with a written reason on every deviation. Both arms split the same two ways the résumé style gate does: prompt text for the calls that need judgment, regexes for what is always slop. A phrase earns a regex only when it is always slop, because a false positive buys a repair call that can damage correct text. |
+| `aiwriting.py` | The vendored extract of the MIT-licensed *avoid-ai-writing* skill (v3.18.0, Conor Bronsdon; attribution in its docstring and `docs/CREDITS.md`), in two arms that share one copy of the vocabulary so the two cannot drift. The **cover-letter arm** (`RULES_PROMPT` / `EXTRA_BANS` / `violations()`, plus the letter-level `bullet_echo()` and `uniform_rhythm()` detectors) rides in every letter prompt; the Settings toggle (default **on**) decides only whether `violations()` joins the deterministic gate, and the two detectors join it regardless. `RULES_PROMPT` also rides in `chat.py`'s system prompt, guiding every Ask AI answer. The **résumé arm** (`RESUME_PROFILE` / `RESUME_RULES_PROMPT` / `RESUME_EXTRA_BANS` / `resume_violations()`) serves the item sweep below. A bullet is a subjectless fragment that opens on a past-tense verb, which matches none of the skill's six context profiles, so `RESUME_PROFILE` is a seventh column of its tolerance matrix: it switches off the rules that fire on correct résumé grammar (subjectless fragments, missing first person, copula avoidance) and tightens the ones a résumé really does fail (promotional language, significance inflation, hedging), with a written reason on every deviation. Both arms split the same two ways the résumé style gate does: prompt text for the calls that need judgment, regexes for what is always slop. A phrase earns a regex only when it is always slop, because a false positive buys a repair call that can damage correct text. |
 | `itemcheck.py` | The item-level detectors: the AI-writing tells that exist only *across* one entry's bullets, which `compose.enforce_style` is structurally blind to because it reads one bullet at a time. `shape_repetition` (one sentence skeleton reused down the list), `length_uniformity` (every bullet the same length), `rule_of_three`, `noun_cycling` and `bare_noun_bullet`, each returning findings with their offending spans and a P1/P2 tier. Stdlib only, and that is a hard requirement: `config.py` loads the `.env` at import scope, so a module that depends on nothing but `re` and `statistics` can be exercised standalone. Every threshold is calibrated against 57 résumés this pipeline generated, because a correct item already has each property these detectors measure to some degree, and a threshold picked by intuition fires on text that was already right. |
 | `sweep.py` | The item-level AI-writing sweep: one model call per Experience / Projects / Leadership entry, sending the entry and all of its bullets together along with `itemcheck`'s P1 findings, so the repair is targeted; a free rewrite is how a grounded bullet drifts off its atoms. A rewrite is committed only when all five acceptance conditions hold against the text it replaces: non-empty, renders within the same per-bullet printed-line budget `run._trim_to_caps` enforces, adds no deterministic style violation, keeps its opening verb, and drops no number or proper name the original carried. Anything else keeps the original, which was already grounded, clean and fitting. Bullets refused for length buy one bounded re-ask that names each one's exact character overage, and then it stops: never a third call, and nothing here is ever trimmed. On by default, and it costs one call per entry per run. |
-| `chat.py` | The per-job "Ask AI" chat, toolkit-agnostic: `build_context` assembles one stable system prompt (job identity, the JD fenced as untrusted data, the folder's `apply.md` when there is one, and now `master_digest()` alongside it on every turn, capped at `MASTER_CHAR_CAP` = 80,000 characters) and `ask` sends only the turns as the user message, which is the prompt-cache split, so the provider switch is honoured with no new setting. Every excerpt and the transcript are capped by named constants (the per-turn floor runs at most about 96,000 characters, roughly 24k tokens on the flash tier), because the whole payload is re-sent (and re-billed) each turn. `master_digest()` walks the known sections by name (basics, education, experience, projects, leadership, skills, the `letter.seed` voice sample) then every other top-level key the file holds, skipping the tailor's own layout configuration. No grounding gate runs on an answer; the grounding rule is carried by the system prompt. `_prose_gate` does run: an answer of `PROSE_WORD_FLOOR` (60) words or more is checked against `compose.style_violations` and `aiwriting.violations`, the same two deterministic scans the résumé and letter arms use, and a flash repair call fires once, kept only when it strictly lowers the finding count; an em dash is stripped from every answer regardless of length. |
+| `chat.py` | The per-job "Ask AI" chat, toolkit-agnostic: `build_context` assembles one stable system prompt (job identity, the JD fenced as untrusted data, the folder's `apply.md` when there is one, and `master_digest()` alongside it on every turn, capped at `MASTER_CHAR_CAP` = 80,000 characters) and `ask` sends only the turns as the user message, which is the prompt-cache split, so the provider switch is honoured with no new setting. Every excerpt and the transcript are capped by named constants (the per-turn floor runs at most about 96,000 characters, roughly 24k tokens on the flash tier), because the whole payload is re-sent (and re-billed) each turn. `master_digest()` walks the known sections by name (basics, education, experience, projects, leadership, skills, the `letter.seed` voice sample) then every other top-level key the file holds, skipping the tailor's own layout configuration. No grounding gate runs on an answer; the grounding rule is carried by the system prompt. `_prose_gate` does run: an answer of `PROSE_WORD_FLOOR` (60) words or more is checked against `compose.style_violations` and `aiwriting.violations`, the same two deterministic scans the résumé and letter arms use, and a flash repair call fires once, kept only when it strictly lowers the finding count; an em dash is stripped from every answer regardless of length. |
 | `verify.py` | The grounding gate. Every rephrased bullet is checked back against the atom it came from before it can reach the `.tex`; anything that drifted is rejected before it can print. This is what enforces the project's one hard rule: select and re-phrase, never invent. |
 | `master_gaps.py` | The JD-gap suggester: find skills the JD wants that aren't in your file, screen + place them (flash-lite), write back with a reviewable diff + backup. |
 | `master_edit.py` | Comment-preserving `master_experience.yaml` writer (ruamel round-trip; append/edit/delete with a `.bak` before every write) behind the dashboard's Résumé Data editor. |
@@ -825,7 +830,7 @@ over representative bullets, a flat 130 states 130 / 260 / 390 characters for 1 
 lines where the real minima are 127 / 250 / 377: the model is invited past the line, the
 bullet wraps, and the trim has to cut it back, which is how a résumé ends up with ragged
 bullets. `char_budget` returned 126 / 245 / 364 there, at or just under the
-measured minimum (124 / 242 / 359 since the 2026-09-22 layout pass narrowed the column), because a ceiling a few characters short costs a few characters while a
+measured minimum (124 / 242 / 359 at the current column width), because a ceiling a few characters short costs a few characters while a
 ceiling over the line costs a trim. Both of its constants (`_BUDGET_CHAR_WIDTH`, the
 conservative advance width of one character of prose; `_WRAP_WASTE`, the share of a line lost
 per break) are measured and scale with `BODY_LINE_CAPACITY`, so the ceiling follows if the
@@ -929,7 +934,7 @@ one severity down, and deliberately NOT streamed to `on_warning`: a note is some
 run could not fully deliver that still leaves a correct, shippable résumé, so it must not
 make the batch summary call the job degraded.
 
-Three kinds land here today. `underfull` is a bullet the fill pass grew and the re-trim
+Four kinds land here. `underfull` is a bullet the fill pass grew and the re-trim
 took straight back, a part-empty last line under the user's two-line layout: a cosmetic
 blemish. `ai writing` is what the AI-writing sweep rewrote, every rewrite it refused,
 and the P2 findings it leaves in place on purpose (the sweep repairs P0 and P1 only, unless
@@ -941,12 +946,12 @@ still missing, none for one recovered); the rejected text behind every gate find
 reverted or dropped; and an underfull fill the fill pass refused outright because
 folding it in would have introduced a token no atom supports. Putting a cosmetic or
 self-healed finding on the degraded channel would make "finished with warnings" mean
-nothing.
+nothing. `model` is a Claude model swap after the first one a process sees (below).
 
 After the notes, a **jev (N)** section (`RunLog.jev`) closes the report: one line per Jev step
 the run took, from `jev_assist.usage_line`, such as `jev shortlist: 1 request, 812 tokens
 (estimated), $0.000034`, with `; <note>` after it when the step fell back or had nothing to
-ask. The steps are `skills`, `shortlist`, `lead`, `verb`, `sweep gate`, `faithfulness`, `best of
+ask. The steps are `skills`, `shortlist`, `verb`, `sweep gate`, `faithfulness`, `best of
 three`, `letter check` and `ats meaning`. A run with Jev off for the tailor records no step,
 and the report leaves the section out. The tokens are estimated
 (`jev.request_size`) and counted per thread, since the dashboard tailors several jobs at once
@@ -1012,26 +1017,27 @@ Tests: `tests/test_atom_audit.py` (census + gate) and `tests/test_atom_slop.py` 
 whose pins are mostly negative: the technical words that must stay quiet).
 
 ## Settings & customization (`local/settings.py` + dashboard Settings tab)
-`settings.py` is one schema (`SETTINGS_SCHEMA`) of 88 `Field` rows describing every
+`settings.py` is one schema (`SETTINGS_SCHEMA`) of 97 `Field` rows describing every
 user-editable option (key, type, default, validation, backing file). The dashboard's
 **Settings** tab auto-renders it grouped by collapsible section, inside a scrollable canvas.
 `SECTION_ORDER` (`local/qt/settings_tab.py`) is Jev / Credentials / Connection & paths / Engine /
-Dashboard / Scraper / Scoring / Resume / Auto-apply / Settings history / VM (cloud scraper), three
+Dashboard / About you / Scraper / Scoring / Resume / Auto-apply / Settings history / VM (cloud scraper), three
 of which `SECTION_DISPLAY` retitles for the UI as *Résumé tailor*, *Job discovery* and *VM (cloud
 job discovery)*. Version 2.0 put the Jev section first (`jev_enabled`, `TYPESAFE_API_KEY` moved
 there from Auto-apply, and the advanced area switches `jev_scoring`, `jev_tailor`,
 `jev_difficulty`) and made each provider selector its section's first row: `tailor_provider`
 leads Engine and the scoring `provider` leads Scoring, with help that names each as the writer
 or fallback beside Jev. Auto-apply gained `auto_apply_pause_minutes` and moved
-`auto_apply_jev_mode` under advanced; Resume gained the three Jev tailor options (TL-7 to TL-9).
+`auto_apply_jev_mode` under advanced; Resume gained the three Jev tailor options.
 Version 2.0 added `jev_writer` under advanced in Scoring, the switch for the writer that turns a
-Jev-scored job's findings into prose.
+Jev-scored job's findings into prose, and the About you section (school status, graduation
+month, clearance and an open box the scorer and filters read).
 `load`/`save` read and atomically write (with a `.bak`) **four** backing files (`TARGET_FILES`): the
 git-ignored `.env` and
 `local/config.json`, plus the root-level `search_config.json` (read by `scraper.py`) and
 `scoring_config.json` (read by `score_jobs.py`). The VM-standalone scraper/scorer never
 import `local/`; they read their own JSON with **env-override > file > built-in-default**
-precedence, so an absent file reproduces today's behavior exactly.
+precedence, so an absent file reproduces the built-in defaults exactly.
 
 ### Rendering flags vs. validation, on the same dataclass
 Four optional `Field` attributes carry the Settings tab's whole disclosure story as
@@ -1044,11 +1050,11 @@ is the guard). The fourth is the exception that proves the rule.
 | Attribute | Contract |
 | --- | --- |
 | `show_if=(gate_key, allowed_values)` | Rendering. A **configuration gate**: the field does nothing for the way this user has things set up, so it is off screen. Resolved **transitively** by `settings.is_visible` / `visible_keys`: a field is visible only if its own predicate holds *and* its gate field is itself visible. A typo'd gate key raises; it never degrades to "hidden". |
-| `advanced` (31 fields) | Rendering. A **view fold**: the setting applies, the user has said "not now". Composes with `show_if` (both must pass); `settings_tab._field_visible` is the single place both are decided. Search deliberately ignores it, so a folded row stays findable. |
-| `restart` (21 fields) | Rendering. The dashboard reads this key once, at launch, so a save writes the file but the running process keeps the old value. It is nearly every `.env` field: `local/app.py` calls `load_dotenv()` at startup and `python-dotenv` defaults to `override=False`, so neither a live `os.environ` read nor a subprocess that inherits the environment can see the new value. The six VM keys are exempt, because `vm_sync.VMTarget.from_env` reads the file via `settings.load`. |
+| `advanced` (35 fields) | Rendering. A **view fold**: the setting applies, the user has said "not now". Composes with `show_if` (both must pass); `settings_tab._field_visible` is the single place both are decided. Search deliberately ignores it, so a folded row stays findable. |
+| `restart` (25 fields) | Rendering. The dashboard reads this key once, at launch, so a save writes the file but the running process keeps the old value. It is nearly every `.env` field: `local/app.py` calls `load_dotenv()` at startup and `python-dotenv` defaults to `override=False`, so neither a live `os.environ` read nor a subprocess that inherits the environment can see the new value. The six VM keys are exempt, because `vm_sync.VMTarget.from_env` reads the file via `settings.load`. |
 | `pattern` / `pattern_help` | **Not** rendering: `validate()` enforces it with `re.fullmatch`, which is what stops the tab writing free text the consumer would silently discard. **A pattern must reject only what the consumer would DISCARD**, never a value it honours: `validate()` runs over every collected field, so an over-strict rule blocks every future Save of every *other* setting. Write the differential test against the real consumer. |
 
-The six per-stage model rows are where that transitivity earns its keep. A `Field` carries
+The eight per-stage model rows are where that transitivity earns its keep. A `Field` carries
 exactly one `show_if`, so they cannot say both "provider is gemini" and "mode is tiers".
 They gate on their provider's mode row, which gates on `tailor_provider`, and `is_visible`
 walks the chain, so a tier row is hidden by *either* the wrong provider or `simple` mode,
@@ -1067,21 +1073,21 @@ form: a view fold may be opened on the user's behalf and is never persisted when
 message true. A master switch is never reported as hiding itself.
 
 ## Apply automation (`apply.py` + the `apply.md` apply sheet)
-`apply_data.write` drops a single self-contained `apply.md` next to each tailored résumé. It is a
-**fallback for portals that don't auto-fill the form from an uploaded résumé**, so it lists **no files
-to upload**; it opens with a "when to use this sheet" note, then the fill-it-out playbook (never submit;
-never log in / enter passwords, payment, SSN, or government IDs; never solve CAPTCHAs, pause and hand
-off; e-sign with the candidate's name + today's date; use `XXXXX` for a blocking required field with no
-answer and flag it), then candidate basics + structured address, education, **this job's tailored
-résumé as markdown** (work experience / projects / leadership / technical skills), the active standard
-answers, and a hidden HTML-comment meta marker carrying the job identity for lookup. The résumé sections
-are rendered **deterministically** by mirroring `render.py`'s selection + grouping, fed the tailor's own
-`sel` + surviving `bullets` + `skill_lines`, so the sheet reflects exactly the blocks on the PDF (only
-selected blocks; each surviving bullet verbatim) with **no extra LLM call**. The dashboard's **Apply**
-button (and `python -m resume_tailor.apply`) resolves the folder via that marker, opens the posting in
-Chrome, and shows the Apply panel, which **renders the sheet as formatted markdown** while "Copy apply
-sheet" copies the raw source; the user pastes `apply.md` into Claude-in-Chrome to fill the fields by hand
-and **stop for human review; nothing auto-submits.** (That fill-it-out contract lives at the top of every `apply.md`.)
+`apply_data.write` drops a single self-contained `apply.md` next to each tailored résumé, and
+`apply_data.build_markdown` (a pure function) assembles it: a title line and the date it was
+generated; **Candidate** (name, email, phone, location, LinkedIn, GitHub); **Address**, from the
+structured address answers; **Education**; **this job's tailored résumé as markdown** (work
+experience / projects / leadership / technical skills); the **Cover letter** when one was written;
+**Standard answers**, the confirmed entries of the answer store; an **Electronic signature** block
+(name, and today's date on the day you apply); and a hidden HTML-comment meta marker carrying the
+job identity for lookup. It lists **no files to upload**. The résumé sections are rendered
+**deterministically** by mirroring `render.py`'s selection + grouping, fed the tailor's own `sel` +
+surviving `bullets` + `skill_lines`, so the sheet reflects exactly the blocks on the PDF (only
+selected blocks; each surviving bullet verbatim) with **no extra LLM call**. The auto-apply runner
+reads its facts from these headings through `local/apply_sheet.py`. The dashboard's
+**Apply** button (and `python -m resume_tailor.apply`) resolves the folder via the marker, opens the
+posting in Chrome, and shows the Apply panel, which **renders the sheet as formatted markdown**
+while "Copy apply sheet" copies the raw source, for a user who fills a form by hand.
 
 ### The one-page guarantee
 Three deterministic stages, none of which can invent text.
@@ -1147,7 +1153,7 @@ flowchart LR
 - `tests/test_jev_switch.py`, `tests/test_jev_score.py`, `tests/test_jev_score_calibrate.py`:
   the per-area Jev switch, the scorer's Jev composition and its calibration script.
 - `tests/test_jev_assist.py`, `tests/test_tailor_jev.py`, `tests/test_tailor_faithfulness.py`,
-  `tests/test_sweep_gate.py`, `tests/test_tailor_jev_options.py`: the tailor's TL-1 to TL-9,
+  `tests/test_sweep_gate.py`, `tests/test_tailor_jev_options.py`: the tailor's nine Jev steps,
   with `tests/fixtures/tailor_jev_off_prompts.json` pinning the Jev-off prompts.
 - `tests/test_apply_pause.py` (over `tests/fixtures/forms/pause_*.html`),
   `tests/test_apply_assess.py`, `tests/test_profile_lock.py`, `tests/test_apply_sheet.py`: park

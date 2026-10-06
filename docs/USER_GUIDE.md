@@ -212,7 +212,7 @@ so a non-technical user can set things up without touching a file. Each section 
 not editing (the tagline still tells you what each collapsed section is for) and tackle
 one group at a time.
 
-**Finding one setting among about ninety.** Three things at the top of the tab, in this order:
+**Finding one setting among about a hundred.** Three things at the top of the tab, in this order:
 
 - **The search box:** type a word and the tab filters to the rows that mention it. It
   matches the setting's name, its explanation, its config key **and the chips on the
@@ -224,9 +224,10 @@ one group at a time.
   never saved. If a match exists but your configuration makes it inert, a muted line under
   the results says so and names the switch: *"3 more settings apply when Scoring provider
   is 'claude'"*.
-- **Show advanced settings:** off by default, folding 21 power-user rows away on a fresh
+- **Show advanced settings:** off by default, folding 23 power-user rows away on a fresh
   install (the per-stage model pickers and fallback lists, scorer concurrency and retry caps,
-  Jev's three area switches and the Auto-apply judge) and 24 once VM features are on, which
+  Jev's three area switches, the Jev writer and the Auto-apply judge) and 26 once VM features
+  are on, which
   adds the VM plumbing. The label counts what it is
   currently withholding *for your configuration*, so ticking it really does reveal that many
   rows. Search ignores the fold: an advanced row still turns up in
@@ -293,8 +294,8 @@ The sections, in the order the tab shows them:
   it on to reveal the controls (see *Manage the VM* below).
 
 The model rows are **editable dropdowns**: the scorer's two stages sit in Scoring and the
-résumé tailor's in Résumé tailor. Each offers the recent Gemini 3.x ids by default, plus the
-Claude tier ids used when a provider is set to `claude`. Pick one or type a custom id. The
+résumé tailor's in Résumé tailor. A Gemini row offers the recent Gemini 3.x ids and a Claude
+row the Claude ids; each shows only while its provider is selected. Pick one or type a custom id. The
 tailor asks one question before the rest, **simple or per stage**, described under *One
 model for every step* below.
 
@@ -512,7 +513,7 @@ Candidate: In school: undergraduate (expected May 2027); clearance: Secret, open
   **Finished** and **In school: undergraduate** keep the filter.
 - The scraper's defaults are Job type *Full-time* and Experience level *Entry level*, so it
   collects few internships, whatever the scorer keeps. To collect them, choose *Internship*
-  under Settings → Scraper → **Job type** and **Experience level**. Each of the two settings
+  under Settings → Job discovery → **Job type** and **Experience level**. Each of the two settings
   holds one value, so this replaces *Full-time* and *Entry level* until you change them back.
 
 For every status, Jev's not-eligible check applies only when the posting carries a student
@@ -574,7 +575,7 @@ either way.
 #### Repair reposts that reused a score
 **Repost score reuse window (days)** (Scoring, under *Show advanced settings*) copies the
 score of a master row that matches and is still fresh onto a new posting. Reposts reused
-from 2026-09-19 until the release that added this command carried only the copied score,
+from 2026-09-19 until v2.0.0, which added this command, carried only the copied score,
 with a blank reason, deep score, strengths, gaps and recommendation. This command fills
 them in. It makes no scrape, no scoring call and no model call, and it prints counts only:
 
@@ -933,7 +934,8 @@ decisions live in `local/apply_judge.py`, with the live answers they were tuned 
    judge)** (it loads masked; untick *Hide* to see it; a rotated key needs a dashboard restart), and leave
    **Use Jev** on. Then install the browser half once, from the project folder (README
    Step 7): `powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -AutoApply` puts
-   playwright==1.61.0 and its Chromium into the venv. The run uses your installed Google
+   playwright==1.61.0 into the venv and its Chromium into `%LOCALAPPDATA%\ms-playwright`.
+   The run uses your installed Google
    Chrome and falls back to that Chromium when Chrome is absent. **Check setup** names
    anything still missing, and `python local/apply_run.py doctor` prints the same rows
    from a terminal.
@@ -1365,9 +1367,9 @@ One job selected, or the setting at 1, checks one job at a time on the real prof
 machine, lower **Difficulty checks at once**.
 
 **With several rows selected,** **Check difficulty** checks all of them ("Checking N selected
-jobs, up to K at once, in a new terminal."), and **Remove** asks first, then removes them in
-one step. **Re-queue**, **Mark applied**, **Don't apply** and the details pane's **Open
-folder**, **Open record** and **Answer now** are greyed out ("Select one job"), because each
+jobs, up to K at once, in a new terminal."), and **Remove from queue** asks first, then
+removes them in one step. **Re-queue**, **Mark applied**, **Don't apply** and the details
+pane's **Open job folder**, **Open application record** and **Answer now** are greyed out ("Select one job"), because each
 acts on a single job.
 
 **One check or run at a time.** A run, **Sign in to sites** and the difficulty check all use

@@ -8,8 +8,9 @@ every call a golden run makes are recorded from an engine with no Jev wiring, in
 `compress_skills`' fallback call, the stages the Jev checks gate (both `reverb`
 calls, the résumé scan that gates the AI-writing sweep with Jev off, every sweep
 call the scan sends, and a `reground` re-ask) and the rephrase call that best-of-N
-gates. The golden stub's scan reads the résumé as clean, so the recording holds the
-scan and no sweep call.
+gates. The golden stub's scan reads the résumé as clean, so the golden run makes no
+sweep call; one direct sweep over the run's own selection with the scan off records
+the sweep's prompt for every item, the way the reground re-ask is recorded.
 A prompt change made on purpose re-records the file (set TAILOR_JEV_OFF_PROMPTS_RECORD=1
 for one run) and shows the diff in review; a change nobody meant fails here.
 
@@ -55,7 +56,9 @@ RECORD_ENV = "TAILOR_JEV_OFF_PROMPTS_RECORD"
 # trims or gates when Jev is on. A stage the golden run calls more than once is
 # recorded once per call, in call order: its first call under the stage's name and
 # each later one as "<stage> #<n>", so the first call's key stays the stage's name.
-PINNED_STAGES = ("select", "rephrase", "reverb", "aiwriting_scan", "aiwriting_sweep")
+# The sweep's prompts are recorded by a direct call (`_record_jev_off`), since the
+# golden run's scan sends no item to it.
+PINNED_STAGES = ("select", "rephrase", "reverb", "aiwriting_scan")
 # The tailor's three Jev options. Each needs a judge, so with Jev off
 # the recording holds whichever way they are set.
 JEV_OPTION_ENVS = ("RESUME_TAILOR_BEST_OF_N", "RESUME_TAILOR_COVER_LETTER_JEV_CHECK",
@@ -147,6 +150,22 @@ def _record_jev_off(monkeypatch, tmp_path):
     compose.reground(golden._JD, golden._JOB["job_title"], captured["sel"],
                      {gk: list(tokens) for gk, tokens in _REGROUND_DROPPED.items()})
 
+    # The golden run's scan reads every item as clean, so no sweep call was made. One
+    # direct sweep with the scan off, over the bullets the run shipped (the golden's,
+    # which are the sweep's input: an echoed sweep changes nothing), records the repair
+    # prompt for every item.
+    sweeps: list = []
+
+    def _sweep_call(system, user, tier, **kw):
+        sweeps.append({"system": system, "user": user, "tier": tier, "kw": kw})
+        return golden._sweep_echo(user)
+
+    monkeypatch.setattr(sweep, "call", _sweep_call)
+    monkeypatch.setenv("RESUME_TAILOR_SWEEP_SCAN", "0")
+    sweep.sweep_items(golden._JD, golden._JOB["job_title"], captured["sel"],
+                      dict(captured["bullets"]))
+    monkeypatch.delenv("RESUME_TAILOR_SWEEP_SCAN")
+
     fallback: dict = {}
 
     def _fallback_call(system, user, tier, **kw):
@@ -163,11 +182,14 @@ def _record_jev_off(monkeypatch, tmp_path):
         if c["stage"] in PINNED_STAGES:
             n = seen[c["stage"]] = seen.get(c["stage"], 0) + 1
             prompts[c["stage"] if n == 1 else f"{c['stage']} #{n}"] = _prompt(c)
+    for n, c in enumerate(sweeps, 1):
+        prompts["aiwriting_sweep" if n == 1 else f"aiwriting_sweep #{n}"] = _prompt(c)
     prompts["reground"] = _prompt(reground)
     prompts["skills_fallback"] = _prompt(fallback)
     return {
         "calls": [{"stage": c["stage"], "tier": c["tier"], "kw": c["kw"]} for c in calls],
         "prompts": prompts,
+        "sweep_calls": [{"tier": c["tier"], "kw": c["kw"]} for c in sweeps],
         "skills_fallback_call": {"tier": fallback["tier"], "kw": fallback["kw"]},
         "reground_call": {"tier": reground["tier"], "kw": reground["kw"]},
     }
@@ -210,7 +232,7 @@ def assert_matches_recording(got: dict, want: dict | None = None) -> None:
             assert got["prompts"][stage][part] == want["prompts"][stage][part], _stale(
                 f"{stage} {part} prompt", want["prompts"][stage][part],
                 got["prompts"][stage][part])
-    for key in ("skills_fallback_call", "reground_call"):
+    for key in ("sweep_calls", "skills_fallback_call", "reground_call"):
         assert got[key] == want[key], _stale(key, want[key], got[key])
     assert got == want, _stale("recorded calls", want, got)
 
@@ -235,11 +257,11 @@ def test_jev_off_prompts_match_the_recording(pinned_engine, stub_template_head,
 def test_the_recording_covers_every_gated_stage():
     """Every stage a Jev step gates has its prompt in the recording: select and
     the rephrase once, reverb twice, the résumé scan that stands in for Jev's sweep
-    gate (it reads the golden résumé as clean, so no sweep call follows), and the
-    reground re-ask."""
+    gate, the sweep once per item, and the reground re-ask."""
     want = recorded_prompts()
-    gated = ["select", "rephrase", "reverb", "reverb #2", "aiwriting_scan", "reground",
-             "skills_fallback"]
+    gated = ["select", "rephrase", "reverb", "reverb #2", "aiwriting_scan",
+             "aiwriting_sweep", "aiwriting_sweep #2", "aiwriting_sweep #3",
+             "aiwriting_sweep #4", "reground", "skills_fallback"]
     assert list(want["prompts"]) == gated, (
         f"{PROMPTS.name} and this list of gated stages disagree. If the tailor's stages "
         f"changed on purpose, re-record with {RECORD_ENV}=1 (see "

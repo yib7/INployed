@@ -347,11 +347,13 @@ def aiwriting_sweep_enabled() -> bool:
     when it fits the same per-bullet line budget the trim enforces, so the pass can never
     push the résumé onto a second page.
 
-    Defaults ON, on the user's explicit instruction, chosen over cheaper detect-then-repair
-    gating: the detectors are deterministic, so gating on a deterministic hit would only
-    ever send the model the cases the code had already named. THE COST IS ONE MODEL CALL
-    PER RÉSUMÉ ITEM ON EVERY TAILOR RUN (a second call for an item whose rewrite came back
-    too long), which is what the setting turns off. Precedence:
+    Defaults ON, on the user's explicit instruction. A gate on the deterministic detectors
+    alone was rejected: gating on a deterministic hit would only ever send the model the
+    cases the code had already named. The calls are gated on a judgment-level read:
+    Jev's, or the résumé scan's (sweep_scan_enabled below). With no read, THE
+    COST IS ONE MODEL CALL PER RÉSUMÉ ITEM ON EVERY TAILOR RUN (a second call for an item
+    whose rewrite came back too long); with one, it is the read plus a call per item it
+    flags. Turning this off stops all of it. Precedence:
     RESUME_TAILOR_AIWRITING_SWEEP env > config.json 'resume_aiwriting_sweep' > True."""
     env = os.getenv("RESUME_TAILOR_AIWRITING_SWEEP")
     if env is not None and str(env).strip():

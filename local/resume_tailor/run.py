@@ -964,9 +964,12 @@ def _report_sweep(ctx: PassCtx, result: sweep.SweepResult, *, stage: str) -> Non
     reask = (f"; the bounded re-ask ran for {len(result.reasked)} item(s): "
              + ", ".join(result.reasked)) if result.reasked else \
             "; no item needed the bounded re-ask"
+    # `calls` counts the résumé scan's call too (SweepResult), so the line says so
+    # whenever the scan made one: "swept 0 item(s) in 1 call(s)" alone reads as a bug.
+    scanned = " (one of them the résumé scan)" if result.scan else ""
     rep.note(KIND_AIWRITING,
-             f"[{stage}] swept {result.items} item(s) in {result.calls} call(s) and "
-             f"rewrote {len(result.changed)} bullet(s){reask}")
+             f"[{stage}] swept {result.items} item(s) in {result.calls} call(s){scanned} "
+             f"and rewrote {len(result.changed)} bullet(s){reask}")
     # The sweep gate: Jev's read (`jev_assist.sweep_flags`) with Jev on, the résumé
     # scan with Jev off or failed. Notes: a skipped call is the gate doing its job, a
     # flag only says why a call was made, and a failed scan sent every item, which is
@@ -1018,8 +1021,9 @@ def _report_sweep(ctx: PassCtx, result: sweep.SweepResult, *, stage: str) -> Non
 
 
 def _pass_aiwriting_sweep(ctx: PassCtx) -> None:
-    """Item-level AI-writing sweep: one model call per résumé entry, reading the entry
-    and all of its bullets together so the tells that only exist ACROSS an item can be
+    """Item-level AI-writing sweep: one model call per résumé entry that a read or a
+    detector flags (every entry when no read ran), reading the entry and all of its
+    bullets together so the tells that only exist ACROSS an item can be
     seen at all. `compose.enforce_style` reads one bullet at a time and is structurally
     blind to those. See `sweep.py` for the five acceptance conditions.
 

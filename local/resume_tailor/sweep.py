@@ -334,7 +334,8 @@ _SCAN_SYSTEM = (
 
 _SCAN_CLOSING = (
     "List only the bullets that carry a tell, each with the tells it carries. A bullet "
-    "you leave out is read as clean. When no bullet carries one, return an empty list."
+    "you leave out is read as clean. When no bullet carries one, return "
+    "{\"flags\": []}."
 )
 
 
@@ -469,10 +470,10 @@ def _sweep_body(item: str, specs: Sequence[_Spec],
     finding's whole `detail` under every bullet it spans would triple the prompt
     for one sentence of content.
 
-    `marks` is {gkey: the tells Jev read} for an item Jev flagged. Each of its
-    bullets then carries a `judge_flags` list, empty for a bullet Jev read as clean,
-    so the model can tell the two apart. With no mark the key is absent, and the
-    payload is the one the sweep sends with Jev off.
+    `marks` is {gkey: the tells read} for an item the gate's read (Jev's or the
+    résumé scan's) flagged. Each of its bullets then carries a `judge_flags` list,
+    empty for a bullet read as clean, so the model can tell the two apart. With no
+    mark the key is absent, and the payload is the one the sweep sends with no read.
     """
     out = []
     for s in specs:
@@ -570,8 +571,15 @@ def _ask_reask(job_title: str, body: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _ask_scan(body: Dict[str, Any]) -> Dict[str, Any]:
-    return as_dict(call(_SCAN_SYSTEM, _scan_user_prompt(body),
-                        config.TIER_FLASH, json_out=True, temperature=0.2), "flags")
+    out = call(_SCAN_SYSTEM, _scan_user_prompt(body),
+               config.TIER_FLASH, json_out=True, temperature=0.2)
+    # A bare empty array is the clean answer with its {"flags": ...} wrapper dropped.
+    # as_dict reads an array holding no object as a broken answer, and a clean résumé
+    # read as a failed scan would buy every item its call: the one case the scan exists
+    # to make cheap.
+    if out == []:
+        return {"flags": []}
+    return as_dict(out, "flags")
 
 
 # ── the gate ─────────────────────────────────────────────────────────────────
@@ -600,7 +608,10 @@ def _parse_scan(out: Any, sent: Sequence[str]) -> Optional[Dict[str, Tuple[str, 
     flag, or None when the answer is not the {"flags": [...]} it was asked for.
 
     A flag naming a bullet that was not sent is dropped, and so is a flag that is not
-    an object. Each tell is collapsed to one line and cut to `_SCAN_TELL_MAX`
+    an object or carries no "tells" list. A non-empty "flags" list with no flag left
+    after that is None too: the model drifted off the shape (bare gkeys, a renamed
+    key), and reading such an answer as "every bullet clean" would skip every call on
+    a misread. Each tell is collapsed to one line and cut to `_SCAN_TELL_MAX`
     characters, blanks and repeats are dropped, and a bullet keeps at most
     `_SCAN_TELLS_MAX` of them: the names land in a repair payload and the run report,
     and an answer's length is the model's choice.
@@ -608,23 +619,28 @@ def _parse_scan(out: Any, sent: Sequence[str]) -> Optional[Dict[str, Tuple[str, 
     if not isinstance(out, dict) or not isinstance(out.get("flags"), list):
         return None
     flags: Dict[str, Tuple[str, ...]] = {gk: () for gk in sent}
+    usable = 0
     for entry in out["flags"]:
         if not isinstance(entry, dict):
             continue
         gk = entry.get("gkey")
-        if not isinstance(gk, str) or gk not in flags:
+        gk = gk.strip() if isinstance(gk, str) else None
+        if gk not in flags:
             continue
         tells = entry.get("tells")
         if isinstance(tells, str):
             tells = [tells]
         if not isinstance(tells, list):
             continue
+        usable += 1
         names = list(flags[gk])
         for tell in tells:
             name = one_line(tell)[:_SCAN_TELL_MAX].strip()
             if name and name not in names:
                 names.append(name)
         flags[gk] = tuple(names[:_SCAN_TELLS_MAX])
+    if out["flags"] and not usable:
+        return None
     return flags
 
 

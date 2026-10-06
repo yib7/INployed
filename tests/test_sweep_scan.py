@@ -270,6 +270,35 @@ def test_a_flag_with_no_tells_reads_as_clean(engine, monkeypatch):
     assert result.skipped == (ITEM,)
 
 
+def test_a_bare_empty_array_is_a_clean_scan(engine, monkeypatch):
+    """The clean answer with its wrapper dropped. Read as a failure it would buy every
+    item its call, which is the case the scan exists to make cheap."""
+    rec, result = _sweep(monkeypatch, dict(CLEAN), scan=[])
+    assert rec.kinds == ["scan"]
+    assert result.scan == sweep.SCAN_RAN
+    assert result.skipped == (ITEM,)
+
+
+def test_the_closing_names_the_clean_answer():
+    assert '{"flags": []}' in sweep._SCAN_CLOSING
+
+
+def test_a_padded_gkey_still_names_its_bullet():
+    got = sweep._parse_scan({"flags": [{"gkey": " a2 ", "tells": ["filler"]}]}, ["a1", "a2"])
+    assert got == {"a1": (), "a2": ("filler",)}
+
+
+@pytest.mark.parametrize("answer", [
+    {"flags": ["a2"]},
+    {"flags": [{"gkey": "a2", "tell": "hype words"}]},
+    {"flags": [{"gkey": "zz", "tells": ["hype words"]}]},
+], ids=["bare-gkeys", "renamed-key", "unknown-gkeys-only"])
+def test_flags_with_none_usable_parse_to_none(answer):
+    """A non-empty list the parser can use none of is a misread shape, never a clean
+    resume: every call would be skipped on it."""
+    assert sweep._parse_scan(answer, ["a1", "a2"]) is None
+
+
 def test_parse_maps_every_sent_bullet():
     got = sweep._parse_scan(_flags(a2=["hype words"]), ["a1", "a2", "a3"])
     assert got == {"a1": (), "a2": ("hype words",), "a3": ()}
@@ -286,8 +315,10 @@ def test_a_malformed_answer_parses_to_none(answer):
 
 # ── failure ─────────────────────────────────────────────────────────────────
 @pytest.mark.parametrize("scan", [
-    RuntimeError("transport down"), "garbage", {"bullets": []}, {"flags": "hype"},
-], ids=["raises", "non-dict", "no-flags-key", "flags-not-a-list"])
+    RuntimeError("transport down"), "garbage", ["not", "objects"], {"bullets": []},
+    {"flags": "hype"}, {"flags": ["a1"]},
+], ids=["raises", "non-dict", "list", "no-flags-key", "flags-not-a-list",
+        "no-usable-flag"])
 def test_a_failed_scan_sweeps_every_entry_as_before(engine, monkeypatch, scan):
     sel, bullets = _two_items()
     monkeypatch.setenv(SCAN_ENV, "0")
@@ -405,6 +436,8 @@ def test_the_report_credits_the_scan_and_never_jev():
     assert ("the résumé scan read hype words in bullet 'a2' in 'Example Corp', so that "
             "item was sent to the sweep") in text
     assert "the résumé scan read 2 item(s) in one call and sent 1 to repair" in text
+    assert ("swept 1 item(s) in 2 call(s) (one of them the résumé scan) and rewrote 0 "
+            "bullet(s)") in text
 
 
 def test_a_failed_scan_is_reported_as_a_note():
@@ -417,6 +450,7 @@ def test_the_jev_lines_are_unchanged_without_a_scan():
         sweep.JudgeFlag("a2", ITEM, ("hype words",)),))))
     assert "Jev's sweep gate skipped the call for 1 item(s)" in lines
     assert "Jev read hype words in bullet 'a2'" in lines
+    assert "swept 1 item(s) in 2 call(s) and rewrote 0 bullet(s)" in lines
     assert "résumé scan" not in lines
 
 

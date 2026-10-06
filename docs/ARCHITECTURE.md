@@ -795,7 +795,7 @@ fill skipped for want of a spare atom is a documented no-op, not a finding.
 
 The AI-writing sweep runs LAST, for two reasons that pull the same way. The style gate is
 free and mechanical, so running it first means the judgment pass reads text the banned
-phrasing is already out of and spends its one call per item on the structural tells only it
+phrasing is already out of and spends each item's call on the structural tells only it
 can see. And the sweep's own line count is non-increasing, so a stage placed after it could
 re-lengthen a bullet and take that guarantee away. There is nothing after it.
 

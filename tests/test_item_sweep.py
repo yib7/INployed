@@ -1,7 +1,8 @@
 """The item-level AI-writing sweep (`resume_tailor.sweep`).
 
-One model call per ITEM (one Experience / Projects / Leadership entry with all of
-its bullets), because the tells this feature chases only exist across an item's
+One repair call per ITEM (one Experience / Projects / Leadership entry with all of
+its bullets; the `engine` fixture pins the résumé scan off, so every item makes
+one), because the tells this feature chases only exist across an item's
 bullets. `itemcheck` finds them, `aiwriting` says what a resume bullet may not
 say, and this module is what turns a finding into a repaired bullet without
 moving the page.

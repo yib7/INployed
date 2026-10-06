@@ -362,6 +362,21 @@ def aiwriting_sweep_enabled() -> bool:
     return _config_json().get("resume_aiwriting_sweep", True) is not False
 
 
+def sweep_scan_enabled() -> bool:
+    """Whether the AI-writing sweep first runs ONE detect-only scan over the whole
+    résumé and sends an entry to its repair call only when the scan flags one of its
+    bullets or a detector forces it (sweep.py, "the résumé scan"). With Jev reading the
+    bullets for the tailor the scan never runs, since Jev's read already gates the
+    calls; it stands in when Jev is off or its read fails. Off sends every entry to
+    the sweep, one call each, as before the scan existed. Defaults ON. Precedence:
+    RESUME_TAILOR_SWEEP_SCAN env > config.json 'resume_sweep_scan' > True."""
+    env = os.getenv("RESUME_TAILOR_SWEEP_SCAN")
+    if env is not None and str(env).strip():
+        return str(env).strip().lower() not in ("0", "false", "no", "off")
+    # `is not False`, the spelling every ON-by-default toggle in this module uses.
+    return _config_json().get("resume_sweep_scan", True) is not False
+
+
 def sweep_p2_enabled() -> bool:
     """Whether the AI-writing sweep also REPAIRS its P2 findings, or only reports them.
 

@@ -967,17 +967,31 @@ def _report_sweep(ctx: PassCtx, result: sweep.SweepResult, *, stage: str) -> Non
     rep.note(KIND_AIWRITING,
              f"[{stage}] swept {result.items} item(s) in {result.calls} call(s) and "
              f"rewrote {len(result.changed)} bullet(s){reask}")
-    # The sweep gate (`jev_assist.sweep_flags`), with Jev on. Notes: a skipped call is
-    # the gate doing its job, and a flag only says why a call was made.
+    # The sweep gate: Jev's read (`jev_assist.sweep_flags`) with Jev on, the résumé
+    # scan with Jev off or failed. Notes: a skipped call is the gate doing its job, a
+    # flag only says why a call was made, and a failed scan sent every item, which is
+    # how the sweep ran before it had a gate. Each line names the read that decided,
+    # so a scan's verdict is never credited to Jev.
+    if result.scan == sweep.SCAN_RAN:
+        rep.note(KIND_AIWRITING,
+                 f"[{stage}] the résumé scan read "
+                 f"{result.items + len(result.skipped)} item(s) in one call and sent "
+                 f"{result.items} to repair")
+    elif result.scan == sweep.SCAN_FAILED:
+        rep.note(KIND_AIWRITING,
+                 f"[{stage}] the résumé scan failed, so every item was swept")
+    by_scan = result.scan == sweep.SCAN_RAN
+    reader = "the résumé scan" if by_scan else "Jev"
+    gate = "the résumé scan" if by_scan else "Jev's sweep gate"
     if result.skipped:
         rep.note(KIND_AIWRITING,
-                 f"[{stage}] Jev's sweep gate skipped the call for "
+                 f"[{stage}] {gate} skipped the call for "
                  f"{len(result.skipped)} item(s) with no tell and no detector finding: "
                  + ", ".join(result.skipped))
     for flag in result.judge_flags:
         rep.note(KIND_AIWRITING,
-                 f"[{stage}] Jev read {', '.join(flag.names)} in bullet '{flag.gkey}' "
-                 f"in '{flag.item}', so that item was sent to the sweep")
+                 f"[{stage}] {reader} read {', '.join(flag.names)} in bullet "
+                 f"'{flag.gkey}' in '{flag.item}', so that item was sent to the sweep")
     for rejection in result.rejected:
         rep.note(KIND_AIWRITING,
                  f"[{stage}] kept the original of bullet '{rejection.gkey}' in "
@@ -1028,7 +1042,8 @@ def _pass_aiwriting_sweep(ctx: PassCtx) -> None:
     With Jev on, the run's judge reads every bullet first, and an item makes its call
     only for a tell Jev reads or a detector finding (`jev_assist.sweep_flags`, the
     judge gate in `sweep.py`). The gate's usage line is recorded whichever way the
-    pass ends.
+    pass ends. With Jev off, or when its read fails, one résumé scan call reads every
+    bullet and gates the calls the same way (`config.sweep_scan_enabled()`).
     """
     ctx.log("sweeping each résumé item for AI-writing tells…")
     try:
@@ -1049,6 +1064,11 @@ def _pass_aiwriting_sweep(ctx: PassCtx) -> None:
     finally:
         if ctx.judge is not None and ctx.report is not None:
             ctx.report.jev_step(jev_assist.STEP_SWEEP_GATE)
+    if result.scan == sweep.SCAN_RAN:
+        ctx.log(f"AI-writing sweep: the résumé scan ran and sent {result.items} of "
+                f"{result.items + len(result.skipped)} item(s) to repair.")
+    elif result.scan == sweep.SCAN_FAILED:
+        ctx.log("AI-writing sweep: the résumé scan failed, so every item was swept.")
     if result.changed:
         ctx.log(f"AI-writing sweep: rewrote {len(result.changed)} bullet(s).")
     _report_sweep(ctx, result, stage=AIWRITING_SWEEP_STAGE)

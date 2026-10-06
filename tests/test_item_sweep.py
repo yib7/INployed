@@ -128,7 +128,11 @@ def _answer(**texts):
 
 @pytest.fixture()
 def engine(monkeypatch):
-    """Every input the sweep reads, pinned. No user data, no config.json, no model."""
+    """Every input the sweep reads, pinned. No user data, no config.json, no model.
+
+    The résumé scan is pinned off, so every item makes its call and these tests read
+    the repair call alone; tests/test_sweep_scan.py turns it back on."""
+    monkeypatch.setenv("RESUME_TAILOR_SWEEP_SCAN", "0")
     monkeypatch.setattr(assets, "atoms_by_id", lambda: {k: dict(v)
                                                         for k, v in _ATOMS.items()})
     monkeypatch.setattr(config, "_config_json", lambda: {})
@@ -155,10 +159,11 @@ def test_no_detector_fires_on_the_clean_item(engine):
     assert itemcheck.item_findings(ITEM, list(CLEAN.items())) == []
 
 
-# ── the toggle is "on unconditionally" ───────────────────────────────────────
+# ── with no read in front of it, every item is sent ──────────────────────────
 def test_a_clean_item_still_makes_its_call_and_commits_nothing(engine, monkeypatch):
-    """The frozen answer is on unconditionally: a clean item is still sent, because
-    the detectors are deterministic and the judgment arm is what they cannot see."""
+    """With no read to gate it (Jev off and the résumé scan off), a clean item is
+    still sent, because the detectors are deterministic and the judgment arm is what
+    they cannot see. tests/test_sweep_scan.py covers the scan that gates it."""
     rec = _install(monkeypatch, Recorder(first=_answer(**CLEAN)))
     bullets = dict(CLEAN)
     result = sweep.sweep_items("", "Data Engineer", _sel(), bullets)

@@ -85,8 +85,11 @@ class Recorder:
 
 @pytest.fixture()
 def engine(monkeypatch):
-    """Every input the sweep and the pass read, pinned. No user data, no config.json."""
+    """Every input the sweep and the pass read, pinned. No user data, no config.json.
+    The résumé scan is pinned off, so the item makes its call whatever it reads like
+    (tests/test_sweep_scan.py covers the scan's wiring)."""
     monkeypatch.delenv("RESUME_TAILOR_AIWRITING_SWEEP", raising=False)
+    monkeypatch.setenv("RESUME_TAILOR_SWEEP_SCAN", "0")
     monkeypatch.setattr(assets, "atoms_by_id", lambda: {k: dict(v)
                                                         for k, v in _ATOMS.items()})
     monkeypatch.setattr(config, "_config_json", lambda: {})

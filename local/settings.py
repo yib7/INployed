@@ -615,12 +615,19 @@ SETTINGS_SCHEMA: list[Field] = [
                "letter prompts carry these rules either way; this decides whether the "
                "check enforces them. docs/USER_GUIDE.md lists exactly what it catches."),
     Field("resume_aiwriting_sweep", "Strip AI writing patterns from the résumé bullets",
-          "bool", True, "Resume", "config",
+          "bool", True, "Resume", "config", choices=("True", "False"),
           help="Sends each résumé entry to the model as a whole to clear the tells that "
                "only show up across its bullets: one sentence shape reused down the "
                "list, every bullet the same length, a three-part series in each line. "
-               "COSTS ONE MODEL CALL PER RÉSUMÉ ENTRY ON EVERY TAILOR RUN. Turn it off "
+               "COSTS ONE MODEL CALL PER RÉSUMÉ ENTRY ON EVERY TAILOR RUN, fewer with "
+               "'Scan the résumé first' on. Turn it off "
                "to save that; the always-on per-bullet style gate is unaffected."),
+    Field("resume_sweep_scan", "Scan the résumé first, then repair only what it flags",
+          "bool", True, "Resume", "config", show_if=("resume_aiwriting_sweep", ("True",)),
+          help="Before the résumé sweep, one model call reads every bullet for AI "
+               "writing patterns, and only an entry it flags (or one the built-in checks "
+               "flag) gets its repair call. Fewer calls and tokens per run. Skipped "
+               "while Jev reads the bullets. Off sends every entry to the sweep."),
     # The tailor's three Jev options, each off by default
     # and on screen only while Jev runs for the tailor: they gate on jev_tailor,
     # which gates on jev_enabled. Read through resume_tailor/config.py's

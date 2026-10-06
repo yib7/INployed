@@ -879,13 +879,15 @@ SHOW_IF_GATES = {
     # how many difficulty checks run at once shows only while the
     # check itself does (its switch, and through it the Jev master switch).
     "auto_apply_check_parallel": ("jev_difficulty", ("True",)),
+    # the résumé scan gates the sweep's calls, so it shows only while the sweep is on.
+    "resume_sweep_scan": ("resume_aiwriting_sweep", ("True",)),
 }
 
 
 def test_every_gate_is_declared_on_the_schema():
     gated = {f.key: f.show_if for f in settings.SETTINGS_SCHEMA if f.show_if is not None}
     assert gated == SHOW_IF_GATES
-    assert len(SHOW_IF_GATES) == 34
+    assert len(SHOW_IF_GATES) == 35
 
 
 def test_show_if_is_a_declarative_tuple_not_a_callable():

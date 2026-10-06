@@ -1,4 +1,4 @@
-"""The item-level AI-writing sweep: one model call per resume entry.
+"""The item-level AI-writing sweep: one repair call per resume entry that needs one.
 
 ``compose.enforce_style`` repairs ONE bullet at a time, so it is structurally
 blind to every tell that only exists across an item's bullets: one sentence
@@ -15,30 +15,53 @@ a second, differently-shaped one to find it.
 
 ── what runs, and when ──────────────────────────────────────────────────────
 
-**Every item, every run.** The toggle is on unconditionally, chosen over cheaper
-detect-then-repair gating. The detectors are deterministic and lexical, so they
-find what they were written to find; the judgment arm is what they cannot see,
-and gating the call on a deterministic hit would only ever send the model the
-cases the code had already named. The findings still ride in the payload, because
+**Every item is read; an item is repaired when the read or a detector finds
+something.** Before the first repair call, one read of every bullet the sweep may
+rewrite decides which items need one. An item makes its call only when one of its
+bullets carries a tell from that read, or when a detector finding forces it: an
+``itemcheck`` finding of a repaired tier, or an ``aiwriting`` phrasing hit. The
+tells ride in the payload (each bullet's ``judge_flags``, which
+``_SWEEP_FLAG_RULE`` tells the model to repair), and so do the findings, because
 they make the repair TARGETED. A free rewrite is how a grounded bullet drifts off
 its atoms, and every guard below exists to make that drift impossible to commit.
+An item the read finds clean and no detector flags has nothing for the call to
+repair: the SCOPE rule returns such bullets exactly as they arrived, so skipping
+the call changes no text. A P2 finding forces nothing while P2 is only reported,
+because it never reaches the model.
 
-**With Jev on, a judge gate.** Before the first call,
-``jev_assist.sweep_flags`` reads every bullet the sweep may rewrite for the tells of
-the user's banned patterns (contrast framing, stacked adjectives, filler or vague
-impact, hype words, a list padded out to three), one request per item. An item then
-makes its call only when a bullet carries a tell at ``jev_assist.SWEEP_FLAG`` or
-more, or when a detector finding forces it: an ``itemcheck`` finding of a repaired
-tier, or an ``aiwriting`` phrasing hit. This gate differs from the detector gate
-rejected above. That gate could only send the model the cases the code had already
-named. The judge reads the same judgment-level tells the call exists to catch, so
-gating on its read still sends the model what the detectors cannot see, and its
-flags ride in the payload (each bullet's ``judge_flags``, which
-``_SWEEP_FLAG_RULE`` tells the model to repair) so that repair is targeted too. An
-item the judge reads as clean and no detector flags has nothing for the call to
-repair: the SCOPE rule returns such bullets exactly as they arrived. A P2 finding
-forces nothing while P2 is only reported, because it never reaches the model. With
-Jev off, or when its read fails, every item is swept as above.
+The read is always a judgment-level one. A gate on the detectors alone was
+considered and rejected, and it stays rejected: the detectors are deterministic
+and lexical, so they find what they were written to find, and gating the call on
+a deterministic hit would only ever send the model the cases the code had already
+named. Both reads below look for the judgment-level tells the repair call exists
+to catch, so gating on them still sends the model what the detectors cannot see.
+
+**With Jev on, Jev reads.** ``jev_assist.sweep_flags`` reads every bullet for the
+tells of the user's banned patterns (contrast framing, stacked adjectives, filler
+or vague impact, hype words, a list padded out to three), one request per item,
+and a bullet is flagged at ``jev_assist.SWEEP_FLAG`` or more.
+
+**With Jev off, or when its read fails, the résumé scan reads.** ONE flash-tier
+call over every bullet, grouped by entry (``_SCAN_SYSTEM``). It carries the rules
+the repair call carries (``compose.BANNED_PHRASING``,
+``aiwriting.RESUME_RULES_PROMPT`` and the names of the patterns Jev asks about)
+plus the register carve-out of ``aiwriting.RESUME_PROFILE``, so correct résumé
+grammar (a subjectless fragment opening on a past-tense action verb) is never
+flagged. It names tells and never rewrites, and it leaves the atoms and the job out,
+since naming a tell needs neither. The saving is the point: a clean résumé costs one
+short answer in place of one repair call per item, and a résumé with one weak
+bullet costs the scan and that item's call. ``_SWEEP_FLAG_RULE`` was written for
+Jev's five names; the scan is asked to use them where one fits and may name a
+tell of the rules in its own words, which the rule's "treat each flag as part of
+that bullet's PHRASING list" covers the same way. The scan lists only the bullets
+it flags, so a bullet it leaves out reads as clean; a cut-off answer does not parse
+and counts as a failed scan. ``config.sweep_scan_enabled()``
+(``RESUME_TAILOR_SWEEP_SCAN``) turns it off.
+
+**With no read, every item is swept.** The scan off, or a scan that raises or
+answers in a shape that does not parse: every item makes its call with the payload
+and prompts it had before either read existed. The scan's call is counted in
+``SweepResult.calls``, so a run's call count is what it paid for.
 
 **P0 and P1 are repaired. P2 is reported by default.** Only the repaired tiers
 reach the prompt, because a finding the model can see is a finding the model will
@@ -129,6 +152,17 @@ REASON_STYLE = "style"
 REASON_VERB = "verb"
 REASON_FACTS = "facts"
 
+# What became of the résumé scan, in `SweepResult.scan` ("" when it did not run:
+# Jev read the bullets, the toggle is off, or there was nothing to read).
+SCAN_RAN = "ran"
+SCAN_FAILED = "failed"
+
+# A tell the scan names is a short label that rides into a repair payload and the
+# run report, so a runaway answer is cut to this many characters, and a bullet
+# keeps at most this many tells.
+_SCAN_TELL_MAX = 60
+_SCAN_TELLS_MAX = 6
+
 # The order the acceptance conditions are tested in, which is also the order the
 # plan states them. It matters for one reason: the reported reason is the FIRST
 # condition that failed, and the bounded re-ask fires on REASON_OVERFLOW. Putting
@@ -161,9 +195,10 @@ class Lingering(NamedTuple):
 
 
 class JudgeFlag(NamedTuple):
-    """A bullet Jev read one or more banned-pattern tells in (the judge gate), by name
-    (`jev_assist.SWEEP_QUESTIONS`). The flag bought its item a call, and the names
-    rode in that call's payload."""
+    """A bullet the gate's read found one or more tells in, by name: Jev's read
+    (`jev_assist.SWEEP_QUESTIONS`), or the résumé scan's when `SweepResult.scan` is
+    set. The flag bought its item a call, and the names rode in that call's
+    payload."""
     gkey: str
     item: str
     names: Tuple[str, ...]
@@ -178,9 +213,12 @@ class SweepResult(NamedTuple):
     the sweep leaves behind, which is the honest list: a P1 repair occasionally
     clears a P2 tell on its way past.
 
-    ``skipped`` and ``judge_flags`` come from the judge gate: the items whose
-    call it skipped, and the bullets whose tells sent theirs. Both stay empty with
-    Jev off. ``items`` and ``calls`` count only the items that made a call.
+    ``skipped`` and ``judge_flags`` come from the gate: the items whose call it
+    skipped, and the bullets whose tells sent theirs. Both stay empty when no read
+    ran. ``scan`` says which read that was: ``SCAN_RAN`` for the résumé scan,
+    ``SCAN_FAILED`` for a scan whose failure sent every item, "" for Jev's read or
+    none. ``items`` counts only the items that made a call; ``calls`` counts every
+    model call the sweep made, the scan's included.
     """
     changed: Tuple[str, ...]
     rejected: Tuple[Rejection, ...]
@@ -192,6 +230,7 @@ class SweepResult(NamedTuple):
     failures: Tuple[str, ...]
     skipped: Tuple[str, ...] = ()
     judge_flags: Tuple[JudgeFlag, ...] = ()
+    scan: str = ""
 
 
 # ── the prompts ──────────────────────────────────────────────────────────────
@@ -235,12 +274,13 @@ _SWEEP_SYSTEM = (
     + aiwriting.RESUME_RULES_PROMPT + "\n" + _PRINCIPLE
 )
 
-# Appended to the system prompt above for an item whose bullets carry Jev's
-# flags, so the call the flags bought knows what to repair. The SCOPE rule hands back
-# a bullet with no finding and no phrasing hit untouched, so without this rule a call
-# made for a flag alone would change nothing. Held to the same rules as the prompts
-# above (tests/test_sweep_gate.py scans it directly). An item with no flag, and every
-# item with Jev off, is sent the system prompt above byte for byte.
+# Appended to the system prompt above for an item whose bullets carry flags from
+# Jev's read or the résumé scan, so the call the flags bought knows what to repair.
+# The SCOPE rule hands back a bullet with no finding and no phrasing hit untouched, so
+# without this rule a call made for a flag alone would change nothing. Held to the
+# same rules as the prompts above (tests/test_sweep_gate.py scans it directly). An
+# item with no flag, and every item when no read ran, is sent the system prompt above
+# byte for byte.
 _SWEEP_FLAG_RULE = (
     "\nJUDGE FLAGS. A bullet may also carry a 'judge_flags' list: tells a judge read "
     "in that bullet, each one of " + ", ".join(jev_assist.SWEEP_QUESTIONS) + ". "
@@ -264,6 +304,46 @@ _REASK_SYSTEM = (
     + compose.BANNED_PHRASING + "\n"
     + aiwriting.RESUME_RULES_PROMPT + "\n" + _PRINCIPLE
 )
+
+# The résumé scan: detect only, over the whole résumé at once ("With Jev off, or
+# when its read fails, the résumé scan reads" above). It carries the repair call's
+# rules, so it looks for what that call would fix, and the register carve-out from
+# aiwriting.RESUME_PROFILE, because a scan that flags correct résumé grammar buys a
+# repair call for every item and saves nothing. _PRINCIPLE is left out: it governs
+# what a rewrite may state, and the scan writes no bullet and sees no atom.
+_SCAN_SYSTEM = (
+    "You read the bullets of a resume, grouped by entry, and name the AI-writing "
+    "tells each bullet carries. Never rewrite a bullet. A later step repairs only the "
+    "bullets you flag, so a tell you miss ships on the page, and a flag on a bullet "
+    "with no tell buys a repair that can damage correct text.\n"
+    "WHAT TO FLAG. A bullet that breaks one of the rules below, or that shows one of "
+    "these patterns: " + ", ".join(jev_assist.SWEEP_QUESTIONS) + ". Name each tell in "
+    "a few words, with one of those names when one fits. Read each entry's bullets "
+    "together: when a tell shows only across them (one sentence shape reused down the "
+    "list, one noun cycling through every line), flag each bullet that shares it. The "
+    "rules say how a writer repairs each pattern; for you they say what to look for.\n"
+    "WHAT NOT TO FLAG. A resume bullet is a subjectless fragment that opens with a "
+    "past-tense action verb ('Built a scraper that cut per-run cost 65%'). That shape "
+    "is correct resume grammar. A missing subject, a missing first person, an action "
+    "verb opener and a sentence fragment are never tells. A number, a tool name or a "
+    "plain technical term is never a tell by itself.\n"
+    "BANNED PHRASING (a bullet using any of these carries a tell): "
+    + compose.BANNED_PHRASING + "\n"
+    + aiwriting.RESUME_RULES_PROMPT
+)
+
+_SCAN_CLOSING = (
+    "List only the bullets that carry a tell, each with the tells it carries. A bullet "
+    "you leave out is read as clean. When no bullet carries one, return an empty list."
+)
+
+
+def _scan_user_prompt(body: Dict[str, Any]) -> str:
+    return f"""{json.dumps(body, ensure_ascii=False, indent=1)}
+
+{_SCAN_CLOSING}
+
+Return ONLY JSON: {{"flags": [{{"gkey": "<gkey>", "tells": ["<tell>", ...]}}, ...]}}"""
 
 
 # ── measurement helpers ──────────────────────────────────────────────────────
@@ -471,10 +551,11 @@ Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<bullet>"}}, ...]}}
 # tests/test_prompt_hygiene.py finds prompts by walking the ARGUMENTS of
 # `llm.call`, so a system prompt handed in as a parameter is invisible to it: the
 # trace has no way back from a parameter to the constant a caller passed. Naming
-# the constant at the call site is what keeps both prompts inside that scan, and
+# the constant at the call site is what keeps every prompt inside that scan, and
 # the scan passing vacuously is a real failure mode (aiwriting.RULES_PROMPT was
 # once invisible for the same reason). The judge gate's flag variants are
-# chosen inside the call's own arguments for the same reason.
+# chosen inside the call's own arguments for the same reason, and the résumé
+# scan's call names _SCAN_SYSTEM at its own call site.
 def _ask_sweep(job_title: str, body: Dict[str, Any], flagged: bool = False) -> Dict[str, Any]:
     return as_dict(call((_SWEEP_SYSTEM + _SWEEP_FLAG_RULE) if flagged else _SWEEP_SYSTEM,
                         _user_prompt(job_title, body,
@@ -488,27 +569,92 @@ def _ask_reask(job_title: str, body: Dict[str, Any]) -> Dict[str, Any]:
                         config.TIER_FLASH, json_out=True, temperature=0.2), "bullets")
 
 
-# ── the judge gate ───────────────────────────────────────────────────────────
+def _ask_scan(body: Dict[str, Any]) -> Dict[str, Any]:
+    return as_dict(call(_SCAN_SYSTEM, _scan_user_prompt(body),
+                        config.TIER_FLASH, json_out=True, temperature=0.2), "flags")
+
+
+# ── the gate ─────────────────────────────────────────────────────────────────
+def _gate_entries(sel: Dict[str, Any], bullets: Dict[str, str]) -> List[Dict[str, Any]]:
+    """[{"entry": name, "bullets": [{"gkey", "text"}]}] per item, in print order:
+    each live bullet outside a verbatim block, the bullets `_specs` builds its specs
+    from. Jev's read and the résumé scan both read exactly these."""
+    return [{"entry": item,
+             "bullets": [{"gkey": gk, "text": bullets[gk]} for gk in gkeys
+                         if gk in bullets and not compose.is_verbatim_gkey(gk)]}
+            for item, gkeys in compose._blocks_in_order(sel)]
+
+
 def _judge_flags(sel: Dict[str, Any], bullets: Dict[str, str],
                  judge: Any) -> Optional[Dict[str, Tuple[str, ...]]]:
     """Jev's read of every bullet the sweep may rewrite, one request per item
     (`jev_assist.sweep_flags`): {gkey: the tells read, () for a clean bullet}. None
-    with Jev off, or when the read fails, and then every item is swept."""
+    with Jev off, or when the read fails, and then the résumé scan stands in."""
     if judge is None:
         return None
-    # Each live bullet outside a verbatim block, in print order: the bullets `_specs`
-    # builds its specs from.
-    entries = [{"entry": item,
-                "bullets": [{"gkey": gk, "text": bullets[gk]} for gk in gkeys
-                            if gk in bullets and not compose.is_verbatim_gkey(gk)]}
-               for item, gkeys in compose._blocks_in_order(sel)]
-    return jev_assist.sweep_flags(entries, judge=judge)
+    return jev_assist.sweep_flags(_gate_entries(sel, bullets), judge=judge)
+
+
+def _parse_scan(out: Any, sent: Sequence[str]) -> Optional[Dict[str, Tuple[str, ...]]]:
+    """The scan's answer as {gkey: tells}, () for every bullet in `sent` it did not
+    flag, or None when the answer is not the {"flags": [...]} it was asked for.
+
+    A flag naming a bullet that was not sent is dropped, and so is a flag that is not
+    an object. Each tell is collapsed to one line and cut to `_SCAN_TELL_MAX`
+    characters, blanks and repeats are dropped, and a bullet keeps at most
+    `_SCAN_TELLS_MAX` of them: the names land in a repair payload and the run report,
+    and an answer's length is the model's choice.
+    """
+    if not isinstance(out, dict) or not isinstance(out.get("flags"), list):
+        return None
+    flags: Dict[str, Tuple[str, ...]] = {gk: () for gk in sent}
+    for entry in out["flags"]:
+        if not isinstance(entry, dict):
+            continue
+        gk = entry.get("gkey")
+        if not isinstance(gk, str) or gk not in flags:
+            continue
+        tells = entry.get("tells")
+        if isinstance(tells, str):
+            tells = [tells]
+        if not isinstance(tells, list):
+            continue
+        names = list(flags[gk])
+        for tell in tells:
+            name = one_line(tell)[:_SCAN_TELL_MAX].strip()
+            if name and name not in names:
+                names.append(name)
+        flags[gk] = tuple(names[:_SCAN_TELLS_MAX])
+    return flags
+
+
+def _scan_flags(sel: Dict[str, Any], bullets: Dict[str, str]
+                ) -> Tuple[Optional[Dict[str, Tuple[str, ...]]], str]:
+    """The résumé scan: (flags, `SCAN_RAN`) from one call over every bullet the
+    sweep may rewrite, (None, `SCAN_FAILED`) when that call raises or its answer does
+    not parse, and (None, "") with nothing to read, which makes no call. With None
+    every item is swept, as with no read at all."""
+    entries = [e for e in _gate_entries(sel, bullets) if e["bullets"]]
+    if not entries:
+        return None, ""
+    sent = [b["gkey"] for e in entries for b in e["bullets"]]
+    try:
+        flags = _parse_scan(_ask_scan({"entries": entries}), sent)
+    except Exception as exc:  # noqa: BLE001 - the scan is advisory, never fatal
+        log.warning("sweep: the résumé scan failed, sweeping every item: %s", exc)
+        return None, SCAN_FAILED
+    if flags is None:
+        log.warning("sweep: the résumé scan answered in the wrong shape, sweeping "
+                    "every item")
+        return None, SCAN_FAILED
+    return flags, SCAN_RAN
 
 
 def _gate_skips(specs: Sequence[_Spec], repaired_findings: Sequence[itemcheck.Finding],
                 flags: Dict[str, Tuple[str, ...]]) -> bool:
-    """True when the item's call has nothing to repair: Jev read every bullet and
-    flagged none, and no detector forces the call. A finding of a repaired tier or a
+    """True when the item's call has nothing to repair: the read (Jev's or the
+    résumé scan's) covered every bullet and flagged none, and no detector forces the
+    call. A finding of a repaired tier or a
     phrasing hit forces it, since both reach the model; a bullet missing from
     `flags` keeps the call too."""
     if repaired_findings or any(s.phrasing for s in specs):
@@ -526,8 +672,9 @@ def sweep_items(jd: str, job_title: str, sel: Dict[str, Any],
     `jd` is accepted and unused; see the note above the prompt constants.
 
     `judge` is the run's Jev judge, None with Jev off. With one, Jev reads every
-    bullet first and an item makes its call only for a tell or a detector finding
-    ("With Jev on, a judge gate" above).
+    bullet first; with none, or when that read fails, the résumé scan does
+    (`config.sweep_scan_enabled()`). After either read an item makes its call only
+    for a tell or a detector finding ("what runs, and when" above).
     """
     targets = compose.bullet_line_targets(sel)
     gm = compose.group_map(sel)
@@ -543,6 +690,11 @@ def sweep_items(jd: str, job_title: str, sel: Dict[str, Any],
     repaired = ((itemcheck.P1, itemcheck.P2) if config.sweep_p2_enabled()
                 else (itemcheck.P1,))
     flags = _judge_flags(sel, bullets, judge)
+    scan = ""
+    if flags is None and config.sweep_scan_enabled():
+        flags, scan = _scan_flags(sel, bullets)
+        if scan:
+            calls += 1
 
     for item, gkeys in compose._blocks_in_order(sel):
         pre = itemcheck.item_findings(item, [(gk, bullets[gk]) for gk in gkeys
@@ -621,7 +773,7 @@ def sweep_items(jd: str, job_title: str, sel: Dict[str, Any],
                        reasked=tuple(reasked), unfixed_p2=tuple(unfixed),
                        unfixed_phrasing=tuple(lingering),
                        calls=calls, items=items, failures=tuple(failures),
-                       skipped=tuple(skipped), judge_flags=tuple(told))
+                       skipped=tuple(skipped), judge_flags=tuple(told), scan=scan)
 
 
 def _commit(spec: _Spec, text: Optional[str], bullets: Dict[str, str], item: str,

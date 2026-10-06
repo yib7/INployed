@@ -6,8 +6,9 @@ model call only when one of its bullets carries a tell at `jev_assist.SWEEP_FLAG
 more, or when a detector finding forces it: an `itemcheck` finding of a repaired
 tier or an `aiwriting` phrasing hit. The tells ride in the payload as each bullet's
 `judge_flags`, with a rule in the system prompt and a line in the closing that name
-them. With Jev off, or when its request fails, every item is swept with its
-Jev-free prompts.
+them. With Jev off, or when its request fails, the résumé scan reads the bullets
+instead (`tests/test_sweep_scan.py`); with the scan off too, as `engine` pins it
+here, every item is swept with its Jev-free prompts.
 
 Nothing here reaches a model or Jev: `sweep.call` is the recorder from
 `test_item_sweep.py`, and every judge is a fake.

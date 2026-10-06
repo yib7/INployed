@@ -145,7 +145,7 @@ for _leaked in (
     # a shell export would decide which stages the golden and the sweep tests
     # see run.
     "RESUME_TAILOR_REGROUND", "RESUME_TAILOR_AIWRITING_SWEEP",
-    "RESUME_TAILOR_SWEEP_P2",
+    "RESUME_TAILOR_SWEEP_P2", "RESUME_TAILOR_SWEEP_SCAN",
     # The tailor's three Jev options, read the same way, and the
     # auto-apply judge mode, which `jev.get()` falls back to when it is handed
     # no mode: a shell export of `fake` would hand a fake judge to every test

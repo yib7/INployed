@@ -1077,7 +1077,7 @@ def is_visible(field: Field, values: Mapping[str, Any]) -> bool:
     Raises on a broken graph rather than degrading quietly, matching the posture
     of `settings_tab._set_field_visible` (KeyError) and `_connect_gate_signals`
     (TypeError): KeyError for a gate key that is not a schema field — silently
-    hiding a field forever is the exact failure this phase exists to prevent —
+    hiding a field forever is the exact failure this check exists to prevent —
     and ValueError for a cycle, which would otherwise be an infinite loop in
     front of a user. The cycle raise is value-DEPENDENT: a failing predicate
     returns False before the walk reaches the repeat, so a cyclic graph only

@@ -1406,7 +1406,7 @@ def test_a_popup_question_whose_words_hold_apply_next_more_or_back_is_a_field(br
         <button type="button" id="l3" aria-haspopup="listbox">Does not apply</button></div>
       <div><label for="m5">Which language do you prefer for interviews?</label>
         <button type="button" id="m5" aria-haspopup="menu">Select...</button></div>
-      <!-- review R6-I1: Workday's question in the aria-label, "Select One Required"
+      <!-- Workday's question in the aria-label, "Select One Required"
            after it; a listbox answered with a send or go-on word -->
       <div><button type="button" aria-haspopup="listbox"
         aria-label="Are you willing to submit to a background check? Select One Required"
@@ -1421,7 +1421,7 @@ def test_a_popup_question_whose_words_hold_apply_next_more_or_back_is_a_field(br
           <div role="option">Email</div></div></div>
       <div><label for="np">What are your plans after graduating?</label>
         <button type="button" id="np" aria-haspopup="listbox">Continue studies</button></div>
-      <!-- review round 7: a required short question with a send word; a menu
+      <!-- A required short question with a send word; a menu
            question read again, showing its answer -->
       <div><button type="button" aria-haspopup="listbox" aria-required="true"
         aria-label="Willing to submit references">Select One</button></div>
@@ -1469,7 +1469,7 @@ def test_a_named_chrome_popup_is_still_no_field(browser_page):
         <button type="button" id="cl" aria-haspopup="menu">English</button></div>
       <div><label for="as">Account settings</label>
         <button type="button" id="as" aria-haspopup="menu">Open</button></div>
-      <!-- review R5-I1: a popup that sends or goes on, by its own text or aria-label -->
+      <!-- A popup that sends or goes on, by its own text or aria-label -->
       <div class="split"><button type="submit">Submit application</button>
         <button type="button" aria-haspopup="menu" aria-label="More submit options">
           <svg width="10" height="10"><path d="M0 0 L10 0 L5 8 z"/></svg></button></div>
@@ -1478,7 +1478,7 @@ def test_a_named_chrome_popup_is_still_no_field(browser_page):
       <button type="button" aria-haspopup="menu" aria-label="Continue with">Continue with</button>
       <button type="button" aria-haspopup="menu" aria-label="Apply with">Apply with</button>
       <button type="button" aria-haspopup="true" aria-label="Next step">Next step</button>
-      <!-- review round 7: an icon-only arrow named at any length -->
+      <!-- An icon-only arrow named at any length -->
       <button type="button" aria-haspopup="menu" aria-label="Submit your application right now">
         <svg width="10" height="10"><path d="M0 0 L10 0 L5 8 z"/></svg></button>
       <button type="button" aria-haspopup="menu"

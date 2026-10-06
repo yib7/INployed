@@ -565,7 +565,7 @@ def test_the_success_floors_over_the_whole_registry():
 def test_a_known_flow_is_reported_and_left_out_of_the_floors(monkeypatch):
     # the registry holds no known failing flow
     assert [f.name for f in h.FLOWS if f.known] == []
-    flows = tuple(dataclasses.replace(f, known="SP3: planted") if f.name == "greenhouse_embed"
+    flows = tuple(dataclasses.replace(f, known="pending: planted") if f.name == "greenhouse_embed"
                   else f for f in h.FLOWS)
     monkeypatch.setattr(apply_flows, "FLOWS", flows)
     rows = [h.RunResult("greenhouse_embed", "fake", "submitted", "x", False, [], 1, 2, 0.1),
@@ -575,7 +575,7 @@ def test_a_known_flow_is_reported_and_left_out_of_the_floors(monkeypatch):
     rates = h.rates(rows)
     assert (rates["fake"], rates["noisy"]) == (1.0, 0.0)
     assert rates["known"] == {"greenhouse_embed": {"fake": 0.0, "noisy": 1.0, "runs": 1}}
-    assert "known failing, SP3: greenhouse_embed" in h.summary(rows)
+    assert "known failing, pending: greenhouse_embed" in h.summary(rows)
 
 
 def test_a_flow_with_a_real_end_is_read_by_the_judge_that_ran_it():

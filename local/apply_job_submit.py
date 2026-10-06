@@ -340,7 +340,7 @@ class _SubmitSteps:
     def _moved_during_wait(self) -> bool:
         """After the gate's wait for the person: did the page move on (a new
         URL, received words it did not show before, or the submit button
-        gone or hidden)? M8."""
+        gone or hidden)?"""
         before = self._before_submit or {}
         if str(before.get("url") or "") != str(self.page.url):
             return True

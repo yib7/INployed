@@ -212,7 +212,7 @@ def test_retailor_existing_survives_tailor_failure():
     assert res["record"]["job_posting_id"] == "manual-abc"     # row identity preserved
 
 
-# ── Follow-up 1: a re-pasted JD backfills a prune-blanked stored description ──
+# ── A re-pasted JD backfills a prune-blanked stored description ──
 
 def test_retailor_existing_fills_blank_description_from_pasted_jd_text(tmp_path):
     """pipeline/prune_master.py blanks job_description_formatted on a row past

@@ -3136,7 +3136,7 @@ def test_the_labels_own_words_in_the_file_are_an_unknown_location(qtbot, tmp_pat
 
 
 def test_set_combo_keeps_a_blank_on_its_labelled_entry(qtbot):
-    """Follow-up 2 at the unit. With a `blank_label` the entry after the choices
+    """At the unit: with a `blank_label` the entry after the choices
     stands for a blank, an unknown value takes the one extra row after it, and a
     blank or a listed value takes that row away again. The label's own text in
     the file is an unknown value, which Save names."""

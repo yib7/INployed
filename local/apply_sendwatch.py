@@ -377,13 +377,12 @@ class SendWatch:
             except Exception:   # noqa: BLE001  (the page is gone)
                 pass
         self._targets = []
-        # a held send no tab claimed may have been the send (U1)
+        # a held send no tab claimed may have been the send
         self.possible += [r for r in self.unplaced_sends() if r not in self.possible]
         self._unplaced = []
 
     def unplaced_sends(self) -> list[str]:
-        """The held POST, PUT or PATCH rows no tab of the job's page claimed
-        (U1)."""
+        """The held POST, PUT or PATCH rows no tab of the job's page claimed."""
         return [row for _, _, row in self._unplaced
                 if row.split(" ", 1)[0] in self._SEND_METHODS]
 

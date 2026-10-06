@@ -650,7 +650,7 @@ def requeue(job_id: str, *, refresh_answers: bool = False,
         e["finished_at"] = ""
         e["tab_note"] = ""
         e["claimed_by"] = ""
-        e.pop("outages", None)      # the person's re-queue starts the outage count over (M1)
+        e.pop("outages", None)      # the person's re-queue starts the outage count over
         e["queued_at"] = _now()
         e["updated_at"] = _now()
         _save(data, path)
@@ -881,8 +881,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     default.
 
     `refresh-answers` has its own two exit codes, layered onto the same
-    numbers: 2 when the answer store is damaged (the spec's message, an
-    entry unaffected) and 1 when the entry's apply.md could not be refreshed
+    numbers: 2 when the answer store is damaged (a message says so, and
+    the entry is unaffected) and 1 when the entry's apply.md could not be refreshed
     (no folder, or its Standard answers or signature heading is missing)."""
     _force_utf8_stdio()
     ap = argparse.ArgumentParser(

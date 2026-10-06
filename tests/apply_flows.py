@@ -365,7 +365,7 @@ class Flow:
     # waits for that condition, never for a clock
     on_read: str = ""
     covers: str = ""                # what the flow exercises
-    # "<phase>: why": the fake judge does not reach the end yet; the matrix
+    # "<tag>: why": the fake judge does not reach the end yet; the matrix
     # reports the flow apart and leaves it out of the rates the floors read
     known: str = ""
     easy_apply: bool = False        # the queue entry's `is_easy_apply`

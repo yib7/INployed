@@ -39,7 +39,7 @@ ATS_SITES = frozenset((
     "gem.com", "comeet.com", "personio.de", "personio.com", "csod.com",
     "clearcompany.com", "hrmdirect.com", "applicantpro.com", "isolvedhire.com",
     "phenompeople.com", "trinethire.com",
-    # ALLOW-01 (the audit's list)
+    # more ATS platforms and career-site hosts
     "jobs2web.com", "selectminds.com", "saashr.com", "pageuppeople.com", "silkroad.com",
     "hirebridge.com", "zohorecruit.com", "bullhornstaffing.com", "jobdiva.com", "ceipal.com",
     "paycor.com", "recruitingbypaycor.com", "freshteam.com", "hireology.com", "careerplug.com",
@@ -408,7 +408,7 @@ def company_site_control(digest: apply_form.FormDigest, *, board: str = "",
     site: one that says so ("Apply on company site", "Continue to the
     employer's website"), else the one Apply-worded link (`targets`: each
     button's link target) that leads off the board (`board`: the board's
-    host; M7: a board whose off-site control reads just "Apply"). Never a
+    host, for a board whose off-site control reads just "Apply"). Never a
     form's own button or the site's chrome; None when there is none."""
     said = next((b for b in digest.buttons if _COMPANY_SITE.search(
         str(b.text or "").translate(jev.APOSTROPHES)) and not b.in_form), None)

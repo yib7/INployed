@@ -580,7 +580,7 @@ class _Accounts:
 
     def _record(self, digest, email: str, advance_n: int, passwords: int,
                 others: list | None = None) -> None:
-        """Write the account step into the current page's record (spec 3.5):
+        """Write the account step into the current page's record:
         the address that was used, one hidden row per password box, the other
         boxes filled from the facts, and the button that was clicked. The
         password value is never carried; the row is marked hidden and

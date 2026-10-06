@@ -111,7 +111,7 @@ def test_real_judge_record_asks_the_live_judge_through_the_cap(tmp_path, monkeyp
 
 
 def test_real_judge_refuses_a_live_recording_that_names_no_cap(tmp_path, monkeypatch):
-    # C KM2: only the dry run has a default cap
+    # only the dry run has a default cap
     monkeypatch.delenv(jev.RECORD_CAP_ENV, raising=False)
     live = _Sized()
     with pytest.raises(ValueError, match=jev.RECORD_CAP_ENV):

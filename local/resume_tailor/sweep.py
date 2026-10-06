@@ -78,9 +78,9 @@ page is distinct; letting this pass change one would silently break that. It
 costs nothing, because opener repetition is already solved and the shape tell
 being chased lives downstream of the verb.
 
-(5) is the plan's fifth condition, and it is stated here because the plan named
-the guarantee ("a rewrite that drops a number or an atom token is not committed")
-while attributing it to the grounding gate, which cannot deliver it.
+(5) is stated here because its guarantee ("a rewrite that drops a number or an atom
+token is not committed") looks like the grounding gate's job, and that gate cannot
+deliver it.
 ``verify.enforce_grounded`` reverts a bullet that INTRODUCES a token with no
 trace in the atoms. Losing a number is the opposite direction and passes that
 gate untouched. So the check is made here, against the text being replaced,

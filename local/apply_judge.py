@@ -443,7 +443,7 @@ def consent_floor(label: str, *, required: bool = False, partial: bool = False,
 
 
 # A login wall's sign-in button and a signup form's create-account button are
-# `advance` (spec 3.5): they move the flow forward without sending the
+# `advance`: they move the flow forward without sending the
 # application. `advance` and `submit` say what they are not for: they are the
 # confusable pair, and a wizard's step button is an HTML submit control too.
 _BUTTON_CRITERIA: dict[str, dict[str, Any]] = {
@@ -1254,8 +1254,8 @@ def page_facts(digest: FormDigest, url: str = "", *, captcha_frame: bool = False
     received = sorted(confirmation_words(text))
     labels = [f.label for f in digest.fields]
     # a page's own word that the job was applied to, or is closed, counts only
-    # where no application box, no account box and no Apply entry is offered
-    # (I1, I2, R2-I1): a sign-in's "Already applied? Sign in" or "If you have
+    # where no application box, no account box and no Apply entry is offered:
+    # a sign-in's "Already applied? Sign in" or "If you have
     # already applied, sign in", a screening question, an open posting's
     # "until the position is filled" never do; a site that means "you
     # applied" says so on a status page

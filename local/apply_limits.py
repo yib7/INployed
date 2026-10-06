@@ -9,7 +9,7 @@ from __future__ import annotations
 
 
 JOB_WALL_CLOCK_S = 15 * 60         # per job, on the injectable clock (a solved CAPTCHA's wait is added back)
-GENERATE_MAX = 3                   # generated answers per job (spec 3.7)
+GENERATE_MAX = 3                   # generated answers per job
 POPUP_TIMEOUT_MS = 5_000           # for the Apply entry to open a new tab
 POPUP_GRACE_S = 0.5                # after a same-tab DOM change, for a popup that follows it
 ENTRY_POLL_MS = 100                # the entry click's watch for a popup, a navigation or a change

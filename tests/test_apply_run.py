@@ -771,7 +771,7 @@ def test_code_gate_with_an_inbox_hook_fills_the_code_and_reaches_confirmation(
 def test_default_accounts_continue_and_keep_password_private(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch, caplog,
         fixture, existing):
-    secret = "synthetic-SP5-password"
+    secret = "synthetic-master-password"
     monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: secret)
     if existing:
         ats_accounts.record("127.0.0.1", "existing@example.com")
@@ -881,7 +881,7 @@ def test_default_signup_fills_the_candidates_name_fields_from_the_catalog(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch, caplog):
     """A signup form that also asks for a name is filled from the fact catalog,
     which is the only place a name may come from."""
-    secret = "synthetic-SP5-password"
+    secret = "synthetic-master-password"
     monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: secret)
     _enqueue(job_folder, fixture_url("signup_with_names.html"))
     with caplog.at_level("INFO"):

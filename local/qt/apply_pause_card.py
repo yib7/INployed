@@ -64,6 +64,36 @@ def _plain_tip(text: str) -> str:
     """`text` as a tooltip that shows exactly as written, markup and all."""
     return "<qt>" + html.escape(text, quote=False) + "</qt>"
 
+class _QuestionsArea(QtWidgets.QScrollArea):
+    """The questions, scrolling once they outgrow the room the tab has. It asks
+    for every row's height, and at minimum for the first question whole, so a
+    long pause scrolls and no row is squeezed."""
+
+    def __init__(self, grid: QtWidgets.QVBoxLayout) -> None:
+        super().__init__()
+        self._grid = grid
+        self.setWidgetResizable(True)
+        self.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Inside the warning callout, the card's fill shows through.
+        self.setStyleSheet("QScrollArea { background: transparent; border: 0; }")
+        self.viewport().setAutoFillBackground(False)
+
+    def sizeHint(self) -> QtCore.QSize:  # noqa: N802 (Qt naming)
+        box = self.widget()
+        h = box.sizeHint().height() if box is not None else 0
+        return QtCore.QSize(super().sizeHint().width(), h + 2 * self.frameWidth())
+
+    def minimumSizeHint(self) -> QtCore.QSize:  # noqa: N802 (Qt naming)
+        box = self.widget()
+        if box is None or self._grid.count() == 0:
+            return QtCore.QSize(0, 0)
+        m = self._grid.contentsMargins()
+        first = self._grid.itemAt(0).sizeHint().height() + m.top() + m.bottom()
+        h = min(first, box.sizeHint().height())
+        return QtCore.QSize(super().minimumSizeHint().width(), h + 2 * self.frameWidth())
+
+
 class PauseCard(QtWidgets.QFrame):
     """The card for one pause request (`set_request`); hidden with none.
     `answered(job_id, mode)` fires once the answer file is written."""
@@ -101,7 +131,9 @@ class PauseCard(QtWidgets.QFrame):
         self._grid = QtWidgets.QVBoxLayout(self._questions_box)
         self._grid.setContentsMargins(0, 4, 0, 4)
         self._grid.setSpacing(8)
-        v.addWidget(self._questions_box)
+        self.questions_area = _QuestionsArea(self._grid)
+        self.questions_area.setWidget(self._questions_box)
+        v.addWidget(self.questions_area)
         bar = QtWidgets.QHBoxLayout()
         self.fill_btn = QtWidgets.QPushButton("Fill and continue")
         self.fill_btn.setProperty("accent", True)

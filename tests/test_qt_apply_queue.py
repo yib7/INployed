@@ -1909,6 +1909,59 @@ def test_the_pause_card_sits_at_the_top_of_the_tab(qtbot, tmp_path, pause_home):
     assert p.layout().itemAt(0).widget() is p.pause_card
 
 
+_LONG_PAUSE = _PAUSE_QUESTIONS + [
+    _q(10 + i, f"Screening question {i}", apply_pause.W_TEXT, help="A sentence is enough")
+    for i in range(8)]
+
+
+def test_a_long_pause_scrolls_its_questions_and_never_crushes_a_row(qtbot, pause_home):
+    """Fourteen questions asked for 650px at minimum, and the tab gave the card
+    what it had: every row was squeezed to a few pixels. The questions scroll;
+    the card's minimum holds one whole question."""
+    _ask(questions=_LONG_PAUSE)
+    card = _card(qtbot)
+    card.show()
+    area = card.questions_area
+    content = area.widget().sizeHint().height()
+    first = card.rows[0]["frame"].sizeHint().height()
+    assert card.minimumSizeHint().height() < content
+    assert area.minimumSizeHint().height() >= first
+    card.resize(640, card.minimumSizeHint().height())
+    QtWidgets.QApplication.processEvents()
+    assert area.viewport().height() >= first
+    for r in card.rows:
+        assert r["frame"].height() >= r["frame"].minimumSizeHint().height(), \
+            r["question"]["label"]
+    assert area.verticalScrollBar().maximum() > 0          # the rest scrolls
+
+
+def test_a_short_pause_shows_every_question_without_scrolling(qtbot, pause_home):
+    _ask()
+    card = _card(qtbot)
+    card.show()
+    card.resize(640, card.sizeHint().height())
+    QtWidgets.QApplication.processEvents()
+    assert card.questions_area.verticalScrollBar().maximum() == 0
+
+
+def test_a_tall_auto_apply_page_leaves_the_job_tabs_minimum_alone(
+        qtbot, monkeypatch, tmp_path, pause_home):
+    """A QTabWidget is as tall at minimum as its tallest page. The Jev notice and a
+    waiting pause made Auto-apply the tallest, and under High Score that height
+    came out of the job detail card."""
+    w = _win(qtbot, monkeypatch, tmp_path)
+    w.apply_queue_panel.jev_notice.setVisible(True)
+    _ask(questions=_LONG_PAUSE)
+    w.apply_queue_panel._check_pauses()
+    page_min = w.apply_queue_panel.minimumSizeHint().height()
+    high = w._tab_widgets["High Score (Unseen)"]
+    w.tabs.setCurrentWidget(high)
+    assert high.minimumSizeHint().height() < page_min
+    assert w.tabs.minimumSizeHint().height() < page_min
+    w.tabs.setCurrentWidget(w.apply_queue_panel)
+    assert w.tabs.minimumSizeHint().height() >= page_min
+
+
 def test_the_default_flash_alerts_the_window(monkeypatch, qtbot):
     seen = []
     monkeypatch.setattr(QtWidgets.QApplication, "alert",

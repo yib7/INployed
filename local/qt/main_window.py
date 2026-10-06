@@ -532,6 +532,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
             page = pages.get(title) or QtWidgets.QWidget()
             self._tab_widgets[title] = page
             self.tabs.addTab(page, title)
+        self._page_policies = {page: page.sizePolicy() for page in self._tab_widgets.values()}
 
         self.high_tab.set_empty_widget(self._build_empty_hint())
 
@@ -582,6 +583,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         vbox.addWidget(self.hsplit, 1)
         # Connect only now that self.preview exists (addTab above fires currentChanged).
         self.tabs.currentChanged.connect(lambda _i: self._on_tab_changed())
+        self._size_tabs_by_current_page()
 
         vbox.addLayout(self._build_action_bar())
         self._setup_zoom_shortcuts()  # Ctrl +/-/0 mirror the bottom scale bar
@@ -1121,7 +1123,21 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
 
     # ---- preview -------------------------------------------------------------
 
+    def _size_tabs_by_current_page(self) -> None:
+        """A QTabWidget is as tall at minimum as its tallest page, so a tall
+        Auto-apply page (the Jev notice, a waiting pause) took its height out of
+        the job detail card under every other tab. A hidden page drops out of
+        the minimum; the page on show keeps its own."""
+        current = self.tabs.currentWidget()
+        ignored = QtWidgets.QSizePolicy.Policy.Ignored
+        for page, policy in self._page_policies.items():
+            if page is current:
+                page.setSizePolicy(policy)
+            else:
+                page.setSizePolicy(ignored, ignored)
+
     def _on_tab_changed(self) -> None:
+        self._size_tabs_by_current_page()
         self._apply_preview_visibility()
         # Re-render the detail card from the NEW tab's selection so its variant
         # (discovery vs tracker) always matches the tab it is shown under; this

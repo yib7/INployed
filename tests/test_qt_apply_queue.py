@@ -866,7 +866,7 @@ def test_console_command_keeps_a_hostile_checkout_path_literal():
 
 def _actions_row(p):
     # item 0 is the "Waiting for you" card (cycle 19, SP7), then the two header rows
-    return p.layout().itemAt(2).layout()
+    return p.body.layout().itemAt(2).layout()
 
 
 def test_panel_has_start_run_button(qtbot, tmp_path):
@@ -877,7 +877,7 @@ def test_panel_has_start_run_button(qtbot, tmp_path):
     # (master-password cluster, then the two small run buttons, then Start), so
     # that the chips keep their labels at 125% and 150% on a window narrower
     # than about 1600px.
-    chips_row, actions = p.layout().itemAt(1).layout(), _actions_row(p)
+    chips_row, actions = p.body.layout().itemAt(1).layout(), _actions_row(p)
     assert chips_row.itemAt(0).widget() is p.status_chips
     assert actions.itemAt(actions.count() - 1).widget() is p.start_run_btn
     row_buttons = [actions.itemAt(i).widget() for i in range(actions.count() - 1)
@@ -1906,7 +1906,7 @@ def test_the_poll_shows_a_new_request_flashes_once_and_keeps_a_half_typed_answer
 
 def test_the_pause_card_sits_at_the_top_of_the_tab(qtbot, tmp_path, pause_home):
     p = _dpanel(qtbot, _qfile(tmp_path), alert=lambda w: None)
-    assert p.layout().itemAt(0).widget() is p.pause_card
+    assert p.body.layout().itemAt(0).widget() is p.pause_card
 
 
 _LONG_PAUSE = _PAUSE_QUESTIONS + [
@@ -1944,22 +1944,47 @@ def test_a_short_pause_shows_every_question_without_scrolling(qtbot, pause_home)
     assert card.questions_area.verticalScrollBar().maximum() == 0
 
 
-def test_a_tall_auto_apply_page_leaves_the_job_tabs_minimum_alone(
-        qtbot, monkeypatch, tmp_path, pause_home):
-    """A QTabWidget is as tall at minimum as its tallest page. The Jev notice and a
-    waiting pause made Auto-apply the tallest, and under High Score that height
-    came out of the job detail card."""
+def test_a_tall_page_leaves_the_other_tabs_minimum_alone(qtbot, monkeypatch, tmp_path):
+    """A QTabWidget is as tall at minimum as its tallest page, and under High
+    Score that height came out of the job detail card."""
     w = _win(qtbot, monkeypatch, tmp_path)
-    w.apply_queue_panel.jev_notice.setVisible(True)
-    _ask(questions=_LONG_PAUSE)
-    w.apply_queue_panel._check_pauses()
-    page_min = w.apply_queue_panel.minimumSizeHint().height()
+    tall = QtWidgets.QWidget()
+    tall.setMinimumHeight(900)
+    w.tracker_tab.layout().addWidget(tall)
+    page_min = w.tracker_tab.minimumSizeHint().height()
     high = w._tab_widgets["High Score (Unseen)"]
     w.tabs.setCurrentWidget(high)
     assert high.minimumSizeHint().height() < page_min
     assert w.tabs.minimumSizeHint().height() < page_min
-    w.tabs.setCurrentWidget(w.apply_queue_panel)
+    w.tabs.setCurrentWidget(w.tracker_tab)
     assert w.tabs.minimumSizeHint().height() >= page_min
+
+
+def test_a_waiting_pause_scrolls_the_tab_and_never_crushes_a_button(
+        qtbot, tmp_path, pause_home):
+    """With a pause waiting, the Jev notice and a parked job selected, the tab
+    asked for more height than a 1100x700 window has (704px at 100%, 889px at
+    150%), and the buttons came out a few pixels tall. The tab scrolls."""
+    qfile = _qfile(tmp_path)
+    _parked(qfile, ("Preferred team", {}), ("Desired salary", {}))
+    _ask(questions=_LONG_PAUSE)
+    p = _dpanel(qtbot, qfile, alert=lambda w: None)
+    p.jev_notice.setVisible(True)
+    host = QtWidgets.QWidget()
+    qtbot.addWidget(host)
+    QtWidgets.QVBoxLayout(host).addWidget(p)
+    host.setFixedSize(1100, 450)
+    host.show()
+    p.table.selectRow(0)
+    QtWidgets.QApplication.processEvents()
+    assert not p.pause_card.isHidden() and not p.details.answer_now_btn.isHidden()
+    for b in p.findChildren(QtWidgets.QPushButton):
+        if b.isVisibleTo(p):
+            assert b.height() >= b.minimumSizeHint().height(), b.text()
+    assert p.scroll.verticalScrollBar().maximum() > 0
+    host.setFixedSize(1600, 1400)
+    QtWidgets.QApplication.processEvents()
+    assert p.scroll.verticalScrollBar().maximum() == 0     # room for all of it
 
 
 def test_the_default_flash_alerts_the_window(monkeypatch, qtbot):

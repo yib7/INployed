@@ -18,6 +18,7 @@ patches a name one of those methods reads patches the module that holds it.
 from __future__ import annotations
 
 import os
+import sqlite3
 import time
 from collections import Counter, namedtuple
 from datetime import date, datetime
@@ -124,6 +125,8 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         super().__init__(parent)
         self.csv_paths: list[Path] = list(csv_paths or [])
         self.registry = registry if registry is not None else SeenRegistry()
+        # The window closes only the seen.db it opened (closeEvent).
+        self._owns_registry = registry is None
         self.setWindowTitle("INployed")
         self.setMinimumSize(1000, 660)
 
@@ -1393,6 +1396,14 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
                     self, "Writes still pending",
                     literal(f"{q.pending_count()} background write(s) did not finish; the "
                     "files on disk may be missing your last mark-seen/delete."))
+        if self._owns_registry:
+            # close() checkpoints the WAL; a connection left to the garbage
+            # collector raised a ResourceWarning at exit.
+            self._owns_registry = False
+            try:
+                self.registry.close()
+            except sqlite3.Error:
+                pass
         super().closeEvent(event)
 
     def _scrape_in_flight(self) -> bool:

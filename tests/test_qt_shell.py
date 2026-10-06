@@ -335,3 +335,33 @@ def test_a_second_instance_never_sweeps(monkeypatch):
     monkeypatch.setattr(qt_app, "_sweep_profile_copies",
                         lambda: (_ for _ in ()).throw(AssertionError("swept")))
     assert qt_app.main([]) == 0
+
+
+def test_closing_the_window_closes_the_seen_db_it_opened(qtbot, tmp_path, monkeypatch):
+    """The window opens seen.db when no registry is handed in, and it left the
+    connection to the garbage collector: Python 3.14 reports that as a
+    ResourceWarning at exit, and the WAL was never checkpointed on the way out."""
+    import sqlite3
+
+    import pytest
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    w = MainWindow(csv_paths=[])
+    qtbot.addWidget(w)
+    conn = w.registry._conn
+    w.close()
+    with pytest.raises(sqlite3.ProgrammingError):
+        conn.execute("SELECT 1")
+    w.close()                                   # a second close is harmless
+
+
+def test_closing_the_window_leaves_a_handed_in_registry_open(qtbot):
+    reg = MagicMock()
+    reg.resume_paths.return_value = {}
+    reg.status_rows.return_value = []
+    reg.all_ids.return_value = set()
+    reg.tailor_failure_ids.return_value = set()
+    w = MainWindow(csv_paths=[], registry=reg)
+    qtbot.addWidget(w)
+    w.close()
+    reg.close.assert_not_called()

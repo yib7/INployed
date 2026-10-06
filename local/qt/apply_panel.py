@@ -63,6 +63,29 @@ class SheetViewer(QtWidgets.QTextBrowser):
         return mime
 
 
+class _ColumnLabel(Label):
+    """A row label as wide as the widest label in its column, so the boxes
+    beside them start at one x. It measures at the current type size: a width
+    fixed in pixels when the panel was built clipped "Cover letter PDF" at 150%."""
+
+    def __init__(self, text: str, column: list) -> None:
+        super().__init__(text)
+        self._column = column
+        column.append(self)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed,
+                           QtWidgets.QSizePolicy.Policy.Preferred)
+
+    def _own_width(self) -> int:
+        return super().sizeHint().width()
+
+    def sizeHint(self) -> QtCore.QSize:  # noqa: N802 (Qt naming)
+        width = max(lab._own_width() for lab in self._column) + 6
+        return QtCore.QSize(width, super().sizeHint().height())
+
+    def minimumSizeHint(self) -> QtCore.QSize:  # noqa: N802 (Qt naming)
+        return self.sizeHint()
+
+
 class ApplyPanel(QtWidgets.QWidget):
     def __init__(self, on_close: Callable[[], None] | None = None,
                  on_applied: Callable[[], None] | None = None,
@@ -84,6 +107,7 @@ class ApplyPanel(QtWidgets.QWidget):
     def _build(self) -> None:
         v = QtWidgets.QVBoxLayout(self)
         v.setContentsMargins(8, 8, 8, 8)
+        self._label_column: list = []   # the four path rows' labels
 
         top = QtWidgets.QHBoxLayout()
         self._title = Label("Apply")
@@ -91,7 +115,6 @@ class ApplyPanel(QtWidgets.QWidget):
         self._title.setWordWrap(True)
         top.addWidget(self._title, 1)
         close = QtWidgets.QPushButton("✕")
-        close.setFixedWidth(34)
         close.setToolTip("Close (back to the score preview)")
         close.clicked.connect(lambda: self._on_close())
         top.addWidget(close)
@@ -108,22 +131,16 @@ class ApplyPanel(QtWidgets.QWidget):
         # Profile links + document paths (copyable). LinkedIn and GitHub sit above
         # the résumé so they're the first thing pasted into the application form.
         link_tip = "Copy to paste into the application form"
-        self._linkedin_row, self._linkedin_edit, linkedin_label = self._path_row(
+        self._linkedin_row, self._linkedin_edit, _ = self._path_row(
             "LinkedIn", tooltip=link_tip)
         v.addLayout(self._linkedin_row)
-        self._github_row, self._github_edit, github_label = self._path_row(
+        self._github_row, self._github_edit, _ = self._path_row(
             "GitHub", tooltip=link_tip)
         v.addLayout(self._github_row)
-        self._resume_row, self._resume_edit, resume_label = self._path_row("Résumé PDF")
+        self._resume_row, self._resume_edit, _ = self._path_row("Résumé PDF")
         v.addLayout(self._resume_row)
-        self._cover_row, self._cover_edit, cover_label = self._path_row("Cover letter PDF")
+        self._cover_row, self._cover_edit, _ = self._path_row("Cover letter PDF")
         v.addLayout(self._cover_row)
-
-        # One shared label column, sized to the widest label, so none of them clip.
-        row_labels = (linkedin_label, github_label, resume_label, cover_label)
-        label_width = max(lab.sizeHint().width() for lab in row_labels) + 6
-        for lab in row_labels:
-            lab.setFixedWidth(label_width)
 
         tools = QtWidgets.QHBoxLayout()
         self._open_btn = QtWidgets.QPushButton("Open folder")
@@ -168,13 +185,12 @@ class ApplyPanel(QtWidgets.QWidget):
 
     def _path_row(self, label: str, tooltip: str | None = None):
         row = QtWidgets.QHBoxLayout()
-        lab = Label(label)
+        lab = _ColumnLabel(label, self._label_column)
         lab.setProperty("muted", True)
         edit = QtWidgets.QLineEdit()
         edit.setAccessibleName(label)
         edit.setReadOnly(True)
         copy = QtWidgets.QPushButton("Copy")
-        copy.setFixedWidth(56)
         copy.clicked.connect(lambda: self._copy_text(edit.text()))
         if tooltip:
             lab.setToolTip(tooltip)

@@ -848,6 +848,39 @@ def test_apply_panel_label_column_fits_the_widest_label(qtbot):
     assert cover_label.width() >= cover_label.sizeHint().width()  # no more clipping
 
 
+def test_apply_panel_labels_and_buttons_follow_the_interface_size(qtbot):
+    """The label column and the Copy and close buttons were sized in pixels when
+    the panel was built. At 150% "Cover letter PDF" needed 122px and had 100,
+    Copy needed 71 and had 56, and the close button needed 46 and had 34."""
+    from qt import theme
+    from qt.apply_panel import ApplyPanel
+    app = QtWidgets.QApplication.instance()
+    p = ApplyPanel()
+    qtbot.addWidget(p)
+    p.setStyleSheet(theme._qss())   # the app's padding, whatever an earlier test left
+    p.show_application({"links": {"LinkedIn": "https://linkedin.example/in/jane",
+                                  "GitHub": "https://github.example/jane"},
+                        "resume_pdf": "Jane_Doe.pdf", "cover_letter_pdf": "cover.pdf"})
+    p.resize(520, 900)
+    p.show()
+    rows = (p._linkedin_row, p._github_row, p._resume_row, p._cover_row)
+    try:
+        for scale in (1.0, 1.25, 1.5):
+            theme.set_scale(app, scale)
+            app.processEvents()
+            for row in rows:
+                lab = row.itemAt(0).widget()
+                assert lab.width() >= lab.fontMetrics().horizontalAdvance(lab.text()), \
+                    (lab.text(), scale)
+            assert len({row.itemAt(1).widget().x() for row in rows}) == 1, scale
+            for b in p.findChildren(QtWidgets.QPushButton):
+                if b.isVisibleTo(p):
+                    assert b.width() >= b.minimumSizeHint().width(), (b.text(), scale)
+    finally:
+        theme.set_scale(app, 1.0)
+        p.hide()
+
+
 def test_apply_panel_applied_button_invokes_callback(qtbot):
     from qt.apply_panel import ApplyPanel
     called = []

@@ -250,3 +250,16 @@ jobs:
           if (-not $alive) { throw 'the .cmd launcher started no Python process' }
           Write-Host "launcher started: $($alive.Name -join ', ')"
           $alive | Stop-Process -Force
+
+      # README Step 7's auto-apply line, verbatim. The other two Step 7 lines act
+      # outside the project (a MiKTeX install, a gcloud sign-in); this one writes
+      # into the venv, so a wrong pin or a broken browser download would only
+      # surface on a user's machine. The check reads the result the way Check
+      # setup does.
+      - name: README Step 7 - the auto-apply install
+        run: powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -AutoApply
+
+      - name: README Step 7 - Playwright and its Chromium are where Check setup looks
+        run: |
+          venv\Scripts\python.exe -c "import sys; sys.path.insert(0, 'local'); import setup_check as s; from importlib.metadata import version; v = version('playwright'); c = s.chromium_installed(); print('playwright', v, '| chromium_installed', c, '|', s.chromium_cache_dirs()); sys.exit(0 if v == '1.61.0' and c else 1)"
+          if ($LASTEXITCODE -ne 0) { throw 'setup.ps1 -AutoApply did not leave Playwright 1.61.0 and its Chromium in place' }

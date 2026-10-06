@@ -70,12 +70,13 @@ aiohttp==3.14.3
 requests==2.34.2
 
 # NOT installed by this file (optional, install only if you use the feature):
-#   * playwright: the Jev auto-apply runner (local/apply_run.py) imports it
-#     lazily: pip install playwright==1.61.0, then playwright install chromium.
-#     Hold it at 1.61.0 (checked 2026-10-03): on 1.62.0 and 1.63.0, closing a
-#     page that a second failed load left on Chrome's error page never returns,
-#     so a run can hang. The everyday per-job Apply flow does not need it;
-#     "Check setup" reports it when missing.
+#   * playwright: the Jev auto-apply runner (local/apply_run.py) and the
+#     difficulty check import it lazily. README Step 7 installs it with its
+#     Chromium in one command: scripts\setup.ps1 -AutoApply, which pins
+#     playwright==1.61.0 into the venv. Hold it at 1.61.0 (checked 2026-10-03):
+#     on 1.62.0 and 1.63.0, closing a page that a second failed load left on
+#     Chrome's error page never returns, so a run can hang. The everyday
+#     per-job Apply flow does not need it; "Check setup" reports it when missing.
 #   * Pillow (maintainers only): regenerates the desktop icon
 #     (python local/assets/make_icon.py) and composes the README media
 #     (scripts/build_demo_media.py, build_social_preview.py, build_walkthrough.py).

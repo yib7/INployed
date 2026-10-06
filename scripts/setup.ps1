@@ -1,7 +1,8 @@
 <#
 .SYNOPSIS
-    One-stop setup for the Job Scraper + Resume Tailor. Writes your local .env,
-    config.json, and master_experience.yaml so the tool runs against YOUR data.
+    One-stop setup for INployed. Writes your local .env, config.json, and
+    master_experience.yaml so the app runs against YOUR data. With -AutoApply it
+    also installs the browser half of auto-apply (README Step 7).
 
 .DESCRIPTION
     Two flows, one code path:
@@ -15,12 +16,17 @@
     settings: your existing values are kept and shown as defaults. State lives in
     .env (secrets) and local/config.json (dashboard prefs) - both git-ignored.
 
+    -AutoApply installs Playwright (pinned below) and its Chromium into the
+    project venv, for the auto-apply runner and the difficulty check.
+
 .EXAMPLE
     ./scripts/setup.ps1                     # fast: drop example files into place
 .EXAMPLE
     ./scripts/setup.ps1 -Mode long          # guided wizard with prompts
 .EXAMPLE
     ./scripts/setup.ps1 -Mode long -InstallDeps    # also pip-install requirements
+.EXAMPLE
+    ./scripts/setup.ps1 -AutoApply          # also install Playwright + Chromium
 #>
 [CmdletBinding()]
 param(
@@ -28,6 +34,7 @@ param(
     [string]$Root = '',
     [switch]$Force,
     [switch]$InstallDeps,
+    [switch]$AutoApply,
     # Long-mode values (optional; prompted when missing in long mode)
     [string]$BrightDataToken,
     [string]$BrightDataDataset,
@@ -79,6 +86,26 @@ $script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 function Read-TextFile($path)        { [System.IO.File]::ReadAllText($path) }
 function Write-TextFile($path, $text) { [System.IO.File]::WriteAllText($path, $text, $script:Utf8NoBom) }
 
+# The project venv README Step 2 builds, when it exists: bare `python` is the
+# global interpreter (the venv is never activated), and the launcher only looks
+# in venv\Scripts, so a package installed globally is one it cannot see.
+function Get-ProjectPython {
+    $venvPy = Join-Path (Join-Path (Join-Path $Root 'venv') 'Scripts') 'python.exe'
+    if (Test-Path -LiteralPath $venvPy) { return $venvPy }
+    return 'python'
+}
+
+# Run a native command and stop on a non-zero exit. PowerShell 5.1 neither
+# throws on a native exit code nor is safe with 'Stop' while a tool writes
+# progress to stderr (pip and playwright both do), so the preference is
+# relaxed for the call and the exit code is checked by hand.
+function Invoke-Checked([string]$exe, [string[]]$argv) {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & $exe @argv; $code = $LASTEXITCODE } finally { $ErrorActionPreference = $prev }
+    if ($code -ne 0) { throw "'$exe $($argv -join ' ')' failed with exit code $code" }
+}
+
 # Prompt with a default; non-interactive callers pass the value as a param.
 function Read-WithDefault($label, $default) {
     if ([string]::IsNullOrWhiteSpace($default)) { $shown = "" } else { $shown = " [$default]" }
@@ -115,7 +142,7 @@ $masterPath    = Join-Path $rtDir 'master_experience.yaml'
 $masterExample = Join-Path $rtDir 'master_experience.example.yaml'
 $cfgPath       = Join-Path (Join-Path $Root 'local') 'config.json'
 
-Write-Step "Job Scraper setup ($Mode mode) in $Root"
+Write-Step "INployed setup ($Mode mode) in $Root"
 
 # --- 1. .env ------------------------------------------------------------------
 if ((Test-Path -LiteralPath $envPath) -and -not $Force) {
@@ -196,17 +223,31 @@ if ($InstallDeps) {
     # names, a symlink escape in the fallback tar extractor, a doubly-encoded
     # index URL). This is the installer, not a project pin, so it is not in
     # requirements.txt.
-    # Install into the project venv README Step 2 builds when it exists: bare
-    # `python` is the global interpreter (the venv is never activated), and the
-    # launcher only looks in venv\Scripts, so a global install is one it cannot see.
-    $venvPy = Join-Path (Join-Path (Join-Path $Root 'venv') 'Scripts') 'python.exe'
-    if (Test-Path -LiteralPath $venvPy) { $py = $venvPy } else { $py = 'python' }
-    & $py -m pip install --upgrade pip
-    & $py -m pip install -r (Join-Path $Root 'requirements.txt')
+    $py = Get-ProjectPython
+    Invoke-Checked $py @('-m', 'pip', 'install', '--upgrade', 'pip')
+    Invoke-Checked $py @('-m', 'pip', 'install', '-r', (Join-Path $Root 'requirements.txt'))
     Write-Ok "Dependencies installed (into $py)"
 }
 
-# --- 5. next steps ------------------------------------------------------------
+# --- 5. auto-apply browser (optional, README Step 7) ---------------------------
+# The auto-apply runner and the difficulty check drive a browser through
+# Playwright: Google Chrome when it is installed, else the Chromium that
+# `playwright install chromium` downloads into %LOCALAPPDATA%\ms-playwright.
+# Optional, so README Step 2 stays small for everyone who never auto-applies.
+# Held at 1.61.0: on 1.62.0 and 1.63.0, closing a page that a second failed
+# load left on Chrome's error page never returns, so a run can hang. CI's
+# browser tests install the same version, and tests/test_setup_script.py
+# checks that every place naming the version agrees.
+$PlaywrightPin = 'playwright==1.61.0'
+if ($AutoApply) {
+    Write-Step "Installing Playwright and its Chromium for auto-apply"
+    $py = Get-ProjectPython
+    Invoke-Checked $py @('-m', 'pip', 'install', $PlaywrightPin)
+    Invoke-Checked $py @('-m', 'playwright', 'install', 'chromium')
+    Write-Ok "Installed $PlaywrightPin and its Chromium (into $py)"
+}
+
+# --- 6. next steps ------------------------------------------------------------
 Write-Step "Done. Next steps:"
 Write-Host @"
     1. Launch the dashboard: double-click  "Open INployed Dashboard.cmd"  in the
@@ -221,4 +262,6 @@ Write-Host @"
     5. (Scraping) run your own pipeline from the venv README Step 2 built:
        venv\Scripts\python.exe pipeline\scraper.py   then   venv\Scripts\python.exe pipeline\score_jobs.py
        or run it on a small GCP VM via cron, managed from Settings -> VM.
+    6. (Auto-apply) install its browser once:
+       powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -AutoApply
 "@ -ForegroundColor Gray

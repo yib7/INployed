@@ -13,6 +13,7 @@ So these tests assert on the CONTENT the setup command produces, loaded through
 the same readers the dashboard uses. Windows-only, because the script is.
 """
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -117,3 +118,67 @@ def test_setup_leaves_an_existing_master_experience_alone(staged_repo):
     res = run_setup(staged_repo)
     assert res.returncode == 0, res.stdout + res.stderr
     assert master.read_text(encoding="utf-8") == "mine: true\n"
+
+
+# --- the README's commands, the CI job that runs them, and the auto-apply install ------
+
+README = (REPO / "README.md").read_text(encoding="utf-8")
+CI = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+SETUP_PS1 = (REPO / "scripts" / "setup.ps1").read_text(encoding="utf-8")
+
+
+def _readme_step(n: int) -> str:
+    """The README's `### Step n` section, up to the next heading."""
+    start = re.search(rf"^### Step {n}\b.*$", README, re.M)
+    assert start, f"README has no Step {n}"
+    rest = README[start.end():]
+    end = re.search(r"^#{2,3} ", rest, re.M)
+    return rest[:end.start()] if end else rest
+
+
+def _commands(section: str) -> list[str]:
+    """Each line of the section's fenced powershell blocks, its trailing
+    `# comment` dropped."""
+    out = []
+    for block in re.findall(r"```powershell\n(.*?)```", section, re.S):
+        for line in block.splitlines():
+            cmd = line.split(" #", 1)[0].strip()
+            if cmd:
+                out.append(cmd)
+    return out
+
+
+def test_ci_runs_every_command_of_readme_steps_2_and_3_verbatim():
+    """The readme-setup job exists to run the words the README ships: a
+    reworded step with an unchanged job proves nothing."""
+    job = CI.split("\n  readme-setup:", 1)[1]
+    cmds = _commands(_readme_step(2)) + _commands(_readme_step(3))
+    assert len(cmds) == 4, cmds
+    for cmd in cmds:
+        assert cmd in job, f"README command not run by the readme-setup job: {cmd}"
+
+
+def test_readme_step_7_carries_the_auto_apply_install_and_ci_runs_it():
+    """The auto-apply install is one optional line in Step 7, the same command
+    Check setup and the runner print when Playwright is missing, and the
+    readme-setup job runs it verbatim."""
+    import setup_check
+    step7 = _readme_step(7)
+    assert setup_check.AUTO_APPLY_INSTALL in _commands(step7)
+    line = next(raw for raw in step7.splitlines() if setup_check.AUTO_APPLY_INSTALL in raw)
+    assert "(skip until you auto-apply)" in line, line
+    assert setup_check.AUTO_APPLY_INSTALL in CI.split("\n  readme-setup:", 1)[1]
+    assert re.search(r"^\s*\[switch\]\$AutoApply\b", SETUP_PS1, re.M)
+
+
+def test_the_playwright_pin_is_one_version_everywhere_it_is_named():
+    """1.62.0 and 1.63.0 hang a run (a page left on Chrome's error page never
+    closes), so the version setup.ps1 installs, the one CI tests and the one
+    the docs name must be the same."""
+    pin = re.compile(r"[Pp]laywright(?:==| )(\d+\.\d+\.\d+)")
+    found = {}
+    for rel in ("scripts/setup.ps1", ".github/workflows/ci.yml", "requirements.txt",
+                "README.md", "docs/USER_GUIDE.md"):
+        found[rel] = set(pin.findall((REPO / rel).read_text(encoding="utf-8")))
+    assert all(found.values()), found
+    assert len(set().union(*found.values())) == 1, found

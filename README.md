@@ -156,6 +156,7 @@ You need an account for each feature you want:
 |---|---|
 | LLM scoring + résumé tailoring | **Gemini API keys** (free tier, from [Google AI Studio](https://aistudio.google.com/apikey); keys from separate Google accounts add up) and/or a **Google Cloud** project with Vertex AI enabled (billed) |
 | Finding your own jobs | a **Bright Data** account + LinkedIn dataset |
+| Auto-apply, and Jev's help with scoring and tailoring | a **TypeSafe** API key for Jev, the model that judges each form page (from `console.typesafe.ai/keys`; billed per input token), plus the browser install in Step 7 |
 | Discovery on a schedule *(optional)* | a **GCP Compute Engine VM** you create, plus the gcloud CLI from Step 7, signed in |
 
 **What bills and what does not.** The scorer uses your API keys first and bills the
@@ -170,7 +171,9 @@ free quota:
 [Tailoring on the scorer's free keys](docs/USER_GUIDE.md#tailoring-on-the-scorers-free-keys-pool).
 
 *(Nothing breaks without keys: the dashboard, tracker, and editors all run, and the
-tailor stops with a one-line message naming the missing key or project.
+tailor stops with a one-line message naming the missing key or project. Without a
+TypeSafe key, scoring and tailoring run without Jev, and the Auto-apply tab's **Start**
+button stays greyed out with the missing piece named under it.
 The VM row is optional even with keys: **Find new jobs** runs the same discovery
 on your PC, and the VM controls stay hidden until you switch on **Enable VM
 features** in Settings.)*
@@ -199,8 +202,11 @@ shows the structure if you would rather edit the file.)
 ```powershell
 winget install MiKTeX.MiKTeX          # (skip until you tailor) no pdflatex on PATH -> Tailor stops with "pdflatex not found"
 gcloud auth application-default login # (skip if you use Gemini API keys) Vertex AI scoring/tailoring + the VM controls
+powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -AutoApply  # (skip until you auto-apply) Playwright 1.61.0 + Chromium, into the venv
 ```
-Set `PDFLATEX_PATH` if MiKTeX lands somewhere off `PATH`. The
+Auto-apply drives Google Chrome through Playwright, or the downloaded Chromium when Chrome
+is not installed. **Check setup** names whichever piece is still missing. Set
+`PDFLATEX_PATH` if MiKTeX lands somewhere off `PATH`. The
 [gcloud CLI](https://cloud.google.com/sdk/docs/install) is a separate install; without it the
 Settings → VM controls are the only thing that stops working, and only if you run the cloud
 discovery VM.

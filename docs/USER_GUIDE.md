@@ -931,11 +931,12 @@ decisions live in `local/apply_judge.py`, with the live answers they were tuned 
 1. Create a key at `console.typesafe.ai/keys` and put it in `.env` as
    `TYPESAFE_API_KEY=...`, or paste it into **Settings → Jev → TypeSafe API key (Jev
    judge)** (it loads masked; untick *Hide* to see it; a rotated key needs a dashboard restart), and leave
-   **Use Jev** on. `pip install
-   playwright==1.61.0 typesafe-sdk` if **Check setup** says they are missing; the run uses your
-   installed Google Chrome, and `python -m playwright install chromium` gives it a fallback
-   browser when Chrome is absent; `python local/apply_run.py doctor` prints the same
-   rows from a terminal.
+   **Use Jev** on. Then install the browser half once, from the project folder (README
+   Step 7): `powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -AutoApply` puts
+   playwright==1.61.0 and its Chromium into the venv. The run uses your installed Google
+   Chrome and falls back to that Chromium when Chrome is absent. **Check setup** names
+   anything still missing, and `python local/apply_run.py doctor` prints the same rows
+   from a terminal.
 2. Click **Sign in to sites** (or run `python local/apply_run.py login`). It opens Chrome on the
    run's own profile (a separate directory from your everyday Chrome profile, which Chrome
    keeps closed to automation) at LinkedIn's login and your inbox in two tabs; sign in

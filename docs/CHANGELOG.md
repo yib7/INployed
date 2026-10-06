@@ -8,6 +8,13 @@ All notable changes to INployed are recorded here. The format follows
 
 ### Added
 
+- **One command installs auto-apply's browser.** `powershell -ExecutionPolicy Bypass -File
+  scripts\setup.ps1 -AutoApply` (README Step 7) installs Playwright 1.61.0 and its Chromium
+  into the project venv. Check setup, `apply_run.py doctor`, the difficulty check and the
+  auto-apply run name that command when Playwright is missing; the run used to stop on a bare
+  `ModuleNotFoundError` line. The README's account table gains the TypeSafe key auto-apply
+  needs, and the hints for a missing `typesafe-sdk` name the venv's own pip.
+
 - **Check difficulty reads several jobs at once.** Select jobs on the Auto-apply tab
   (Ctrl-click or Shift-click) and **Check difficulty** opens one browser window per job, up to
   the new **Difficulty checks at once** setting (Settings → Auto-apply, 1 to 10, default 10;
@@ -43,9 +50,8 @@ All notable changes to INployed are recorded here. The format follows
   `typesafe-sdk` is pinned exactly at 0.7.2 (it was the range `>=0.7.0`), so a fresh install
   gets the version the suite ran against.
 - **Playwright is held at 1.61.0.** On 1.62.0 and 1.63.0, closing a page that a second failed
-  load left on Chrome's error page never returns, so an auto-apply run could hang. Check setup,
-  the User Guide and the `requirements.txt` comment now say `pip install playwright==1.61.0`,
-  and CI installs the same version.
+  load left on Chrome's error page never returns, so an auto-apply run could hang.
+  `scripts\setup.ps1 -AutoApply` installs that version, and CI tests the same one.
 
 ### Fixed
 

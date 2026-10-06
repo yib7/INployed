@@ -4,6 +4,18 @@ All notable changes to INployed are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims for
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **The résumé's AI-writing sweep reads first and repairs second.** With Jev off for the
+  tailor, one model call now scans every bullet for AI-writing patterns, and only an entry
+  with a flagged bullet (or one the built-in checks flag) gets its repair call, so a clean
+  résumé costs one call in place of one per entry. **Scan the résumé first, then repair
+  only what it flags** in Settings → Resume (`RESUME_TAILOR_SWEEP_SCAN`) turns it off; a
+  failed scan sweeps every entry as before. With Jev on, Jev's own read still gates the
+  sweep and no scan runs.
+
 ## [2.0.0] - 2026-10-05
 
 Auto-apply now sends applications itself, from one submit gate in code: TypeSafe's Jev judges

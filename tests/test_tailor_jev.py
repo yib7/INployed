@@ -6,8 +6,10 @@ that: the prompts of the stages the Jev steps sit beside and the order and tier 
 every call a golden run makes are recorded from an engine with no Jev wiring, in
 `tests/fixtures/tailor_jev_off_prompts.json`. The recording holds `select`,
 `compress_skills`' fallback call, the stages the Jev checks gate (both `reverb`
-calls, every AI-writing sweep call and a `reground` re-ask) and the rephrase call
-that best-of-N gates.
+calls, the résumé scan that gates the AI-writing sweep with Jev off, every sweep
+call the scan sends, and a `reground` re-ask) and the rephrase call that best-of-N
+gates. The golden stub's scan reads the résumé as clean, so the recording holds the
+scan and no sweep call.
 A prompt change made on purpose re-records the file (set TAILOR_JEV_OFF_PROMPTS_RECORD=1
 for one run) and shows the diff in review; a change nobody meant fails here.
 
@@ -53,7 +55,7 @@ RECORD_ENV = "TAILOR_JEV_OFF_PROMPTS_RECORD"
 # trims or gates when Jev is on. A stage the golden run calls more than once is
 # recorded once per call, in call order: its first call under the stage's name and
 # each later one as "<stage> #<n>", so the first call's key stays the stage's name.
-PINNED_STAGES = ("select", "rephrase", "reverb", "aiwriting_sweep")
+PINNED_STAGES = ("select", "rephrase", "reverb", "aiwriting_scan", "aiwriting_sweep")
 # The tailor's three Jev options. Each needs a judge, so with Jev off
 # the recording holds whichever way they are set.
 JEV_OPTION_ENVS = ("RESUME_TAILOR_BEST_OF_N", "RESUME_TAILOR_COVER_LETTER_JEV_CHECK",
@@ -232,11 +234,11 @@ def test_jev_off_prompts_match_the_recording(pinned_engine, stub_template_head,
 
 def test_the_recording_covers_every_gated_stage():
     """Every stage a Jev step gates has its prompt in the recording: select and
-    the rephrase once, reverb twice, the sweep once per item, and the
+    the rephrase once, reverb twice, the résumé scan that stands in for Jev's sweep
+    gate (it reads the golden résumé as clean, so no sweep call follows), and the
     reground re-ask."""
     want = recorded_prompts()
-    gated = ["select", "rephrase", "reverb", "reverb #2", "aiwriting_sweep",
-             "aiwriting_sweep #2", "aiwriting_sweep #3", "aiwriting_sweep #4", "reground",
+    gated = ["select", "rephrase", "reverb", "reverb #2", "aiwriting_scan", "reground",
              "skills_fallback"]
     assert list(want["prompts"]) == gated, (
         f"{PROMPTS.name} and this list of gated stages disagree. If the tailor's stages "
@@ -675,8 +677,9 @@ def test_a_golden_run_with_jev_on_makes_fewer_llm_calls(pinned_engine, stub_temp
     "Designed", then "Engineered", the verbs the golden's two dedupe arms reach.
 
     The sweep gate asks once per sweep item (4 requests). FakeJev reads no tell
-    in any golden bullet and no detector fires on them, so all four sweep calls go too:
-    the golden stub only echoed them.
+    in any golden bullet and no detector fires on them, so no item makes its sweep
+    call, and with Jev's read in hand the résumé scan the Jev-off golden makes in its
+    place does not run either.
 
     The faithfulness check passes every golden bullet. It asks once per entry
     after the rephrase (4 requests) and once per entry a later pass rewrote: Trailhead
@@ -700,9 +703,10 @@ def test_a_golden_run_with_jev_on_makes_fewer_llm_calls(pinned_engine, stub_temp
     assert not any("EXACTLY FOUR fixed lines" in s for s in systems), "the fallback ran"
     assert not any("OPENS WITH A DIFFERENT action verb" in s for s in systems), "reverb ran"
     assert not any("You clean AI-writing tells" in s for s in systems), "the sweep ran"
+    assert sweep._SCAN_SYSTEM not in systems, "the résumé scan ran"
     assert pinned_engine == [s for s in golden._GOLDEN_STAGES
-                             if s not in ("reverb", "aiwriting_sweep")]
-    assert len(pinned_engine) == len(golden._GOLDEN_STAGES) - 6
+                             if s not in ("reverb", "aiwriting_scan")]
+    assert len(pinned_engine) == len(golden._GOLDEN_STAGES) - 3
     assert captured["bullets"] == golden._GOLDEN_BULLETS
     assert gate == [True, False, False, False, False]
     assert captured["skill_lines"] == _JEV_SKILL_LINES

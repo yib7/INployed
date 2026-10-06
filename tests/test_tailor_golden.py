@@ -400,6 +400,12 @@ def _make_stub(stages):
         if "slipped into banned phrasing" in system:
             stages.append("enforce_style")
             return _STYLE
+        if "name the AI-writing tells" in system:
+            # The résumé scan in front of the sweep. It reads the recording as clean,
+            # which is the honest answer for an already style-gated résumé, so an item
+            # makes its sweep call only when a detector forces it.
+            stages.append("aiwriting_scan")
+            return {"flags": []}
         if "You clean AI-writing tells" in system:
             stages.append("aiwriting_sweep")
             return _sweep_echo(user)
@@ -451,7 +457,8 @@ def pinned_engine(tmp_path, monkeypatch):
                 "RESUME_TAILOR_FILL_UNDERFULL", "RESUME_TAILOR_LEAD_OVERVIEW",
                 "RESUME_TAILOR_METHODS_LINE", "RESUME_TAILOR_METHODS_LABEL",
                 "RESUME_TAILOR_TECH_ALIASES", "RESUME_TAILOR_SKILL_TARGETS",
-                "RESUME_TAILOR_AIWRITING_SWEEP", "RESUME_TAILOR_CANDIDATE"):
+                "RESUME_TAILOR_AIWRITING_SWEEP", "RESUME_TAILOR_SWEEP_SCAN",
+                "RESUME_TAILOR_CANDIDATE"):
         monkeypatch.delenv(var, raising=False)
 
     # Import-time constants: env can no longer reach them, so pin the attributes.
@@ -553,14 +560,12 @@ _GOLDEN_STAGES = [
     "reverb",
     "fill_underfull",
     "enforce_style",
-    # One AI-writing sweep call per non-verbatim ITEM, in selection order
-    # (Globex Analytics, Trailhead, Ledgerly, Robotics Club). Side Gig is verbatim, so it
-    # is not an item here at all. No "aiwriting_reask" entry: the stub echoes each bullet
-    # back unchanged, so nothing overflows and the bounded re-ask never fires.
-    "aiwriting_sweep",
-    "aiwriting_sweep",
-    "aiwriting_sweep",
-    "aiwriting_sweep",
+    # One résumé scan over every non-verbatim ITEM (Globex Analytics, Trailhead, Ledgerly,
+    # Robotics Club; Side Gig is verbatim, so it is not an item here at all). The stub's
+    # scan reads them all as clean and no detector fires on any of them, so no item makes
+    # its sweep call. tests/test_sweep_layout_invariant.py still drives the sweep call
+    # over every item of this résumé, with the scan off.
+    "aiwriting_scan",
 ]
 
 _GOLDEN_BULLETS = {

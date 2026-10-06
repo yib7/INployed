@@ -437,8 +437,16 @@ restyled sentence that introduces an unsupported fact is still rejected.
 #### What "Strip AI writing patterns from the résumé bullets" catches
 Settings → Resume. This is the sweep, the last of the bullet passes: on by default, and it
 **costs one model call per résumé entry on every tailor run** (a second call for an entry
-whose rewrite came back too long). Turn it off to stop paying for it; the free per-bullet
-style gate keeps running either way.
+whose rewrite came back too long), or fewer with the scan described next. Turn it off to stop
+paying for it; the free per-bullet style gate keeps running either way.
+
+**Scan the résumé first, then repair only what it flags** (Settings → Resume, on by default,
+shown while the sweep is on) puts one cheap read in front of those calls: a single model call
+reads every bullet for the same AI-writing patterns and names the ones it finds, and only an
+entry with a flagged bullet, or one the free checks flag, gets its repair call. A clean résumé
+then costs that one call. The scan is skipped while Jev reads the bullets (the sweep gate
+below does the same job), and if it fails, every entry is swept as if it were off.
+`RESUME_TAILOR_SWEEP_SCAN=0` turns it off from `.env`.
 
 The always-on style gate reads one bullet at a time, so the tells it cannot see are the ones
 that live across a whole entry:

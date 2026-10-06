@@ -153,16 +153,16 @@ def scenes(win):
     typing = "Search filters the ranked list live, without a re-run"
     tailor = "Tailor writes the resume, cover letter and apply sheet for THIS job"
     rows = "Every row carries the model's reason, strengths and gaps"
-    sheet = "apply.md - one self-contained sheet, every bullet traced to your data"
-    atoms = "Resume Data - the atoms every generated bullet must trace back to"
-    queue = "Auto-apply - each queued job's status and difficulty score, 1 to 10"
-    waiting = "Waiting for you - a question your saved answers cannot fill"
+    sheet = "apply.md: one self-contained sheet, every bullet traced to your data"
+    atoms = "Resume Data: the atoms every generated bullet must trace back to"
+    queue = "Auto-apply: each queued job's status and difficulty score, 1 to 10"
+    waiting = "Waiting for you: a question your saved answers cannot fill"
     statuses = "Statuses run applied through interviewing, offer and rejected"
-    answers = "Apply Answers - reusable responses for application forms"
-    knobs = "Settings - Jev and Auto-apply, every option in one form"
+    answers = "Apply Answers: reusable responses for application forms"
+    knobs = "Settings: Jev and Auto-apply, every option in one form"
     return [
         ("High Score (Unseen)", lambda: _pick(win.high_tab, 0),
-         "High Score - what a scored run leaves you to actually look at", 4.0),
+         "High Score: what a scored run leaves you to actually look at", 4.0),
         ("High Score (Unseen)", lambda: _pick(win.high_tab, 1), rows, 2.0),
         ("High Score (Unseen)", lambda: _pick(win.high_tab, 2), rows, 2.0),
         ("High Score (Unseen)", lambda: _pick(win.high_tab, 3), rows, 2.0),
@@ -202,7 +202,7 @@ def scenes(win):
         ("Auto-apply", lambda: win.apply_queue_panel.pause_card.fill_btn.click(),
          "Fill and continue hands your answer to the run, which goes on", 2.8),
         ("Tracker", lambda: _pick(win.tracker_tab, 0),
-         "Tracker - application status, with follow-ups flagged when due", 4.2),
+         "Tracker: application status, with follow-ups flagged when due", 4.2),
         ("Tracker", lambda: _pick(win.tracker_tab, 2), statuses, 1.8),
         ("Tracker", lambda: _pick(win.tracker_tab, 3), statuses, 1.8),
         ("Tracker", lambda: _pick(win.tracker_tab, 4), statuses, 2.4),
@@ -357,7 +357,7 @@ def main() -> int:
           f"{mb:.1f} MB, {holds[0].width}x{holds[0].height}")
     if mb > 10:
         print("WARNING: GitHub caps comment-box video uploads at 10 MB.")
-    print("\nTo publish it (browser only -- there is no API for this):")
+    print("\nTo publish it in the browser (GitHub has no API for this):")
     print("  1. Open any issue or PR comment box on github.com/yib7/INployed.")
     print(f"  2. Drag {OUT.name} into it. GitHub uploads it and inserts a")
     print("     https://github.com/user-attachments/assets/<uuid> URL.")

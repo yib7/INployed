@@ -40,18 +40,19 @@ DOCS = REPO / "docs"
 BAND_H = 34
 BG = (13, 17, 23)
 FG = (139, 148, 158)
+INK = (230, 237, 243)
 WATERMARK = "representative sample data"
 
 # The README's Screenshots grid: four distinct screens, not four near-duplicates
 # of the same table. (slug in .screenshots, caption band, committed filename)
 STILLS = [
-    ("high_score", "High Score - LLM-ranked postings with a score breakdown",
+    ("high_score", "High Score: LLM-ranked postings with a score breakdown",
      "dashboard.png"),
-    ("auto_apply", "Auto-apply - the queue with difficulty scores, and a question for you",
+    ("auto_apply", "Auto-apply: the queue with difficulty scores, and a question for you",
      "auto-apply.png"),
-    ("resume_data", "Resume Data - the atoms every bullet must trace back to",
+    ("resume_data", "Resume Data: the atoms every bullet must trace back to",
      "resume-data.png"),
-    ("tracker", "Tracker - application statuses + follow-up nudges",
+    ("tracker", "Tracker: application statuses and follow-up nudges",
      "tracker.png"),
 ]
 
@@ -66,8 +67,10 @@ FADE_MS = 40
 GIF_COLORS = 128
 
 
-def _font() -> ImageFont.FreeTypeFont:
-    for name in ("segoeui.ttf", "DejaVuSans.ttf", "arial.ttf"):
+def _font(bold: bool = False) -> ImageFont.FreeTypeFont:
+    names = ("segoeuib.ttf", "DejaVuSans-Bold.ttf", "arialbd.ttf") if bold else (
+        "segoeui.ttf", "DejaVuSans.ttf", "arial.ttf")
+    for name in names:
         try:
             return ImageFont.truetype(name, 15)
         except OSError:
@@ -83,7 +86,11 @@ def _stamp(src: Path, caption: str) -> Image.Image:
     draw = ImageDraw.Draw(out)
     font = _font()
     y = h + BAND_H // 2
-    draw.text((16, y), f"INployed - {caption}", font=font, fill=FG, anchor="lm")
+    # The name in bold, then the caption: the same band the walkthrough GIF uses.
+    bold = _font(bold=True)
+    draw.text((16, y), "INployed", font=bold, fill=INK, anchor="lm")
+    x = 16 + draw.textlength("INployed", font=bold) + 12
+    draw.text((x, y), caption, font=font, fill=FG, anchor="lm")
     draw.text((w - 16, y), WATERMARK, font=font, fill=FG, anchor="rm")
     return out
 

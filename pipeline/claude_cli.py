@@ -69,7 +69,9 @@ class ClaudeCLIError(RuntimeError):
     parseable JSON envelope, or -- for extract_json_text callers -- the
     envelope's `result` text wasn't extractable JSON), 'cli_too_old' (the
     installed CLI refuses the model until it is updated; run_claude has already
-    tried the model's MODEL_FALLBACKS entry, so never retriable), 'error'
+    tried the model's MODEL_FALLBACKS entry, so never retriable),
+    'unrecognized_model' (the installed CLI does not know the model's name at
+    all; same fallback and same no-retry rule as 'cli_too_old'), 'error'
     (anything else).
     """
 
@@ -110,9 +112,35 @@ def is_cli_too_old_message(text: str | None) -> bool:
     return "does not support this model" in t and "or newer is required" in t
 
 
+_UNRECOGNIZED_MARKER = "unrecognized_model"
+
+
+def is_unrecognized_model_message(text: str | None, model: str | None) -> bool:
+    """True if `text` is the CLI refusing `model` as a name it does not know.
+
+    Claude Code 2.1.283 answers `--model claude-sonnet-5-5` with exit 1 and
+    `[claude-code:unrecognized_model] {"model":"claude-sonnet-5-5","query_source":"sdk"}`.
+    The marker and the refused model's own name must both be present, so an
+    unrelated error that mentions a model never matches, and neither does a
+    refusal of some other model. The name must stand alone: claude-sonnet-5
+    does not match inside claude-sonnet-5-5.
+    """
+    t = text or ""
+    if not model or _UNRECOGNIZED_MARKER not in t.lower():
+        return False
+    name = re.compile(rf"(?<![\w.-]){re.escape(model)}(?![\w.-])", re.IGNORECASE)
+    return name.search(t) is not None
+
+
+# The kinds that mean the installed CLI refused the model itself. Another
+# attempt meets the same CLI, so callers never retry them, and run_claude
+# tries the model's MODEL_FALLBACKS entry once.
+REFUSAL_KINDS = frozenset({"cli_too_old", "unrecognized_model"})
+
+
 # A model the installed CLI may be too old for, mapped to the model a run uses
-# instead until the user runs `claude update`. One hop only: a fallback is
-# never itself swapped.
+# until the user runs `claude update`. The swap fires on either refusal in
+# REFUSAL_KINDS. One hop only: a fallback is never itself swapped.
 MODEL_FALLBACKS: dict[str, str] = {
     "claude-opus-5-5": "claude-opus-5",
     "claude-sonnet-5-5": "claude-sonnet-5",
@@ -123,7 +151,8 @@ MODEL_FALLBACKS: dict[str, str] = {
 # claude-sonnet-5-5 has no entry on purpose: the first CLI version that runs it
 # is not known without a live call. Check setup stays silent about it (no
 # version to name), and a CLI too old for it still swaps to claude-sonnet-5 at
-# run time through MODEL_FALLBACKS. Add the entry once a refusal names the version.
+# run time through MODEL_FALLBACKS. CLI 2.1.283 refuses it as unrecognized_model,
+# a refusal that names no version. Add the entry once a refusal names the version.
 MIN_CLI_VERSION: dict[str, tuple[int, int, int]] = {"claude-opus-5-5": (2, 1, 280)}
 
 # Models the installed CLI refused this process, mapped to the fallback in use.
@@ -176,9 +205,20 @@ def _remember_swap(model: str, fallback: str, cli_text: str) -> None:
         pass
 
 
-def _error_kind(text: str) -> str:
+def _refusal_kind(text: str | None, model: str) -> str | None:
+    """The REFUSAL_KINDS entry `text` shows for `model`, or None."""
     if is_cli_too_old_message(text):
         return "cli_too_old"
+    if is_unrecognized_model_message(text, model):
+        return "unrecognized_model"
+    return None
+
+
+def _error_kind(text: str, model: str = "") -> str:
+    # The refusals come first: a required version such as 2.1.429 carries "429".
+    refusal = _refusal_kind(text, model)
+    if refusal is not None:
+        return refusal
     return "rate_limit" if is_rate_limit_message(text) else "error"
 
 
@@ -254,12 +294,13 @@ def run_claude(
     prompt-cache breakpoint -- see the module docstring's caching note.
     Runs in a temp cwd so no project files are visible to the child process.
 
-    The model fallback: when the installed CLI is too old for `model`
-    (kind 'cli_too_old') and MODEL_FALLBACKS names a fallback, the call runs
-    once more on the fallback. The swap is remembered for the rest of the
-    process, so later calls for `model` go straight to the fallback, and one
-    warning goes to stderr. The fallback's own failure is raised as is; a
-    'cli_too_old' for a model with no fallback is raised as is.
+    The model fallback: when the installed CLI refuses `model` (a kind in
+    REFUSAL_KINDS: too old for it, or does not recognize its name) and
+    MODEL_FALLBACKS names a fallback, the call runs once more on the fallback.
+    The swap is remembered for the rest of the process, so later calls for
+    `model` go straight to the fallback, and one warning goes to stderr. The
+    fallback's own failure is raised as is; a refusal of a model with no
+    fallback is raised as is.
     """
     kwargs = dict(json_mode=json_mode, allow_websearch=allow_websearch,
                   timeout_s=timeout_s, effort=effort)
@@ -270,7 +311,7 @@ def run_claude(
         return _run_once(system, user, model, **kwargs)
     except ClaudeCLIError as exc:
         fallback = MODEL_FALLBACKS.get(model)
-        if exc.kind != "cli_too_old" or fallback is None:
+        if exc.kind not in REFUSAL_KINDS or fallback is None:
             raise
         _remember_swap(model, fallback, str(exc))
     return _run_once(system, user, fallback, **kwargs)
@@ -341,9 +382,10 @@ def _run_once(
             pass
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "")[:400]
-        kind = _error_kind(err)
-        if kind != "cli_too_old" and is_cli_too_old_message(proc.stdout):
-            kind = "cli_too_old"  # the refusal rode stdout beside unrelated stderr
+        kind = _error_kind(err, model)
+        if kind not in REFUSAL_KINDS:
+            # the refusal may ride stdout beside unrelated stderr
+            kind = _refusal_kind(proc.stdout, model) or kind
         raise ClaudeCLIError(f"claude exited {proc.returncode}: {err}", kind=kind)
     try:
         envelope = json.loads(proc.stdout or "{}")
@@ -355,7 +397,7 @@ def _run_once(
     result = str(envelope.get("result") or "")
     if envelope.get("is_error"):
         raise ClaudeCLIError(
-            f"claude reported an error: {result[:300]}", kind=_error_kind(result),
+            f"claude reported an error: {result[:300]}", kind=_error_kind(result, model),
         )
     if not result.strip():
         raise ClaudeCLIError("empty response", kind="error")
@@ -514,7 +556,7 @@ class ClaudePool:
                 self._claude_calls += 1  # successful generates only
                 return _Resp(text, res.input_tokens, res.output_tokens)
             except ClaudeCLIError as exc:
-                if exc.kind in ("not_found", "cli_too_old"):
+                if exc.kind == "not_found" or exc.kind in REFUSAL_KINDS:
                     raise  # never retriable (run_claude already tried the fallback)
                 if exc.kind == "rate_limit":
                     if rl >= self.RATE_LIMIT_RETRIES:

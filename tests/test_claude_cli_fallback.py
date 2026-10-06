@@ -305,6 +305,142 @@ def test_reset_forgets_the_swap(monkeypatch, fake_exe):
     assert models == [NEW, OLD, NEW, OLD]
 
 
+# --- the unrecognized_model refusal (CLI 2.1.283) ------------------------------
+
+def _unrecognized(model):
+    """What Claude Code 2.1.283 prints for a --model it does not know (exit 1)."""
+    return f'[claude-code:unrecognized_model] {{"model":"{model}","query_source":"sdk"}}'
+
+
+def _unknown_cli(monkeypatch, *, via="exit", refused=(SONNET_NEW,)):
+    """A fake CLI that refuses the `refused` models the way 2.1.283 does and
+    answers anything else. Returns the models it was asked for, in order."""
+    models: list[str] = []
+    lock = threading.Lock()
+
+    def fake_run(argv, **kwargs):
+        m = _model(argv)
+        with lock:
+            models.append(m)
+        if m in refused:
+            if via == "envelope":
+                return _proc(stdout=_envelope(_unrecognized(m), is_error=True))
+            return _proc(returncode=1, stderr=_unrecognized(m))
+        return _proc(stdout=_envelope(f"answer from {m}"))
+
+    monkeypatch.setattr(claude_cli.subprocess, "run", fake_run)
+    return models
+
+
+def test_is_unrecognized_model_message_matches_the_live_text():
+    text = _unrecognized(SONNET_NEW)
+    assert claude_cli.is_unrecognized_model_message(text, SONNET_NEW) is True
+    assert claude_cli.is_unrecognized_model_message(
+        f"claude exited 1: {text}", SONNET_NEW) is True
+
+
+@pytest.mark.parametrize("text,model", [
+    (None, SONNET_NEW),
+    ("", SONNET_NEW),
+    # an unrelated error that mentions a model
+    ("API Error: 400 model claude-sonnet-5-5 is overloaded", SONNET_NEW),
+    ('{"error":"invalid model","model":"claude-sonnet-5-5"}', SONNET_NEW),
+    # the marker for some other model
+    (_unrecognized("claude-other-1"), SONNET_NEW),
+    # the fallback's name sits inside the refused name: no match on the fallback
+    (_unrecognized(SONNET_NEW), SONNET_OLD),
+    # no model to look for
+    (_unrecognized(SONNET_NEW), ""),
+])
+def test_is_unrecognized_model_message_needs_the_marker_and_the_model(text, model):
+    assert claude_cli.is_unrecognized_model_message(text, model) is False
+
+
+def test_an_unrelated_error_mentioning_the_model_stays_a_plain_error(monkeypatch, fake_exe):
+    models = []
+    monkeypatch.setattr(
+        claude_cli.subprocess, "run",
+        lambda argv, **k: (models.append(_model(argv)),
+                           _proc(returncode=1, stderr="bad request for model claude-sonnet-5-5"))[1])
+    with pytest.raises(claude_cli.ClaudeCLIError) as ei:
+        claude_cli.run_claude("sys", "user", SONNET_NEW)
+    assert ei.value.kind == "error"
+    assert models == [SONNET_NEW]                 # no swap
+
+
+@pytest.mark.parametrize("new,old", PAIRS)
+@pytest.mark.parametrize("via", ["envelope", "exit"])
+def test_unrecognized_model_swaps_once_and_is_remembered(
+        monkeypatch, fake_exe, capsys, via, new, old):
+    models = _unknown_cli(monkeypatch, via=via, refused=(new,))
+    for _ in range(3):
+        res = claude_cli.run_claude("sys", "user", new, effort="low")
+        assert res.text == f"answer from {old}"
+        assert res.model == old
+    assert models == [new, old, old, old]          # one refusal, then straight to the fallback
+    assert claude_cli.active_swaps() == {new: old}
+    err = capsys.readouterr().err
+    assert err.count(f"claude CLI does not support {new} yet") == 1
+    assert f"using {old}" in err
+    assert "claude update" in err
+
+
+def test_unrecognized_model_refusal_on_stdout_beside_other_stderr_still_swaps(
+        monkeypatch, fake_exe):
+    models = []
+
+    def fake_run(argv, **kwargs):
+        m = _model(argv)
+        models.append(m)
+        if m == SONNET_NEW:
+            return _proc(returncode=1, stdout=_unrecognized(m), stderr="warning: something else")
+        return _proc(stdout=_envelope("ok"))
+
+    monkeypatch.setattr(claude_cli.subprocess, "run", fake_run)
+    assert claude_cli.run_claude("sys", "user", SONNET_NEW).text == "ok"
+    assert models == [SONNET_NEW, SONNET_OLD]
+
+
+@pytest.mark.parametrize("via", ["envelope", "exit"])
+def test_unrecognized_model_with_no_fallback_fails_fast(monkeypatch, fake_exe, via):
+    models = _unknown_cli(monkeypatch, via=via, refused=("claude-sonet-5",))
+    with pytest.raises(claude_cli.ClaudeCLIError) as ei:
+        claude_cli.run_claude("sys", "user", "claude-sonet-5")
+    assert ei.value.kind == "unrecognized_model"
+    assert models == ["claude-sonet-5"]            # nothing to swap to
+    assert claude_cli.active_swaps() == {}
+
+
+def test_a_fallback_the_cli_also_does_not_recognize_raises_unrecognized_model(
+        monkeypatch, fake_exe):
+    """One hop only: a refused fallback is raised, never swapped again."""
+    models = _unknown_cli(monkeypatch, refused=(SONNET_NEW, SONNET_OLD))
+    with pytest.raises(claude_cli.ClaudeCLIError) as ei:
+        claude_cli.run_claude("sys", "user", SONNET_NEW)
+    assert ei.value.kind == "unrecognized_model"
+    assert models == [SONNET_NEW, SONNET_OLD]
+
+
+def test_claude_pool_raises_unrecognized_model_without_retrying(monkeypatch):
+    calls = []
+
+    def fake_run_claude(*a, **k):
+        calls.append(1)
+        raise claude_cli.ClaudeCLIError("unknown", kind="unrecognized_model")
+
+    async def no_sleep(_s):
+        raise AssertionError("unrecognized_model must not sleep or retry")
+
+    monkeypatch.setattr(claude_cli, "run_claude", fake_run_claude)
+    monkeypatch.setattr(claude_cli.asyncio, "sleep", no_sleep)
+    pool = claude_cli.ClaudePool()
+    cfg = SimpleNamespace(system_instruction="s", response_mime_type=None)
+    with pytest.raises(claude_cli.ClaudeCLIError) as ei:
+        asyncio.run(pool.generate(model="claude-sonet-5", contents="u", config=cfg))
+    assert ei.value.kind == "unrecognized_model"
+    assert calls == [1]
+
+
 # --- ClaudePool does not retry the kind -----------------------------------------
 
 def test_claude_pool_raises_cli_too_old_without_retrying(monkeypatch):

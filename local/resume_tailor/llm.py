@@ -77,7 +77,8 @@ class LLMError(RuntimeError):
     Kinds: "bad_json" and "empty" (the model answered, the answer was
     unusable), "config" (missing credentials or provider), "cli_too_old" (the
     installed `claude` CLI refuses the model and its one fallback already ran;
-    raised at once, never retried). None = unclassified.
+    raised at once, never retried), "unrecognized_model" (the CLI does not know
+    the model's name; same handling as "cli_too_old"). None = unclassified.
     """
 
     def __init__(self, *args, kind: Optional[str] = None):
@@ -743,14 +744,17 @@ def _call_claude(
         except Exception as exc:  # noqa: BLE001
             last_err = exc
             kind = getattr(exc, "kind", "")
-            if kind == "cli_too_old":
-                # run_claude already ran the model's one fallback, and another
-                # attempt meets the same installed CLI. Fail now.
-                raise LLMError(
-                    f"The installed `claude` CLI is too old for {model}. Run "
-                    f"`claude update`, or pick another Claude model in Settings: {exc}",
-                    kind="cli_too_old",
-                ) from exc
+            if kind in ("cli_too_old", "unrecognized_model"):
+                # run_claude already ran the model's one fallback (when it has
+                # one), and another attempt meets the same installed CLI. Fail now.
+                if kind == "cli_too_old":
+                    why = (f"The installed `claude` CLI is too old for {model}. Run "
+                           "`claude update`, or pick another Claude model in Settings")
+                else:
+                    why = (f"The installed `claude` CLI does not recognize the model "
+                           f"{model}. Check the model name in Settings, or run "
+                           "`claude update` if it is a newer model")
+                raise LLMError(f"{why}: {exc}", kind=kind) from exc
             if kind == "timeout" or (not kind and _is_timeout(exc)):
                 timed_out = True
                 log.warning("llm: claude %s timed out at %ss (attempt %d/%d); "

@@ -525,6 +525,28 @@ def test_call_claude_cli_too_old_fails_fast_with_no_retry(monkeypatch, claude_en
     assert recorded == []               # no sleeps of any kind
 
 
+def test_call_claude_unrecognized_model_fails_fast_with_no_retry(monkeypatch, claude_env):
+    """CLI 2.1.283 refuses a --model it does not know with
+    [claude-code:unrecognized_model]. run_claude has already tried the model's
+    one fallback (or it has none), so the tailor fails at once with a message
+    that names the model, never through the retry ladder."""
+    recorded, _ = claude_env
+    unknown = ClaudeCLIErrorLike(
+        'claude exited 1: [claude-code:unrecognized_model] '
+        '{"model":"claude-sonet-5","query_source":"sdk"}',
+        kind="unrecognized_model")
+    fake, seen = _invoke_claude_seq([unknown] * 99)
+    monkeypatch.setattr(llm, "_invoke_claude", fake)
+    with pytest.raises(llm.LLMError) as ei:
+        llm._call_claude("sys", "user", "claude-sonet-5")
+    assert ei.value.kind == "unrecognized_model"
+    msg = str(ei.value)
+    assert "does not recognize" in msg and "claude-sonet-5" in msg
+    assert "claude update" in msg and "Settings" in msg
+    assert seen == [180]                # one attempt, no escalation
+    assert recorded == []               # no sleeps of any kind
+
+
 def test_usage_names_the_model_that_ran_after_a_swap(monkeypatch, claude_env):
     """VL-5 fix round: a call claude_cli answered on the fallback is booked
     under the fallback, never under the model the tailor asked for."""
@@ -573,4 +595,6 @@ def test_cli_too_old_is_not_a_transient_for_the_answer_drafter():
     sys.path.insert(0, str(REPO / "local"))
     import apply_answergen
     err = llm.LLMError("Claude CLI too old", kind="cli_too_old")
+    assert apply_answergen.transient(err) is False
+    err = llm.LLMError("Claude CLI does not recognize the model", kind="unrecognized_model")
     assert apply_answergen.transient(err) is False

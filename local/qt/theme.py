@@ -379,6 +379,12 @@ def _qss() -> str:
     QCheckBox::indicator {{ width: 16px; height: 16px; border: 1px solid {BORDER_INPUT};
         border-radius: {RADII["checkbox"]}px; background: {WINDOW}; }}
     QCheckBox::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT}; }}
+    /* A radio button's ring, drawn like the check box's square: Fusion's own
+       ring was dark on the dark ground and did not show. */
+    QRadioButton {{ spacing: 7px; }}
+    QRadioButton::indicator {{ width: 16px; height: 16px; border: 1px solid {BORDER_INPUT};
+        border-radius: 9px; background: {WINDOW}; }}
+    QRadioButton::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT}; }}
 
     QGroupBox {{ border: 1px solid {BORDER}; border-radius: 8px; margin-top: 10px;
         padding: 10px; }}
@@ -424,7 +430,8 @@ def _qss() -> str:
        surfaces (their type rules stay untouched). */
     QFrame[card="true"] QLabel, QFrame[card="true"] QCheckBox,
     QFrame[card="true"] QSlider, QFrame[card="true"] .QWidget,
-    QFrame[callout="warning"] QLabel, QFrame[callout="warning"] .QWidget {{
+    QFrame[callout="warning"] QLabel, QFrame[callout="warning"] .QWidget,
+    QFrame[callout="warning"] QCheckBox, QFrame[callout="warning"] QRadioButton {{
         background: transparent; }}
     QFrame[divider="true"] {{ background: {BORDER_SOFT}; border: 0; }}
     QLabel[storageTag="true"] {{ color: {FAINT}; border: 1px solid {BORDER};

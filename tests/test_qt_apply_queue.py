@@ -1904,6 +1904,54 @@ def test_the_poll_shows_a_new_request_flashes_once_and_keeps_a_half_typed_answer
     assert p.pause_card.isHidden()
 
 
+def _lum(c: QtGui.QColor) -> float:
+    def ch(v):
+        v = v / 255
+        return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+    return 0.2126 * ch(c.red()) + 0.7152 * ch(c.green()) + 0.0722 * ch(c.blue())
+
+
+def _ratio(a: QtGui.QColor, b: QtGui.QColor) -> float:
+    hi, lo = sorted((_lum(a), _lum(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def test_the_cards_choices_sit_on_the_callout_and_show_their_rings(qtbot, pause_home):
+    """Inside the warning callout a save box and a radio button painted the
+    window's colour behind themselves, a dark band across the amber card,
+    and a radio's ring (dark on dark) did not show at all."""
+    from qt import theme
+    _ask()
+    card = _card(qtbot)
+    host = QtWidgets.QWidget()          # the tab's window-coloured ground
+    qtbot.addWidget(host)
+    host.setStyleSheet(theme._qss())
+    QtWidgets.QVBoxLayout(host).addWidget(card)
+    host.resize(700, host.sizeHint().height())
+    host.show()
+    QtWidgets.QApplication.processEvents()
+    img = host.grab().toImage()
+    dpr = img.devicePixelRatio()
+
+    def at(widget, x, y):
+        pt = widget.mapTo(host, QtCore.QPoint(x, y))
+        return img.pixelColor(round(pt.x() * dpr), round(pt.y() * dpr))
+
+    save = _row_for(card, 1)["save"]
+    title = card.title_label           # a label: transparent on the callout
+    fill = at(title, title.width() - 2, title.height() // 2)
+    beside = at(save, save.width() - 3, save.height() // 2)
+    assert beside.name() == fill.name()
+    radio = _row_for(card, 1)["widget"].group.buttons()[0]
+    ground = at(radio, radio.width() - 2, 1)
+    assert ground.name() == fill.name()
+    # WCAG 1.4.11: a control's boundary 3:1 on its ground. The ring is drawn in
+    # BORDER_INPUT; its antialiased pixels come out a shade under the token.
+    assert _ratio(QtGui.QColor(theme.BORDER_INPUT), ground) >= 3.0
+    ring = max(_ratio(at(radio, x, radio.height() // 2), ground) for x in range(0, 4))
+    assert ring >= 2.7
+
+
 def test_the_pause_card_sits_at_the_top_of_the_tab(qtbot, tmp_path, pause_home):
     p = _dpanel(qtbot, _qfile(tmp_path), alert=lambda w: None)
     assert p.body.layout().itemAt(0).widget() is p.pause_card

@@ -457,7 +457,7 @@ class Runner:
         return self._run_context
 
     def load_answers(self) -> list[dict]:
-        """The answer store, read once per drain (FL-4): every job's sheet
+        """The answer store, read once per drain: every job's sheet
         refresh and fact catalog use this copy. A damaged store raises
         `apply_answers.AnswerStoreError` before any job is claimed. The
         built-in answers that are not set or not confirmed are named once in

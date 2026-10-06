@@ -915,7 +915,7 @@ class _JobRun(_PageSteps, _FormSteps, _SubmitSteps):
 
     def _refresh_sheet(self, answers: list[dict]) -> None:
         """The sheet's Standard answers and Address re-rendered from the
-        store before the facts are read (FL-2), so the sheet a person opens
+        store before the facts are read, so the sheet a person opens
         shows what this run may fill. A refresh that fails, or a sheet
         without those sections, is logged and the job goes on: the facts
         come from the store either way."""

@@ -52,7 +52,7 @@ def _stored(tmp_path) -> dict:
 
 
 @pytest.mark.parametrize("word", OFF_WORDS)
-def test_c2_a_false_word_plus_an_unrelated_save_keeps_submit_off(qtbot, tmp_path,
+def test_a_false_word_plus_an_unrelated_save_keeps_submit_off(qtbot, tmp_path,
                                                                  quiet_boxes, word):
     import apply_run
     (tmp_path / "config.json").write_text(
@@ -70,7 +70,7 @@ def test_c2_a_false_word_plus_an_unrelated_save_keeps_submit_off(qtbot, tmp_path
 
 @pytest.mark.parametrize("key", sorted(settings.STRICT_SWITCHES))
 @pytest.mark.parametrize("word", ("true", "yes", "on", "1"))
-def test_c2_a_strict_switch_shows_a_string_as_off(qtbot, tmp_path, key, word):
+def test_a_strict_switch_shows_a_string_as_off(qtbot, tmp_path, key, word):
     """Their runtime readers take only a stored True, so a string there runs
     off; the box shows it off and a Save keeps it off."""
     (tmp_path / "config.json").write_text(json.dumps({key: word}), encoding="utf-8")
@@ -78,7 +78,7 @@ def test_c2_a_strict_switch_shows_a_string_as_off(qtbot, tmp_path, key, word):
     assert form._widgets[key].isChecked() is False
 
 
-def test_c2_the_strict_switches_are_read_by_is_true_at_runtime(tmp_path, monkeypatch):
+def test_the_strict_switches_are_read_by_is_true_at_runtime(tmp_path, monkeypatch):
     import apply_run
     from resume_tailor import config as rt_config
     assert apply_run.submit_on({"auto_apply_submit": "true"}) is False
@@ -94,7 +94,7 @@ def test_c2_the_strict_switches_are_read_by_is_true_at_runtime(tmp_path, monkeyp
 
 
 @pytest.mark.parametrize("word", ("false", "off", "0", "no"))
-def test_c2_every_bool_field_shows_a_false_word_as_off(qtbot, tmp_path, word):
+def test_every_bool_field_shows_a_false_word_as_off(qtbot, tmp_path, word):
     by_target: dict = {}
     for f in settings.SETTINGS_SCHEMA:
         if f.type == "bool" and f.target != "env":
@@ -107,7 +107,7 @@ def test_c2_every_bool_field_shows_a_false_word_as_off(qtbot, tmp_path, word):
             assert form._widgets[key].isChecked() is False, key
 
 
-def test_c2_a_real_true_still_ticks(qtbot, tmp_path):
+def test_a_real_true_still_ticks(qtbot, tmp_path):
     (tmp_path / "config.json").write_text(json.dumps({"auto_apply_submit": True}),
                                           encoding="utf-8")
     form = _form(qtbot, tmp_path)
@@ -119,7 +119,7 @@ def test_c2_a_real_true_still_ticks(qtbot, tmp_path):
 DAMAGED = '{"auto_apply_submit": false, "jev_enabled": false, "min_score": 6,}'
 
 
-def test_c1_a_damaged_config_opens_with_submit_and_jev_off_and_save_keeps_it_aside(
+def test_a_damaged_config_opens_with_submit_and_jev_off_and_save_keeps_it_aside(
         qtbot, tmp_path, quiet_boxes):
     (tmp_path / "config.json").write_text(DAMAGED, encoding="utf-8")
     form = _form(qtbot, tmp_path)
@@ -134,7 +134,7 @@ def test_c1_a_damaged_config_opens_with_submit_and_jev_off_and_save_keeps_it_asi
     assert len(kept) == 1 and kept[0].read_text(encoding="utf-8") == DAMAGED
 
 
-def test_c1_a_file_damaged_after_the_tab_opened_is_refused(qtbot, tmp_path, quiet_boxes):
+def test_a_file_damaged_after_the_tab_opened_is_refused(qtbot, tmp_path, quiet_boxes):
     (tmp_path / "config.json").write_text(json.dumps({"auto_apply_submit": False}),
                                           encoding="utf-8")
     form = _form(qtbot, tmp_path)
@@ -146,7 +146,7 @@ def test_c1_a_file_damaged_after_the_tab_opened_is_refused(qtbot, tmp_path, quie
                for kind, a in quiet_boxes)
 
 
-def test_c1_a_config_that_cannot_be_opened_is_never_written_over(qtbot, tmp_path,
+def test_a_config_that_cannot_be_opened_is_never_written_over(qtbot, tmp_path,
                                                                 quiet_boxes, monkeypatch):
     good = {"auto_apply_submit": False, "hidden_columns": {"jobs": ["company"]}}
     cfg = tmp_path / "config.json"
@@ -168,7 +168,7 @@ def test_c1_a_config_that_cannot_be_opened_is_never_written_over(qtbot, tmp_path
     assert not list(tmp_path.glob("*.corrupt-*"))
 
 
-def test_c1_a_rebuilt_config_names_the_submit_switch(qtbot, tmp_path):
+def test_a_rebuilt_config_names_the_submit_switch(qtbot, tmp_path):
     (tmp_path / "config.json.corrupt-20261001-120000").write_text(DAMAGED, encoding="utf-8")
     (tmp_path / "config.json").write_text(json.dumps({"hidden_columns": {}}), encoding="utf-8")
     form = _form(qtbot, tmp_path)

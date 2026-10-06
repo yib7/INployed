@@ -1138,7 +1138,7 @@ Nothing to migrate either way: `tiers` stays the default.
   aim is 90%; 75% is the aim for the *last* line of a bullet that wraps.
 - **The fixture UUID in `tests/test_vm_sync.py` is now all-zero rather than all-one.** Cosmetic:
   both are placeholders. This audit initially reported the old value as a live Bright Data token
-  and it was not — the finding was retracted before release. No credential has ever been
+  and it was not: the finding was retracted before release. No credential has ever been
   committed to this repository; the only two UUIDs in its entire history are the `11111111-…`
   placeholder and the `00000000-…` that replaced it. Nothing to rotate, nothing to purge.
 - **A job posting could choose the email typed into a real application.** `apply.md` is not

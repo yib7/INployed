@@ -841,7 +841,7 @@ def _secret_setting_names() -> set:
     return {f.key for f in settings.SETTINGS_SCHEMA if getattr(f, "secret", False)}
 
 
-def test_c7_every_secret_setting_is_scrubbed_from_the_child_env():
+def test_every_secret_setting_is_scrubbed_from_the_child_env():
     """The scrub list is pinned to the Settings schema, so a new secret field
     (TypeSafe's key, say) cannot ride into `claude`."""
     names = _secret_setting_names()
@@ -850,7 +850,7 @@ def test_c7_every_secret_setting_is_scrubbed_from_the_child_env():
     assert not missing, f"not scrubbed from the claude child: {sorted(missing)}"
 
 
-def test_c7_the_typesafe_key_never_reaches_the_claude_child(monkeypatch, tmp_path):
+def test_the_typesafe_key_never_reaches_the_claude_child(monkeypatch, tmp_path):
     monkeypatch.setattr(claude_cli, "find_claude", lambda: str(tmp_path / "claude"))
     for name in _secret_setting_names() | {"TYPESAFE_BASE_URL"}:
         monkeypatch.setenv(name, "synthetic-secret")

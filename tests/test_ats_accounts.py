@@ -490,7 +490,7 @@ def _seed(ledger):
     return seed
 
 
-def test_c6_record_raises_when_the_ledger_cannot_be_read(ledger, monkeypatch):
+def test_record_raises_when_the_ledger_cannot_be_read(ledger, monkeypatch):
     seed = _seed(ledger)
     _flaky_ledger_read(monkeypatch, ledger)
     with pytest.raises(OSError):
@@ -500,7 +500,7 @@ def test_c6_record_raises_when_the_ledger_cannot_be_read(ledger, monkeypatch):
     assert not list(ledger.parent.glob("ats_accounts.json.corrupt-*"))
 
 
-def test_c6_record_raises_when_a_damaged_ledger_cannot_be_moved_aside(ledger, monkeypatch):
+def test_record_raises_when_a_damaged_ledger_cannot_be_moved_aside(ledger, monkeypatch):
     ledger.write_text("{not json", encoding="utf-8")
     real_replace = ats_accounts.os.replace
 
@@ -515,13 +515,13 @@ def test_c6_record_raises_when_a_damaged_ledger_cannot_be_moved_aside(ledger, mo
     assert ledger.read_text(encoding="utf-8") == "{not json"
 
 
-def test_c6_a_reader_still_reads_an_unreadable_ledger_as_empty(ledger, monkeypatch):
+def test_a_reader_still_reads_an_unreadable_ledger_as_empty(ledger, monkeypatch):
     _seed(ledger)
     _flaky_ledger_read(monkeypatch, ledger)
     assert ats_accounts.lookup("site0.example.com") is None
 
 
-def test_c6_two_writers_never_lose_each_others_account(ledger, monkeypatch):
+def test_two_writers_never_lose_each_others_account(ledger, monkeypatch):
     """record's read-merge-write runs under the ledger's file lock: a writer
     that read before the other wrote would otherwise drop its account."""
     import threading

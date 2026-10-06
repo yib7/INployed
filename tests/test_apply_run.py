@@ -3881,7 +3881,7 @@ def test_a_missing_answer_carries_the_fields_help_options_and_type(
     assert items[_TALKS]["type"] == "number", items
 
 
-def test_c5_the_drain_stops_when_the_queue_cannot_be_read(
+def test_the_drain_stops_when_the_queue_cannot_be_read(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
     """A queue another program holds past the read retries: nothing is
     claimed, nothing is written, and the job stays queued."""

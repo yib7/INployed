@@ -2444,13 +2444,13 @@ def test_the_save_box_tooltip_shows_the_page_question_as_text(qtbot, pause_home)
 
 @pytest.mark.parametrize("bad", ["it's", "x\u2019; Write-Output INJECTED; \u2019",
                                  "1 2", "1;calc", "$(calc)", "", "1\n2", "\uff11"])
-def test_c9_the_check_command_refuses_an_id_outside_the_safe_set(bad):
+def test_the_check_command_refuses_an_id_outside_the_safe_set(bad):
     with pytest.raises(ValueError):
         aqp._assess_command(Path("C:/repo"), ["1", bad])
 
 
 @pytest.mark.parametrize("quote", ["'", "\u2018", "\u2019", "\u201a", "\u201b"])
-def test_c9_every_powershell_single_quote_in_the_root_is_doubled(quote):
+def test_every_powershell_single_quote_in_the_root_is_doubled(quote):
     """PowerShell 5.1 ends a single-quoted string at a curly quote too."""
     root = Path(f"C:/Users/o{quote}brien/repo")
     for line in (aqp._console_command(root, "drain"), aqp._assess_command(root, ["7"])):
@@ -2458,7 +2458,7 @@ def test_c9_every_powershell_single_quote_in_the_root_is_doubled(quote):
         assert literal == "'" + str(root).replace(quote, quote * 2) + "'"
 
 
-def test_c9_a_check_refused_for_a_bad_id_says_so(qtbot, tmp_path):
+def test_a_check_refused_for_a_bad_id_says_so(qtbot, tmp_path):
     def refuse(ids):
         raise ValueError("job id outside the safe set")
     p = _dpanel(qtbot, _three(tmp_path), on_check_difficulty=refuse)

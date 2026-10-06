@@ -347,7 +347,7 @@ def test_b4_the_runners_inbox_passes_the_sender_check(monkeypatch):
 
 # === the queue never loses jobs to a read error ===========================================
 
-def test_c5_a_locked_mutation_raises_on_an_unreadable_queue_and_writes_nothing(
+def test_a_locked_mutation_raises_on_an_unreadable_queue_and_writes_nothing(
         tmp_path, monkeypatch):
     qp = tmp_path / "apply_queue.json"
     qp.write_text(json.dumps({"version": 1, "jobs": [

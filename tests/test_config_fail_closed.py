@@ -48,7 +48,7 @@ def _flaky_read(monkeypatch, path):
 # --- jsonutil ------------------------------------------------------------------
 
 @pytest.mark.parametrize("damaged", [DAMAGED, '["a list"]', "\xff\xfe not text"])
-def test_c1_update_json_locked_refuses_a_damaged_file(tmp_path, damaged):
+def test_update_json_locked_refuses_a_damaged_file(tmp_path, damaged):
     p = tmp_path / "config.json"
     if damaged.startswith("\xff"):
         p.write_bytes(b"\xff\xfe\x00 not text")
@@ -64,7 +64,7 @@ def test_c1_update_json_locked_refuses_a_damaged_file(tmp_path, damaged):
     assert not list(tmp_path.glob("*.corrupt-*"))
 
 
-def test_c1_update_json_locked_refuses_a_file_it_cannot_read(tmp_path, monkeypatch):
+def test_update_json_locked_refuses_a_file_it_cannot_read(tmp_path, monkeypatch):
     """probe_config_oserror: a transient read error never writes only the new key."""
     p = tmp_path / "config.json"
     good = {"auto_apply_submit": True, "jev_enabled": True, "candidate_name": "Jane Doe"}
@@ -78,13 +78,13 @@ def test_c1_update_json_locked_refuses_a_file_it_cannot_read(tmp_path, monkeypat
     assert json.loads(p.read_text(encoding="utf-8")) == good
 
 
-def test_c1_update_json_locked_still_creates_a_missing_file(tmp_path):
+def test_update_json_locked_still_creates_a_missing_file(tmp_path):
     p = tmp_path / "config.json"
     assert jsonutil.update_json_locked(p, {"a": 1}) == {"a": 1}
     assert json.loads(p.read_text(encoding="utf-8")) == {"a": 1}
 
 
-def test_c1_the_submit_switch_survives_the_next_partial_write(tmp_path, monkeypatch):
+def test_the_submit_switch_survives_the_next_partial_write(tmp_path, monkeypatch):
     """probe_submit_rewrite: broken file, then a column hide. The runner must
     still read the submit switch as off, with the park note."""
     import apply_run
@@ -103,7 +103,7 @@ def test_c1_the_submit_switch_survives_the_next_partial_write(tmp_path, monkeypa
 
 # --- the callers ------------------------------------------------------------------
 
-def test_c1_the_watcher_logs_and_carries_on(tmp_path, monkeypatch, caplog):
+def test_the_watcher_logs_and_carries_on(tmp_path, monkeypatch, caplog):
     import watcher
     cfg = tmp_path / "config.json"
     cfg.write_text(DAMAGED, encoding="utf-8")
@@ -115,7 +115,7 @@ def test_c1_the_watcher_logs_and_carries_on(tmp_path, monkeypatch, caplog):
     assert "gdrive_root" in caplog.text
 
 
-def test_c1_the_watcher_logs_a_read_error_too(tmp_path, monkeypatch, caplog):
+def test_the_watcher_logs_a_read_error_too(tmp_path, monkeypatch, caplog):
     import watcher
     cfg = tmp_path / "config.json"
     cfg.write_text(json.dumps({"auto_apply_submit": False}), encoding="utf-8")
@@ -128,7 +128,7 @@ def test_c1_the_watcher_logs_a_read_error_too(tmp_path, monkeypatch, caplog):
     assert "could not be opened" in caplog.text
 
 
-def test_c1_jobsdata_save_cfg_logs_and_keeps_the_file(tmp_path, monkeypatch, caplog):
+def test_jobsdata_save_cfg_logs_and_keeps_the_file(tmp_path, monkeypatch, caplog):
     import jobsdata
     cfg = tmp_path / "config.json"
     cfg.write_text(DAMAGED, encoding="utf-8")
@@ -141,7 +141,7 @@ def test_c1_jobsdata_save_cfg_logs_and_keeps_the_file(tmp_path, monkeypatch, cap
 
 # --- settings.save and settings.load ---------------------------------------------
 
-def test_c1_settings_save_refuses_a_damaged_file_unless_asked(tmp_path):
+def test_settings_save_refuses_a_damaged_file_unless_asked(tmp_path):
     targets = _targets(tmp_path)
     targets["config"].write_text(DAMAGED, encoding="utf-8")
     with pytest.raises(jsonutil.JsonUnreadable):
@@ -155,7 +155,7 @@ def test_c1_settings_save_refuses_a_damaged_file_unless_asked(tmp_path):
     assert len(kept) == 1 and kept[0].read_text(encoding="utf-8") == DAMAGED
 
 
-def test_c1_settings_save_never_replaces_a_file_it_cannot_read(tmp_path, monkeypatch):
+def test_settings_save_never_replaces_a_file_it_cannot_read(tmp_path, monkeypatch):
     targets = _targets(tmp_path)
     good = {"auto_apply_submit": False, "hidden_columns": ["x"]}
     targets["config"].write_text(json.dumps(good), encoding="utf-8")
@@ -167,7 +167,7 @@ def test_c1_settings_save_never_replaces_a_file_it_cannot_read(tmp_path, monkeyp
     assert not list(tmp_path.glob("*.corrupt-*"))
 
 
-def test_c1_a_damaged_config_reads_submit_and_jev_off(tmp_path):
+def test_a_damaged_config_reads_submit_and_jev_off(tmp_path):
     targets = _targets(tmp_path)
     targets["config"].write_text(DAMAGED, encoding="utf-8")
     values = settings.load(targets)
@@ -177,7 +177,7 @@ def test_c1_a_damaged_config_reads_submit_and_jev_off(tmp_path):
     assert settings.submit_problem(targets) == "config.json is not valid JSON"
 
 
-def test_c1_a_healthy_config_keeps_its_defaults(tmp_path):
+def test_a_healthy_config_keeps_its_defaults(tmp_path):
     targets = _targets(tmp_path)
     targets["config"].write_text(json.dumps({"min_score": 5}), encoding="utf-8")
     values = settings.load(targets)
@@ -186,7 +186,7 @@ def test_c1_a_healthy_config_keeps_its_defaults(tmp_path):
     assert settings.submit_problem(targets) == ""
 
 
-def test_c1_a_config_rebuilt_beside_a_damaged_copy_reads_submit_off(tmp_path):
+def test_a_config_rebuilt_beside_a_damaged_copy_reads_submit_off(tmp_path):
     """The state an earlier version left: the damaged file kept aside and a new
     config.json holding only the keys of one partial write."""
     targets = _targets(tmp_path)

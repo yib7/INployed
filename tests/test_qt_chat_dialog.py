@@ -485,7 +485,7 @@ def test_4_9_an_error_shows_no_absolute_path(qtbot, monkeypatch):
     assert "Jane Doe" not in text and "AppData" not in text
 
 
-def test_c4_html_in_an_answer_shows_as_text(qtbot, monkeypatch):
+def test_html_in_an_answer_shows_as_text(qtbot, monkeypatch):
     """The answer is model text over a scraped posting; raw HTML in it
     must not render (an <img> would load a local file)."""
     _sync_workers(monkeypatch)

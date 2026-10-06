@@ -728,7 +728,7 @@ def test_unmarked(jev_judge):
 '''
 
 
-def test_a_marked_tests_replay_miss_skips_until_sp8_records_it(pytester, monkeypatch,
+def test_a_marked_tests_replay_miss_skips_until_it_is_recorded(pytester, monkeypatch,
                                                               tmp_path):
     # a test marked as not yet recorded skips on its replay miss (no live
     # request); an unmarked miss still fails

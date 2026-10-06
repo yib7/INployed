@@ -194,7 +194,7 @@ def test_the_key_is_read_from_the_environment_at_call_time(sdk, monkeypatch):
 
 
 @pytest.mark.parametrize("text", ["{not json", "[1, 2]", "", "null"])
-def test_c8_a_config_file_that_will_not_parse_reads_jev_off(sdk, text):
+def test_a_config_file_that_will_not_parse_reads_jev_off(sdk, text):
     """The switches default on, so a config the user switched Jev off in and
     then broke would spend credits if it read as defaults. It reads off, in the
     same words as a switch turned off in Settings (which shows it off too)."""
@@ -205,7 +205,7 @@ def test_c8_a_config_file_that_will_not_parse_reads_jev_off(sdk, text):
     assert jev_switch.master_on() is False
 
 
-def test_c8_a_config_file_that_cannot_be_opened_reads_jev_off(sdk, monkeypatch):
+def test_a_config_file_that_cannot_be_opened_reads_jev_off(sdk, monkeypatch):
     path = jev_switch.config_path()
     path.write_text(json.dumps(ON), encoding="utf-8")
     real = type(path).read_text

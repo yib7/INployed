@@ -32,20 +32,20 @@ def _guessing(root: QtWidgets.QWidget) -> list[str]:
 
 # --- the helper ------------------------------------------------------------------
 
-def test_c4_literal_keeps_plain_text_as_it_is():
+def test_literal_keeps_plain_text_as_it_is():
     for text in ("Saved.", "Line one\nLine two", ""):
         assert plaintext.literal(text) == text
     assert _rendered(plaintext.literal("a < b and c > d")) == "a < b and c > d"
 
 
-def test_c4_literal_shows_a_tag_as_text():
+def test_literal_shows_a_tag_as_text():
     doc = QtGui.QTextDocument()
     doc.setHtml(plaintext.literal(f"Delete '{IMG}'?\nSecond line"))
     assert doc.toPlainText() == f"Delete '{IMG}'?\nSecond line"
     assert "<img" not in doc.toHtml()
 
 
-def test_c4_a_label_shows_an_img_tag_as_text(qtbot):
+def test_a_label_shows_an_img_tag_as_text(qtbot):
     lab = plaintext.Label(IMG)
     qtbot.addWidget(lab)
     assert lab.textFormat() == QtCore.Qt.TextFormat.PlainText
@@ -55,14 +55,14 @@ def test_c4_a_label_shows_an_img_tag_as_text(qtbot):
 
 # --- no label anywhere guesses -----------------------------------------------------
 
-def test_c4_no_label_in_the_main_window_guesses_its_format(qtbot):
+def test_no_label_in_the_main_window_guesses_its_format(qtbot):
     from qt.main_window import MainWindow
     w = MainWindow()
     qtbot.addWidget(w)
     assert _guessing(w) == []
 
 
-def test_c4_no_qt_module_builds_a_bare_qlabel():
+def test_no_qt_module_builds_a_bare_qlabel():
     """Static sweep: every label is a `plaintext.Label` (or a subclass), so a
     label added later cannot fall back to Qt's guess."""
     offenders = []
@@ -105,7 +105,7 @@ def _rendered(text: str) -> str:
     return doc.toPlainText()
 
 
-def test_c4_the_add_answer_dialog_shows_the_forms_text_as_written(qtbot, tmp_path):
+def test_the_add_answer_dialog_shows_the_forms_text_as_written(qtbot, tmp_path):
     from qt.answers_tab import AddAnswerDialog
     from resume_tailor import apply_answers
     prefill = {"question": f"Q {IMG}", "help": IMG, "type": "choice",
@@ -117,7 +117,7 @@ def test_c4_the_add_answer_dialog_shows_the_forms_text_as_written(qtbot, tmp_pat
     assert dlg.hint_label.sizeHint().height() < 200
 
 
-def test_c4_the_answers_tab_delete_box_shows_the_question_as_written(
+def test_the_answers_tab_delete_box_shows_the_question_as_written(
         qtbot, tmp_path, boxes):
     from qt.answers_tab import AnswersEditor
     from resume_tailor import apply_answers
@@ -133,7 +133,7 @@ def test_c4_the_answers_tab_delete_box_shows_the_question_as_written(
     assert kind == "question" and _rendered(args[2]) == f"Delete '{IMG}'?"
 
 
-def test_c4_the_queue_panel_shows_a_scraped_company_as_written(qtbot, tmp_path):
+def test_the_queue_panel_shows_a_scraped_company_as_written(qtbot, tmp_path):
     from qt.apply_queue_panel import ApplyQueuePanel
     qfile = tmp_path / "apply_queue.json"
     apply_queue.enqueue(apply_queue.new_entry("1", company=IMG, title=IMG,
@@ -147,7 +147,7 @@ def test_c4_the_queue_panel_shows_a_scraped_company_as_written(qtbot, tmp_path):
             assert "<img" not in lab.text(), lab.objectName()
 
 
-def test_c4_an_elided_labels_tooltip_shows_the_full_text_as_written(qtbot):
+def test_an_elided_labels_tooltip_shows_the_full_text_as_written(qtbot):
     from qt.widgets import ElidedLabel
     lab = ElidedLabel(f"Analyst {IMG}")
     qtbot.addWidget(lab)
@@ -155,7 +155,7 @@ def test_c4_an_elided_labels_tooltip_shows_the_full_text_as_written(qtbot):
     assert _rendered(lab.toolTip()) == f"Analyst {IMG}"
 
 
-def test_c4_markup_we_compose_still_renders(qtbot):
+def test_markup_we_compose_still_renders(qtbot):
     """The labels that show composed markup set RichText themselves; none of
     it shows up as literal tags in a plain label."""
     from qt.main_window import MainWindow

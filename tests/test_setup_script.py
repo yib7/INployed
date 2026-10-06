@@ -205,7 +205,8 @@ def test_a_failed_install_stops_setup_and_progress_on_stderr_does_not(tmp_path):
     outer = tmp_path / "outer.ps1"
     outer.write_text(f"$out = & '{inner}' 2>&1 | Out-String\nWrite-Output $out\n", encoding="ascii")
     res = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-                          str(outer)], capture_output=True, text=True, timeout=90)
+                          str(outer)], capture_output=True, text=True, encoding="utf-8",
+                         errors="replace", timeout=90)
     assert res.returncode == 0, res.stdout + res.stderr
     assert "after-ok" in res.stdout, res.stdout + res.stderr
     assert "thrown:" in res.stdout and "exit code 3" in res.stdout, res.stdout

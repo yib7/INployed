@@ -182,3 +182,32 @@ def test_the_playwright_pin_is_one_version_everywhere_it_is_named():
         found[rel] = set(pin.findall((REPO / rel).read_text(encoding="utf-8")))
     assert all(found.values()), found
     assert len(set().union(*found.values())) == 1, found
+
+
+def test_a_failed_install_stops_setup_and_progress_on_stderr_does_not(tmp_path):
+    """-AutoApply and -InstallDeps run pip and playwright through
+    Invoke-Checked. PowerShell 5.1 ignores a native command's exit code, and
+    under 'Stop' it turns progress a tool writes to stderr into a terminating
+    error once the script's stderr is redirected (`setup.ps1 2>&1 | Tee`), so
+    the helper must do the reverse of both. The outer script below makes that
+    redirect."""
+    fn = re.search(r"(?s)function Invoke-Checked.*?\n}\n", SETUP_PS1.replace("\r\n", "\n"))
+    assert fn, "setup.ps1 lost Invoke-Checked"
+    py = sys.executable.replace("'", "''")
+    inner = tmp_path / "inner.ps1"
+    inner.write_text(
+        "$ErrorActionPreference = 'Stop'\n" + fn.group(0)
+        + f"Invoke-Checked '{py}' @('-c', 'import sys; sys.stderr.write(chr(112)*8)')\n"
+        + "Write-Output 'after-ok'\n"
+        + f"try {{ Invoke-Checked '{py}' @('-c', 'import sys; sys.exit(3)'); "
+        + "Write-Output 'not-thrown' } catch { Write-Output \"thrown: $($_.Exception.Message)\" }\n",
+        encoding="ascii")
+    outer = tmp_path / "outer.ps1"
+    outer.write_text(f"$out = & '{inner}' 2>&1 | Out-String\nWrite-Output $out\n", encoding="ascii")
+    res = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                          str(outer)], capture_output=True, text=True, timeout=90)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "after-ok" in res.stdout, res.stdout + res.stderr
+    assert "thrown:" in res.stdout and "exit code 3" in res.stdout, res.stdout
+    assert "not-thrown" not in res.stdout
+

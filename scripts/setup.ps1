@@ -95,10 +95,11 @@ function Get-ProjectPython {
     return 'python'
 }
 
-# Run a native command and stop on a non-zero exit. PowerShell 5.1 neither
-# throws on a native exit code nor is safe with 'Stop' while a tool writes
-# progress to stderr (pip and playwright both do), so the preference is
-# relaxed for the call and the exit code is checked by hand.
+# Run a native command and stop on a non-zero exit. PowerShell 5.1 ignores a
+# native exit code, and under 'Stop' it turns a line the tool writes to stderr
+# into a terminating error once stderr is redirected (`setup.ps1 2>&1 | Tee`);
+# pip and playwright both write progress there. So the preference is relaxed
+# for the call and the exit code is checked by hand.
 function Invoke-Checked([string]$exe, [string[]]$argv) {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'

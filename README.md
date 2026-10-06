@@ -204,13 +204,12 @@ winget install MiKTeX.MiKTeX          # (skip until you tailor) no pdflatex on P
 gcloud auth application-default login # (skip if you use Gemini API keys) Vertex AI scoring/tailoring + the VM controls
 powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -AutoApply  # (skip until you auto-apply) Playwright 1.61.0 + Chromium, into the venv
 ```
-Auto-apply drives Google Chrome through Playwright, or the downloaded Chromium (about 700 MB
-in `%LOCALAPPDATA%\ms-playwright`) when Chrome is not installed. **Check setup** names
-whichever piece is still missing. Set
-`PDFLATEX_PATH` if MiKTeX lands somewhere off `PATH`. The
+Set `PDFLATEX_PATH` if MiKTeX lands somewhere off `PATH`. The
 [gcloud CLI](https://cloud.google.com/sdk/docs/install) is a separate install; without it the
 Settings → VM controls are the only thing that stops working, and only if you run the cloud
-discovery VM.
+discovery VM. Auto-apply drives Google Chrome through Playwright, or the downloaded Chromium
+(about 700 MB in `%LOCALAPPDATA%\ms-playwright`) when Chrome is not installed; **Check setup**
+names whichever piece is still missing.
 
 ---
 

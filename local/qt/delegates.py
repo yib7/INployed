@@ -205,14 +205,14 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
             self._paint_deep_bar(painter, rect, text, font, s, family, muted)
         elif cid == "recommendation":
             self._paint_reco_pill(painter, rect, text, font, s,
-                                  str(index.data(TAG_ROLE) or ""), muted)
+                                  str(index.data(TAG_ROLE) or ""), muted, selected=selected)
         elif cid == "status":
-            self._paint_status_pill(painter, rect, text, font, s)
+            self._paint_status_pill(painter, rect, text, font, s, selected=selected)
         elif cid == "difficulty":
             if text:
                 fam = theme.SEMANTICS.get(str(index.data(BAND_ROLE) or ""),
                                           theme.SEMANTICS["neutral"])
-                self._paint_pill(painter, rect, text, font, s, fam)
+                self._paint_pill(painter, rect, text, font, s, fam, selected=selected)
         elif cid == "follow_up":
             self._paint_follow_up(painter, rect, text, font, muted)
         elif cid == "url":
@@ -314,7 +314,7 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
         self._draw_text(painter, num_rect, label, mono,
                         self._color(theme.TEXT_SECONDARY))
 
-    def _paint_pill(self, painter, rect, label, font, s, family):
+    def _paint_pill(self, painter, rect, label, font, s, family, *, selected=False):
         pill_font = self._font(font, "pill")
         fm = QtGui.QFontMetrics(pill_font)
         h = min(rect.height() - round(6 * s), fm.height() + round(6 * s))
@@ -323,6 +323,12 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
         painter.setPen(QtCore.Qt.PenStyle.NoPen)
         bg = family.get("tint_base", family["base"])
+        if selected:
+            # A selected row's tint is lighter than PANEL, and the danger ink on
+            # its pill tint over that measured 4.06 to 4.40:1 (WCAG AA wants
+            # 4.5). The pill keeps the PANEL ground it has on a plain row.
+            painter.setBrush(self._color(theme.PANEL))
+            painter.drawRoundedRect(box, h / 2, h / 2)
         painter.setBrush(self._color(bg, family["pill_a"]))
         painter.drawRoundedRect(box, h / 2, h / 2)
         painter.setPen(self._color(family["pill_fg"]))
@@ -333,7 +339,7 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
         return box
 
     def _paint_reco_pill(self, painter, rect, text, font, s, tag,
-                         muted=theme.MUTED):
+                         muted=theme.MUTED, *, selected=False):
         # Row tag overrides the reco: Tailored / Tailor failed pills.
         override = _TAG_PILLS.get(tag)
         if override is not None:
@@ -344,9 +350,10 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
                 self._draw_text(painter, rect, text, font, self._color(muted))
                 return
             label, sem = _RECO_LABELS[reco], _RECO_FAMILY[reco]
-        self._paint_pill(painter, rect, label, font, s, theme.SEMANTICS[sem])
+        self._paint_pill(painter, rect, label, font, s, theme.SEMANTICS[sem],
+                         selected=selected)
 
-    def _paint_status_pill(self, painter, rect, text, font, s):
+    def _paint_status_pill(self, painter, rect, text, font, s, *, selected=False):
         status = text.strip().lower()
         if not status:
             return
@@ -357,7 +364,7 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
             # Leading 6px status dot inside the pill's left edge.
             dot = round(6 * s)
             box = self._paint_pill(painter, rect.adjusted(dot + round(6 * s), 0, 0, 0),
-                                   label, font, s, family)
+                                   label, font, s, family, selected=selected)
             painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
             painter.setPen(QtCore.Qt.PenStyle.NoPen)
             painter.setBrush(self._color(family["base"]))
@@ -366,7 +373,7 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
             return
         sem = theme.TAG_SEMANTIC.get(status, "neutral")
         self._paint_pill(painter, rect, status.capitalize(), font, s,
-                         theme.SEMANTICS[sem])
+                         theme.SEMANTICS[sem], selected=selected)
 
     def _paint_follow_up(self, painter, rect, text, font, muted=theme.MUTED):
         state = text.strip()

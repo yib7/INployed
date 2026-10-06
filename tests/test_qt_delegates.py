@@ -194,3 +194,42 @@ def test_deep_bar_draws_a_dash_for_a_missing_score(qtbot, monkeypatch):
         assert drawn == ["7"]
     finally:
         painter.end()
+
+
+def _luminance(c) -> float:
+    def chan(v: float) -> float:
+        v /= 255.0
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+    return 0.2126 * chan(c.red()) + 0.7152 * chan(c.green()) + 0.0722 * chan(c.blue())
+
+
+def _contrast(a, b) -> float:
+    hi, lo = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def test_a_pill_on_a_selected_row_keeps_its_ink_legible(qapp):
+    """A selected row's tint is lighter than PANEL, and a pill's own tint went on
+    top of it: the danger ink (a Difficulty "Do it yourself" pill, a Failed
+    status pill) measured 4.06 to 4.40:1 there, under WCAG AA's 4.5:1. Every
+    pill family on every queue row's selected tint clears 4.5:1."""
+    from PySide6 import QtGui
+
+    dlg = JobRowDelegate(["difficulty"], kind="apply")
+    for row_family in sorted(set(STATUS_TAGS.values())):
+        row = theme.SEMANTICS[row_family]
+        for pill_family in ("accent", "success", "warning", "danger", "neutral"):
+            fam = theme.SEMANTICS[pill_family]
+            image = QtGui.QImage(240, 34, QtGui.QImage.Format.Format_RGB32)
+            painter = QtGui.QPainter(image)
+            try:
+                painter.fillRect(image.rect(), theme.qcolor(theme.PANEL))
+                painter.fillRect(image.rect(), theme.qcolor(
+                    row.get("tint_base", row["base"]), row["sel_a"]))
+                box = dlg._paint_pill(painter, QtCore.QRect(0, 0, 240, 34), "8 Do it yourself",
+                                      QtGui.QFont(), 1.0, fam, selected=True)
+            finally:
+                painter.end()
+            ground = image.pixelColor(int(box.left()) + 4, int(box.center().y()))
+            ink = theme.qcolor(fam["pill_fg"])
+            assert _contrast(ink, ground) >= 4.5, (row_family, pill_family, ground.name())

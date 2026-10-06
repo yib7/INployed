@@ -10,8 +10,8 @@ All notable changes to INployed are recorded here. The format follows
 
 - **The résumé's AI-writing sweep reads first and repairs second.** With Jev off for the
   tailor, one model call now scans every bullet for AI-writing patterns, and only an entry
-  with a flagged bullet (or one the built-in checks flag) gets its repair call, so a clean
-  résumé costs one call in place of one per entry. **Scan the résumé first, then repair
+  with a flagged bullet (or one the built-in checks flag) gets its repair call: one scan
+  call, then a repair call only for flagged entries. **Scan the résumé first, then repair
   only what it flags** in Settings → Resume (`RESUME_TAILOR_SWEEP_SCAN`) turns it off; a
   failed scan sweeps every entry as before. With Jev on, Jev's own read still gates the
   sweep and no scan runs.

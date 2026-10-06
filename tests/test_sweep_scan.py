@@ -249,10 +249,9 @@ def test_a_detector_hit_forces_the_call_despite_a_clean_scan(engine, monkeypatch
 
 
 # ── parsing the answer ──────────────────────────────────────────────────────
-def test_unknown_gkeys_are_ignored_and_tells_are_trimmed(engine, monkeypatch):
+def test_tells_are_trimmed(engine, monkeypatch):
     long_tell = "x" * 500
-    scan = {"flags": [{"gkey": "zz", "tells": ["hype words"]},
-                      {"gkey": "a3", "tells": ["  stacked adjectives  ", "", long_tell]}]}
+    scan = {"flags": [{"gkey": "a3", "tells": ["  stacked adjectives  ", "", long_tell]}]}
     rec, result = _sweep(monkeypatch, dict(CLEAN), scan=scan, first=_answer())
     assert rec.kinds == ["scan", "sweep"]
     (flag,) = result.judge_flags
@@ -260,14 +259,52 @@ def test_unknown_gkeys_are_ignored_and_tells_are_trimmed(engine, monkeypatch):
     assert flag.names[0] == "stacked adjectives"
     assert len(flag.names) == 2
     assert len(flag.names[1]) <= sweep._SCAN_TELL_MAX
-    assert "zz" not in rec.calls[1][2]
 
 
-def test_a_flag_with_no_tells_reads_as_clean(engine, monkeypatch):
-    rec, result = _sweep(monkeypatch, dict(CLEAN), scan={"flags": [{"gkey": "a1",
-                                                                     "tells": []}]})
-    assert rec.kinds == ["scan"]
-    assert result.skipped == (ITEM,)
+@pytest.mark.parametrize("tells", [[], [""], ["   "]], ids=["empty", "blank", "spaces"])
+def test_a_flag_with_no_usable_tell_still_buys_the_repair(engine, monkeypatch, tells):
+    """The model listed the bullet, so it meant to flag it: the repair runs, under a
+    generic tell name."""
+    rec, result = _sweep(monkeypatch, dict(CLEAN),
+                         scan={"flags": [{"gkey": "a1", "tells": tells}]}, first=_answer())
+    assert rec.kinds == ["scan", "sweep"]
+    assert result.scan == sweep.SCAN_RAN
+    (flag,) = result.judge_flags
+    assert (flag.gkey, flag.names) == ("a1", (sweep._SCAN_UNNAMED,))
+
+
+@pytest.mark.parametrize("scan", [
+    {"flags": [{"gkey": "a2", "tells": ["filler"]}, {"gkey": "V1", "tells": ["hype words"]}]},
+    {"flags": [{"gkey": "a2", "tells": ["filler"]}, {"gkey": "zz", "tells": ["hype words"]}]},
+    {"flags": [{"gkey": "v1", "tells": [""]}, {"gkey": "a2", "tells": None}]},
+    {"flags": [{"gkey": "v1", "tells": ["hype words"]}, {"gkey": "a2", "tells": {}}]},
+    {"flags": [{"gkey": "v1", "tells": ["hype words"]}, {"gkey": "a2"}]},
+    {"flags": [{"gkey": "v1", "tells": ["hype words"]}, "a2"]},
+], ids=["wrong-case-gkey", "unknown-gkey", "tells-null", "tells-object", "tells-missing",
+        "bare-gkey"])
+def test_one_bad_flag_fails_the_whole_scan(engine, monkeypatch, scan):
+    """A good flag in one entry does not carry a bad flag in another: dropping the bad
+    one would read the bullet it meant as clean and skip that entry. The scan fails
+    closed and every entry is swept exactly as with the scan off."""
+    sel, bullets = _two_items()
+    monkeypatch.setenv(SCAN_ENV, "0")
+    off, _r = _sweep(monkeypatch, dict(bullets), sel=sel, first=_answer())
+    monkeypatch.delenv(SCAN_ENV)
+    rec, result = _sweep(monkeypatch, dict(bullets), sel=sel, scan=scan, first=_answer())
+    assert rec.kinds == ["scan", "sweep", "sweep"]
+    assert rec.calls[1:] == off.calls
+    assert result.scan == sweep.SCAN_FAILED
+    assert result.skipped == () and result.judge_flags == ()
+
+
+def test_a_verbatim_gkey_in_the_answer_is_dropped_quietly():
+    """A verbatim bullet is never sent and never rewritten, so naming it changes
+    nothing and is no sign of a misread answer."""
+    vgk = compose._VERBATIM_PREFIX + "/Example Corp/0"
+    got = sweep._parse_scan({"flags": [{"gkey": vgk, "tells": ["filler"]},
+                                       {"gkey": "a2", "tells": ["hype words"]}]},
+                            ["a1", "a2"])
+    assert got == {"a1": (), "a2": ("hype words",)}
 
 
 def test_a_bare_empty_array_is_a_clean_scan(engine, monkeypatch):
@@ -292,10 +329,15 @@ def test_a_padded_gkey_still_names_its_bullet():
     {"flags": ["a2"]},
     {"flags": [{"gkey": "a2", "tell": "hype words"}]},
     {"flags": [{"gkey": "zz", "tells": ["hype words"]}]},
-], ids=["bare-gkeys", "renamed-key", "unknown-gkeys-only"])
-def test_flags_with_none_usable_parse_to_none(answer):
-    """A non-empty list the parser can use none of is a misread shape, never a clean
-    resume: every call would be skipped on it."""
+    {"flags": [{"gkey": "a2", "tells": "hype words"}]},
+    {"flags": [{"gkey": "a2", "tells": {}}]},
+    {"flags": [{"gkey": None, "tells": ["hype words"]}]},
+    {"flags": [{"gkey": "a1", "tells": ["filler"]}, {"gkey": "zz", "tells": ["hype"]}]},
+], ids=["bare-gkeys", "renamed-key", "unknown-gkeys-only", "tells-string",
+        "tells-object", "gkey-null", "one-good-one-unknown"])
+def test_a_malformed_flag_parses_to_none(answer):
+    """One flag the parser cannot use makes the answer a misread shape, never a clean
+    resume: dropping it would skip the call that flag asked for."""
     assert sweep._parse_scan(answer, ["a1", "a2"]) is None
 
 

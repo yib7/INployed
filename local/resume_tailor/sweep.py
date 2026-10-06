@@ -49,13 +49,16 @@ plus the register carve-out of ``aiwriting.RESUME_PROFILE``, so correct résumé
 grammar (a subjectless fragment opening on a past-tense action verb) is never
 flagged. It names tells and never rewrites, and it leaves the atoms and the job out,
 since naming a tell needs neither. The saving is the point: a clean résumé costs one
-short answer in place of one repair call per item, and a résumé with one weak
-bullet costs the scan and that item's call. ``_SWEEP_FLAG_RULE`` was written for
+short answer: one scan call, then a repair call only for each flagged item. A
+résumé with one weak bullet costs the scan and that item's call. ``_SWEEP_FLAG_RULE`` was written for
 Jev's five names; the scan is asked to use them where one fits and may name a
 tell of the rules in its own words, which the rule's "treat each flag as part of
 that bullet's PHRASING list" covers the same way. The scan lists only the bullets
 it flags, so a bullet it leaves out reads as clean; a cut-off answer does not parse
-and counts as a failed scan. ``config.sweep_scan_enabled()``
+and counts as a failed scan, and so does an answer with any malformed flag
+(``_parse_scan`` fails closed). The prompt asks the model to flag when unsure: a
+flag costs one repair call whose rewrite the five checks below still judge, and a
+missed tell ships. ``config.sweep_scan_enabled()``
 (``RESUME_TAILOR_SWEEP_SCAN``) turns it off.
 
 **With no read, every item is swept.** The scan off, or a scan that raises or
@@ -162,6 +165,8 @@ SCAN_FAILED = "failed"
 # keeps at most this many tells.
 _SCAN_TELL_MAX = 60
 _SCAN_TELLS_MAX = 6
+# The name a flag carries when the scan listed a bullet without naming a usable tell.
+_SCAN_UNNAMED = "unnamed tell"
 
 # The order the acceptance conditions are tested in, which is also the order the
 # plan states them. It matters for one reason: the reported reason is the FIRST
@@ -314,8 +319,9 @@ _REASK_SYSTEM = (
 _SCAN_SYSTEM = (
     "You read the bullets of a resume, grouped by entry, and name the AI-writing "
     "tells each bullet carries. Never rewrite a bullet. A later step repairs only the "
-    "bullets you flag, so a tell you miss ships on the page, and a flag on a bullet "
-    "with no tell buys a repair that can damage correct text.\n"
+    "bullets you flag, and a tell you miss ships on the page. A flag costs one repair "
+    "call, and a rewrite that fails the repair step's checks is thrown away with the "
+    "original kept. So when you are unsure, flag the bullet.\n"
     "WHAT TO FLAG. A bullet that breaks one of the rules below, or that shows one of "
     "these patterns: " + ", ".join(jev_assist.SWEEP_QUESTIONS) + ". Name each tell in "
     "a few words, with one of those names when one fits. Read each entry's bullets "
@@ -607,40 +613,38 @@ def _parse_scan(out: Any, sent: Sequence[str]) -> Optional[Dict[str, Tuple[str, 
     """The scan's answer as {gkey: tells}, () for every bullet in `sent` it did not
     flag, or None when the answer is not the {"flags": [...]} it was asked for.
 
-    A flag naming a bullet that was not sent is dropped, and so is a flag that is not
-    an object or carries no "tells" list. A non-empty "flags" list with no flag left
-    after that is None too: the model drifted off the shape (bare gkeys, a renamed
-    key), and reading such an answer as "every bullet clean" would skip every call on
-    a misread. Each tell is collapsed to one line and cut to `_SCAN_TELL_MAX`
-    characters, blanks and repeats are dropped, and a bullet keeps at most
-    `_SCAN_TELLS_MAX` of them: the names land in a repair payload and the run report,
-    and an answer's length is the model's choice.
+    It fails closed. One malformed flag makes the whole answer None (the scan failed,
+    and every item is swept): a flag that is not an object, one naming a bullet that
+    was not sent, or one whose "tells" is missing or not a list. Dropping such a flag
+    and keeping the rest would read the bullet the model meant to flag as clean and
+    skip its item's call, while the report said the scan ran. The one quiet drop is a
+    verbatim bullet's gkey: it was never sent, and the sweep never touches it anyway.
+
+    A sent bullet listed with no usable tell (an empty list, blanks only) is still
+    FLAGGED, under `_SCAN_UNNAMED`: the model chose to list it. Each tell is collapsed
+    to one line and cut to `_SCAN_TELL_MAX` characters, blanks and repeats are dropped,
+    and a bullet keeps at most `_SCAN_TELLS_MAX` of them: the names land in a repair
+    payload and the run report, and an answer's length is the model's choice.
     """
     if not isinstance(out, dict) or not isinstance(out.get("flags"), list):
         return None
     flags: Dict[str, Tuple[str, ...]] = {gk: () for gk in sent}
-    usable = 0
     for entry in out["flags"]:
         if not isinstance(entry, dict):
-            continue
+            return None
         gk = entry.get("gkey")
         gk = gk.strip() if isinstance(gk, str) else None
-        if gk not in flags:
+        if gk is not None and gk not in flags and compose.is_verbatim_gkey(gk):
             continue
         tells = entry.get("tells")
-        if isinstance(tells, str):
-            tells = [tells]
-        if not isinstance(tells, list):
-            continue
-        usable += 1
+        if gk not in flags or not isinstance(tells, list):
+            return None
         names = list(flags[gk])
         for tell in tells:
             name = one_line(tell)[:_SCAN_TELL_MAX].strip()
             if name and name not in names:
                 names.append(name)
-        flags[gk] = tuple(names[:_SCAN_TELLS_MAX])
-    if out["flags"] and not usable:
-        return None
+        flags[gk] = tuple(names[:_SCAN_TELLS_MAX]) or (_SCAN_UNNAMED,)
     return flags
 
 

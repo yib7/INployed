@@ -166,7 +166,7 @@ You need an account for each feature you want:
 Google Cloud project only when no free key can take the call: every key's daily quota is
 spent, or Google is refusing all of them for the moment. The résumé tailor bills the
 project by default; to keep it on the free keys too, set **Settings →
-Engine → Resume tailor engine** to `pool`. Leave the project ID blank and there is no
+Résumé tailor → Resume tailor engine** to `pool`. Leave the project ID blank and there is no
 paid spillover: scoring and tailoring stop with a rate-limit message once the free quota
 is gone. (A key from an AI Studio project that has billing switched on is not free-tier;
 Google bills that project.) Details, including the fallback-model lists that stretch the

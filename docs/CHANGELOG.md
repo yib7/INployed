@@ -73,6 +73,12 @@ All notable changes to INployed are recorded here. The format follows
   up in a bullet. The bullet prompts and the grounding gate now skip `interview_notes`;
   every other key on an atom still reaches the bullet writer.
 
+- **A Claude CLI that does not know `claude-sonnet-5-5` falls back again.** The CLI now
+  refuses an unknown model with an `unrecognized_model` error, a shape the fallback did not
+  read, so every tailor and Claude-scored run failed after its retries. That refusal now
+  swaps `claude-sonnet-5-5` to `claude-sonnet-5` (and `claude-opus-5-5` to `claude-opus-5`)
+  the same way an out-of-date CLI does. A model with no fallback fails at once, with no retry.
+
 - **`score_jobs.py --heal-reused` fixes a chain in one run.** A reposted row whose reused score
   came from another reused row now takes the first real score up the chain (cycles stop safely);
   before, a second run was needed.

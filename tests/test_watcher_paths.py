@@ -24,7 +24,7 @@ def test_ui_path_targets_existing_app_entrypoint():
     assert watcher.UI_PATH.exists()
 
 
-# P1-2: save_state must write via atomic_write_json (tmp + os.replace), not a
+# save_state must write via atomic_write_json (tmp + os.replace), not a
 # naked write_text, so a crash mid-write never leaves state.json truncated.
 
 def test_save_state_round_trips_valid_json(tmp_path, monkeypatch):
@@ -55,7 +55,7 @@ def test_save_state_leaves_file_untouched_on_replace_failure(tmp_path, monkeypat
     assert state_path.read_bytes() == before        # untouched: os.replace never landed
 
 
-# P1-8: list_target_files / latest_for_ui must iterate the canonical RUN_LABELS
+# list_target_files / latest_for_ui must iterate the canonical RUN_LABELS
 # (pipeline/run_labels.py: morning/afternoon/evening/night), not a hardcoded
 # morning/evening pair. run_scraper.sh uploads to afternoon/ and night/ too --
 # scored files there must not be invisible to the watcher.
@@ -105,7 +105,7 @@ def test_list_target_files_still_includes_master(tmp_path):
     assert master in found
 
 
-# P2-5: the master-staleness check must honor `stale_after_hours` from config
+# the master-staleness check must honor `stale_after_hours` from config
 # (the same setting the dashboard's Stats tab reads), defaulting to 36 when
 # absent -- not a hardcoded 36.
 
@@ -126,10 +126,9 @@ def test_master_is_stale_boundary_exactly_at_threshold_is_fresh():
     assert watcher.master_is_stale(100.0, {"stale_after_hours": 100}) is False
 
 
-# P2-9: local/locks.py is the single shared lock class -- watcher.SingleInstance
-# and jobsdata._UILock are now both aliases of locks.SingleInstance (previously
-# byte-for-byte duplicated in each module). Test the shared module directly, not
-# just through one caller's alias.
+# local/locks.py is the single shared lock class: watcher.SingleInstance and
+# jobsdata._UILock are both aliases of locks.SingleInstance. Test the shared
+# module directly, not just through one caller's alias.
 
 def test_locks_single_instance_direct(tmp_path):
     p = tmp_path / "shared.lock"
@@ -147,7 +146,7 @@ def test_watcher_uses_shared_lock_class():
     assert watcher.SingleInstance is locks.SingleInstance
 
 
-# P2-3: load_state must tolerate a parseable-but-WRONG-SHAPE state.json. A
+# load_state must tolerate a parseable-but-WRONG-SHAPE state.json. A
 # corrupt shape (a JSON list, or a dict whose reconciled_mtimes isn't a dict)
 # would make the downstream state["reconciled_mtimes"] access raise on EVERY
 # future fire — and the file is only rewritten on success, so the watcher would
@@ -207,7 +206,7 @@ def test_load_state_unparseable_json_returns_default(tmp_path, monkeypatch):
     assert state == _DEFAULT_STATE
 
 
-# P2-5: the watcher's config write must be single-key / read-FRESH so it can't
+# the watcher's config write must be single-key / read-FRESH so it can't
 # revert a key the dashboard (jobsdata._save_cfg) persisted between the watcher's
 # load and its write. atomic_write_json stops torn files, not lost updates — a
 # whole-dict write of the watcher's stale snapshot would silently drop the
@@ -236,7 +235,7 @@ def test_save_config_key_tolerates_missing_or_corrupt_file(tmp_path, monkeypatch
     watcher.save_config_key("gdrive_root", "E:/drive")
     assert json.loads(cfg_path.read_text(encoding="utf-8")) == {"gdrive_root": "E:/drive"}
 
-    # corrupt file -> left as it is (4-C1: a partial write would drop the
+    # corrupt file -> left as it is (a partial write would drop the
     # submit switch), logged, and no crash
     cfg_path.write_text("{not json", encoding="utf-8")
     watcher.save_config_key("gdrive_root", "F:/drive")

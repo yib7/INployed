@@ -1,11 +1,11 @@
 """SeenRegistry self-heals a corrupt seen.db instead of crash-looping.
 
-The 2026-06/07 tracker wipes had two ingredients: (a) a non-hermetic pytest
-suite corrupted the live seen.db (fixed in conftest — see test_hermetic_appdata),
-and (b) once corrupt, the whole app_status tracker was gone because it had no
-second store anywhere. This is the defense-in-depth layer for (b): opening the
-registry on a malformed db must NOT raise (the scheduled watcher was crashing on
-every run), and app_status must survive via the auto-backup written beside the db.
+A tracker wipe has two ingredients: (a) a non-hermetic pytest suite that
+corrupts the live seen.db (closed in conftest, see test_hermetic_appdata), and
+(b) once corrupt, an app_status tracker with no second store anywhere is gone.
+This is the defense-in-depth layer for (b): opening the registry on a malformed
+db must NOT raise (a raise would crash the scheduled watcher on every run), and
+app_status must survive via the auto-backup written beside the db.
 """
 import sqlite3
 
@@ -111,9 +111,9 @@ def _main_file_ids(path):
 def test_every_write_lands_in_the_main_file_without_a_clean_close(tmp_path):
     """The dashboard is usually killed, never closed, so SQLite's close-time
     checkpoint never runs and the writes are too small for the auto-checkpoint.
-    On 2026-09-18 the main file was a seven-week-old snapshot and every mark,
-    tracker row and resume link since lived only in seen.db-wal; losing that one
-    file silently reverted the registry. Each writer must checkpoint itself."""
+    Without a checkpoint the main file can be weeks old, with every mark, tracker
+    row and resume link since living only in seen.db-wal; losing that one file
+    silently reverts the registry. Each writer must checkpoint itself."""
     db = tmp_path / "seen.db"
     r = SeenRegistry(db)          # never closed: the kill case
     r.mark(["J1", "J2"])
@@ -134,8 +134,9 @@ def test_every_write_lands_in_the_main_file_without_a_clean_close(tmp_path):
 
 
 def test_seen_marks_refresh_the_backup(tmp_path):
-    """The auto-backup used to follow tracker writes only, so a registry restored
-    from it came back without the seen marks made since the last status change."""
+    """The auto-backup follows seen marks as well as tracker writes, so a registry
+    restored from it comes back with the seen marks made since the last status
+    change."""
     db = tmp_path / "seen.db"
     r = SeenRegistry(db)
     try:

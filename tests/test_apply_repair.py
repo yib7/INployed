@@ -1,14 +1,13 @@
-"""SP6: the page read again after its fill, and a step the form refuses repaired.
+"""The page read again after its fill, and a step the form refuses repaired.
 
 - The page read again after the fill: uploads first, a parser's or a
-  lookup's writes put right (FILL-03), revealed fields filled (FILL-10),
-  buttons the fill enabled or revealed judged (ADV-01, study G10), a still
-  disabled way on parked with its evidence.
+  lookup's writes put right, revealed fields filled, buttons the fill
+  enabled or revealed judged, a still disabled way on parked with its
+  evidence.
 - The form's refusals: validation messages mapped to fields (code first,
   then one judge request), the fields repaired and the step clicked once
-  more, a submit refused with nothing sent repaired once through the gate
-  (ADV-02, ADV-06); a loading indicator waited out (ADV-07); the noise the
-  new question takes.
+  more, a submit refused with nothing sent repaired once through the gate;
+  a loading indicator waited out; the noise the new question takes.
 
 Headless Chromium through the module-scoped test browser; no network, no
 judge but `FakeJev` or a scripted one."""
@@ -69,7 +68,7 @@ def _decisions(r) -> list[dict]:
     return _events(r, "decision")
 
 
-# === the page read again after the fill (FILL-03, FILL-10, ADV-01, study G10) ============================
+# === the page read again after the fill ==================================================================
 
 def test_uploads_go_first_and_the_page_settles_before_the_rest(browser_page, tmp_path):
     pdf = tmp_path / "Jane_Doe_Resume.pdf"
@@ -167,7 +166,7 @@ def test_a_still_disabled_submit_parks_naming_what_was_left_blank(_browser, flow
     assert r.policy is True
 
 
-# === the form's refusals, read and repaired (ADV-02, ADV-06, ADV-07) =====================================
+# === the form's refusals, read and repaired ==============================================================
 
 def test_a_refused_next_is_repaired_and_clicked_again_only_after_the_repair(
         _browser, flow_server, tmp_path):
@@ -180,7 +179,7 @@ def test_a_refused_next_is_repaired_and_clicked_again_only_after_the_repair(
     # the summary no control names went to the judge, which named its field
     assert what["errors_mapped"]["messages"] == [
         "Please correct 2 error(s). Years of experience is required."]
-    # ADV-06: the refused Next was never clicked again before the repair
+    # the refused Next was never clicked again before the repair
     nexts = [a for a in r.actions if a.kind == "click" and a.text == "Next"]
     assert len(nexts) == 2
 
@@ -218,7 +217,7 @@ _SPINNER_STEP = """<!doctype html><html><head><title>Apply</title></head><body>
 
 
 def test_a_step_that_shows_a_loading_indicator_is_waited_out(_browser, flow_server, tmp_path):
-    # ADV-07, the chaos case's long spinner: the step's indicator stays up
+    # the chaos case's long spinner: the step's indicator stays up
     # past every short wait the harness sets (a click's 3 s, a settle's 3 s)
     import dataclasses
     page = _SPINNER_STEP.replace("__MS__", "7000")
@@ -267,7 +266,7 @@ def test_the_noisy_judge_drops_flips_and_scales_a_messages_field():
         if a.choice != "q1":
             assert a.probabilities["q1"] > 0      # the truth second
             if a.confidence >= apply_judge.FIELD_MAP_MIN_CONF:
-                # a confident wrong mapping the run acts on (SP6 review M1)
+                # a confident wrong mapping the run acts on
                 sure += 1
                 assert 0.70 <= a.confidence <= 0.90
             else:
@@ -303,9 +302,7 @@ def test_a_message_the_judge_maps_under_its_floor_names_no_field(tmp_path):
 
 
 
-# === SP6 review round 1 ====================================================================================
-
-# --- I2: after a repair the same control is clicked, never another form's -------------------------
+# --- after a repair the same control is clicked, never another form's -----------------------------
 
 def test_a_repaired_submit_is_the_same_control_never_another_forms_with_its_words(
         _browser, flow_server, tmp_path):
@@ -344,7 +341,7 @@ def test_a_control_gone_after_a_repair_is_never_replaced_by_a_look_alike(browser
         raise run._button_lost(who)
 
 
-# --- I3 (ADV-06): a quiet click that set a request going is waited for, never made again -----------
+# --- a quiet click that set a request going is waited for, never made again ------------------------
 
 _SLOW_STEP = """<!doctype html><html><head><title>Apply</title></head><body>
 <h1>Analytics Engineer</h1><form id="f" novalidate>
@@ -422,7 +419,7 @@ def test_a_step_that_posted_and_never_moved_parks_without_a_second_click(_browse
         context.close()
 
 
-# --- I4: a submit disabled until the CAPTCHA tick goes the gate's CAPTCHA path -----------------------
+# --- a submit disabled until the CAPTCHA tick goes the gate's CAPTCHA path ---------------------------
 
 @pytest.mark.parametrize("name", ["recaptcha_disabled_submit", "recaptcha_disabled_submit_park"])
 def test_a_submit_disabled_until_the_captcha_tick_goes_the_gates_captcha_path(
@@ -434,7 +431,7 @@ def test_a_submit_disabled_until_the_captcha_tick_goes_the_gates_captcha_path(
     assert any(d["what"] == "disabled_captcha" for d in _decisions(r))
 
 
-# --- M1: a confident wrong reading of a message no control names -------------------------------------
+# --- a confident wrong reading of a message no control names -----------------------------------------
 
 def test_a_message_question_can_leave_fields_out_and_be_asked_again():
     import apply_judge
@@ -453,7 +450,7 @@ def test_a_message_question_can_leave_fields_out_and_be_asked_again():
 class MapsTheBannerTo:
     """FakeJev, except that a message question offering the field `label`
     (or `none` for None) is answered with it at 0.85: a confident wrong
-    reading (SP6 review M1), on every request that offers it, or on the
+    reading, on every request that offers it, or on the
     first look only (`first_only`); and "Badge number" never gets a source
     (it has no answer)."""
 
@@ -519,7 +516,7 @@ def test_a_field_the_judge_named_that_has_no_answer_parks_only_when_nothing_else
                                "Before you go on"), r.reason
 
 
-# --- M3: the page record keeps every field's verification ---------------------------------------------
+# --- the page record keeps every field's verification -------------------------------------------------
 
 def test_the_record_keeps_the_first_fills_verification_after_a_revealed_field(
         _browser, flow_server, tmp_path):
@@ -542,9 +539,7 @@ def test_a_re_verification_replaces_its_own_rows_and_keeps_the_rest():
                                                                   ("Email", True)]
 
 
-# === SP6 review round 2 ====================================================================================
-
-# --- R2-I1: a way on whose own box takes the form's message is found again ------------------------------
+# --- a way on whose own box takes the form's message is found again -------------------------------------
 
 @pytest.mark.parametrize("name", ["validation_in_button_box", "validation_in_button_box_submit"])
 def test_a_button_whose_box_takes_the_forms_message_is_found_again(_browser, flow_server,
@@ -585,7 +580,7 @@ def test_a_footer_button_outside_any_form_is_matched_by_its_box_never_another_bo
     assert run._same_button(apply_form.extract(browser_page), who) is None
 
 
-# --- R2-I2: the page's own telemetry is no request of the click's ----------------------------------------
+# --- the page's own telemetry is no request of the click's -----------------------------------------------
 
 def test_a_quiet_first_click_is_retried_beside_the_pages_own_telemetry(_browser, flow_server,
                                                                         tmp_path):
@@ -596,7 +591,7 @@ def test_a_quiet_first_click_is_retried_beside_the_pages_own_telemetry(_browser,
     assert any(e.get("retry") and e.get("text") == "Next" for e in _events(r, "click"))
 
 
-# --- R2-I4: the field only the judge named, with no answer, is kept for the last park ---------------
+# --- the field only the judge named, with no answer, is kept for the last park ----------------------
 
 class YearsThen:
     """FakeJev, except that "Years of experience" and "Badge number" never get
@@ -671,7 +666,7 @@ def test_a_message_read_as_a_field_no_repair_can_touch_gets_the_second_look(
     assert r.sends == 1
 
 
-# --- round 2's addition: a message both looks leave unmapped names the field whose label it holds ---
+# --- a message both looks leave unmapped names the field whose label it holds -----------------------
 
 @pytest.mark.parametrize("message, labels, want", [
     ("Portfolio URL is required", ("Resume", "Portfolio URL"), 1),
@@ -733,7 +728,7 @@ def test_a_field_named_only_by_its_label_is_never_parked_on(_browser, flow_serve
     assert any(d.get("by_label") for d in _decisions(r) if d["what"] == "errors_mapped")
 
 
-# === cycle 19 SP7: the pauses after the fill (a way on still disabled, an option tie) ====================
+# === the pauses after the fill (a way on still disabled, an option tie) ==================================
 
 def test_a_still_disabled_way_on_pauses_and_the_answer_goes_in_on_the_page_read_again(
         _browser, flow_server, tmp_path):
@@ -821,11 +816,11 @@ def test_a_required_option_tie_pauses_and_the_persons_pick_goes_in_on_the_spot(
     assert [a.name for a in picked] == ["work_auth"], [(a.name, a.url) for a in picked]
 
 
-# === SP7 fix round 1 ======================================================================================
+# === a person's own moves during a pause ==================================================================
 
 def test_a_submit_the_person_clicks_during_a_pause_parks_as_possibly_sent(
         _browser, flow_server, tmp_path, monkeypatch):
-    # review I1: the person fixes the disabled page and clicks Submit in the
+    # the person fixes the disabled page and clicks Submit in the
     # browser, then answers "I filled it in the browser"; the run reads the
     # thank-you page as a page that moved on, never fills it, and the job
     # may have been sent (never re-queued, even with the judge down)
@@ -853,7 +848,7 @@ def test_a_submit_the_person_clicks_during_a_pause_parks_as_possibly_sent(
 
 def test_same_labelled_fields_answered_in_the_card_each_take_their_own_answer(
         _browser, flow_server, tmp_path):
-    # review I2: two required "Please explain" fields, a page that changed
+    # two required "Please explain" fields, a page that changed
     # during the pause; the invariant (USER-ANSWER-ELSEWHERE) holds
     r = h.run_flow(h.flow("pause_dup_labels"), jev.FakeJev(), "fake", browser=_browser,
                    server=flow_server, workdir=tmp_path)
@@ -865,7 +860,7 @@ def test_same_labelled_fields_answered_in_the_card_each_take_their_own_answer(
 
 def test_a_value_the_person_fixed_in_the_browser_is_never_typed_over(
         _browser, flow_server, tmp_path):
-    # review I3: the run typed the phone; the person rewrote it in the site's
+    # the run typed the phone; the person rewrote it in the site's
     # format during the disabled pause; the replan keeps it
     r = h.run_flow(h.flow("pause_fix_kept"), jev.FakeJev(), "fake", browser=_browser,
                    server=flow_server, workdir=tmp_path)
@@ -876,11 +871,11 @@ def test_a_value_the_person_fixed_in_the_browser_is_never_typed_over(
     assert [d["fields"] for d in decided] == [["Phone"]], decided
 
 
-# === SP7 fix round 2 ======================================================================================
+# === a page that moved on during a pause, and a closed window =============================================
 
 def test_a_submit_that_lands_on_an_account_form_parks_as_possibly_sent(
         _browser, flow_server, tmp_path):
-    # review N2: after the person's submit the site shows an account form
+    # after the person's submit the site shows an account form
     # that shares the "Email" label and no received words; the paused
     # page's send button is gone, so the job may have been sent
     r = h.run_flow(h.flow("pause_submit_to_account"), jev.FakeJev(), "fake", browser=_browser,
@@ -894,7 +889,7 @@ def test_a_submit_that_lands_on_an_account_form_parks_as_possibly_sent(
 
 def test_a_next_the_person_clicks_during_a_pause_is_planned_again(
         _browser, flow_server, tmp_path):
-    # review N1: a disabled Next (no send button on the page); the person
+    # a disabled Next (no send button on the page); the person
     # clicks it and the address moves on: the run plans the review step and
     # the gate sends
     r = h.run_flow(h.flow("pause_wizard_next"), jev.FakeJev(), "fake", browser=_browser,
@@ -906,7 +901,7 @@ def test_a_next_the_person_clicks_during_a_pause_is_planned_again(
 
 def test_a_card_answer_never_goes_in_a_box_on_the_step_the_person_moved_on_to(
         _browser, flow_server, tmp_path):
-    # final review A I-1: the person answers the referral code in the card and
+    # the person answers the referral code in the card and
     # also clicks Next in the browser; the review step's own Referral code box
     # (the same name, the same path) never takes the card's answer
     r = h.run_flow(h.flow("pause_wizard_fill"), jev.FakeJev(), "fake", browser=_browser,
@@ -980,14 +975,14 @@ def test_a_page_with_no_send_button_that_moved_on_is_planned_again():
 
 
 def test_a_same_address_page_with_no_send_button_that_lost_a_field_moved_on():
-    # final fix review Important 1: a single-page app's next step at the same
+    # a single-page app's next step at the same
     # address; one of the paused step's labelled fields is gone
     run = _Moved(_URL1, (("phone", "tel"),), _NEXT)
     assert _moved(run, _URL1, _NEXT) is None
     assert run._person_moved_on and run.decided == ["pause_moved_on"]
 
 
-# final review A I-2: the window or the tab closed during a pause
+# the window or the tab closed during a pause
 
 def _closed(buttons: tuple, *, moved_on: bool = False) -> _Moved:
     run = _Moved(_URL1, _ROWS, buttons)
@@ -1007,7 +1002,7 @@ def test_a_close_during_a_pause_after_the_person_moved_on_may_have_been_sent():
 
 
 def test_a_close_during_a_pause_on_a_page_that_cannot_send_may_have_been_sent_too():
-    # final fix review Important 2: the person had the browser, and a Next
+    # the person had the browser, and a Next
     # leads on to a Submit; they may have clicked through and sent it before
     # the close, so any close during a pause is possibly sent
     run = _closed(_NEXT)
@@ -1019,7 +1014,7 @@ def test_a_close_during_a_pause_on_a_page_that_cannot_send_may_have_been_sent_to
     (False, True, apply_run.TAB_CLOSED_REASON),
     (False, False, apply_run.PAUSE_UNANSWERED_REASON)])
 def test_a_close_during_a_pause_returns_its_own_check_whether_park(window, tab, why):
-    # final fix review Minor 2: the park already carries the check-whether
+    # the park already carries the check-whether
     # reason and note, whatever the run's handler finds of the window later
     run = _Moved(_URL1, _ROWS, _NEXT)
     run._person_moved_on = False
@@ -1045,10 +1040,10 @@ def _flow_entry(r) -> dict:
 
 def test_a_failed_wait_with_the_tab_still_open_ends_possibly_sent(
         _browser, flow_server, tmp_path, monkeypatch):
-    # final fix review Minor 2: `wait_for_answer` reads any failed wait as a
-    # close; the run's handler then finds neither the window nor the tab
-    # closed. The end still carries the check-whether note (it was a plain
-    # finish of the pause's own reason, with a Re-queue offered)
+    # `wait_for_answer` reads any failed wait as a close; the run's handler
+    # then finds neither the window nor the tab closed. The end still carries
+    # the check-whether note, never a plain finish of the pause's own reason
+    # with a Re-queue offered
     import apply_pause
 
     def _fails(page, job_id, minutes, **kw):
@@ -1067,7 +1062,7 @@ def test_a_failed_wait_with_the_tab_still_open_ends_possibly_sent(
 
 def test_a_tab_closed_after_the_waits_last_poll_ends_possibly_sent(
         _browser, flow_server, tmp_path, monkeypatch):
-    # final fix review Minor 2: the answer lands and the tab closes before
+    # the answer lands and the tab closes before
     # the run reads the page again; that close is the pause's too
     import apply_pause
 
@@ -1089,7 +1084,7 @@ def test_a_tab_closed_after_the_waits_last_poll_ends_possibly_sent(
 
 def test_a_tab_closed_during_a_pause_on_a_next_only_step_is_never_offered_a_requeue(
         _browser, flow_server, tmp_path, monkeypatch):
-    # final fix review Important 2: the pause_wizard_next step shows only its
+    # the pause_wizard_next step shows only its
     # disabled Next; the person closes the job's tab during the wait. The job
     # ends with the check-whether note, and Answer now offers no Re-queue
     import apply_pause
@@ -1135,11 +1130,11 @@ class _DownAfterTheWait:
 
 def test_a_judge_down_after_the_person_moved_on_parks_and_is_never_requeued(
         _browser, flow_server, tmp_path, monkeypatch):
-    # review N5: the person clicked through a page with no send button during
+    # the person clicked through a page with no send button during
     # the pause and may have sent it on a later step; the judge goes down on
     # the replan's read. The job parks with the check-whether note and is
     # never handed back to the queue on its own. The judge is still down, so
-    # the drain stops (review N8): a second queued job is never claimed
+    # the drain stops: a second queued job is never claimed
     import apply_queue
     judge = _DownAfterTheWait()
     real = apply_run._JobRun._pause_moved

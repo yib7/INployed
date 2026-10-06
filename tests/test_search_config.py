@@ -61,10 +61,10 @@ def test_build_inputs_uses_config_keywords(monkeypatch, tmp_path):
     assert len({i["keyword"] for i in capped}) == 1
 
 
-# P2-5: limit_per_input is interpolated into the trigger URL of a
-# pay-per-collection API. load_search_config used to return whatever the JSON
-# held, uncoerced, so a hand-edited or corrupted config could rewrite the
-# request that gets billed.
+# limit_per_input is interpolated into the trigger URL of a
+# pay-per-collection API. load_search_config coerces whatever the JSON holds,
+# so a hand-edited or corrupted config can never rewrite the request that gets
+# billed.
 def test_limit_per_input_is_coerced_to_a_positive_int(monkeypatch, tmp_path):
     monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
     for bad in ("100&limit=5000", None, "", [], {}, 0, -3):
@@ -118,10 +118,10 @@ def test_trigger_url_cannot_carry_an_injected_query_parameter(monkeypatch):
 
 # --- exclude_window_days ------------------------------------------------------
 # The dashboard's Settings tab writes exclude_window_days into search_config.json,
-# but scraper.exclude_window_days() only ever read the EXCLUDE_WINDOW_DAYS env var,
-# so a user-set window was silently ignored and every run fell back to the 90-day
-# default. That kept the whole master in jobs_to_not_include and grew the trigger
-# POST until Bright Data rejected it (2026-08-26).
+# and scraper.exclude_window_days() reads it there as well as from the
+# EXCLUDE_WINDOW_DAYS env var. A user-set window it ignored would fall back to the
+# 90-day default, keep the whole master in jobs_to_not_include and grow the trigger
+# POST until Bright Data rejects it.
 
 def test_exclude_window_days_honours_search_config(monkeypatch, tmp_path):
     monkeypatch.delenv(scraper.EXCLUDE_WINDOW_DAYS_ENV, raising=False)

@@ -267,7 +267,7 @@ def test_replay_misses_on_a_changed_state(tmp_path):
     assert inner.calls == 2
 
 
-# --- (b2) ReplayJev.used_keys and jev.prune_cache (SP8) -------------------------
+# --- (b2) ReplayJev.used_keys and jev.prune_cache -------------------------------
 
 def test_used_keys_starts_empty_and_gains_the_key_on_a_hit(tmp_path):
     cache = tmp_path / "cache.json"
@@ -368,7 +368,7 @@ def test_get_typesafe_without_a_key_raises_jev_unavailable_naming_the_console():
     msg = str(exc.value)
     assert "console.typesafe.ai/keys" in msg
     assert "TYPESAFE_API_KEY" in msg and ".env" in msg
-    assert "Settings > Jev" in msg          # the key row's section since cycle 19
+    assert "Settings > Jev" in msg          # the key row's section
 
 
 def test_jev_unavailable_is_a_runtime_error():
@@ -464,7 +464,7 @@ def test_typesafe_passes_raw_question_dicts_and_pins_the_model(monkeypatch):
     jev.TypeSafeJev(api_key="k-test").judge(STATE, QUESTIONS)
     init = next(r for r in record if r[0] == "init")[1]
     assert init["api_key"] == "k-test" and init["model"] == "jev-1.13.0"
-    assert init["retry"].max_retries == 0       # `jev.Guarded` owns the retries (M2)
+    assert init["retry"].max_retries == 0       # `jev.Guarded` owns the retries
     call = next(r for r in record if r[0] == "system_one")
     assert call[1] is STATE and call[2] is QUESTIONS
     assert call[3].get("model") == "jev-1.13.0"
@@ -641,7 +641,7 @@ def test_typesafe_never_calls_the_api_at_construction(monkeypatch):
     assert jev.usage()["requests"] == 0
 
 
-# --- (e) one layer of retries (SP8a review M2) --------------------------------
+# --- (e) one layer of retries -------------------------------------------------
 
 def test_a_judge_that_stays_down_gets_the_guards_retries_alone():
     """The installed SDK over a transport that answers every request with a
@@ -678,7 +678,7 @@ def test_fake_takes_not_settled_whenever_it_is_listed():
     assert a.probabilities == {"Yes": 0.0, "No": 0.0, "not_settled": 1.0}
 
 
-# --- a choice's options (VL-3) --------------------------------------------------------
+# --- a choice's options ---------------------------------------------------------------
 
 def _choice(n: int) -> dict:
     return {"type": "choice", "instructions": "Which option?",
@@ -690,8 +690,8 @@ def test_the_choice_option_limit_is_jevs():
 
 
 def test_a_choice_past_jevs_option_limit_does_not_fit():
-    """VL-3: TL-6 sent about 360 verbs in one choice and the service answered 400.
-    The request was well under the token limits, so only the option count shows it."""
+    """The service answers 400 to a choice of about 360 verbs in a request well
+    under the token limits, so only the option count shows it."""
     state = {"bullet": "Built a sales model."}
     assert jev.request_fits(state, {"q": _choice(jev.CHOICE_OPTIONS_MAX)})
     assert not jev.request_fits(state, {"q": _choice(jev.CHOICE_OPTIONS_MAX + 1)})

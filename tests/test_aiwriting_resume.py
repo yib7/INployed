@@ -25,7 +25,7 @@ import test_prompt_hygiene as hygiene  # noqa: E402 - sibling test module, no pk
 from resume_tailor import aiwriting, compose  # noqa: E402
 
 
-# The bullet the whole phase exists to protect: correct register, correct grammar,
+# The bullet this file exists to protect: correct register, correct grammar,
 # a number, no slop. Every gate in this module must leave it completely alone.
 CLEAN_BULLET = "Built a scraper that cut per-run cost 65%."
 
@@ -186,7 +186,7 @@ def test_rules_prompt_is_a_substantial_block_and_names_its_source():
 def test_rules_prompt_states_the_p0_p1_scope():
     prompt = aiwriting.RESUME_RULES_PROMPT
     assert "P0" in prompt and "P1" in prompt
-    # P2 polish is detected elsewhere and reported, never auto-fixed this cycle.
+    # P2 polish is detected elsewhere and reported, never auto-fixed.
     assert "P2" not in prompt
 
 
@@ -310,9 +310,9 @@ def test_resume_ban_quiet_on_a_near_miss(name):
     assert aiwriting.resume_violations(near_miss) == []
 
 
-# ── the proof this phase exists for ──────────────────────────────────────────
+# ── the proof this file exists for ───────────────────────────────────────────
 def test_a_correct_resume_register_bullet_yields_zero_findings():
-    """The phase checkpoint. A subjectless fragment opening with a past-tense verb
+    """A subjectless fragment opening with a past-tense verb
     is CORRECT résumé grammar, and the upstream skill would flag it twice."""
     assert aiwriting.resume_violations(CLEAN_BULLET) == []
 

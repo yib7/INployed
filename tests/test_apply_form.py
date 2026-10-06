@@ -272,8 +272,8 @@ def linkedin(browser_page, fixture_url):
 
 
 def test_linkedin_header_search_and_footer_language_picker_are_not_fields(linkedin):
-    # the 2026-09-22 live run read these three as a form and judged the posting
-    # `application_form`, then parked with "no way forward on this page"
+    # read as a form, these three make the posting `application_form`, and the
+    # run parks with "no way forward on this page"
     assert linkedin.fields == []
 
 
@@ -287,9 +287,9 @@ def test_linkedin_apply_link_is_a_button_in_document_order(browser_page, linkedi
 
 
 def test_the_page_text_leads_with_the_main_landmark(linkedin):
-    # the judge reads the text's first characters; on the 2026-09-22 run
-    # LinkedIn's skip links, header and upsell took 597 of its 600 and the
-    # posting read as a form
+    # the judge reads the text's first characters; on a live LinkedIn page
+    # the skip links, header and upsell take 597 of its 600 and the posting
+    # reads as a form
     assert linkedin.text.startswith("Analytics Engineer")
     assert linkedin.text.count("Own the analytics models") == 1
     assert linkedin.text.rstrip().endswith("Home Me")      # the rest follows, nothing dropped
@@ -308,7 +308,7 @@ def test_a_banner_above_main_keeps_its_place_and_the_site_chrome_moves_last(brow
 
 
 def test_linkedins_real_page_prefix_leaves_the_posting_inside_the_headline(browser_page):
-    # the text above "About the job" on the 2026-09-22 page: skip links, the
+    # the text above "About the job" on a captured LinkedIn page: skip links, the
     # header, the upsell and the top card, 597 characters
     browser_page.set_content("""
       <body><div>0 notifications<br>Skip to main content<br>Skip to primary content<br>

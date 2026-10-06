@@ -335,7 +335,7 @@ def test_click_tells_a_quiet_click_from_one_that_never_landed(browser_page, fixt
     assert apply_fill.click(browser_page, d, _button(d, "Nothing").n, timeout_s=1).changed is False
 
 
-# --- cycle 18 FM-1: a yes or no matches only an option in its own alias set ---------------
+# --- a yes or no matches only an option in its own alias set ------------------------------
 
 @pytest.mark.parametrize("options, value, index", [
     (["Yes - on a work visa (OPT/H-1B)", "U.S. citizen or permanent resident"], "Yes", -1),
@@ -348,7 +348,7 @@ def test_a_yes_or_no_is_matched_on_the_page_only_by_its_alias_set(options, value
     assert apply_fill._ci_match(value, options) == index
 
 
-# --- cycle 18 FM-5: a number box takes a plain number, and repairs join no digits ---------
+# --- a number box takes a plain number, and repairs join no digits ------------------------
 
 @pytest.mark.parametrize("value, want", [
     ("120k", None), ("3-5", None), ("(555) 123-4567", None), ("Less than 1 year", None),
@@ -389,7 +389,7 @@ def test_a_number_box_takes_the_phone_only_when_it_names_a_phone(browser_page):
     assert [e["n"] for e in errors] == [y.n]
 
 
-# --- cycle 18 FM-4: clear empties a control, and says so --------------------------------
+# --- clear empties a control, and says so -----------------------------------------------
 
 _CLEARABLE = """<body><form>
   <label>Nickname <input id="nick"></label>
@@ -428,7 +428,7 @@ def test_clear_empties_a_box_a_list_and_a_tick_and_says_when_it_cannot(browser_p
     assert apply_fill.clear(browser_page, gone) is True
 
 
-# --- cycle 18 FM-2: a list whose options were never read takes only a code match --------
+# --- a list whose options were never read takes only a code match -----------------------
 
 _UNREAD_LIST = """<body><form>
   <span id="auth-label">Work authorization</span>
@@ -487,10 +487,9 @@ def test_a_list_that_shows_its_options_only_when_typed_in_is_left_blank(browser_
 
 
 def test_a_list_that_shows_nothing_keeps_a_typed_place_and_takes_out_a_typed_yes(browser_page):
-    # SP3 fix round 1: a list whose menu never opens raises `NothingShown`
-    # (a type, no longer its message). A place typed to bring its options
-    # stays for the read-back, as before; a yes or a no is taken out
-    # (`OptionsUnread`): no typed guess stands as the answer
+    # a list whose menu never opens raises `NothingShown` (a type). A place
+    # typed to bring its options stays for the read-back; a yes or a no is
+    # taken out (`OptionsUnread`): no typed guess stands as the answer
     browser_page.set_content(_UNREAD_LIST.replace(
         "box.addEventListener('click', open);", "").replace(
         "input.addEventListener('input', open);", ""))

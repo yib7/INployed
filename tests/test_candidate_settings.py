@@ -1,9 +1,9 @@
-"""Cycle 21, Task 4: the "About you" settings section.
+"""The "About you" settings section.
 
 Four rows in the Settings tab (school status, graduation month, clearance held,
-open to employer sponsorship) write the four scoring_config.json keys Task 3 taught
-score_jobs to read. The rows are schema DATA, so the pins here are about that data
-staying in step with the consumer:
+open to employer sponsorship) write the four scoring_config.json keys score_jobs
+reads. The rows are schema DATA, so the pins here are about that data staying in
+step with the consumer:
 
   * the two dropdowns list exactly the labels score_jobs resolves,
   * every default equals the scorer's own default (a fresh install and the VM
@@ -117,7 +117,7 @@ def _consumer_ok(value: str) -> bool:
     return sj.parse_graduation_month(value) is not None or not value.strip()
 
 
-# Task 3's month table (tests/test_candidate_profile.py), accepted then rejected.
+# The scorer's month table (tests/test_candidate_profile.py), accepted then rejected.
 _ACCEPTED = [
     "May 2026", "January 2027", "Jan 2027", "February 2028", "Feb 2028", "March 2026",
     "mar 2026", "April 2026", "Apr 2026", "June 2026", "Jun 2026", "July 2026",
@@ -503,7 +503,7 @@ def test_the_default_clearance_none_round_trips_the_form_as_the_string(qtbot, tm
 
 
 def test_a_stored_null_on_a_text_field_opens_clean(qtbot, tmp_path):
-    """The Task 4 fix reads a stored null as blank for every str field, so a null
+    """The form reads a stored null as blank for every str field, so a null
     in search_config.json shows an empty box and marks nothing changed."""
     targets = _targets(tmp_path)
     targets["search"].write_text(json.dumps({"location": None}), encoding="utf-8")
@@ -533,7 +533,7 @@ def test_the_month_pattern_still_accepts_padding_around_a_month_and_a_blank_run(
     assert re.fullmatch(pattern, " " * 5_000 + "May 2026" + " " * 5_000 + "x") is None
 
 
-# --- final review, B: a graduation month that has passed is named at Save -----------
+# --- a graduation month that has passed is named at Save ----------------------------
 #
 # The scorer rolls an in-school status whose graduation month is before this month
 # over to Finished school (score_jobs.candidate_profile). The shipped default month is

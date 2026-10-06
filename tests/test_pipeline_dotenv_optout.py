@@ -77,8 +77,8 @@ def test_without_the_optout_the_env_file_still_loads(tmp_path, script):
 @pytest.mark.parametrize("flag", ["1", "true", "TRUE", "True", "yes", "on", " 1 "])
 def test_the_optout_accepts_the_spellings_a_human_types(tmp_path, flag):
     """This is typed by hand at a shell. An INPLOYED_NO_DOTENV=TRUE that silently
-    re-arms a billed script is the worst possible way to be strict -- and "TRUE"
-    and "yes" both did exactly that before 2026-08-27."""
+    re-arms a billed script is the worst possible way to be strict, so "TRUE"
+    and "yes" count as set too."""
     assert _probe_with_temp_env(tmp_path, "scraper.py", flag) == "ABSENT"
 
 

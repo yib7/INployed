@@ -1,11 +1,10 @@
-"""SP5: the second look at a required field's dropped or weak mapping.
+"""The second look at a required field's dropped or weak mapping.
 
-SP4's matrix left every noisy miss on one class: a required field whose
-mapping the judge dropped, or whose consent tick it read under the consent
-floor, parked "required field without an answer" although the data answers
-it. The run now asks that field alone once more (a small request: its label,
-type, options and the sources its type can take) before it parks, and only
-then; a field the data cannot answer still parks.
+A required field whose mapping the judge dropped, or whose consent tick it
+read under the consent floor, would park "required field without an answer"
+although the data answers it. The run asks that field alone once more (a
+small request: its label, type, options and the sources its type can take)
+before it parks, and only then; a field the data cannot answer still parks.
 
 - `reask_targets`: which fields get the second look (a dropped or weak
   source, a consent tick under its floor, a dropped or weak pick), and which
@@ -60,7 +59,7 @@ def _choice(choice, conf):
 def _digest():
     return FormDigest(url_host="jobs.example.com", title="Apply", text="", fields=[
         _f(0, "Are you authorized to work in the US?", "select", options=("Yes", "No")),
-        # qualified options (cycle 18, FM-1): a plain Yes / No is settled in
+        # qualified options: a plain Yes / No is settled in
         # code and never waits for a pick
         _f(1, "Will you now or in the future require sponsorship?", "radio",
            options=("Yes, I will require sponsorship", "No, I do not require sponsorship")),
@@ -96,7 +95,7 @@ def test_the_second_look_takes_a_dropped_or_weak_source_and_a_consent_under_its_
     answers["field_1_pick"] = _choice("No, I do not require sponsorship", 0.5)
     plan = apply_judge.plan(digest, catalog, answers)
     assert apply_judge.reask_targets(digest, catalog, answers, plan, what="pick") == [1]
-    # a routine consent (SP5 round 2) at 0.80 ticks: it is no target
+    # a routine consent at 0.80 ticks: it is no target
     routine = FormDigest(url_host="x", title="t", text="", fields=[
         _f(0, "I certify that the information provided is accurate", "checkbox",
            options=("checked",))])
@@ -147,7 +146,7 @@ def test_the_second_look_is_the_field_alone_with_its_types_sources_and_no_value(
 
 
 def test_the_second_look_asks_every_target_in_one_request(catalog):
-    # review M11: one request per read and kind, whatever the number of targets
+    # one request per read and kind, whatever the number of targets
     digest = _digest()
     plan = apply_judge.plan(digest, catalog, {})
     targets = apply_judge.reask_targets(digest, catalog, {}, plan, what="source")
@@ -326,7 +325,7 @@ def test_a_question_the_data_cannot_answer_still_parks_after_the_second_look(
 
 def test_a_consent_tick_read_under_its_floor_is_ticked_after_a_sure_second_look(
         _browser, flow_server, tmp_path):
-    # a routine consent's floor is the mapping floor (SP5 round 2): read under it
+    # a routine consent's floor is the mapping floor: read under it
     judge = ScaleFirst(jev.FakeJev(), "certify", conf=0.60)
     r = _run("greenhouse_embed", judge, _browser, flow_server, tmp_path)
     assert judge.done
@@ -335,7 +334,7 @@ def test_a_consent_tick_read_under_its_floor_is_ticked_after_a_sure_second_look(
     assert len(asked) == 1 and asked[0]["what"] == "source"
 
 
-# --- a consent tick's second look stands alone (review I1) -------------------------------------
+# --- a consent tick's second look stands alone -------------------------------------------------
 
 _CERTIFY = "I certify that the information provided is accurate"      # routine
 _BACKGROUND_CHECK = "I consent to a background check"                    # a commitment
@@ -435,7 +434,7 @@ class DropInMapping:
 
 
 def test_a_re_read_of_the_same_page_reuses_the_second_look(_browser, flow_server, tmp_path):
-    """Review M11: the same step comes back with an error line (a new page to
+    """The same step comes back with an error line (a new page to
     the loop, the same fields); its second look is asked once and reused."""
     import dataclasses
     page = """<!doctype html><html><head><title>Apply - Fabrikam</title></head><body>
@@ -457,7 +456,7 @@ def test_a_re_read_of_the_same_page_reuses_the_second_look(_browser, flow_server
     assert judge.second_looks == 1
 
 
-# --- review round 5, R5-I1: discovery never clicks a popup that sends -----------------------------
+# --- discovery never clicks a popup that sends ----------------------------------------------------
 
 _SPLIT_SUBMIT = """<!doctype html><html><head><title>Apply - Fabrikam</title></head><body>
 <h1>Analytics Engineer</h1>
@@ -473,12 +472,12 @@ _SPLIT_SUBMIT = """<!doctype html><html><head><title>Apply - Fabrikam</title></h
 
 
 @pytest.mark.parametrize("arrow", ["More submit options",
-                                   # review round 7: an icon-only arrow named at any length
+                                   # an icon-only arrow named at any length
                                    "Submit your application right now"])
 def test_discovery_never_clicks_a_popup_whose_own_words_send(_browser, flow_server, tmp_path,
                                                              arrow):
-    """Review R5-I1: a submit's menu arrow ("More submit options") read as a
-    dropdown was opened by the options discovery, a click outside the
+    """A submit's menu arrow ("More submit options") read as a dropdown is never
+    opened by the options discovery: that open would be a click outside the
     submit gate on a control that reads submit (CLICK-OUTSIDE-GATE)."""
     import dataclasses
     page = _SPLIT_SUBMIT.replace("__ARROW__", arrow)
@@ -493,7 +492,7 @@ def test_discovery_never_clicks_a_popup_whose_own_words_send(_browser, flow_serv
                 and not a.in_gate]
 
 
-# --- review round 8 (1): a misread send popup is never opened in a run -----------------------------
+# --- a misread send popup is never opened in a run -------------------------------------------------
 
 _SEND_ARROW_PAGE = """<!doctype html><html><head><title>Apply - Fabrikam</title></head><body>
 <h1>Analytics Engineer</h1>
@@ -508,7 +507,7 @@ _SEND_ARROW_PAGE = """<!doctype html><html><head><title>Apply - Fabrikam</title>
 @pytest.mark.parametrize("shape", ["shown", "long", "legend"])
 def test_a_misread_send_popup_is_never_opened_in_a_run(_browser, flow_server, tmp_path,
                                                        monkeypatch, shape):
-    """Review round 8: whatever the extractor decides, a popup whose own
+    """Whatever the extractor decides, a popup whose own
     words send is never opened; a misread one (added here as a dropdown
     field) is left unopened and, optional, skipped."""
     import dataclasses
@@ -546,7 +545,7 @@ def test_a_required_popup_the_guard_refused_parks_on_its_question(catalog):
     assert p.park_reason == "required field without an answer: Delivery options"
 
 
-# --- review round 3, M4: the commitment floor in the matrix ---------------------------------------
+# --- the commitment floor in the matrix -----------------------------------------------------------
 
 @pytest.mark.parametrize("seed", [0, 1, 2, 3])
 def test_the_commitment_flow_parks_on_its_box_and_never_ticks_it(_browser, flow_server, tmp_path,
@@ -563,7 +562,7 @@ def test_the_commitment_flow_parks_on_its_box_and_never_ticks_it(_browser, flow_
 
 
 
-# --- a held-back answer, asked whether it settles a reworded question (2026-09-26) ------------
+# --- a held-back answer, asked whether it settles a reworded question -------------------------
 
 _NY = """<!doctype html><html><head><title>Apply - Fabrikam</title></head><body>
 <h1>Analytics Engineer</h1>

@@ -1,8 +1,8 @@
-"""The cover letter's own model and Claude effort (cycle 22).
+"""The cover letter's own model and Claude effort.
 
 TIER_COVER drafts the letter and TIER_COVER_EDIT runs its repair, humanizer and
 style-fix passes. In 'tiers' mode both read one cover-letter model per provider
-and, left blank, resolve as before the setting existed (draft on the deep tier,
+and, left blank, resolve to the general tiers (draft on the deep tier,
 edits on the standard one). The Claude effort for both can be set on its own;
 'same' keeps the general effort. Hermetic: no real CLI or API call.
 """

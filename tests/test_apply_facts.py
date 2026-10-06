@@ -110,7 +110,7 @@ def test_field_types_are_the_listed_set():
         "checkbox", "file", "date", "listbox", "other"}
 
 
-# --- build(): the checkpoint (a) ---------------------------------------------
+# --- build() -----------------------------------------------------------------
 
 def test_build_splits_the_name(folder):
     cat = apply_facts.build(folder, answers=_bank())
@@ -166,10 +166,10 @@ def _v1(**answers):
 
 
 def test_build_reads_worded_yes_no_answers_once_migrated_and_confirmed(tmp_path):
-    # the 2026-09-26 Contoso run put "No" on "Are you legally authorized" from
-    # "Yes, I am a US citizen"; the store now keeps "Yes" with the words as its
+    # a worded "Yes, I am a US citizen" must never reach "Are you legally
+    # authorized" as "No"; the store keeps "Yes" with the words as its
     # note (`migrate_v1`). A sentence that says more than its first word stays
-    # unconfirmed (final review), so no form gets it until the user ticks it;
+    # unconfirmed, so no form gets it until the user ticks it;
     # once confirmed, the fact is the typed answer
     v1 = _v1(work_authorized="Yes, I am a US citizen",
              requires_sponsorship="No, I am a US citizen",
@@ -186,7 +186,7 @@ def test_build_reads_worded_yes_no_answers_once_migrated_and_confirmed(tmp_path)
 
 
 def test_build_a_yes_no_answer_without_yes_or_no_gives_no_fact(tmp_path):
-    # moved to the store's rule on purpose (cycle 18): the words migrate into
+    # the store's rule: the words migrate into
     # the note and the answer stays not set, so no form gets "Open to NYC"
     migrated = apply_answers.migrate_v1(_v1(willing_to_relocate="Open to NYC"))[0]
     cat = apply_facts.build(tmp_path, answers=migrated)
@@ -205,7 +205,7 @@ _OTHER = {"work_authorized": "No", "requires_sponsorship": "Yes", "years_experie
 
 
 def test_build_the_store_outranks_a_stale_sheet_for_every_answer_and_the_address(folder):
-    # FL-1: the sheet was written from `_bank()`; the store now holds other
+    # the sheet is written from `_bank()`; the store holds other
     # answers, and every bank-backed fact is the store's
     sheet = (folder / "apply.md").read_text(encoding="utf-8")
     assert "- **Are you willing to relocate?** Yes" in sheet
@@ -220,8 +220,8 @@ def test_build_the_store_outranks_a_stale_sheet_for_every_answer_and_the_address
 
 
 def test_build_the_sheet_fills_no_answer_the_store_lacks(folder):
-    # FL-1, moved on purpose: the sheet's Standard answers and Address used to
-    # fill what the bank lacked; now a store with nothing set gives no answer
+    # the sheet's Standard answers and Address never fill what the bank
+    # lacks: a store with nothing set gives no answer
     bank = [dict(e, answer="", confirmed=False) for e in apply_answers.seed_defaults()]
     cat = apply_facts.build(folder, answers=bank)
     for key in (*apply_facts._NAMED_BANK_IDS, "answer_authorization_statement",
@@ -265,8 +265,7 @@ def test_build_reads_an_answer_only_through_fact_value(tmp_path, entry):
 
 
 def test_build_a_duplicate_named_id_the_first_entry_wins(folder):
-    # fix round 1, item 5: a duplicate id used to let the LAST entry win;
-    # now the FIRST one does, confirmed or not (a well-formed store never
+    # with a duplicate id the FIRST entry wins, confirmed or not (a well-formed store never
     # has one; `apply_answers.validate` rejects it)
     bank = _bank()
     by_id = {e["id"]: e for e in bank}
@@ -284,7 +283,7 @@ def test_build_a_named_answer_is_never_a_custom_fact_too(folder):
     assert named == []
 
 
-# --- FL-5: the fact descriptions and onsite_ok ------------------------------------
+# --- the fact descriptions and onsite_ok ------------------------------------------
 
 def test_the_years_relocate_and_onsite_descriptions_are_the_specs():
     d = apply_facts.DESCRIPTIONS
@@ -394,7 +393,7 @@ _STALE_SHEET_NO_SIGNATURE = """\
 
 
 def test_sheet_excerpt_renders_answers_and_address_from_the_store_never_the_sheet(tmp_path):
-    # fix round 1, item 1: a sheet with no signature heading (so a refresh
+    # a sheet with no signature heading (so a refresh
     # leaves it exactly as it is) must never hand its own stale or
     # unconfirmed Standard answers or Address text to a drafting call
     (tmp_path / "apply.md").write_text(_STALE_SHEET_NO_SIGNATURE, encoding="utf-8")
@@ -525,7 +524,7 @@ def test_quick_map_table(label, ident, type_, expected):
     assert apply_facts.quick_map(label, ident, type_) == expected
 
 
-# --- cycle 18 FM-3: another person's field, and the how-did-you-hear question -------------
+# --- another person's field, and the how-did-you-hear question ----------------------------
 
 @pytest.mark.parametrize("label, ident, type_, expected", [
     ("Referrer email", "", "email", None),
@@ -554,7 +553,7 @@ def test_quick_map_never_reads_the_how_did_you_hear_question_as_a_profile_url(la
         "linkedin_url", "github_url", "website_url")
 
 
-# --- cycle 18 FM-8: the graduation year of a degree under way ------------------------------
+# --- the graduation year of a degree under way ---------------------------------------------
 
 @pytest.mark.parametrize("dates, year", [
     ("2022 - Present", ""),
@@ -578,7 +577,7 @@ def test_a_degree_under_way_gives_no_graduation_year_but_its_expected_one(tmp_pa
     assert cat.value("education_school") == "State University"
 
 
-# --- cycle 18 SP6c: the derived yes / no facts ----------------------------------------------
+# --- the derived yes / no facts -------------------------------------------------------------
 
 def _yes_no_bank(**states):
     """The standard answers with each named yes / no answer set to "Yes" or
@@ -650,7 +649,7 @@ def test_a_custom_answer_with_a_derived_id_stays_a_custom_fact(tmp_path):
     ("Years of experience", "years_experience"),
     ("Years of Python experience", None),
     ("How many years of experience do you have with Python?", None),
-    # round 3: a skill before the words, a cut label
+    # a skill before the words, a cut label
     ("Python - years of experience", None),
     ("Java (years of experience)", None),
 ])
@@ -664,7 +663,7 @@ def test_quick_map_leaves_a_label_that_fails_the_own_question_gate_to_the_judge(
 
 
 def test_the_derived_description_says_it_answers_unrestricted_work_authorization():
-    # cycle 18 SP6c round 2: "Do you have unrestricted work authorization?" is
+    # "Do you have unrestricted work authorization?" is
     # its question, and the judge reads that in its description
     d = apply_facts.DESCRIPTIONS["authorized_without_sponsorship"]
     assert "unrestricted work authorization" in d.lower()
@@ -709,7 +708,7 @@ def test_asks_about_reads_the_subject_of_the_question_sentence(label, keys):
     assert asked == keys
 
 
-# --- the question a custom answer saves for a field (PR-6, PR-9) ---------------------
+# --- the question a custom answer saves for a field ----------------------------------
 
 @pytest.mark.parametrize("label, help_text, saved", [
     ("Desired salary", "", "Desired salary"),
@@ -770,7 +769,7 @@ def test_answer_type_follows_the_widget(field_type, options, want):
     assert apply_facts.answer_type(field_type, options) == want
 
 
-# --- ship audit S5: duplicate custom ids, the PDF names, quick_map's stop words ----------
+# --- duplicate custom ids, the PDF names, quick_map's stop words -------------------------
 
 def test_build_a_duplicate_custom_id_the_first_entry_wins_whole(folder):
     """Value and note come from one entry: the first."""

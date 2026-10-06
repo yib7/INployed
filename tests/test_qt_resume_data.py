@@ -1,4 +1,4 @@
-"""SP7: the Qt Resume Data editor (YAML round-trip) + resume.md generator (mocked LLM)."""
+"""The Qt Resume Data editor (YAML round-trip) + resume.md generator (mocked LLM)."""
 import yaml
 from PySide6 import QtCore
 
@@ -202,7 +202,7 @@ def test_verbatim_block_toggle_and_save(qtbot, master_tmp, tmp_path, monkeypatch
     import jobsdata
     monkeypatch.setattr(jobsdata, "HERE", tmp_path)
     ed = _editor(qtbot, master_tmp)
-    # P2-5: editors are keyed by (section, idx) so same-named entries can't
+    # editors are keyed by (section, idx) so same-named entries can't
     # clobber each other; the persisted-store name rides in the value.
     by_name = {nm: (cb, edit) for (nm, cb, edit) in ed._verbatim_edits.values()}
     assert "Example Corp" in by_name                     # experience block has the toggle
@@ -257,9 +257,9 @@ def test_push_outcome_distinguishes_success_and_failure():
     assert failed is False and "unable to open" in msg
 
 
-# --- SP5 (ED-10): Save validates every entry/basics it is about to write BEFORE
-# writing anything, reusing entry_problems -- the same rules append_entry and the
-# add-entry dialog enforce -- instead of writing first and validating after. -----
+# --- Save validates every entry/basics it is about to write BEFORE writing
+# anything, with entry_problems: the same rules append_entry and the add-entry
+# dialog enforce. ------------------------------------------------------------
 
 def test_save_blocks_and_writes_nothing_when_an_entry_field_is_blanked(
         qtbot, master_tmp, monkeypatch):
@@ -304,7 +304,7 @@ def test_save_still_writes_a_valid_change(qtbot, master_tmp, tmp_path, monkeypat
 
 def test_save_blocks_when_basics_email_is_blanked(qtbot, master_tmp_broken, monkeypatch):
     # master_tmp_broken has no `basics` at all yet; filling in a name but leaving
-    # email blank must still be blocked by the same name/email check Save now
+    # email blank must still be blocked by the same name/email check Save
     # runs on the projected basics before writing anything.
     monkeypatch.setattr(rdt.QtWidgets.QMessageBox, "critical", staticmethod(lambda *a, **k: None))
     ed = _editor(qtbot, master_tmp_broken)
@@ -314,7 +314,7 @@ def test_save_blocks_when_basics_email_is_blanked(qtbot, master_tmp_broken, monk
     assert master_tmp_broken.read_bytes() == before
 
 
-# --- SP5 (ED-10): the add-entry dialog validates inline and disables OK until
+# --- the add-entry dialog validates inline and disables OK until
 # valid, and keeps every field intact when the write itself fails. `QDialog.exec`
 # is faked (never a real modal loop) so the test drives the widgets directly and
 # never blocks headless. -----------------------------------------------------
@@ -373,7 +373,7 @@ def test_add_entry_dialog_keeps_input_on_a_failed_write(qtbot, master_tmp, monke
     assert calls["n"] == 2   # the SAME dialog re-opened after the failed write
 
 
-# --- I5 (final review): the add-entry dialog's Impact field must split one
+# --- the add-entry dialog's Impact field must split one
 # achievement per LINE, like the add-achievement dialog and the in-place edits,
 # since "$1,200" holds a comma inside a single number. ------------------------
 
@@ -397,7 +397,7 @@ def test_add_entry_dialog_impact_splits_on_newlines_not_commas(qtbot, master_tmp
     assert impact == ["Cut costs by $1,200 per month", "saving 40%"]
 
 
-# --- I6 (final review): a YAML parse error in the master must not escape the
+# --- a YAML parse error in the master must not escape the
 # write handler: master_edit wraps ruamel's YAMLError in a ValueError, so it
 # is caught by the SAME `except (ValueError, OSError)` as any other failed
 # write, shown to the user, and the dialog reopens with every field intact. --
@@ -440,7 +440,7 @@ def test_add_entry_dialog_keeps_input_when_the_master_is_broken_yaml(
     assert shown and "line" in shown[0] and "column" in shown[0]
 
 
-# --- cycle 18 gap: the add-atom ("Add achievement") dialog gets the same
+# --- the add-atom ("Add achievement") dialog gets the same
 # treatment as the add-entry dialog above -- live validation with OK disabled
 # until every rule passes, and the input kept intact when the write fails. -----
 

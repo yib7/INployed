@@ -126,7 +126,7 @@ SEEDS = {
     ],
     # The second one is not covered by the vendored chatbot rule, whose
     # `let's\s+\w)\b` branch can only match a one-letter verb. See the comment
-    # on the rule and the `.autopilot/BACKLOG.md` entry.
+    # on the rule.
     "engagement hook": ["Cut the run time. The catch? It only runs on weekends.",
                         "Let's walk through the exporter."],
     "novelty inflation": ["Coined the term context poisoning for the failure."],

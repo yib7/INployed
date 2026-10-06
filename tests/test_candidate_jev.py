@@ -1,8 +1,8 @@
-"""Cycle 21, Task 8: the Jev scorer follows the candidate profile.
+"""The Jev scorer follows the candidate profile.
 
 `jev_score.candidate_for(profile)` renders the candidate block of every Jev
 request from the four profile settings (school status, graduation month, held
-clearance, open to a clearance the employer sponsors). stage 1 gains a
+clearance, open to a clearance the employer sponsors). stage 1 has a
 "not eligible" main factor and a cap for it, the clearance wording says "the
 candidate does not hold", and `score_jobs.run_scoring` hands the one resolved
 profile to both stages and to `jev_facts`.
@@ -92,7 +92,7 @@ def _clearance_text(label, open_):
 
 def _expected(status, graduation, label, open_):
     """The six strings for a status, a graduation month text ("" for none), a
-    clearance label and the open box, as the brief words them."""
+    clearance label and the open box, as the candidate block words them."""
     g, with_grad = graduation, bool(graduation)
     in_school = status != "finished"
     return {
@@ -461,7 +461,7 @@ def test_run_scoring_keeps_the_default_candidate_when_no_setting_is_changed(monk
         assert state["candidate"] == jev_score.CANDIDATE
 
 
-# --- fix round 1: stage 2 follows the candidate's status -----------------------------------
+# --- stage 2 follows the candidate's status ------------------------------------------------
 
 FINISHED_LEVELS = (
     "Poor fit: the candidate lacks most of the job's must-have requirements, or the "
@@ -623,7 +623,7 @@ def test_run_scoring_sends_stage_2_the_finished_wording_when_no_setting_is_chang
     assert deeps and all(deep == _deep_fit() for deep in deeps)
 
 
-# --- fix round 1: the default profile copy and the calibration ---------------------------------
+# --- the default profile copy and the calibration ----------------------------------------------
 
 def test_jev_score_default_profile_equals_the_score_jobs_defaults():
     """`jev_score.DEFAULT_PROFILE` is a second copy of the score_jobs settings

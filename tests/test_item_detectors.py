@@ -193,7 +193,7 @@ ALL_ITEMS = [CLEAN_ITEM] + [item for pair in DETECTOR_CASES.values() for item in
 def test_findings_are_order_independent(item):
     """Same item, different bullet order, same findings.
 
-    SP3 groups bullets with `compose._blocks_in_order`, and a repair payload that
+    The repair step groups bullets with `compose._blocks_in_order`, and a repair payload that
     changes shape because two bullets swapped places is a payload no test can pin.
     """
     baseline = itemcheck.item_findings(ITEM, item)
@@ -244,7 +244,7 @@ def test_the_statistical_detectors_need_three_bullets():
 
 
 # ── severity tiers ───────────────────────────────────────────────────────────
-# The frozen strictness answer for this cycle is "P0 and P1 fixed, P2 reported",
+# The strictness rule is "P0 and P1 fixed, P2 reported",
 # so every finding has to say which tier it belongs to. The values come from the
 # skill's own severity list: synonym cycling and bare-noun bullet lists are P1,
 # uniform length and compulsive rule of three are P2.
@@ -268,9 +268,9 @@ def test_the_two_tiers_are_distinct():
     assert itemcheck.P1 != itemcheck.P2
 
 
-# ── the SP3 payload ──────────────────────────────────────────────────────────
+# ── the repair payload ───────────────────────────────────────────────────────
 def test_findings_payload_is_json_serialisable():
-    """SP3 drops these straight into a prompt payload, so a NamedTuple that only
+    """The repair step drops these straight into a prompt payload, so a NamedTuple that only
     survives repr() is not enough."""
     findings = []
     for offending, _ in DETECTOR_CASES.values():
@@ -290,7 +290,7 @@ def test_findings_payload_of_nothing_is_an_empty_list():
 
 
 def test_detail_text_obeys_the_projects_own_writing_rules():
-    """A detail string rides into an LLM prompt in SP3. A model copies the
+    """A detail string rides into an LLM prompt in the repair step. A model copies the
     punctuation it is shown, so the same rule the prompts live under applies here:
     tests/test_prompt_hygiene.py bans an em dash in anything a model reads."""
     findings = []
@@ -305,9 +305,8 @@ def test_detail_text_obeys_the_projects_own_writing_rules():
 
 # ── the stdlib-only guarantee ────────────────────────────────────────────────
 # This is the property that makes the module verifiable on its own, without
-# `config.load_dotenv()` pulling live credentials into the process. It already
-# paid for itself this cycle: SP1's hedge regex was checked standalone and three
-# false negatives fell out that the suite had not covered.
+# `config.load_dotenv()` pulling live credentials into the process: a detector's
+# regex can be checked standalone.
 def test_itemcheck_imports_only_the_standard_library():
     tree = ast.parse(MODULE_PATH.read_text(encoding="utf-8"), filename=str(MODULE_PATH))
     stdlib = set(sys.stdlib_module_names)
@@ -362,7 +361,7 @@ def test_compose_leading_verb_behaves_identically(text, expected):
 
 # ── the calibration is written down ──────────────────────────────────────────
 def test_the_uniformity_floor_records_what_it_was_calibrated_against():
-    """A bare number here is folklore in one cycle. Every bullet in an item is
+    """A bare number here soon turns into folklore. Every bullet in an item is
     already trimmed to a per-bullet printed-line target, so bullets in one item
     are SUPPOSED to be similar lengths; the floor only means something next to the
     measurement of how similar a correct item actually is."""

@@ -1,4 +1,4 @@
-"""Concurrency-safe output-dir resolution + usage gating (cycle 11 SP2).
+"""Concurrency-safe output-dir resolution + usage gating.
 
 When several résumés tailor in parallel, two jobs with the SAME company+title must
 NOT resolve to the same folder and clobber each other's PDF (the résumé file isn't

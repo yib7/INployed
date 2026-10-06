@@ -10,9 +10,9 @@ else, and neither shows up as a test failure until a user hits it:
 runner, cp932 on a Japanese Windows. A résumé bullet with an ``é``, a company
 name with a curly apostrophe, or a pdflatex log echoing either one then comes out
 mangled on one machine and raises ``UnicodeDecodeError`` on another. The repo has
-been bitten by exactly this twice: ``compile.subprocess.run`` (pdflatex echoes the
+been bitten by exactly this: ``compile.subprocess.run`` (pdflatex echoes the
 document back) and ``vm_sync.run_cmd`` (gcloud echoes the error body) both carry a
-comment about it, and ``local_task.register`` was found still doing it in cycle 11.
+comment about it, and ``local_task.register`` had the same fault.
 So the rule is: every text-mode read, write and subprocess pins ``encoding=``.
 
 **2. Line endings.** ``.gitattributes`` settles what is stored and what is checked
@@ -182,7 +182,7 @@ def _binary(raw: bytes) -> bool:
     """git's own test for a binary file: a NUL byte in its first block, so a
     new fixture type (a font, an image, an archive) needs no list. A file
     that starts with a byte order mark is text: a UTF-16 or UTF-32 file's
-    NULs are its encoding's, and the sweeps flag it (SP8a review R2-M1)."""
+    NULs are its encoding's, and the sweeps flag it."""
     return not raw.startswith(_BOMS) and b"\x00" in raw[:_BINARY_PROBE]
 
 
@@ -224,14 +224,14 @@ def test_no_tracked_text_file_carries_a_bom():
 
 def test_no_tracked_text_file_carries_a_control_byte():
     """A byte below 0x20 other than tab, LF and CR in a text file is a
-    mangled escape: c16's USER_GUIDE carried a vertical tab (0x0b) where the
+    mangled escape, such as a vertical tab (0x0b) in a USER_GUIDE where the
     `\\v` of `..\\venv` belongs."""
     offenders = _control_bytes(_text_files(REPO, _tracked_files()))
     assert not offenders, f"control bytes in tracked text files: {offenders}"
 
 
 def test_a_binary_file_of_any_type_is_left_out_of_the_text_sweeps(tmp_path):
-    # SP8a review M16: a binary is told by its content (a NUL byte in its
+    # a binary is told by its content (a NUL byte in its
     # first block, as git tells it), so a new fixture type never trips the
     # sweeps, and a text file's stray control byte still does
     (tmp_path / "font.woff2").write_bytes(b"wOF2\x00\x01\x00\x00\x0b\x1b" * 40)
@@ -243,7 +243,7 @@ def test_a_binary_file_of_any_type_is_left_out_of_the_text_sweeps(tmp_path):
 
 
 def test_a_utf16_text_file_goes_through_the_text_sweeps(tmp_path):
-    # SP8a review R2-M1: a UTF-16 file's NUL bytes are its encoding's, so its
+    # a UTF-16 file's NUL bytes are its encoding's, so its
     # byte order mark tells it as text, and the sweeps flag it (the policy is
     # UTF-8; PowerShell 5.1's Out-File writes UTF-16 LE)
     (tmp_path / "le.txt").write_bytes("﻿notes\n".encode("utf-16-le"))

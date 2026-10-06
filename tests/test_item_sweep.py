@@ -402,7 +402,7 @@ def test_a_new_style_violation_is_rejected(engine, monkeypatch):
 
 
 def test_a_new_resume_violation_is_rejected(engine, monkeypatch):
-    """aiwriting.resume_violations: the SP1 arm, disjoint from the list above."""
+    """aiwriting.resume_violations: the resume arm, disjoint from the list above."""
     slop = CLEAN["a3"].replace("Led the migration",
                                "Led the industry-leading migration")
     assert aiwriting.resume_violations(slop) == ["promotional language"]
@@ -529,7 +529,7 @@ def test_p1_findings_ride_in_the_payload(engine, monkeypatch):
 
 
 def test_p2_findings_are_reported_and_never_sent(engine, monkeypatch):
-    """The frozen strictness answer: P0 and P1 are repaired, P2 is surfaced in the
+    """The strictness rule: P0 and P1 are repaired, P2 is surfaced in the
     run report and left alone. So a P2 finding never reaches the model."""
     three = {
         "a1": ("Built a batched async fetcher, a retry queue, and a nightly backfill "
@@ -596,7 +596,7 @@ def test_the_prompts_are_free_of_the_phrasing_they_ban(name):
     assert compose.style_violations(own) == []
 
 
-# ── the result is what SP4 has to report from ────────────────────────────────
+# ── the result is what the run report is written from ────────────────────────
 def test_the_result_carries_everything_the_run_report_needs(engine, monkeypatch):
     _install(monkeypatch, Recorder(first=_answer(a1=_OVERLONG_A1, a2=_REPAIRED_A1),
                                    second=_answer(a1=_SHORTENED_A1)))
@@ -610,7 +610,7 @@ def test_the_result_carries_everything_the_run_report_needs(engine, monkeypatch)
 
 
 def test_findings_payload_round_trips_the_unfixed_p2(engine, monkeypatch):
-    """SP4 reports these, so they have to survive json.dumps."""
+    """The run report carries these, so they have to survive json.dumps."""
     three = {
         "a1": ("Built a batched async fetcher, a retry queue, and a nightly backfill "
                "for the ingestion job across 12 source systems."),

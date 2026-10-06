@@ -1,5 +1,5 @@
-"""P2-9: run.py's master-CSV default must not bake in a machine-specific drive
-letter (was hardcoded `E:/My Drive/...`). It now resolves via jobsdata's
+"""run.py's master-CSV default must not bake in a machine-specific drive
+letter (such as `E:/My Drive/...`). It resolves via jobsdata's
 `gdrive_root_dir` (config.json's gdrive_root) or the repo-root master, and falls
 back to REQUIRING --csv when nothing resolves.
 """

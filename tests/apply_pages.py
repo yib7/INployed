@@ -121,7 +121,7 @@ UNCONFIRMED_MIN = 6
 
 
 def unconfirmed_values(answers: list[dict] | None = None) -> tuple[str, ...]:
-    """The answers the bank holds that the user has not confirmed (FL-1: the
+    """The answers the bank holds that the user has not confirmed (the
     run never fills one), each at least `UNCONFIRMED_MIN` characters."""
     answers = bank() if answers is None else answers
     out = []

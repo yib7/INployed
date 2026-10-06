@@ -60,7 +60,7 @@ def test_the_consent_control_on_each_capture_with_a_banner(_browser, capture):
         assert not re.search(r"accept|allow|agree", found[1]["text"], re.I)
 
 
-# --- SP5: the fields a person sees on each capture -------------------------------------------------
+# --- the fields a person sees on each capture ------------------------------------------------------
 #
 # Each capture's MHTML snapshot (its page.html when it has none) is loaded
 # offline, frames and all, with no script running and every request off the
@@ -159,7 +159,7 @@ def _read_capture(browser, folder: Path):
         page.wait_for_timeout(300)
         d = apply_form.extract(page)
         # the run never reads a bot check's frame (`_drop_foreign_controls`):
-        # a reCAPTCHA anchor is no field of the application (review M12)
+        # a reCAPTCHA anchor is no field of the application
         urls = [str(f.url) for f in apply_form.frames(page)]
         bot = {i for i, u in enumerate(urls) if apply_run._is_captcha_url(u)}
         d.fields = [f for f in d.fields if int(f.locator[0]) not in bot]

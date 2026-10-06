@@ -1,5 +1,5 @@
-"""SP2 (cycle 15): resume_tailor.run._job_description_text's job_description_md
-precedence (the tailor + Ask AI side of the same fix as jobsdata.job_detail_fields).
+"""Tests for resume_tailor.run._job_description_text's job_description_md
+precedence (the tailor + Ask AI side of the same rule as jobsdata.job_detail_fields).
 
 job_description_md is passed through UNCHANGED -- the tailor already reasons
 over markdown directly, and running it through _to_plain (markdownify-on-HTML)

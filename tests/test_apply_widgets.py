@@ -1,4 +1,4 @@
-"""SP5: every widget family the layout study found, read as a person sees it
+"""Every widget family the layout study found, read as a person sees it
 and filled so the page holds what was planned.
 
 Per family: the extractor's reading (count, type, label, required, options,
@@ -7,28 +7,27 @@ widget), a fill and read-back round trip through `apply_fill.apply`, and
 `tests/fixtures/forms/` are synthetic: the shapes of the captured pages,
 invented wording.
 
-- G2 labels: marker-only text (a star in its own span, "(required)", an
+- Labels: marker-only text (a star in its own span, "(required)", an
   sr-only "Required", an aria-hidden star, a leading star) is skipped and
   sets `required`; hidden text inside a label is left out; a file box takes
   its group's question, never its "Attach" or file-count label; a generic
   aria-label ("Search", "Select...", "textbox") falls through to the visible
   question; label[for] counts only for a unique id whose control it is.
-- G3 junk: honeypots, react-select's hidden required twin, a read-only box
+- Junk: honeypots, react-select's hidden required twin, a read-only box
   and a posting's job-alert widget are no fields; the harness sees a fill
   into one as an invariant break.
-- G6 hidden natives behind a visible label or trigger: kept, acted on
+- Hidden natives behind a visible label or trigger: kept, acted on
   through the label or trigger (`click_locator`).
-- G7 custom single choices: a role=radio group, Yes / No buttons with
+- Custom single choices: a role=radio group, Yes / No buttons with
   aria-pressed, a dropdown drawn as a button (listbox or menu), an untyped
   typeahead; "Click here" and "-- No answer --" placeholders dropped.
-- G8 a question's tick boxes are one field with the question's words.
-- G12 open shadow roots are walked, their controls located `<host> >> <inner>`.
-- G10 a disabled submit is kept with its flag, and so is a primary one.
-- EXT-07 a list past 40 is matched in code; EXT-10 react-select's pick is
-  read from its sibling; EXT-12 date parts; EXT-13 a rich-text box;
-  EXT-19 / FILL-02 a stable locator and the control's identity checked
-  before the act; FILL-07 the option aliases; FILL-13 picks verified in code;
-  READ-05 the section headings sent with the fields.
+- A question's tick boxes are one field with the question's words.
+- Open shadow roots are walked, their controls located `<host> >> <inner>`.
+- A disabled submit is kept with its flag, and so is a primary one.
+- A list past 40 is matched in code; react-select's pick is read from its
+  sibling; date parts; a rich-text box; a stable locator and the control's
+  identity checked before the act; the option aliases; picks verified in
+  code; the section headings sent with the fields.
 
 Headless Chromium through the module-scoped test browser, the fixtures over
 the local fixture server; no network, no judge but `FakeJev`."""
@@ -87,7 +86,7 @@ def _fill(page, *planned):
     return {f.n: f.value for f in out}
 
 
-# --- G2: labels a person reads, required markers ------------------------------------------------
+# --- labels a person reads, required markers ----------------------------------------------------
 
 def test_marker_only_text_is_skipped_and_marks_the_field_required(browser_page, fixture_url):
     d = _open(browser_page, fixture_url, "lever_cards.html")
@@ -205,7 +204,7 @@ def test_a_label_for_a_shared_id_never_names_another_questions_box(browser_page)
         ("What is your notice period?", False), ("Which team would you like to join?", True)]
 
 
-# --- G3: boxes no person fills -------------------------------------------------------------------
+# --- boxes no person fills -----------------------------------------------------------------------
 
 def test_honeypots_read_only_boxes_and_hidden_twins_are_no_fields(browser_page, fixture_url):
     d = _open(browser_page, fixture_url, "workday_create_account.html")
@@ -226,7 +225,7 @@ def test_honeypots_read_only_boxes_and_hidden_twins_are_no_fields(browser_page, 
 
 
 def test_a_transparent_box_or_a_box_in_a_transparent_wrapper_is_no_field(browser_page):
-    # final review B-M3: a trap at opacity 0 with no tabindex=-1, or inside a
+    # a trap at opacity 0 with no tabindex=-1, or inside a
     # transparent wrapper, is never a field; a radio behind its label still is
     browser_page.set_content("""<body><form>
       <label for="site">Website</label><input id="site" type="text" style="opacity:0">
@@ -260,7 +259,7 @@ _FADES = {
 
 @pytest.mark.parametrize("case", list(_FADES))
 def test_a_form_that_fades_in_or_waits_transparent_keeps_its_fields(browser_page, case):
-    # final review B R2 M3: a form read while its opacity is still moving
+    # a form read while its opacity is still moving
     # up from 0 keeps its fields, and so does a transparent wrapper around
     # the whole form; a trap at opacity 0 inside the fading form is still no
     # field
@@ -291,7 +290,7 @@ def test_the_harness_breaks_on_a_fill_into_a_honeypot_or_a_read_only_box(browser
     assert "honeypot" in breaks[0] and "read-only" in breaks[1]
 
 
-# --- G6: hidden natives behind a visible label or trigger ----------------------------------------
+# --- hidden natives behind a visible label or trigger --------------------------------------------
 
 def test_a_zero_size_terms_box_is_ticked_through_its_label(browser_page, fixture_url):
     d = _open(browser_page, fixture_url, "oracle_email_terms.html")
@@ -329,7 +328,7 @@ def test_a_hidden_select_behind_a_styled_trigger_is_picked_in_place(browser_page
     assert values[country.n] == "United States"
 
 
-# --- G7: custom single choices -------------------------------------------------------------------
+# --- custom single choices -----------------------------------------------------------------------
 
 def test_a_role_radio_group_is_one_question_clicked_through_its_options(browser_page,
                                                                        fixture_url):
@@ -389,7 +388,7 @@ def test_a_menu_of_radio_items_behind_a_button_is_one_question(browser_page, fix
 
 
 def test_a_dropdown_that_opens_nothing_never_sends_an_escape_to_its_dialog(browser_page):
-    # FILL-08: the Escape after reading a menu goes only to an open menu; a
+    # the Escape after reading a menu goes only to an open menu; a
     # modal form closes on any other Escape
     browser_page.set_content("""<body><div id="dlg" role="dialog" aria-modal="true"
       style="width:500px;height:300px;border:1px solid"><form>
@@ -415,7 +414,7 @@ def test_an_untyped_typeahead_is_typed_and_its_match_clicked(browser_page, fixtu
 
 
 def test_an_async_combobox_is_typed_in_and_its_match_picked(browser_page):
-    # EXT-06: no option shows until the box is typed in, 300 ms later
+    # no option shows until the box is typed in, 300 ms later
     browser_page.set_content("""<body><form><label id="l" for="city">City *</label>
       <input id="city" role="combobox" aria-labelledby="l" aria-controls="city-list"
              aria-expanded="false" autocomplete="off">
@@ -437,7 +436,7 @@ def test_an_async_combobox_is_typed_in_and_its_match_picked(browser_page):
 
 
 def test_a_second_typeahead_clicks_its_own_match_never_an_earlier_lists(browser_page):
-    # final review B-M1: the first typeahead's list stays open with its
+    # the first typeahead's list stays open with its
     # marks; the second's click took the first mark in the document
     browser_page.set_content("""<body><form>
       <div><label for="a">Home city</label><input id="a" autocomplete="off">
@@ -469,10 +468,10 @@ _CITY = ('<form><div><label for="b">Work city</label><input id="b" autocomplete=
 
 @pytest.mark.parametrize("shadow", [True, False], ids=["in_a_shadow_root", "in_the_page"])
 def test_a_stale_mark_in_a_shadow_root_is_cleared_before_the_click(browser_page, shadow):
-    # final review B R2 nit: the clear read the document alone, and the
-    # click's locator reaches into shadow roots: a mark an earlier list left
-    # in one came first and took the click when the typeahead sits in a
-    # shadow root of its own (a web-component form)
+    # the clear reads the document alone, and the click's locator reaches
+    # into shadow roots: a mark an earlier list left in one must not take the
+    # click when the typeahead sits in a shadow root of its own (a
+    # web-component form)
     browser_page.set_content(f"""<body><div id="old"></div><div id="app">{'' if shadow else _CITY}
       </div><script>
         const old = document.getElementById('old').attachShadow({{mode: 'open'}});
@@ -513,8 +512,8 @@ _TIED_TYPEAHEAD = """<body><form>
 
 
 def test_a_typeahead_whose_matches_tie_and_differ_is_left_empty(browser_page):
-    # final review B R2 M2: the site's order picked "Software Engineering"
-    # for "Engineering" and "Not Hispanic or Latino" for "Latino"
+    # the site's order alone would pick "Software Engineering" for
+    # "Engineering" and "Not Hispanic or Latino" for "Latino"
     browser_page.set_content(_TIED_TYPEAHEAD)
     frame = browser_page.main_frame
     with pytest.raises(apply_fill.OptionTie):
@@ -543,12 +542,11 @@ _SPONSORSHIP = """<body><form>
 
 
 def test_a_yes_or_no_picks_no_qualified_option_and_the_judges_pick_does(browser_page):
-    # moved on purpose (cycle 18, FM-1): fix round 3 picked "No, I do not
-    # require sponsorship" for a stored "No" as the one option holding it.
-    # A yes or a no now matches only an option in its own alias set: a
-    # typeahead is emptied and says so (`OptionsUnread`, SP3 fix round 1:
-    # a required field parks, an optional one stays blank), and a radio
-    # group chooses nothing. A free-text value keeps its typed words
+    # a stored "No" never takes "No, I do not require sponsorship" as the
+    # one option holding it. A yes or a no matches only an option in its own
+    # alias set: a typeahead is emptied and says so (`OptionsUnread`: a
+    # required field parks, an optional one stays blank), and a radio group
+    # chooses nothing. A free-text value keeps its typed words
     browser_page.set_content(_SPONSORSHIP)
     frame = browser_page.main_frame
     with pytest.raises(apply_fill.OptionsUnread):
@@ -569,8 +567,8 @@ def test_a_yes_or_no_picks_no_qualified_option_and_the_judges_pick_does(browser_
 
 
 def test_a_yes_or_no_is_never_matched_by_an_options_hidden_value(browser_page):
-    # SP3 fix round 1: a radio's or a select's value attribute ("yes") sat
-    # behind the words "Yes - on a work visa (OPT/H-1B)" and took a stored Yes
+    # a radio's or a select's value attribute ("yes") behind the words
+    # "Yes - on a work visa (OPT/H-1B)" never takes a stored Yes
     browser_page.set_content("""<body><form>
       <fieldset><legend>Work authorization</legend>
         <label><input type="radio" name="auth" value="yes"> Yes - on a work visa
@@ -601,7 +599,7 @@ def test_a_yes_or_no_is_never_matched_by_an_options_hidden_value(browser_page):
 
 
 def test_a_line_break_typed_key_by_key_never_submits_the_form(browser_page):
-    # final review B-I1: typed key by key, a value's line break is an Enter,
+    # typed key by key, a value's line break is an Enter,
     # and an Enter in a one-line box submits its form
     browser_page.set_content("""<body><form id="app" onsubmit="document.body.dataset.submitted
         = (document.body.dataset.submitted || '') + 'x'; return false">
@@ -635,7 +633,7 @@ def test_placeholder_options_are_dropped(browser_page, fixture_url):
     assert apply_form.extract(browser_page).fields[0].options == ["Yes", "No"]
 
 
-# --- G8: a question's tick boxes -----------------------------------------------------------------
+# --- a question's tick boxes ---------------------------------------------------------------------
 
 def test_a_questions_tick_boxes_are_one_field_with_its_words(browser_page, fixture_url):
     d = _open(browser_page, fixture_url, "lever_cards.html")
@@ -651,7 +649,7 @@ def test_a_questions_tick_boxes_are_one_field_with_its_words(browser_page, fixtu
 
 
 def test_options_that_each_carry_their_own_name_are_one_question_by_their_box(browser_page):
-    # a Framer-built form (study G6, G8): every box and every radio has a
+    # a Framer-built form: every box and every radio has a
     # name of its own; the question sits in a label above the options
     hidden = "position:absolute;width:0;height:0;opacity:0"
     browser_page.set_content(f"""<body><form>
@@ -675,7 +673,7 @@ def test_options_that_each_carry_their_own_name_are_one_question_by_their_box(br
     assert browser_page.locator("#wn").is_checked() and browser_page.locator("#e2").is_checked()
 
 
-# --- G12: open shadow roots ----------------------------------------------------------------------
+# --- open shadow roots ---------------------------------------------------------------------------
 
 def test_controls_inside_open_shadow_roots_are_read_located_and_filled(browser_page,
                                                                       fixture_url):
@@ -692,7 +690,7 @@ def test_controls_inside_open_shadow_roots_are_read_located_and_filled(browser_p
     assert next(b for b in d.buttons if b.text == "Submit").locator[1] == "#submit >> #btn-submit"
 
 
-# --- G10, READ-10: a disabled submit is kept and flagged -----------------------------------------
+# --- a disabled submit is kept and flagged -------------------------------------------------------
 
 def test_a_disabled_submit_is_kept_flagged_and_a_primary_one_named(browser_page, fixture_url):
     d = _open(browser_page, fixture_url, "rippling_generic_aria.html")
@@ -702,7 +700,7 @@ def test_a_disabled_submit_is_kept_flagged_and_a_primary_one_named(browser_page,
     assert (back.disabled, back.primary) == (False, False)
 
 
-# --- EXT-07, FILL-07: options matched in code ----------------------------------------------------
+# --- options matched in code ---------------------------------------------------------------------
 
 @pytest.mark.parametrize("value, options, want", [
     ("United States", ["Canada", "United States of America", "Uruguay"], "United States of America"),
@@ -731,7 +729,7 @@ def test_a_long_lists_pick_question_carries_a_shortlist_for_the_value():
 
 
 @pytest.mark.parametrize("want, options, index", [
-    # final review B-M2: the last fallback holds the value as whole words,
+    # the last fallback holds the value as whole words,
     # and an option that names it as one of its own parts wins
     ("chicago", ["Chicago Heights, IL", "Chicago, IL", "Chicagoland"], 1),
     ("heights", ["Chicago Heights, IL", "Heightsville"], 0),
@@ -745,24 +743,23 @@ def test_a_long_lists_pick_question_carries_a_shortlist_for_the_value():
     # no place (the real judge's typeahead_editor recording holds the first)
     ("anytown", ["Anytown, California, United States", "Anytown, New York, United States"], 0),
     ("", ["Anything"], -1),
-    # final review B R2 M2: among options that hold the value, one that turns
+    # among options that hold the value, one that turns
     # it with a negation or a qualifier the value lacks gives way to one that
     # does not, whatever the site's order
     ("Latino", ["Not Hispanic or Latino", "Hispanic or Latino"], 1),
     ("Not Hispanic or Latino", ["Hispanic or Latino", "Not Hispanic or Latino"], 1),
-    # fix round 3: the rule only breaks a tie; a lone option that holds the
+    # the rule only breaks a tie; a lone option that holds the
     # value stands
     ("Latino", ["Not Hispanic or Latino", "White"], 0),
-    # moved on purpose (cycle 18, FM-1): a yes or a no matches only an
-    # option in its own alias set; a qualified option is the judge's pick
+    # a yes or a no matches only an option in its own alias set; a
+    # qualified option is the judge's pick
     ("Yes", ["Yes, but I will require sponsorship", "Yes, I am authorized"], -1),
     ("No", ["No, I do not require sponsorship"], -1),
     ("No", ["Yes, I will require sponsorship", "No, I do not require sponsorship"], -1),
     ("no", ["Yes, I will need sponsorship", "No, I don't need sponsorship"], -1),
     ("Yes", ["Yes, but I will require sponsorship", "No"], -1),
-    # every option that holds the value turns it, each its own way: a tie,
-    # as before (SP3 fix round 1: a typeahead is emptied and a required
-    # field parks)
+    # every option that holds the value turns it, each its own way: a tie
+    # (a typeahead is emptied and a required field parks)
     ("Yes", ["Yes, but I will require sponsorship",
              "Yes, I am authorized and do not require sponsorship", "No"], "tie"),
     ("No", ["Yes, I will require sponsorship", "N"], 1),
@@ -793,7 +790,7 @@ def test_the_first_pick_found_wins_and_a_tie_is_told_from_no_match(tries, index)
     assert apply_fill._ci_first(tries) == index
 
 
-# --- EXT-10: react-select's pick is read from its sibling ----------------------------------------
+# --- react-select's pick is read from its sibling ------------------------------------------------
 
 def test_a_react_select_pick_reads_back_from_its_single_value(browser_page, fixture_url):
     d = _open(browser_page, fixture_url, "greenhouse_react_select.html")
@@ -806,7 +803,7 @@ def test_a_react_select_pick_reads_back_from_its_single_value(browser_page, fixt
     assert browser_page.locator("#q_auth").input_value() == ""      # the input itself is cleared
 
 
-# --- EXT-12: date parts --------------------------------------------------------------------------
+# --- date parts ----------------------------------------------------------------------------------
 
 def test_month_day_year_boxes_are_one_date_typed_part_by_part(browser_page, fixture_url):
     browser_page.set_viewport_size({"width": 1400, "height": 1000})
@@ -821,7 +818,7 @@ def test_month_day_year_boxes_are_one_date_typed_part_by_part(browser_page, fixt
     assert values[date.n] == "09/24/2026"
 
 
-# --- EXT-13: a rich-text box ---------------------------------------------------------------------
+# --- a rich-text box -----------------------------------------------------------------------------
 
 def test_a_rich_text_box_is_a_field_filled_as_typing_would(browser_page):
     browser_page.set_content("""<body><form><div id="lbl">Cover letter *</div>
@@ -834,7 +831,7 @@ def test_a_rich_text_box_is_a_field_filled_as_typing_would(browser_page):
     assert values[box.n] == "I am writing to apply."
 
 
-# --- EXT-19, FILL-02: stable locators and the control's identity ---------------------------------
+# --- stable locators and the control's identity --------------------------------------------------
 
 def test_a_stable_attribute_locates_a_control_and_a_moved_one_is_never_typed_into(
         browser_page):
@@ -861,7 +858,7 @@ def test_a_stable_attribute_locates_a_control_and_a_moved_one_is_never_typed_int
 
 
 def test_a_moved_box_with_no_attributes_is_told_apart_by_its_label(browser_page):
-    # review I5: boxes that carry no id, name or test attribute are told apart
+    # boxes that carry no id, name or test attribute are told apart
     # by their label's words; the inserted box has no attribute either
     browser_page.set_content("""<body><form id="f">
       <div class="row"><label>City <input></label></div>
@@ -885,7 +882,7 @@ def test_a_moved_box_with_no_attributes_is_told_apart_by_its_label(browser_page)
     assert not apply_form.same_ident(postal.ident, city.ident)
 
 
-# --- FILL-13: picks are verified in code ---------------------------------------------------------
+# --- picks are verified in code ------------------------------------------------------------------
 
 @pytest.mark.parametrize("value, option, group, ok", [
     ("checked", "checked", False, True), ("", "checked", False, False),
@@ -894,17 +891,17 @@ def test_a_moved_box_with_no_attributes_is_told_apart_by_its_label(browser_page)
     # a plain read-back is one whole option (`apply_fill.Ticked` carries a list)
     ("Go", "Go", True, True), ("SQL, Go", "Go", True, False), ("SQL, Go", "Python", True, False),
     ("California", "CA", False, True), ("Select One", "Canada", False, False),
-    # review M3: words that only contain the option are no pick of it
+    # words that only contain the option are no pick of it
     ("Yes, but I will need sponsorship", "Yes", False, False),
     ("SQL, Go", "Go", False, False),
-    # review R2 Minor 4: a read-back shorter than the planned option neither
+    # a read-back shorter than the planned option is no pick of it either
     ("Yes", "Yes, I will need sponsorship", False, False),
     ("No", "No, not at this time", False, False)])
 def test_a_pick_is_verified_in_code_against_the_read_back(value, option, group, ok):
     assert apply_run.pick_holds(value, option, group) is ok
 
 
-# --- READ-05: the section headings go with the fields --------------------------------------------
+# --- the section headings go with the fields -----------------------------------------------------
 
 def test_the_mapping_sends_the_section_headings_with_the_fields(browser_page, fixture_url,
                                                                tmp_path):
@@ -923,9 +920,7 @@ def test_the_mapping_sends_the_section_headings_with_the_fields(browser_page, fi
     json.dumps(state)
 
 
-# === SP5 review round 1 ============================================================================
-
-# --- I2: a required marker drawn by CSS or named by a class --------------------------------------
+# --- a required marker drawn by CSS or named by a class ------------------------------------------
 
 def test_a_star_drawn_by_css_or_a_required_class_marks_the_question_required(browser_page):
     browser_page.set_content("""<head><style>
@@ -945,7 +940,7 @@ def test_a_star_drawn_by_css_or_a_required_class_marks_the_question_required(bro
         ("Middle name", False), ("I have read the policy.", True)]
 
 
-# --- I3: an upload hidden until "Attach resume" is clicked ----------------------------------------
+# --- an upload hidden until "Attach resume" is clicked --------------------------------------------
 
 def test_a_file_box_hidden_under_its_shown_question_is_kept_and_a_hidden_steps_is_not(
         browser_page, fixture_url):
@@ -959,7 +954,7 @@ def test_a_file_box_hidden_under_its_shown_question_is_kept_and_a_hidden_steps_i
     assert [f.label for f in apply_form.extract(browser_page).fields] == ["Name"]
 
 
-# --- I4: a link inside a label keeps its words ------------------------------------------------------
+# --- a link inside a label keeps its words ----------------------------------------------------------
 
 def test_a_link_that_opens_a_dialog_keeps_its_words_in_the_label(browser_page, fixture_url):
     d = _open(browser_page, fixture_url, "oracle_email_terms.html")
@@ -972,7 +967,7 @@ def test_a_link_that_opens_a_dialog_keeps_its_words_in_the_label(browser_page, f
     assert [f.label for f in apply_form.extract(browser_page).fields] == ["State"]
 
 
-# --- I6: a menu that closed under the option's click is opened once more -------------------------
+# --- a menu that closed under the option's click is opened once more -----------------------------
 
 class _Options:
     def __init__(self, texts, fail=False):
@@ -1012,7 +1007,7 @@ def test_an_option_click_that_fails_opens_the_menu_once_more_and_clicks_again(mo
         apply_fill._pick_listbox(None, None, None, "Remote")
 
 
-# --- I7: a custom tick box (role=checkbox, role=switch) ---------------------------------------------
+# --- a custom tick box (role=checkbox, role=switch) -------------------------------------------------
 
 def test_a_custom_tick_box_is_a_field_ticked_and_read_back(browser_page, fixture_url):
     d = _open(browser_page, fixture_url, "aria_controls.html")
@@ -1030,7 +1025,7 @@ def test_a_custom_tick_box_is_a_field_ticked_and_read_back(browser_page, fixture
     assert browser_page.locator("#certify").get_attribute("aria-checked") == "true"
 
 
-# --- I8 (EXT-16, G3): a posting's widget groups -------------------------------------------------
+# --- a posting's widget groups ------------------------------------------------------------------
 
 def test_a_postings_filters_search_box_alert_form_and_footer_picker_are_no_fields(browser_page):
     browser_page.set_content("""<body><h1>Open roles</h1>
@@ -1058,7 +1053,7 @@ def test_an_application_forms_boxes_stay_beside_its_search_labelled_dropdown(bro
     assert [f.label for f in apply_form.extract(browser_page).fields] == ["Location", "First name"]
 
 
-# --- M4: honeypot words as a whole label --------------------------------------------------------
+# --- honeypot words as a whole label ------------------------------------------------------------
 
 def test_a_question_that_says_leave_blank_or_do_not_enter_is_no_honeypot(browser_page):
     browser_page.set_content("""<body><form>
@@ -1071,7 +1066,7 @@ def test_a_question_that_says_leave_blank_or_do_not_enter_is_no_honeypot(browser
         "Middle name (leave this field blank if none)"]
 
 
-# --- M5: statements under a line that asks nothing stay apart -----------------------------------
+# --- statements under a line that asks nothing stay apart ---------------------------------------
 
 def test_two_consent_statements_under_a_heading_line_stay_two_boxes(browser_page):
     browser_page.set_content("""<body><form><div><p>Consent:</p>
@@ -1083,7 +1078,7 @@ def test_two_consent_statements_under_a_heading_line_stay_two_boxes(browser_page
         ("I agree to the terms", "", ["checked"]), ("I agree to receive texts", "", ["checked"])]
 
 
-# --- M6: a read-only picker stays a field ---------------------------------------------------------
+# --- a read-only picker stays a field -------------------------------------------------------------
 
 def test_a_read_only_picker_stays_a_field_and_a_read_only_box_does_not(browser_page):
     browser_page.set_content("""<body><form>
@@ -1094,7 +1089,7 @@ def test_a_read_only_picker_stays_a_field_and_a_read_only_box_does_not(browser_p
     assert [f.label for f in apply_form.extract(browser_page).fields] == ["Gender", "Start date"]
 
 
-# --- M7: a heading counts only when its own box holds the control ---------------------------------
+# --- a heading counts only when its own box holds the control -------------------------------------
 
 def test_a_section_heading_is_one_whose_box_holds_the_control(browser_page, fixture_url):
     browser_page.set_content("""<body><h2>Compensation</h2><p>Base pay range.</p>
@@ -1107,7 +1102,7 @@ def test_a_section_heading_is_one_whose_box_holds_the_control(browser_page, fixt
                                                         ("Work authorization", "Eligibility")]
 
 
-# --- M8: a question's tick boxes take every chosen option ---------------------------------------
+# --- a question's tick boxes take every chosen option -------------------------------------------
 
 def test_every_option_the_value_names_is_ticked(browser_page, fixture_url):
     d = _open(browser_page, fixture_url, "lever_cards.html")
@@ -1117,7 +1112,7 @@ def test_every_option_the_value_names_is_ticked(browser_page, fixture_url):
 
 
 @pytest.mark.parametrize("value, option, chosen", [
-    # review R2 Minor 3: a value that is one option's whole name is that option
+    # a value that is one option's whole name is that option
     ("Research and Development", "Research and Development", ["Research and Development"]),
     ("Sales, Marketing", "Sales", ["Sales", "Marketing"]),
     ("Research, Development", "Research", ["Research", "Development"]),
@@ -1131,7 +1126,7 @@ def test_a_value_that_names_one_option_whole_ticks_that_option_alone(value, opti
     assert [options[i] for i in apply_fill._chosen(pf, option)] == chosen
 
 
-# --- M14: a choice never clicks a form's submit control -----------------------------------------
+# --- a choice never clicks a form's submit control ----------------------------------------------
 
 def test_a_choice_option_that_is_a_forms_submit_is_never_clicked(browser_page):
     browser_page.set_content("""<body><form onsubmit="event.preventDefault();
@@ -1147,7 +1142,7 @@ def test_a_choice_option_that_is_a_forms_submit_is_never_clicked(browser_page):
     assert browser_page.evaluate("document.body.dataset.sent") is None
 
 
-# --- review M1: Workday's click filter over its real button --------------------------------------
+# --- Workday's click filter over its real button -------------------------------------------------
 
 def test_a_button_under_a_click_filter_of_the_same_words_is_one_button(browser_page, fixture_url):
     d = _open(browser_page, fixture_url, "workday_create_account.html")
@@ -1157,9 +1152,7 @@ def test_a_button_under_a_click_filter_of_the_same_words_is_one_button(browser_p
     assert create.locator[1] == "#create-filter"
 
 
-# === SP5 review round 2 ============================================================================
-
-# --- R2-I1: a hidden required mark, and a fieldset's title --------------------------------------
+# --- a hidden required mark, and a fieldset's title ---------------------------------------------
 
 def test_a_hidden_required_mark_and_another_questions_label_mark_nothing_required(browser_page):
     browser_page.set_content("""<head><style>.ng-hide { display: none !important; }</style>
@@ -1179,7 +1172,7 @@ def test_a_hidden_required_mark_and_another_questions_label_mark_nothing_require
         ("Middle name", False), ("Nickname", False), ("Phone", True)]
 
 
-# --- R2-I2: only a search, alert or subscribe group is a posting's widget -------------------------
+# --- only a search, alert or subscribe group is a posting's widget --------------------------------
 
 def test_a_clear_button_a_prefixed_search_box_an_outside_next_and_an_eeo_note_keep_their_fields(
         browser_page):
@@ -1224,7 +1217,7 @@ def test_a_search_and_clear_group_is_still_a_postings_widget(browser_page):
     assert apply_form.extract(browser_page).fields == []
 
 
-# --- R2-I3: a section heading in its own header box ------------------------------------------------
+# --- a section heading in its own header box -------------------------------------------------------
 
 def test_a_heading_in_its_own_header_box_is_the_section_and_a_parsers_box_is_not(browser_page):
     # Ashby's shape: the posting's details in a left column beside the form,
@@ -1254,7 +1247,7 @@ def test_a_heading_in_its_own_header_box_is_the_section_and_a_parsers_box_is_not
                    "Race": "Voluntary Self-Identification"}
 
 
-# --- R2 Minor 1: "date" as a whole word only --------------------------------------------------
+# --- "date" as a whole word only --------------------------------------------------------------
 
 def test_a_read_only_box_named_candidate_or_update_is_no_date_picker(browser_page):
     browser_page.set_content("""<body><form>
@@ -1267,7 +1260,7 @@ def test_a_read_only_box_named_candidate_or_update_is_no_date_picker(browser_pag
     assert [f.label for f in apply_form.extract(browser_page).fields] == ["Start", "End", "When"]
 
 
-# --- R2 Minor 2: react-select without search --------------------------------------------------
+# --- react-select without search --------------------------------------------------------------
 
 _REACT_SELECT_DUMMY = """<body><form>
   <label id="g-label" for="g-input">Gender *</label>
@@ -1326,11 +1319,9 @@ def test_react_selects_dummy_input_is_a_dropdown_opened_through_its_face(browser
     assert browser_page.inner_text("#g-shown") == "Female"
 
 
-# --- a popup button that names a menu or a step is no dropdown field (fix round 3) ---------------
+# --- a popup button that names a menu or a step is no dropdown field -----------------------------
 
 def test_a_popup_button_that_says_more_menu_apply_next_or_back_is_no_field(browser_page):
-    # SP5's extractor carried backspace bytes where `\b` belonged, so these
-    # words never matched (found in fix round 3)
     browser_page.set_content("""<body><form>
       <div><span id="src-l">How did you hear about us?</span>
         <button type="button" aria-haspopup="listbox" aria-labelledby="src-l">Select One</button></div>
@@ -1347,9 +1338,7 @@ def test_a_popup_button_that_says_more_menu_apply_next_or_back_is_no_field(brows
         ("How did you hear about us?", "popup"), ("CV", "file")]
 
 
-# === SP5 review round 3 ============================================================================
-
-# --- R3-I1: a consent's floor from the label the extractor read -----------------------------------
+# --- a consent's floor from the label the extractor read ------------------------------------------
 
 _LONG_ROUTINE = ("I have read the privacy notice for candidates and I understand how my personal "
                  "information is collected, processed, stored and retained for this application, "
@@ -1397,12 +1386,9 @@ def test_a_consent_read_in_part_in_another_script_named_or_optional_keeps_its_hi
     assert apply_form.FormDigest.from_dict(d.to_dict()).fields[0].label_partial is partial
 
 
-# === SP5 review round 4 ============================================================================
-
-# --- R4-I1: a chrome word drops a popup only as its whole text ------------------------------------
+# --- a chrome word drops a popup only as its whole text -------------------------------------------
 
 def test_a_popup_question_whose_words_hold_apply_next_more_or_back_is_a_field(browser_page):
-    # the words round 3's backspace bytes kept inert, live since 9a6c42c
     browser_page.set_content("""<body><form>
       <div><label for="m1">Which of these apply to you?</label>
         <button type="button" id="m1" aria-haspopup="menu">Select...</button></div>
@@ -1505,7 +1491,7 @@ def test_a_named_chrome_popup_is_still_no_field(browser_page):
     assert "Save and continue" in [b.text for b in d.buttons]
 
 
-# --- R6 Minor 1: the harness never reads a tick or a toggle as a click outside the gate -----------
+# --- the harness never reads a tick or a toggle as a click outside the gate -----------------------
 
 def test_a_tick_or_a_toggle_that_says_confirm_is_no_click_outside_the_gate(browser_page):
     import types
@@ -1534,7 +1520,7 @@ def test_a_tick_or_a_toggle_that_says_confirm_is_no_click_outside_the_gate(brows
     breaks = h.invariant_breaks(out, rec, h.Sends(rec))
     assert len(breaks) == 1 and breaks[0].startswith("CLICK-OUTSIDE-GATE: clicked 'Submit "
                                                     "application'"), breaks
-    # review round 7, Minor 2: a toggle whose own name sends is no exemption
+    # a toggle whose own name sends is no exemption
     browser_page.evaluate("""() => document.querySelector('form').insertAdjacentHTML('beforeend',
       '<button type="button" id="sendtoggle" aria-pressed="false">Submit application</button>')""")
     rec = h.Recorder(None, park_mode=True)
@@ -1545,7 +1531,7 @@ def test_a_tick_or_a_toggle_that_says_confirm_is_no_click_outside_the_gate(brows
                                                     "application'"), breaks
 
 
-# --- R5 Minor 1: a menu label is chrome only when it names the chrome itself ----------------------
+# --- a menu label is chrome only when it names the chrome itself ----------------------------------
 
 def test_a_language_question_and_a_listbox_answered_back_are_fields(browser_page):
     browser_page.set_content("""<body><form>
@@ -1567,7 +1553,7 @@ def test_a_language_question_and_a_listbox_answered_back_are_fields(browser_page
         ("Bank account type", True, "popup"), ("Stack preference", False, "popup")]
 
 
-# --- R4 Minor 1: every skipped subtree with words marks the label read in part --------------------
+# --- every skipped subtree with words marks the label read in part --------------------------------
 
 @pytest.mark.parametrize("inner, partial", [
     ('I agree to the Privacy Policy <span aria-hidden="true">and consent to a background '
@@ -1584,9 +1570,7 @@ def test_a_labels_skipped_words_mark_it_read_in_part(browser_page, inner, partia
     assert f.label_partial is partial, f.label
 
 
-# === SP5 review round 8 ============================================================================
-
-# the three send shapes the word rules let through (R8-I1 a, c), for the
+# the send shapes the word rules let through, for the
 # classification tests and the open guard's
 _SEND_POPUPS = {
     "shown": """<div><button type="button" id="arrow" aria-haspopup="menu"
@@ -1603,7 +1587,7 @@ _SEND_POPUPS = {
 }
 
 
-# --- R8 (1): no popup whose own words send is ever opened, however it was read --------------------
+# --- no popup whose own words send is ever opened, however it was read ----------------------------
 
 @pytest.mark.parametrize("shape", sorted(_SEND_POPUPS))
 def test_a_popup_whose_own_words_send_is_never_opened(browser_page, shape):
@@ -1634,7 +1618,7 @@ def test_a_popup_whose_words_ask_is_opened(browser_page):
     assert browser_page.evaluate("document.body.dataset.opened") == "1"
 
 
-# --- R8 (2), (3): a popup is a field by a question from outside it, or by its own requirement -----
+# --- a popup is a field by a question from outside it, or by its own requirement ------------------
 
 @pytest.mark.parametrize("shape", sorted(_SEND_POPUPS))
 def test_a_send_popup_is_no_field(browser_page, shape):
@@ -1666,10 +1650,10 @@ def test_a_popup_with_its_star_beside_it_reads_required(browser_page):
 
 
 def test_an_optional_question_with_a_send_word_is_a_field_only_by_an_outside_label(browser_page):
-    # the Minor's two cases: with a label of its own it is a question; named
-    # only by its own aria-label it is a question too since SP6 (review M2:
-    # the send rule reads "submit" there as a question's word, not a send),
-    # and a send named by its own aria-label stays a button
+    # with a label of its own it is a question; named only by its own
+    # aria-label it is a question too (the send rule reads "submit" there as
+    # a question's word), and a send named by its own aria-label stays a
+    # button
     browser_page.set_content("""<body><form>
       <div><label for="ref">Willing to submit references</label>
         <button type="button" id="ref" aria-haspopup="listbox">Select</button></div>

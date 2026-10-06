@@ -1,6 +1,6 @@
-"""SP0 smoke: PySide6 is installed and a widget constructs headless.
+"""Smoke test: PySide6 is installed and a widget constructs headless.
 
-Proves the Qt toolkit works without a display so the rest of the port (and CI) can
+Proves the Qt toolkit works without a display so the rest of the suite (and CI) can
 rely on it. `conftest.py` sets QT_QPA_PLATFORM=offscreen; pytest-qt's `qapp` fixture
 owns the single QApplication and `qtbot` manages widget lifetimes.
 """

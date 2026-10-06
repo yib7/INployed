@@ -1,4 +1,4 @@
-"""Phase 7 (ship cycle 6) UI polish: header/cell alignment, Title stretch, and
+"""UI polish: header/cell alignment, Title stretch, and
 the accessible names screen readers need on inputs without a QFormLayout label.
 """
 from unittest.mock import MagicMock

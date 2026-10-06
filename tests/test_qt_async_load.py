@@ -113,12 +113,12 @@ def test_reload_data_async_reports_errors_without_crashing(qtbot, tmp_path, monk
     assert w._loading is False
 
 
-# --- SP5: repost window wiring through a real refresh ----------------------------
+# --- repost window wiring through a real refresh ---------------------------------
 
 # The repost window counts days on the UTC clock (jobsdata._utc_today), so these
 # tests pin that clock and date their rows and marks from it. A local
 # date.today() runs a day ahead of UTC east of Greenwich in the evening: under
-# TZ=LIN-14 the "31 days ago" mark read as 30 and the repost stayed hidden.
+# TZ=LIN-14 the "31 days ago" mark would read as 30 and the repost would stay hidden.
 TODAY = date(2026, 9, 15)
 
 

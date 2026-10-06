@@ -121,7 +121,7 @@ def test_transient_errors_keep_schedule_bounded_behavior(monkeypatch, sleeps):
     assert len(seen) == 3
 
 
-# P1-3: the retry classifiers substring-match str(exc), and the try block they
+# The retry classifiers substring-match str(exc), and the try block they
 # guard raises its OWN LLMErrors carrying up to 500 chars of model output. A JD
 # about sales quotas or request timeouts must not turn a deterministic parse
 # failure into 17 minutes of rate-limit backoff.

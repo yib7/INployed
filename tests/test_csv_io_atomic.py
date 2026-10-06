@@ -1,8 +1,8 @@
-"""P1-2: csv_io.write_csv_gz_atomic generalized with a `compression` parameter so
+"""csv_io.write_csv_gz_atomic takes a `compression` parameter so
 _drop_ids_from_csv and _append_dedup_csv (local/jobsdata.py) can reuse the same
-atomic tmp+os.replace helper for PLAIN csv writes, not just gz. Default stays gz
-so both existing call sites (csv_io.reconcile_file, qt/mw_tracker._write_is_seen)
-keep working unchanged.
+atomic tmp+os.replace helper for PLAIN csv writes, not just gz. The default is gz,
+so the gz call sites (csv_io.reconcile_file, qt/mw_tracker._write_is_seen) need no
+argument.
 """
 import os
 import sys
@@ -47,7 +47,7 @@ def test_write_csv_gz_atomic_plain_csv_is_atomic_no_leftovers(tmp_path):
 
 
 def test_write_csv_gz_atomic_retries_replace_past_transient_lock(tmp_path, monkeypatch):
-    # P1-3: the CSV writer must share jsonutil's bounded os.replace retry so a
+    # the CSV writer must share jsonutil's bounded os.replace retry so a
     # lock-free concurrent reader on Windows can't fail a master rewrite with a
     # transient PermissionError. Mirror the jsonutil regression test: the flaky
     # replace lives in jsonutil (the shared helper), proving csv_io routes
@@ -94,7 +94,7 @@ def test_write_csv_gz_atomic_cleans_up_tmp_on_failure(monkeypatch, tmp_path):
     assert leftovers == []
 
 
-# MB-1: pd.concat([existing, df]) in scraper.py's append_to_master column-unions a
+# pd.concat([existing, df]) in scraper.py's append_to_master column-unions a
 # fresh row against a master that already HAS an is_seen column -- the fresh row
 # gets is_seen=NaN (no per-row fill), not "no". score_jobs.py's update_master_scores
 # deliberately never sets is_seen (that is local triage state -- see its docstring),

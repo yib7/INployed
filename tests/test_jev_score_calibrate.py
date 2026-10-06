@@ -1,4 +1,4 @@
-"""scripts/jev_score_calibrate.py (VL-2): the Jev scorer's calibration run.
+"""scripts/jev_score_calibrate.py: the Jev scorer's calibration run.
 
 Hermetic: a synthetic master and résumé in tmp_path, `live_judge` swapped for
 `jev_doubles.DryRun(jev.FakeJev())` (it counts each request like a live one, so the
@@ -264,7 +264,7 @@ def test_load_jobs_reads_the_text_score_jobs_reads(tmp_path):
     ({"extracted_date": "2026-09-27"}, (3, "formatted")),    # before: stays in
     ({"extracted_date": "not a date"}, (3, "formatted")),     # unparseable: stays in
     ({"extracted_date": ""}, (3, "formatted")),               # missing: stays in
-    # M1: a timezone-offset date must not raise comparing tz-aware to naive.
+    # A timezone-offset date must not raise comparing tz-aware to naive.
     ({"extracted_date": "2026-09-29T08:00:00-04:00"}, None),               # after (UTC): excluded
     ({"extracted_date": "2026-09-26T08:00:00-04:00"}, (3, "formatted")),   # before (UTC): stays in
 ])

@@ -1,6 +1,6 @@
 """Post-batch cover-letter tweaks:
 
-  * refine_body: the second, flash-tier pass (since cycle 15 the humanizer:
+  * refine_body: the second, flash-tier pass (the humanizer:
     cohesion + rhythm + bullet-echo removal + strict grounding + measured tone;
     its rules are pinned in tests/test_coverletter_narrative.py). Best-effort:
     an empty result or a raising call leaves the draft untouched. No real LLM
@@ -95,7 +95,7 @@ def test_generate_body_runs_generation_then_refine_then_gate(monkeypatch):
     order = []
 
     # Sentence-case sentinels, not ALLCAPS: the grounding gate downstream traces
-    # every ALLCAPS token wherever it sits (P2-4 -- sentence case cannot produce
+    # every ALLCAPS token wherever it sits (sentence case cannot produce
     # one, so an abbreviation upstream cannot manufacture a free slot), and an
     # ungrounded "GEN" would fail the letter before the ordering is asserted.
     def fake_call(system, user, *a, **k):

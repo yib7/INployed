@@ -1,4 +1,4 @@
-"""SC-1 to SC-3 and JS-4 (cycle 19): the Jev scorer's switch, its questions,
+"""The Jev scorer's switch, its questions,
 the requirement-line extractor and the composition code.
 
 Hermetic: the dashboard config is a file in tmp_path (monkeypatched onto
@@ -60,7 +60,7 @@ def sdk(monkeypatch):
     return set_found
 
 
-# --- JS-4: the switch order ---------------------------------------------------------
+# --- the switch order ---------------------------------------------------------------
 
 def test_env_on_wins_over_a_config_that_is_off(cfg_file, sdk, capsys):
     cfg_file({"jev_enabled": False})
@@ -165,7 +165,7 @@ def test_the_env_switch_still_needs_the_key(cfg_file, sdk, capsys):
 @pytest.mark.parametrize("found", [True, False])
 def test_use_jev_agrees_with_jev_switch_on_one_config_file(cfg_file, sdk, monkeypatch, capsys,
                                                            cfg, env, found):
-    """The scorer's own switch (JS-4) and the dashboard's (`jev_switch`) read the
+    """The scorer's own switch and the dashboard's (`jev_switch`) read the
     same file the same way, so Settings and the scorer never disagree."""
     path = cfg_file(cfg)
     monkeypatch.setattr(jev_switch, "config_path", lambda: path)
@@ -173,7 +173,7 @@ def test_use_jev_agrees_with_jev_switch_on_one_config_file(cfg_file, sdk, monkey
     on, why = jev_score.use_jev(env)
     assert on is jev_switch.jev_on("scoring", env=env)
     assert why == (jev_switch.jev_why_off("scoring", env=env) or "Settings")
-    if isinstance(cfg, str):        # 4-C8: a file that will not parse reads off
+    if isinstance(cfg, str):        # a file that will not parse reads off
         assert (on, why) == (False, jev_score.REASON_SWITCH)
 
 
@@ -202,7 +202,7 @@ def test_use_jev_and_jev_switch_agree_on_every_stored_switch_value(cfg_file, sdk
     assert on is settings.switch_on(raw)
 
 
-# --- SC-1: importing score_jobs stays light -------------------------------------------
+# --- importing score_jobs stays light -------------------------------------------------
 
 def _copy_pipeline(dest: Path, names) -> Path:
     dest.mkdir(parents=True)
@@ -334,7 +334,7 @@ def _all_strings(value):
     return []
 
 
-# --- SC-2: stage 1 composition ------------------------------------------------------------
+# --- stage 1 composition ------------------------------------------------------------------
 
 @pytest.mark.parametrize("main_factor,text", [
     ("skills_fit", "no experience bar, and the skills, tools and field line up"),
@@ -624,7 +624,7 @@ def test_fitted_state_keeps_the_longest_job_text_jev_request_fits_passes(monkeyp
     assert jev_score.fitted_state(job, RESUME, jev_score.stage1_questions()) is None
 
 
-# --- SC-3: requirement lines ---------------------------------------------------------------
+# --- requirement lines ---------------------------------------------------------------------
 
 Req = jev_score.Req
 
@@ -832,7 +832,7 @@ def test_requirement_lines_of_nothing_are_empty(desc):
     assert jev_score.requirement_lines(desc) == []
 
 
-# --- SC-3: stage 2 composition ---------------------------------------------------------------
+# --- stage 2 composition ---------------------------------------------------------------------
 
 def _reqs(*musts):
     return [Req(f"Requirement {i}", m) for i, m in enumerate(musts)]
@@ -1058,7 +1058,7 @@ def test_stage2_returns_none_without_a_judge_or_when_it_fails(monkeypatch):
     assert jev_score.stage2(ScriptedJudge(), JOB2_MD, "") is None
 
 
-# --- SC-4, SC-5: the hooks in score_jobs.py ---------------------------------------------------
+# --- the hooks in score_jobs.py ---------------------------------------------------------------
 
 def _sj():
     import score_jobs
@@ -1131,7 +1131,7 @@ class _CountsLikeLive(RefusesStage2For):
 
 def test_run_scoring_scores_both_stages_with_jev_and_never_calls_the_llm(monkeypatch):
     sj = _sj()
-    # SP2's writer is a deliberate exception to "never calls the LLM": it is
+    # the Jev writer is a deliberate exception to "never calls the LLM": it is
     # this test's own subject elsewhere (tests/test_score_jobs_writer.py), so
     # it is switched off here to keep this test about the Jev-vs-LLM path.
     monkeypatch.setattr(sj, "JEV_WRITER", False)

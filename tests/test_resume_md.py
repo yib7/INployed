@@ -1,4 +1,4 @@
-"""Tests for local/resume_md.py — the YAML→resume.md generator (Cycle 6 SP6).
+"""Tests for local/resume_md.py, the YAML→resume.md generator.
 
 The build must NEVER make a real Gemini call (paid), so every test injects a
 fake `llm_call`. We verify: the fake receives the chosen model + a prompt that

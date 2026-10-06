@@ -1,4 +1,4 @@
-"""SP3 (cycle 15): the cover letter as narrative.
+"""The cover letter as narrative.
 
 With the seed and the background in place (tests/test_coverletter_inputs.py),
 this pins what the letter does with them:

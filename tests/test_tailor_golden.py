@@ -1,13 +1,10 @@
 """Golden-output oracle for the résumé-tailor engine.
 
-The file was born in cycle 9 (design spec:
-``docs/superpowers/specs/2026-09-01-tailor-legibility-design.md``), a pass over
-``local/resume_tailor/`` that moved code without changing what the engine produces:
-SP2 turned ``run.tailor()``'s hand-written stage sequence into a declarative pass
-pipeline, SP4 split ``compose.py`` into ``selection.py`` + ``skills.py``, SP5 deleted
-the parts of the tree that were documented but never real. All three had to leave the
-output byte-identical, and "byte-identical" is not something a reviewer can eyeball
-across a 1,571-line module move. So it was pinned here instead.
+It pins the engine's exact output, byte for byte, so a code move or a refactor of
+``local/resume_tailor/`` (the declarative pass pipeline in ``run.tailor()``, the
+``selection.py`` + ``skills.py`` split of ``compose.py``) cannot change what the engine
+produces unseen. "Byte-identical" is not something a reviewer can eyeball across a large
+module move, so the golden checks it.
 
 The test drives the whole bullet pipeline in the exact order ``run.tailor()`` runs it —
 ``select`` -> ``inject_verbatim`` -> ``lead_with_overview`` -> ``block_briefs`` ->
@@ -19,17 +16,15 @@ gate -> ``sweep.sweep_items`` -> retrim -> gate -> ``compress_skills`` -> ``meth
 they were produced by running this pipeline once and pasting what came out, so the test
 compares the engine against a frozen recording rather than against itself.
 
-**The contract changed at cycle 10.** Cycle 9 was a pure refactor, so any diff here was
-a bug and the rule was "do not update the golden to make a refactor land". Cycle 10
-deliberately changes what the engine writes — prompt wording, selection, style repair —
-so the golden is now a change **detector**, not a change **preventer**. What it detects
-is an output change nobody meant to make. The rules:
+The golden is a change **detector**: a change to prompt wording, selection or style
+repair may change what the engine writes, and the golden catches the output change
+nobody meant to make. The rules:
 
-* A phase that does NOT intend to change output leaves this file untouched. A diff there
-  is still a real regression: find it, don't re-pin it.
-* A phase that DOES change output re-pins the literals below **and records the exact
-  before/after diff in that phase's entry in ``.autopilot/PLAN.md``**, so the change is
-  reviewable as text rather than as a wall of new expected values.
+* A change that does NOT intend to change output leaves this file untouched. A diff there
+  is a real regression: find it, don't re-pin it.
+* A change that DOES change output re-pins the literals below **and records the exact
+  before/after diff in its commit message**, so a reviewer reads the change as a diff of
+  text, line by line.
 * **A re-pin with no recorded diff is a failed checkpoint**, not a passing test. Pasting
   fresh output into the literals is exactly how a regression ships disguised as a
   refactor, and the recorded diff is the only thing standing in the way.
@@ -40,27 +35,26 @@ Four tests, each catching a different kind of drift:
   pins the *stage call order* (``_GOLDEN_STAGES``): a reordered or dropped LLM stage shows
   up as a sequence diff before the text diff does.
 * ``test_run_tailor_matches_the_golden`` — drives the real ``run.tailor()`` with
-  ``enforce_one_page`` stubbed at the render seam. This is the one SP2 has to satisfy:
-  if the pass-pipeline refactor reorders anything, the bullets handed to
+  ``enforce_one_page`` stubbed at the render seam. This one guards the pass pipeline:
+  if a change to it reorders anything, the bullets handed to
   ``enforce_one_page`` stop matching.
 * ``test_grounding_gate_runs_at_every_bullet_pass`` — the gate is a no-op on grounded
   text, so the golden alone cannot tell four gate calls from three. This counts them and
   pins which one runs without a fallback.
 * ``test_render_uses_the_real_template_preamble`` — the tests above stub
   ``assets.template_head()`` to a short sentinel so the golden ``.tex`` literal stays
-  reviewable (the real preamble is 180-odd lines of candidate-independent LaTeX that no
-  phase of this cycle touches). This test puts the real preamble back and proves ``render``
+  reviewable (the real preamble is 180-odd lines of candidate-independent LaTeX). This
+  test puts the real preamble back and proves ``render``
   still emits ``preamble + body`` verbatim, so nothing hides behind the sentinel.
 
 Hermetic by construction, and it must stay that way:
 
 * **No LLM call ever leaves the process.** The stub is installed as ``call`` on
-  every ``resume_tailor.*`` module that has one (``compose``, ``llm`` and ``research``
-  today, whatever SP4 adds tomorrow) — not just ``compose``, because a monkeypatch
-  binds the name in the namespace where the function resolves its global, so patching
-  ``compose`` alone would silently detach the moment SP4 moves ``select`` into
-  ``selection.py``. Patching by sweep means this file survives that move untouched, which
-  is the point. Any stage that reaches the stub with an unrecognised prompt raises
+  every ``resume_tailor.*`` module that has one (``compose``, ``llm``, ``research`` and
+  any module added later). A monkeypatch binds the name in the namespace where the
+  function resolves its global, so patching ``compose`` alone would silently detach once
+  ``select`` lives in ``selection.py``. Patching by sweep keeps this file valid when code
+  moves between modules. Any stage that reaches the stub with an unrecognised prompt raises
   instead of falling through to the network.
 * **No user data reaches this file.** A synthetic master (``_MASTER``) replaces the real
   ``resume_tailor_files/master_experience.yaml``, which is gitignored personal data and
@@ -245,7 +239,7 @@ _STUB_HEAD = "%%GOLDEN TEMPLATE PREAMBLE%%\n\\begin{document}\n\n"
 
 # ── The deterministic stubbed LLM ────────────────────────────────────────────
 # One fixed payload per stage, dispatched on the stage's own system prompt. Each
-# payload is shaped to exercise a branch the refactor could break:
+# payload is shaped to exercise a branch a refactor could break:
 #   select            — an over-long block/project so _enforce_fixed_counts really trims
 #   rephrase          — one over-length bullet (trim), one underfull (fill), one buzzword
 #                       and one em dash (style gate), and two openers colliding with the
@@ -424,9 +418,9 @@ def _install_stub(monkeypatch, stub):
     """Bind `stub` as ``call`` on EVERY imported ``resume_tailor`` module that has one.
 
     A monkeypatch binds the name in the namespace where the function resolves its
-    global, so ``setattr(compose, "call", ...)`` stops covering ``select`` the moment
-    SP4 moves it into ``selection.py``. Sweeping every module keeps this file valid
-    across that move — and keeps the money guard total: no module is left holding the
+    global, so ``setattr(compose, "call", ...)`` does not cover ``select``, which lives
+    in ``selection.py``. Sweeping every module keeps this file valid when code moves
+    between modules, and keeps the money guard total: no module is left holding the
     real ``llm.call``.
     """
     patched = []
@@ -461,15 +455,15 @@ def pinned_engine(tmp_path, monkeypatch):
         monkeypatch.delenv(var, raising=False)
 
     # Import-time constants: env can no longer reach them, so pin the attributes.
-    # (config.MAX_LINE_CHARS was pinned here until SP3 retired it — the length budget is
-    # derived from measure.BODY_LINE_CAPACITY below, which is pinned instead.)
+    # (The length budget is derived from measure.BODY_LINE_CAPACITY below, which is
+    # pinned.)
     monkeypatch.setattr(config, "DEFAULT_LINE_TARGETS", [2, 2, 2])
     monkeypatch.setattr(config, "PROJECTS_MAX", 3)
     monkeypatch.setattr(config, "PROJECT_BULLETS_MAX", 2)
     monkeypatch.setattr(config, "PROJECT_BULLET_LINES", 2)
     monkeypatch.setattr(measure, "BODY_LINE_CAPACITY", 53464)
     monkeypatch.setattr(measure, "SKILL_LINE_CAPACITY", 53464)
-    # SP3 made the fill fractions env-overridable at import time. UNDERFULL_FILL decides which
+    # The fill fractions are env-overridable at import time. UNDERFULL_FILL decides which
     # bullets fill_underfull rewrites, so an exported override would otherwise pick the golden.
     monkeypatch.setattr(measure, "FULL_LINE_FILL", 0.90)
     monkeypatch.setattr(measure, "LAST_LINE_FILL", 0.75)
@@ -477,7 +471,7 @@ def pinned_engine(tmp_path, monkeypatch):
     monkeypatch.setattr(layout, "LEADERSHIP_ENTRY_LINES", 2)
 
     # Prompt-only assets that would otherwise read files absent from a fresh clone
-    # (resume_sample.pdf) or drift independently of this cycle (active_words.md).
+    # (resume_sample.pdf) or drift on their own (active_words.md).
     monkeypatch.setattr(assets, "example_text", lambda: "Exemplar voice, fixed.")
     monkeypatch.setattr(assets, "active_verbs", lambda: {k: list(v) for k, v in _VERBS.items()})
 
@@ -528,7 +522,7 @@ def _run_bullet_pipeline():
 
     grounded_snap = dict(bullets)
     compose.enforce_style(jd, job_title, sel, bullets)
-    rt_run._trim_to_caps(sel, bullets)     # SP2: the style repair may lengthen a bullet
+    rt_run._trim_to_caps(sel, bullets)     # the style repair may lengthen a bullet
     verify.enforce_grounded(sel, bullets, fallback=grounded_snap)
 
     if config.aiwriting_sweep_enabled():
@@ -559,7 +553,7 @@ _GOLDEN_STAGES = [
     "reverb",
     "fill_underfull",
     "enforce_style",
-    # Cycle 12 SP4: one AI-writing sweep call per non-verbatim ITEM, in selection order
+    # One AI-writing sweep call per non-verbatim ITEM, in selection order
     # (Globex Analytics, Trailhead, Ledgerly, Robotics Club). Side Gig is verbatim, so it
     # is not an item here at all. No "aiwriting_reask" entry: the stub echoes each bullet
     # back unchanged, so nothing overflows and the bounded re-ask never fires.
@@ -570,11 +564,10 @@ _GOLDEN_STAGES = [
 ]
 
 _GOLDEN_BULLETS = {
-    # SP2 re-pin (clause-cut floor 0.6 -> 0.85). Was "...new raw event volume": the only
-    # comma in the over-budget prefix sat at char 204 of a 254-char 2-line budget (80%),
-    # which cleared the old 60% floor, so the clause cut fired and threw away 50 chars
-    # that FIT. It now falls through to the word cut, which keeps 232 of the 254 and lands
-    # on "...the runbook" (_strip_dangling sheds the trailing "that ..." fragment).
+    # The clause-cut floor is 0.85. The only comma in the over-budget prefix sits at char
+    # 204 of a 254-char 2-line budget (80%), under the floor, so the clause cut (which
+    # would throw away 50 chars that FIT) does not fire. The word cut keeps 232 of the 254
+    # and lands on "...the runbook" (_strip_dangling sheds the trailing "that ..." fragment).
     "gx_etl":
         "Rebuilt the nightly ETL pipeline in Python against PostgreSQL and cut batch runtime 42%, "
         "keeping the ingestion service green across the whole summer while the warehouse kept taking on "
@@ -606,12 +599,11 @@ _GOLDEN_SKILL_LINES = [
     {"label": "Methods", "items": "ETL, Experimentation, Data Modeling, Feature Engineering"},
 ]
 
-# 2026-09-22 layout re-pin (spacing only; bullets, skills and stages unchanged):
-#   after the contact line   \vspace{-10pt}  -> \vspace{-12.5pt}
-#   after Education          \vspace{-10pt}  -> \vspace{-10.5pt}
-#   after Projects           \vspace{-10pt}  -> (removed)
-#   skills itemize           [leftmargin=0.15in, label={}]
-#                         -> [leftmargin=\resumeEntryIndent, labelwidth=0pt, labelsep=0pt, label={}]
+# the template's layout spacing, as the literal below pins it:
+#   after the contact line   \vspace{-12.5pt}
+#   after Education          \vspace{-10.5pt}
+#   after Projects           no space
+#   skills itemize           [leftmargin=\resumeEntryIndent, labelwidth=0pt, labelsep=0pt, label={}]
 _GOLDEN_TEX = r"""%%GOLDEN TEMPLATE PREAMBLE%%
 \begin{document}
 
@@ -716,8 +708,7 @@ def test_run_tailor_matches_the_golden(pinned_engine, stub_template_head,
     Everything past the render seam is stubbed out — ``enforce_one_page`` captures what
     it was handed and hands back a fake PDF, ``pdflatex_available`` lies, and the
     advisory apply-sheet writer is silenced (it reaches stores this test has no business
-    touching). What is NOT stubbed is the stage sequencing, which is exactly what SP2
-    rewrites.
+    touching). What is NOT stubbed is the stage sequencing of the pass pipeline.
     """
     captured: dict = {}
 
@@ -759,12 +750,12 @@ def test_grounding_gate_runs_at_every_bullet_pass(pinned_engine, stub_template_h
 
     The golden above can't see this on its own: with everything grounded the gate is a
     no-op, so a refactor that quietly lost a call site would still produce identical
-    text. The snapshot -> mutate -> re-verify discipline is precisely what SP2 makes
+    text. The pass pipeline makes the snapshot -> mutate -> re-verify discipline
     structural, so pin the shape of it — one fallback-less prologue gate after rephrase,
     then one fallback-bearing gate after each bullet-mutating pass (verb dedupe,
     underfull fill, style gate, AI-writing sweep).
 
-    The fifth is cycle 12's sweep, and it is not redundant with the sweep's own
+    The fifth is the AI-writing sweep's, and it is not redundant with the sweep's own
     acceptance check: this gate reverts a bullet whose rewrite INTRODUCED an ungrounded
     token, while `sweep._accept` refuses one that DROPPED a fact the original carried.
     """

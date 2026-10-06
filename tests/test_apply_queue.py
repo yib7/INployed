@@ -1,7 +1,7 @@
-"""Tests for the batch auto-apply queue store + agent CLI (SP2).
+"""Tests for the batch auto-apply queue store + agent CLI.
 
-local/apply_queue.py is the deterministic backend the dashboard (SP3) and the
-apply agent (SP4) share: an atomic JSON queue beside seen.db with a sidecar
+local/apply_queue.py is the deterministic backend the dashboard and the
+apply agent share: an atomic JSON queue beside seen.db with a sidecar
 byte-0 file lock for cross-process mutations. Everything here is hermetic —
 every call passes an explicit tmp_path queue (or sets APPLY_QUEUE_PATH), so the
 real %LOCALAPPDATA%\\linkedin_watcher\\apply_queue.json is never touched.
@@ -161,7 +161,7 @@ def test_new_entry_carries_all_fields(tmp_path):
     assert e["status"] == "queued"
     assert e["attempts"] == 0
     assert e["missing_answers"] == []
-    assert e["difficulty"] == {}          # DF-4: no check has run yet
+    assert e["difficulty"] == {}          # no check has run yet
     for k in ("folder", "resume_pdf", "cover_letter_pdf",
               "apply_md", "application_record"):
         assert k in e["artifacts"], k
@@ -267,7 +267,7 @@ def test_claim_fifo_oldest_first(tmp_path):
 
 
 def test_claim_blank_queued_at_sorts_after_real_timestamps(tmp_path):
-    """P2-7: a blank queued_at (from a hand-edited / pre-schema entry) must NOT
+    """A blank queued_at (from a hand-edited / pre-schema entry) must NOT
     jump the FIFO ahead of jobs that carry one. '' sorts lexicographically BEFORE
     every ISO stamp, so a plain sort claims a blank entry first; the claim treats
     blank as newest-unknown and sorts it AFTER every real timestamp. The oldest
@@ -295,7 +295,7 @@ def test_claim_missing_queued_at_key_sorts_after_real(tmp_path):
 
 
 def test_claim_blank_queued_at_ties_break_by_list_order(tmp_path):
-    """Two blank-queued_at entries tie; the fix keeps a defined, stable order —
+    """Two blank-queued_at entries tie; the claim keeps a defined, stable order —
     the earlier one in list (insertion) order is claimed first."""
     q = _q(tmp_path)
     for jid in ("first_blank", "second_blank"):
@@ -496,7 +496,7 @@ def test_stats_counts_submitted(tmp_path):
     assert s["ready_to_submit"] == 0
 
 
-# --- DF-4: the difficulty check's result ---------------------------------------------
+# --- the difficulty check's result ---------------------------------------------------
 
 _DIFFICULTY = {"score": 5, "band": "May need an answer or two",
                "checked_at": "2026-09-27T10:00:00", "system": "workday",
@@ -586,9 +586,9 @@ def test_requeue_clears_the_right_fields_keeps_attempts(tmp_path):
 
 
 def test_unclaim_gives_the_attempt_back_and_counts_the_outage_only_when_asked(tmp_path):
-    # SP8a review M1: a judge the service could not answer gives the attempt
-    # back and counts an outage; a refused key keeps the attempt counted; an
-    # outage the runner does not count (review R2-I1) gives the attempt back
+    # a judge the service could not answer gives the attempt back and counts
+    # an outage; a refused key keeps the attempt counted; an outage the runner
+    # does not count gives the attempt back
     q = _q(tmp_path)
     apply_queue.enqueue(_entry("1"), path=q)
     apply_queue.claim(claimed_by="w", path=q)
@@ -606,7 +606,7 @@ def test_unclaim_gives_the_attempt_back_and_counts_the_outage_only_when_asked(tm
 
 
 def test_unclaim_sends_the_job_behind_the_others(tmp_path):
-    # SP8a review R2-I1: a job handed back goes to the back of the FIFO, so the
+    # a job handed back goes to the back of the FIFO, so the
     # next drain starts on another job, even one queued in the same second
     q = _q(tmp_path)
     for jid in ("1", "2", "3"):
@@ -675,7 +675,7 @@ _STALE_SHEET = """\
 
 
 def test_requeue_refresh_splices_the_store_into_a_stale_sheet(tmp_path, monkeypatch):
-    # cycle 18 (FL-2): the requeue re-renders the Standard answers and the
+    # the requeue re-renders the Standard answers and the
     # Address from the store; the rest of the sheet stays as it was
     _store(tmp_path, monkeypatch, willing_to_relocate="Yes", onsite_ok="No",
            address_street="9 New Street")
@@ -708,8 +708,8 @@ def test_requeue_refresh_names_a_damaged_store_on_the_entry(tmp_path, monkeypatc
     apply_queue.set_artifacts("1", {"folder": str(folder)}, path=q)
     got = apply_queue.requeue("1", refresh_answers=True, path=q)
     assert got["status"] == "queued"
-    # fix round 1, item 3: say the sheet's answers were not refreshed, and for
-    # a damaged store point to the Apply Answers tab's backup restore (FL-4)
+    # the notes say the sheet's answers were not refreshed, and for a damaged
+    # store point to the Apply Answers tab's backup restore
     assert "were not refreshed" in got["notes"] and "AnswerStoreError" in got["notes"]
     assert "restore the backup" in got["notes"]
     assert (folder / "apply.md").read_text(encoding="utf-8") == _STALE_SHEET
@@ -727,12 +727,12 @@ def test_requeue_refresh_hook_failure_is_tolerated(tmp_path, monkeypatch):
     monkeypatch.setattr(apply_data, "refresh_answer_sections", boom)
     got = apply_queue.requeue("1", refresh_answers=True, path=q)  # must not raise
     assert got["status"] == "queued"
-    # P2 #14: the failure is surfaced IN-BAND on the entry's notes (dashboard-
+    # the failure is surfaced IN-BAND on the entry's notes (dashboard-
     # visible), not only stderr — so a human doesn't assume the answers refreshed.
     assert "were not refreshed" in got["notes"]
     assert "store on fire" in got["notes"]
-    # fix round 1, item 3: a plain RuntimeError is not the store; no backup-
-    # restore pointer for it
+    # a plain RuntimeError is not the store; no backup-restore pointer for
+    # it
     assert "restore the backup" not in got["notes"]
     # And it's persisted on the stored entry, not just the returned copy.
     stored = apply_queue._find(apply_queue.load(q), "1")
@@ -842,7 +842,7 @@ def test_remove_deletes_and_unknown_raises(tmp_path):
 
 
 def test_remove_many_drops_every_named_job_in_one_write(tmp_path, monkeypatch):
-    """Cycle 22: the Auto-apply tab's Remove on a multi-row selection. One
+    """The Auto-apply tab's Remove on a multi-row selection. One
     locked write for all of them; an id gone since the panel read the queue is
     skipped, and the count says how many went."""
     q = _q(tmp_path)
@@ -928,7 +928,7 @@ def test_mutation_under_held_lock_times_out(tmp_path, monkeypatch):
 
 
 def test_concurrent_claim_never_double_claims(tmp_path):
-    """P2 #16 stress: N worker threads hammer claim() on a queue of N entries.
+    """Stress: N worker threads hammer claim() on a queue of N entries.
     The cross-process byte-0 lock (load->mutate->atomic-write under locked())
     must guarantee each entry is claimed by EXACTLY ONE thread — never two — and
     that every entry ends in_progress. A race would hand the same job to two
@@ -971,13 +971,12 @@ def test_concurrent_claim_never_double_claims(tmp_path):
 # --- build_context --------------------------------------------------------------------
 
 def test_build_context_reads_master_email_and_config(tmp_path, monkeypatch):
-    # NOTE (settings declutter): the `auto_apply_inbox_url` config key exercised
-    # here no longer has a Settings Field — it was merged away into
-    # `auto_apply_inbox_map`. This test and
+    # NOTE: the `auto_apply_inbox_url` config key exercised here has no
+    # Settings field; `auto_apply_inbox_map` covers it. This test and
     # test_build_context_single_inbox_is_fallback_for_unmapped_domain below are
-    # deliberately UNCHANGED: they are now the BACK-COMPAT CONTRACT for the key.
-    # build_context reads config.json directly and keeps DEFAULT_INBOX_URL, so a
-    # value an existing user already saved must keep resolving exactly as before.
+    # the BACK-COMPAT CONTRACT for the key: build_context reads config.json
+    # directly and keeps DEFAULT_INBOX_URL, so a value an existing user saved
+    # keeps resolving the same way.
     from resume_tailor import assets, config as rt_config
     monkeypatch.setattr(assets, "load_master",
                         lambda: {"basics": {"email": "cand@example.com"}})
@@ -1148,9 +1147,10 @@ def test_cli_lock_timeout_exits_3(tmp_path, capsys, monkeypatch):
 
 def test_cli_enqueue_list_survive_cp1252_pipe(tmp_path, monkeypatch):
     # On this machine sys.stdout.encoding is cp1252 when stdout is a pipe —
-    # exactly how the SP4 agent invokes every verb. Before the reconfigure fix,
-    # a verb persisted its mutation then crashed with UnicodeEncodeError (exit
-    # 1, outside the 0/2/3 contract) and the agent never saw the entry it owns.
+    # exactly how the apply agent invokes every verb. Without the stdout
+    # reconfigure, a verb would persist its mutation then crash with
+    # UnicodeEncodeError (exit 1, outside the 0/2/3 contract) and the agent
+    # would never see the entry it owns.
     q = _q(tmp_path)
     title = "✅ Data Engineer → NYC"        # ✅ … → : not in cp1252
     out_buf, err_buf = io.BytesIO(), io.BytesIO()
@@ -1233,7 +1233,7 @@ def test_a_dropped_url_also_clears_the_inferred_ats():
 
 
 def test_a_failed_check_is_noted_beside_the_earlier_result(tmp_path):
-    # SP6 fix round 1 (minor 7): the earlier score stays, the failure is noted
+    # the earlier score stays, the failure is noted
     q = _q(tmp_path)
     apply_queue.enqueue(_entry("1"), path=q)
     apply_queue.set_difficulty("1", _DIFFICULTY, path=q)

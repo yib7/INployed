@@ -1,4 +1,4 @@
-"""VL-5: an installed `claude` CLI older than a model needs.
+"""An installed `claude` CLI older than a model needs.
 
 Claude Code 2.1.207 answers `--model claude-opus-5-5` with exit 0 and an
 `is_error` envelope saying the model needs 2.1.280 or newer. run_claude maps
@@ -30,7 +30,7 @@ NEW = "claude-opus-5-5"
 OLD = "claude-opus-5"
 SONNET_NEW = "claude-sonnet-5-5"
 SONNET_OLD = "claude-sonnet-5"
-# Every model that swaps, with the model it swaps to (cycle 21 Task 10 added Sonnet).
+# Every model that swaps, with the model it swaps to.
 PAIRS = [pytest.param(NEW, OLD, id="opus"), pytest.param(SONNET_NEW, SONNET_OLD, id="sonnet")]
 
 

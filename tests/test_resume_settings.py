@@ -6,9 +6,9 @@ behaviour: ATS on, prep on-demand, professional tone. These exercise the schema
 + load/save round-trip against a temp config dir so nothing touches the real
 config.json.
 
-Note: `tailor_cover_letter` was removed from the schema in the settings-page
-audit — no consumer ever read it; every tailor call site prompts live via
-QMessageBox or hardcodes the value instead. The key may still linger
+Note: the schema has no `tailor_cover_letter`, since no consumer reads it;
+every tailor call site prompts live via QMessageBox or hardcodes the
+value. The key may still linger
 harmlessly in an existing config.json (merge semantics).
 """
 import sys
@@ -45,7 +45,7 @@ def test_resume_fields_exist_with_exact_defaults_and_types():
     assert by_key["tailor_prep_sheet"].type == "bool"
     assert by_key["tailor_prep_sheet"].default is False
 
-    # cycle 15: the cover-letter avoid-AI-writing check is on unless turned off
+    # the cover-letter avoid-AI-writing check is on unless turned off
     assert by_key["cover_letter_avoid_ai_writing"].type == "bool"
     assert by_key["cover_letter_avoid_ai_writing"].default is True
 
@@ -89,7 +89,7 @@ def test_validate_rejects_unknown_tone(tmp_path):
     assert settings.validate(base) == {}
 
 
-# --- SP5: claude provider dropdowns + Claude model fields -----------------------
+# --- claude provider dropdowns + Claude model fields ----------------------------
 
 def _scoring_targets(tmp_path: Path) -> dict[str, Path]:
     return {"config": tmp_path / "config.json", "scoring": tmp_path / "scoring_config.json"}

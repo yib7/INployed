@@ -1,5 +1,6 @@
-"""Cycle-5 audit sweep (P2-2, P2-6, P2-12, P2-13, P2-30): the behavior-changing
-small fixes, each pinned by a regression test.
+"""Small behavior rules, each pinned by a regression test: a list-shaped skill
+line, a same-day status change across machines, a same-mtime rewrite, long
+names and the removed-jobs marker.
 """
 import sys
 from pathlib import Path
@@ -16,24 +17,24 @@ from resume_tailor import compose, output  # noqa: E402
 from seen_db import SeenRegistry  # noqa: E402
 
 
-# ── P2-2: a list-shaped skill line keeps the model's ranking ─────────────────
+# ── a list-shaped skill line keeps the model's ranking ───────────────────────
 
 def test_finalize_skill_lines_joins_list_shape():
     out = {"Languages": ["Python", "SQL"], "Frameworks": "",
            "Developer Tools": "", "Libraries": ""}
     lines = compose._finalize_skill_lines(out)
     langs = next(ln["items"] for ln in lines if ln["label"] == "Languages")
-    # The model's ranking survives (previously the list coerced to "" and the
-    # pool order silently filled instead).
+    # The model's ranking survives: the list is joined, so the pool order never
+    # fills the line.
     assert langs.index("Python") < langs.index("SQL")
 
 
-# ── P2-6: same-day cross-machine status change can win the merge ─────────────
+# ── same-day cross-machine status change can win the merge ───────────────────
 
 def test_import_same_day_status_change_wins_with_timestamp(tmp_path, monkeypatch):
     """status_ts has second resolution, so the two writes must land on different
-    seconds. Drive seen_db's clock instead of sleeping 1.1 s of real time (audit
-    C6-12): a wall-clock sleep is both a second of suite runtime and the kind of
+    seconds. The test drives seen_db's clock and never sleeps 1.1 s of real time:
+    a wall-clock sleep is both a second of suite runtime and the kind of
     timing dependence that flakes on a loaded CI runner."""
     import datetime as _dt
 
@@ -65,7 +66,7 @@ def test_import_same_day_status_change_wins_with_timestamp(tmp_path, monkeypatch
 
 
 def test_import_from_old_backup_without_status_ts(tmp_path):
-    """A pre-P2-6 backup (no status_ts column) must still merge."""
+    """An older backup with no status_ts column must still merge."""
     import sqlite3
     bak = tmp_path / "old.db"
     conn = sqlite3.connect(bak)
@@ -93,7 +94,7 @@ def test_import_from_old_backup_without_status_ts(tmp_path):
         reg.close()
 
 
-# ── P2-12: a same-mtime-tick rewrite is still detected (size differs) ────────
+# ── a same-mtime-tick rewrite is still detected (size differs) ───────────────
 
 def test_new_run_ids_detects_same_mtime_rewrite(tmp_path, monkeypatch):
     d = tmp_path / "evening"
@@ -110,7 +111,7 @@ def test_new_run_ids_detects_same_mtime_rewrite(tmp_path, monkeypatch):
     assert outbox.new_run_ids(before, base=tmp_path) == ["1", "2"]
 
 
-# ── P2-13: >80-char names get a disambiguating hash suffix ───────────────────
+# ── >80-char names get a disambiguating hash suffix ──────────────────────────
 
 def test_sanitize_long_names_do_not_collide():
     a = output.sanitize("A" * 79 + " Consolidated Holdings International Group")
@@ -121,7 +122,7 @@ def test_sanitize_long_names_do_not_collide():
     assert output.sanitize("Acme") == "Acme"
 
 
-# ── P2-30: removed_jobs marker prunes once no source carries the row ─────────
+# ── removed_jobs marker prunes once no source carries the row ────────────────
 
 def test_removed_jobs_pruned_when_absent_everywhere(tmp_path, monkeypatch):
     monkeypatch.setattr(jobsdata, "HERE", tmp_path)   # isolate config.json
@@ -135,7 +136,7 @@ def test_removed_jobs_pruned_when_absent_everywhere(tmp_path, monkeypatch):
     assert jobsdata.load_removed_jobs() == {"2"}      # gone-id pruned
 
 
-# ── P2-1: status_ts must be UTC-aware, like every other timestamp seen_db writes
+# ── status_ts must be UTC-aware, like every other timestamp seen_db writes ───
 
 def test_set_status_stamps_an_aware_utc_timestamp(tmp_path):
     """status_ts is the cross-machine merge tie-break and compares

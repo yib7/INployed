@@ -1,10 +1,10 @@
-"""SP6: the way on.
+"""The way on.
 
-- What covers a click put away (ADV-04); a step's Next over a feedback
-  Submit (ADV-05); a stranger that took the advance gives way to the form's
-  own Next; a sign-up beside a sign-in (ADV-08); sign-ins with another
-  site never the way on (ADV-09); controls the run cannot read named and
-  parked on (EXT-01).
+- What covers a click put away; a step's Next over a feedback
+  Submit; a stranger that took the advance gives way to the form's
+  own Next; a sign-up beside a sign-in; sign-ins with another
+  site never the way on; controls the run cannot read named and
+  parked on.
 
 Headless Chromium through the module-scoped test browser; no network, no
 judge but `FakeJev` or a scripted one."""
@@ -38,7 +38,7 @@ def _decisions(r) -> list[dict]:
     return out
 
 
-# === what covers a click, put away (ADV-04) ===============================================================
+# === what covers a click, put away ========================================================================
 
 @pytest.mark.parametrize("name, cleared", [
     ("chat_launcher", "close '×'"), ("cookie_banner", "consent 'Reject All'")])
@@ -72,7 +72,7 @@ def test_a_cover_with_nothing_to_close_is_never_clicked_through(browser_page):
         None, None]
 
 
-# --- SP6 review M4: the overlay picker's gaps ------------------------------------------------------------
+# --- the overlay picker's gaps ---------------------------------------------------------------------------
 
 _TARGET = ('<form id="app"><button type="button" id="go" style="position: fixed; bottom: 40px; right: 40px; '
            'width: 80px; height: 30px">Next</button></form>')
@@ -104,14 +104,14 @@ _COVERS = {
                    'Autofill with Resume</button><button type="button">Apply Manually</button>'
                    '<button type="button" aria-label="Close">×</button></div>',
                    ("none", "", True)),
-    # final review B-M6: the application's own fixed footer, no dialog; its
-    # "Skip this step" is never clicked to put it away. It is the form's by
-    # the controls the form owns (final review B R2 M6)
+    # the application's own fixed footer, no dialog; its "Skip this step"
+    # is never clicked to put it away. It is the form's by the controls the
+    # form owns
     "own_sticky_bar": ('<div class="step-footer" style="position: fixed; inset: 0; '
                        'background: #fff"><button type="button" form="app">Skip this step'
                        '</button><button type="submit" form="app">Submit application</button>'
                        '</div>', ("none", "", True)),
-    # final review B R2 M6: a talent-network slide-in and a pre-chat form
+    # a talent-network slide-in and a pre-chat form
     # beside the application hold fields and a submit of their own; each is
     # put away by its own close
     "talent_network": ('<div class="talent-network" style="position: fixed; inset: 0; '
@@ -128,7 +128,7 @@ _COVERS = {
                  '<button type="button">Start chat</button>'
                  '<button type="button" aria-label="Minimize">_</button></div>',
                  ("close", "_", False)),
-    # final review B-M4: a close that holds a last-step word is never picked
+    # a close that holds a last-step word is never picked
     "final_word": ('<div id="promo" style="position: fixed; inset: 0; background: #eee">Almost '
                    'there<button type="button">Skip and finish</button></div>',
                    ("none", "", False)),
@@ -157,7 +157,7 @@ _ALERTS = ('<div class="job-alerts" style="position: fixed; inset: 0; background
                                        (_ALERTS, ("close", "Maybe later", False))])
 def test_a_fixed_box_is_the_applications_own_by_the_box_it_shares_with_the_fields(
         browser_page, box, want):
-    # final review B R2 M6: a page with no form element. A fixed footer in
+    # a page with no form element. A fixed footer in
     # the box that holds the covered control and the application's fields is
     # the application's own; a job-alert slide-in beside that box is put
     # away, though it holds two fields and an upload of its own
@@ -171,7 +171,7 @@ def test_a_fixed_box_is_the_applications_own_by_the_box_it_shares_with_the_field
     assert (found["kind"], found["text"], found.get("own")) == want, found
 
 
-# === the way on: a Next beside another Submit, two forms, sign-ins elsewhere (ADV-05, 08, 09) ==========
+# === the way on: a Next beside another Submit, two forms, sign-ins elsewhere ===========================
 
 @pytest.mark.parametrize("name", ["next_and_feedback_submit", "two_forms", "apply_with_linkedin"])
 def test_the_way_on_is_the_steps_own(_browser, flow_server, tmp_path, name):
@@ -199,7 +199,7 @@ def test_a_next_beside_a_submit_goes_on_unless_the_page_is_the_last_step(text, a
 
 
 def test_a_progress_list_that_names_every_step_is_no_step_marker():
-    # SP6 review M5: "Step 1 of 2 ... Step 2 of 2" says nothing of where the
+    # "Step 1 of 2 ... Step 2 of 2" says nothing of where the
     # page is; the same marker twice (a title and a heading) still does
     progress = "Step 1 of 2: About you\nStep 2 of 2: Documents\nResume *"
     assert apply_run.step_position(_route_digest(progress)) is None
@@ -259,7 +259,7 @@ def test_a_sign_in_with_another_site_never_holds_the_way_on(tmp_path):
     assert apply_run.account_advance(account, FillPlan(buttons={"advance": (0, 0.95)}))[0] == 1
 
 
-# === a control the run cannot read (EXT-01's rest) ======================================================
+# === a control the run cannot read ======================================================================
 
 def test_a_closed_shadow_root_and_a_form_associated_element_are_named_unreadable(
         browser_page, fixture_url):
@@ -290,7 +290,7 @@ def test_the_unreadable_flow_parks_on_the_required_one(_browser, flow_server, tm
     assert unreadable and unreadable[0]["required"] == ["Earliest start date"]
 
 
-# --- SP6 review I6: a form-associated control that blocks the send without `required` -------------
+# --- a form-associated control that blocks the send without `required` ----------------------------
 
 @pytest.mark.parametrize("name", ["form_associated_invalid", "form_associated_invalid_park"])
 def test_a_form_associated_control_its_internals_mark_invalid_parks_naming_it(
@@ -302,7 +302,7 @@ def test_a_form_associated_control_its_internals_mark_invalid_parks_naming_it(
     assert not any(a.kind == "click" and a.text == "Submit application" for a in r.actions)
 
 
-# --- SP6 review M6: a required unreadable control after forty others ---------------------------------
+# --- a required unreadable control after forty others ------------------------------------------------
 
 def test_a_required_unreadable_control_after_forty_others_still_parks_the_step(browser_page):
     picks = "".join(f'<x-pick aria-label="Option {i}"></x-pick>' for i in range(45))

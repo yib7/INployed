@@ -807,7 +807,7 @@ def test_pool_warmup_gate_releases_after_first_call_failure(monkeypatch, no_slee
 
 
 def test_child_env_drops_other_providers_secrets(monkeypatch, tmp_path):
-    """Phase 4 (4.1): the parent has already loaded .env, so a bare
+    """The parent has already loaded .env, so a bare
     subprocess.run would hand Bright Data's and Gemini's credentials to an
     unrelated vendor's CLI purely by env inheritance. Anthropic's own vars and
     PATH must survive."""
@@ -842,8 +842,8 @@ def _secret_setting_names() -> set:
 
 
 def test_c7_every_secret_setting_is_scrubbed_from_the_child_env():
-    """4-C7: the scrub list is pinned to the Settings schema, so a new secret
-    field (TypeSafe's key was the one missed) cannot ride into `claude`."""
+    """The scrub list is pinned to the Settings schema, so a new secret field
+    (TypeSafe's key, say) cannot ride into `claude`."""
     names = _secret_setting_names()
     assert "TYPESAFE_API_KEY" in names
     missing = (names | {"TYPESAFE_BASE_URL"}) - set(claude_cli._SCRUBBED_ENV_VARS)

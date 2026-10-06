@@ -1,4 +1,4 @@
-"""The SP8 record / replay harness for the runner tests: `jev_harness` (the
+"""The record / replay harness for the runner tests: `jev_harness` (the
 judge selector, the cost guard), `jev_outcomes` (the jsonl writer),
 `conftest_jev` (the `jev_judge` fixture and its hooks) and
 `scripts/jev_thresholds.py` (the tuning printout).
@@ -76,7 +76,7 @@ def test_cache_path_comes_from_the_env_else_the_tracked_fixture_file(tmp_path):
 
 
 def test_cap_comes_from_the_env_and_a_live_recording_without_it_is_refused(tmp_path):
-    # C KM2: a live recording names its cap; only a dry run has a default
+    # a live recording names its cap; only a dry run has a default
     assert jev_harness.cap_from({jev_harness.CAP_ENV: "0.25"}) == 0.25
     with pytest.raises(ValueError, match=jev_harness.CAP_ENV):
         jev_harness.cap_from({})
@@ -151,7 +151,7 @@ def test_replay_miss_is_recorded_on_the_test_and_re_raised(tmp_path):
     assert rec.misses[0]["questions"] == ["page_state", "verify_0"]
     text = s.miss_text(rec)
     assert "jev_judge" in text and "tests/test_apply_run.py::test_a" in text
-    # C KM2: the re-record command is the script, which names the cap
+    # the re-record command is the script, which names the cap
     assert r"jev_record.ps1 -Target runner -Cap <USD>" in text
     assert str(tmp_path / "cache.json") in text
 
@@ -224,7 +224,7 @@ def test_cap_guard_counts_only_the_spend_inside_tests(tmp_path, monkeypatch):
     assert s.spent_usd == 0.0 and s.skip_reason() is None
 
 
-# --- the per-request cap and the dry run (SP8b) ------------------------------------------
+# --- the per-request cap and the dry run -------------------------------------------------
 
 class _Sized:
     """A stand-in for the live judge that counts each request at its
@@ -390,7 +390,7 @@ class _BilledThenFailed:
 
 
 def test_spend_cap_counts_a_request_that_failed_after_it_left():
-    # SP8b review M4: a request that raised before the counter saw it counts
+    # a request that raised before the counter saw it counts
     # at its estimate, so the cap never runs behind the bill
     one = _one_request_usd()
     live = _BilledThenFailed()
@@ -419,7 +419,7 @@ def test_spend_cap_counts_a_counted_request_that_then_failed_once():
 
 @pytest.mark.parametrize("raw", ["nan", "NaN", "inf", "-inf", "0", "0.0", "-0.05", "cheap"])
 def test_the_cap_refuses_a_value_that_is_no_amount_above_zero(raw):
-    # SP8b review M3: a NaN cap never stops (no sum is greater than NaN)
+    # a NaN cap never stops (no sum is greater than NaN)
     with pytest.raises(ValueError, match=jev.RECORD_CAP_ENV):
         jev.record_cap({jev.RECORD_CAP_ENV: raw})
     with pytest.raises(ValueError):
@@ -452,7 +452,7 @@ def _record_script(tmp_path, *args):
 ])
 def test_the_record_script_takes_a_live_recording_only_with_a_cap_above_zero(tmp_path, args,
                                                                              said):
-    # SP8b review M3: one run with -Cap left out could spend the whole
+    # one run with -Cap left out could spend the whole
     # approval; the cap is checked before the key is read
     res = _record_script(tmp_path, *args)
     assert res.returncode == 2, res.stdout + res.stderr
@@ -460,8 +460,8 @@ def test_the_record_script_takes_a_live_recording_only_with_a_cap_above_zero(tmp
 
 
 def test_the_cap_env_parses_and_only_a_dry_run_has_a_default():
-    # C KM2: a live recording names its cap; the dry run's default is what
-    # the cycle's approval had left under its limit after SP8b
+    # a live recording names its cap; only the dry run has a default, the
+    # fixed DRY_RECORD_CAP_USD
     with pytest.raises(ValueError, match=jev.RECORD_CAP_ENV):
         jev.record_cap({})
     with pytest.raises(ValueError, match=jev.RECORD_CAP_ENV):
@@ -542,7 +542,7 @@ def test_outcomes_path_sits_beside_the_cache(tmp_path):
     assert jev_harness.outcomes_path(tmp_path / "x" / "cache.json") == tmp_path / "x" / "outcomes.jsonl"
 
 
-# --- the xdist guard on record/replay (SP3.5 review finding 1) ------------------------
+# --- the xdist guard on record/replay -------------------------------------------------
 
 class _FakeOption:
     def __init__(self, numprocesses=None):
@@ -592,7 +592,7 @@ def test_configure_refuses_record_mode_on_an_xdist_worker(cjev, monkeypatch, tmp
 
 
 def test_configure_refuses_a_live_recording_that_names_no_cap(cjev, monkeypatch, tmp_path):
-    # C KM2: the run stops before any test, with the variable named
+    # the run stops before any test, with the variable named
     monkeypatch.setenv(jev_harness.MODE_ENV, "record")
     monkeypatch.setenv(jev.KEY_ENV, "k-test")
     monkeypatch.delenv(jev.RECORD_CAP_ENV, raising=False)
@@ -649,8 +649,8 @@ def test_configure_ignores_an_xdist_worker_env_var_inherited_by_a_nested_run(
     vars -- same process, same `os.environ` -- even though the nested, single-process
     pytest run it starts is never itself distributed. The guard must key off THIS
     config (no `workerinput`, no `-n` of its own), not off an inherited env var, or
-    every `pytester`-based test below starts failing under `-n` (found by running
-    this file with `-n 2`, SP3.5 fix round 1)."""
+    every `pytester`-based test below starts failing under `-n` (as running this
+    file with `-n 2` shows)."""
     monkeypatch.setenv(jev_harness.MODE_ENV, "replay")
     monkeypatch.setenv(jev.CACHE_ENV, str(tmp_path / "cache.json"))
     monkeypatch.setenv("PYTEST_XDIST_WORKER", "gw0")
@@ -730,8 +730,8 @@ def test_unmarked(jev_judge):
 
 def test_a_marked_tests_replay_miss_skips_until_sp8_records_it(pytester, monkeypatch,
                                                               tmp_path):
-    # SP6: a test whose recording is a later phase skips on its miss (no
-    # live request in this phase); an unmarked miss still fails
+    # a test marked as not yet recorded skips on its replay miss (no live
+    # request); an unmarked miss still fails
     monkeypatch.setenv(jev_harness.MODE_ENV, "replay")
     monkeypatch.setenv(jev.CACHE_ENV, str(tmp_path / "cache.json"))
     pytester.syspathinsert(TESTS)
@@ -809,8 +809,8 @@ def _inner_later_day(pytester, expected: str):
 
 def test_a_replay_whose_clock_reads_a_later_day_still_hits_the_cache(
         pytester, monkeypatch, tmp_path):
-    # R-DATE: the catalog lists today's date in every request that carries
-    # the facts; a replay on the day after the recording missed each one.
+    # the catalog lists today's date in every request that carries the
+    # facts, so a replay on a later day would miss each one unpinned.
     # The cache holds a request recorded on the pinned day, the inner test's
     # clock reads 2026-10-01, and the replay still hits it.
     import apply_facts
@@ -1014,7 +1014,7 @@ def _answer(kind, value, choice=None):
 
 
 def test_thresholds_helper_reads_todays_question_ids_over_several_caches(tmp_path):
-    # SP8b: the page read's Nouls, the send Noul, an error's field, the
+    # the page read's Nouls, the send Noul, an error's field, the
     # inbox's link Noul and the link pick are today's ids; each cache adds
     # its requests, and the combined reads come from a matrix --json file
     # and the captures' results
@@ -1066,8 +1066,8 @@ def test_thresholds_helper_reads_todays_question_ids_over_several_caches(tmp_pat
 
 
 def test_the_record_scripts_runner_target_runs_the_runner_tests():
-    # SP7 fix round 2: the difficulty check's jev_unrecorded tests are
-    # recorded with the SP7 runner tests; the script and RUNNER_TESTS name
+    # the difficulty check's jev_unrecorded tests are recorded with the
+    # runner tests; the script and RUNNER_TESTS name
     # the same files, and every one exists
     files = jev_harness.RUNNER_TESTS.split()
     assert "tests/test_apply_assess.py" in files

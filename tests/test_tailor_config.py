@@ -172,7 +172,7 @@ def test_enforce_fixed_counts_splits_a_fused_group_when_no_atom_is_left(syntheti
     """Side Gig has 3 atoms and a 3-bullet config, and select fused two of
     them into one group: with no unused atom to pad from, the largest fused
     group splits in place so the block still renders its configured count
-    (a 2026-09-20 run shipped 2 of 3)."""
+    (without the split it prints 2 of 3)."""
     monkeypatch.setattr(config, "_config_json", lambda: {"resume_layout": {
         "Side Gig": {"line_targets": [2, 2, 2]},
         "Big Co": {"line_targets": [1]},
@@ -343,7 +343,7 @@ def test_cap_projects_falls_back_to_global(synthetic_master, monkeypatch):
     assert len(clean["projects"][0]["groups"]) == 2
 
 
-# --- projects honor their configured count: pad UP, not just cap (cycle 24) -------
+# --- projects honor their configured count: pad UP as well as cap -----------------
 
 def test_cap_projects_pads_configured_project_up_from_unused_atoms(synthetic_master, monkeypatch):
     # ProjTwo has 4 atoms; configured for 3 bullets but select() returned only 1 group.
@@ -641,12 +641,13 @@ def test_fill_underfull_skips_verbatim_bullets(synthetic_master, monkeypatch):
     assert out == {gk: "Short verbatim bullet."}
 
 
-# --- SP4: re-check the fill AFTER the re-trim ------------------------------------
+# --- re-check the fill AFTER the re-trim -----------------------------------------
 # The fill pass runs measure-underfull -> ask the model to lengthen -> trim back, and
-# nothing used to re-measure after that trim. `_fit_to_lines` binary-searches the
-# longest prefix that fits the line target, so when the folded-in material is one wide
-# token the prefix it lands on IS the original text: the run paid for a fill, shipped
-# the bullet exactly as underfull as it started, and the report said the stage ran.
+# a re-measure follows that trim. `_fit_to_lines` binary-searches the longest prefix
+# that fits the line target, so when the folded-in material is one wide token the
+# prefix it lands on IS the original text: without the re-check the run pays for a
+# fill, ships the bullet exactly as underfull as it started, and the report says the
+# stage ran.
 #
 # The re-check names the bullet in `tailor_report.txt`. It does NOT re-call the model
 # (a second billed call per bullet for a part-empty last line is not worth it) and it
@@ -828,7 +829,7 @@ def test_lead_with_overview_floats_a_fused_overview_group(synthetic_master):
 
 def test_lead_with_overview_adds_an_unselected_overview_in_place_of_the_last_group(
         synthetic_master):
-    # A 2026-09-29 run: select left a project's overview atom out entirely. It
+    # select can leave a project's overview atom out entirely. It
     # takes the least relevant slot, so the entry keeps its bullet count.
     sel = {"experience": [], "leadership": [],
            "projects": [{"name": "ProjTwo", "groups": [["p2c"], ["p2d", "p2b"]]}]}
@@ -852,9 +853,9 @@ def test_lead_with_overview_skips_verbatim_project(synthetic_master):
 
 
 def test_lead_with_overview_covers_experience_and_leadership(synthetic_master):
-    # A 2026-09-29 run: an experience entry printed its validation bullet before the
-    # bullet that introduces the model, because experience kept select()'s relevance
-    # order.
+    # experience and leadership follow the same rule: select()'s relevance order alone
+    # can print an entry's validation bullet before the bullet that introduces the
+    # model.
     sel = {"experience": [{"name": "Side Gig", "groups": [["gig_c"], ["gig_b"], ["gig_a"]]}],
            "leadership": [{"name": "Club A", "groups": [["la_b"], ["la_a"]]}],
            "projects": []}
@@ -1070,7 +1071,7 @@ def test_tech_aliases_enabled_config_off(synthetic_master, monkeypatch):
     assert config.tech_aliases_enabled() is False
 
 
-# --- load_master shape validation (P1-7): a malformed yaml must fail loudly at the
+# --- load_master shape validation: a malformed yaml must fail loudly at the
 # load boundary, not as a deep AttributeError the first time a consumer calls .get() ---
 
 def test_load_master_empty_file_raises_value_error(tmp_path, monkeypatch):
@@ -1097,9 +1098,9 @@ def test_load_master_top_level_list_raises_value_error(tmp_path, monkeypatch):
         assets.load_master.cache_clear()
 
 
-# ── import-time env constants degrade instead of crashing the import (3A) ─────
+# ── a bad import-time env constant degrades and the import goes on ────────────
 # PROJECTS_MAX / PROJECT_BULLETS_MAX / PROJECT_BULLET_LINES are resolved at IMPORT
-# scope. A bare int(os.getenv(...)) turned `RESUME_TAILOR_PROJECTS_MAX=three` into
+# scope. A bare int(os.getenv(...)) would turn `RESUME_TAILOR_PROJECTS_MAX=three` into
 # a ValueError raised while importing config -- which takes down every caller with
 # a raw traceback and makes projects_max()'s own try/except unreachable, since the
 # module it lives in never finishes loading.
@@ -1161,13 +1162,13 @@ def test_project_constants_default_instead_of_failing_the_import(reload_config, 
 
 
 def test_projects_max_still_resolves_after_a_garbage_env(reload_config):
-    """The live resolver keeps working, which is the whole point: before the fix it
-    was unreachable code because the import raised first."""
+    """The live resolver keeps working, which is the whole point: an import that
+    raised first would leave it unreachable."""
     c = reload_config(RESUME_TAILOR_PROJECTS_MAX="three")
     assert c.projects_max() == 3
 
 
-# --- cycle 19: the tailor's three Jev options (TL-7 to TL-9), all off by default ---
+# --- the tailor's three Jev options, all off by default ----------------------------
 # Each is read env > config.json > False, the pattern of every default-off toggle
 # in config.py (sweep_p2_enabled). Only a real True in config.json turns one on,
 # so an editor's stray "true" string leaves the extra cost off.

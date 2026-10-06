@@ -1,4 +1,4 @@
-"""Cycle 40 Phase 3b/3c: jobsdata.job_detail_fields + the JobDetailCard."""
+"""Tests for jobsdata.job_detail_fields and the JobDetailCard."""
 import pandas as pd
 from PySide6 import QtCore, QtWidgets
 
@@ -241,7 +241,7 @@ def test_html_to_text_flattens_a_nested_list_without_blank_lines():
 
 
 def test_html_to_text_keeps_bullets_in_one_list_adjacent():
-    # `</li>\n<li>` used to yield a blank line between every bullet.
+    # `</li>\n<li>` must not yield a blank line between bullets.
     out = jobsdata.html_to_text("<ul><li>a</li>\n<li>b</li>\n<li>c</li></ul>")
     assert out.splitlines() == ["• a", "• b", "• c"]
 
@@ -447,7 +447,7 @@ def test_card_description_holds_the_entire_jd_verbatim(qtbot):
     body = "\n".join(f"<p>Requirement number {i} spelled out in full.</p>"
                      for i in range(200))
     fields = jobsdata.job_detail_fields(_row(job_description_formatted=body))
-    assert len(fields["jd"]) > 5000            # SP1 stopped truncating
+    assert len(fields["jd"]) > 5000            # not truncated
     card = JobDetailCard()
     qtbot.addWidget(card)
     card.set_fields(fields, jid="1")
@@ -470,7 +470,7 @@ def test_card_description_preserves_line_breaks_and_bullets(qtbot):
 
 
 def test_card_renders_a_job_description_md_row_with_real_structure(qtbot):
-    # SP2: the scored row's job_description_md (markdownify output) now reaches
+    # the scored row's job_description_md (markdownify output) reaches
     # the card through job_detail_fields -> md_to_text, so the QPlainTextEdit
     # shows real headings and bullets, with each requirement on its own line.
     f = jobsdata.job_detail_fields(_row(

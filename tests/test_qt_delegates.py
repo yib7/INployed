@@ -1,4 +1,4 @@
-"""Phase 2 (cycle 40 restyle): JobRowDelegate + the TAG_ROLE plumbing.
+"""JobRowDelegate + the TAG_ROLE plumbing.
 
 The delegate owns ALL cell painting (category tint, selection lines, stripes,
 badges, pills) — these tests pin the *data* contracts it relies on, which are
@@ -6,8 +6,8 @@ invisible in a pixel diff:
 
   * TAG_ROLE (UserRole + 2) reaches the delegate THROUGH the sort proxy;
   * a "skip" reco carries the paint-only "skip" tag while the legacy
-    `row_tag()` / BackgroundRole contract stays exactly as before (those are
-    pinned by test_qt_jobs.py — DisplayRole/BackgroundRole never changed);
+    `row_tag()` / BackgroundRole contract stays untouched (those are
+    pinned by test_qt_jobs.py, DisplayRole and BackgroundRole alike);
   * the jobs/tracker/apply tables actually install the delegate (zebra off);
   * the apply-queue table stamps each item with its raw status under TAG_ROLE
     while DisplayRole keeps the RAW status text (pill labels are paint-time).
@@ -77,7 +77,7 @@ def test_tag_role_forwards_through_the_proxy(qtbot):
 
 def test_skip_reco_paint_tag_without_touching_legacy_contract(qapp):
     # The neutral "Don't consider" tint rides TAG_ROLE only: row_tag() and
-    # BackgroundRole keep the pre-restyle behavior (pinned by test_qt_jobs.py).
+    # BackgroundRole keep their own behavior (pinned by test_qt_jobs.py).
     m = JobsTableModel(COL_IDS, mode="high")
     m.set_dataframe(_df())
     assert m.data(m.index(2, 0), TAG_ROLE) == "skip"

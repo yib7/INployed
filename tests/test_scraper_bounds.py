@@ -55,8 +55,8 @@ def test_negative_max_keywords_does_not_lift_the_guard(capsys):
 
     `build_inputs` spends max_keywords as `keywords[:n]`, and a negative slice
     bound in Python means "all but n": with 12 keywords, `[:-1]` is 11 of them.
-    So --max-keywords -1, the obvious way somebody writes "no limit", used to
-    fire 11/12 of a full billed fan-out while the run log announced a cap. The
+    So --max-keywords -1, the obvious way somebody writes "no limit", must not
+    fire 11/12 of a full billed fan-out while the run log announces a cap. The
     premise is asserted first so this test still fails loudly if the slice is
     ever swapped for something with different semantics.
     """
@@ -107,7 +107,7 @@ def _dated_master(tmp_path, rows):
 
 
 def test_load_exclude_ids_windows_out_stale_ids(monkeypatch, tmp_path):
-    # P1-2 step 2: the search filter is time_range="Past 24 hours", so a posting
+    # the search filter is time_range="Past 24 hours", so a posting
     # scraped long ago can't reappear -- keeping its id in the exclude set is pure
     # payload that eventually overflows Bright Data's trigger-POST size limit. So a
     # far-past id is DROPPED, while a recent id (still re-collectable) and an undated
@@ -154,7 +154,7 @@ def test_master_ids_no_extracted_date_column_keeps_all(monkeypatch, tmp_path):
 
 
 def test_master_ids_windowing_failure_degrades_to_keep_all(monkeypatch, tmp_path):
-    # Defensive (review finding #2): windowing is an optimization on top of the
+    # Defensive: windowing is an optimization on top of the
     # exclude set. If _window_ids ever raises (e.g. an unexpected extracted_date
     # dtype), _master_ids degrades to keeping ALL master ids -- a superset never
     # re-bills -- instead of letting the exception kill the pre-collection step.
@@ -289,7 +289,7 @@ def test_write_external_exclude_ids_dumps_full_known_set(monkeypatch, tmp_path):
     assert set(json.loads(out.read_text(encoding="utf-8"))) == {"a", "b"}
 
 
-# P1-2: append_to_master must ABORT (never fabricate an empty/partial master) when
+# append_to_master must ABORT (never fabricate an empty/partial master) when
 # an existing master can't be read, and all writes must be atomic (tmp + os.replace)
 # so a crash mid-write never truncates the cumulative master.
 
@@ -408,8 +408,8 @@ def test_save_current_ids_leaves_file_untouched_on_replace_failure(monkeypatch, 
     assert ids_path.read_bytes() == before          # untouched: os.replace never landed
 
 
-# P1-3: load_previous_ids must never raise on a corrupt/truncated file -- a bare
-# json.load used to let a bad last_run_job_ids.json kill the whole scrape before
+# load_previous_ids must never raise on a corrupt/truncated file -- a bare
+# json.load would let a bad last_run_job_ids.json kill the whole scrape before
 # _master_ids' fallback could help. A non-list JSON shape must not silently yield
 # garbage ids either.
 
@@ -530,7 +530,7 @@ def _trigger_session(status, body):
 
 
 def test_trigger_401_explains_the_permission_trap():
-    """The real 2026-08-26 failure: a replacement token that reads fine but is
+    """A replacement token that reads fine but is
     refused permission to start a collection, reported as 'Invalid credentials'."""
     with pytest.raises(RuntimeError) as excinfo:
         asyncio.run(scraper.trigger(_trigger_session(401, "Invalid credentials"), {}))
@@ -653,14 +653,14 @@ def test_account_problems_flags_missing_credentials_without_a_call(monkeypatch):
 
 # --- jobs_to_not_include payload cap -----------------------------------------
 # Bright Data expands one search input into up to `limit_per_input` CHILD inputs,
-# each carrying a verbatim copy of the parent's jobs_to_not_include. On 2026-08-26
-# a 2,679-id exclude set (34.9 KB per input) passed at limit_per_input=1 and was
-# rejected on 100% of inputs at limit_per_input=150 with `child_input_size_validation`
-# -- 0 rows collected, no error raised, the run just looked like "no new jobs".
+# each carrying a verbatim copy of the parent's jobs_to_not_include. A 2,679-id
+# exclude set (34.9 KB per input) passes at limit_per_input=1 and is rejected on
+# 100% of inputs at limit_per_input=150 with `child_input_size_validation`
+# -- 0 rows collected, no error raised, the run just looks like "no new jobs".
 # These tests pin the bound that makes that unreachable.
 
 def test_exclude_ids_are_capped_so_bright_data_accepts_the_input():
-    """THE regression guard for the 2026-08-26 silent-zero-rows outage."""
+    """THE regression guard against a silent-zero-rows scrape."""
     huge = [str(4_400_000_000 + n) for n in range(5_000)]
     inputs = scraper.build_inputs(huge, max_keywords=1, limit_per_input=150)
     for i in inputs:
@@ -742,7 +742,7 @@ def test_build_inputs_defaults_the_limit_from_config(monkeypatch, tmp_path):
 
 
 # --- eviction is by DATE, and the target is the newest 2,000 ------------------
-# Measured against Bright Data 2026-08-27, one search at limit_per_input=150:
+# Measured against Bright Data, one search at limit_per_input=150:
 # 2,000 ids (4,239,000 bytes of children) was ACCEPTED and collected 128 jobs;
 # 2,679 ids (5,262,000 bytes) was REJECTED. 5 MiB = 5,242,880 sits between them.
 # MAX_EXCLUDE_PAYLOAD_BYTES is set so 150 x 2,000 lands on the measured-good side.
@@ -795,10 +795,10 @@ def test_undated_rows_are_evicted_before_dated_recent_ones(monkeypatch, tmp_path
 
 
 # --- a rejected collection must not look like a quiet day ---------------------
-# THE reason the 2026-08-26 outage ran unnoticed for weeks: when Bright Data
-# refuses every input, the snapshot still finishes with status="ready". download()
-# then returned [], main() printed "No new jobs returned this run" and exited 0.
-# The VM cron logged a clean success twice a day while collecting nothing.
+# When Bright Data refuses every input, the snapshot still finishes with
+# status="ready". Unchecked, download() returns [], main() prints "No new jobs
+# returned this run" and exits 0, and the VM cron logs a clean success twice a
+# day while collecting nothing.
 
 def _progress_session(payload):
     class _Resp:
@@ -838,7 +838,7 @@ def test_partial_rejection_raises_even_though_rows_came_back():
     Bright Data can refuse most children and still return rows from the few it
     accepted. A records-based rule sees a truthy `records` and waves that through,
     so a badly degraded collection is silently treated as a good one -- which is
-    the same class of miss as the outage this guard was written for."""
+    the same class of miss as a refused collection read as a quiet day."""
     with pytest.raises(RuntimeError) as excinfo:
         asyncio.run(scraper.wait_until_ready(_progress_session({
             "status": "ready", "records": 12, "errors": 88,
@@ -888,11 +888,11 @@ def test_partial_errors_with_rows_collected_do_not_raise():
 def test_this_hosts_own_ids_are_the_ones_that_survive_the_cap(monkeypatch, tmp_path):
     """load_exclude_ids() puts OUR ids last, because cap_exclude_ids keeps the tail.
 
-    They were appended FIRST until 2026-08-27, which put other machines' ids in
-    the tail. On the VM the pushed external file routinely carries more than
-    MAX_EXCLUDE_IDS entries, so the cap then kept 100% foreign ids and 0% of the
-    VM's own master -- and ours are the only ids that can resurface in a
-    "Past 24 hours" search, so every run re-collected the previous day's work."""
+    Appended FIRST, they would put other machines' ids in the tail. On the VM
+    the pushed external file routinely carries more than MAX_EXCLUDE_IDS
+    entries, so the cap would keep 100% foreign ids and 0% of the VM's own
+    master -- and ours are the only ids that can resurface in a "Past 24 hours"
+    search, so every run would re-collect the previous day's work."""
     monkeypatch.setattr(scraper, "MASTER_CSV", _master(tmp_path, *[f"own{n}" for n in range(10)]))
     ext = tmp_path / "external_exclude_ids.json"
     ext.write_text(json.dumps([f"foreign{n}" for n in range(5_000)]), encoding="utf-8")

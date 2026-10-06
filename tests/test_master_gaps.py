@@ -1,4 +1,4 @@
-"""Tests for the smarter master_experience JD-gap feature (PLAN stage 5).
+"""Tests for the smarter master_experience JD-gap feature.
 
 Deterministic parts (gap detection, comment-preserving insertion, diff, fallback
 placement) are tested directly; the flash-lite screen/placement calls are tested
@@ -72,7 +72,7 @@ def test_screen_candidates_conservative_on_error(monkeypatch):
 
 
 def test_screen_candidates_lets_programming_errors_surface(monkeypatch):
-    # P2-10: a non-LLM error (a bug in our own code) must NOT be swallowed as [].
+    # a non-LLM error (a bug in our own code) must NOT be swallowed as [].
     def boom(*a, **k):
         raise KeyError("programming bug")
     monkeypatch.setattr(master_gaps, "call", boom)
@@ -81,7 +81,7 @@ def test_screen_candidates_lets_programming_errors_surface(monkeypatch):
 
 
 def test_place_skills_lets_programming_errors_surface(monkeypatch):
-    # P2-10: place_skills must likewise let non-LLM errors surface.
+    # place_skills must likewise let non-LLM errors surface.
     def boom(*a, **k):
         raise KeyError("programming bug")
     monkeypatch.setattr(master_gaps, "call", boom)
@@ -147,7 +147,7 @@ def test_apply_to_file_backs_up_and_writes(tmp_path):
     assert "Kubernetes" in diff
 
 
-# ── P1-1: apply_to_file must be atomic (old-or-new, never truncated) ───────────
+# ── apply_to_file must be atomic (old-or-new, never truncated) ─────────────────
 def test_apply_to_file_atomic_on_write_failure(tmp_path, monkeypatch):
     p = tmp_path / "master_experience.yaml"
     p.write_text(_MASTER_TEXT, encoding="utf-8")
@@ -163,7 +163,7 @@ def test_apply_to_file_atomic_on_write_failure(tmp_path, monkeypatch):
     assert p.read_text(encoding="utf-8") == _MASTER_TEXT   # intact, not truncated
 
 
-# ── P2-30: a second save keeps a timestamped backup ring, not one clobbered .bak
+# ── a second save keeps a timestamped backup ring, not one clobbered .bak
 def test_apply_to_file_keeps_timestamped_backup_ring(tmp_path):
     p = tmp_path / "master_experience.yaml"
     p.write_text(_MASTER_TEXT, encoding="utf-8")
@@ -173,7 +173,7 @@ def test_apply_to_file_keeps_timestamped_backup_ring(tmp_path):
     assert len(ring) >= 2   # each save left its own timestamped backup
 
 
-# ── P2-15: _bucket_span must not leak an insertion into a following section ────
+# ── _bucket_span must not leak an insertion into a following section ───────────
 _MASTER_TRAILING = textwrap.dedent("""\
     skills:
       languages: [Python]
@@ -193,7 +193,7 @@ def test_bucket_span_bounded_to_skills_section():
     assert "skipped" in diff
 
 
-# ── P2-18: CLI --apply requires per-item confirmation (or --yes) ──────────────
+# ── CLI --apply requires per-item confirmation (or --yes) ─────────────────────
 def test_confirm_placements_drops_declined_items():
     placements = {"developer_tools": ["Kubernetes", "Airflow"]}
     # Declining every item yields an empty confirmed set (nothing folded in).

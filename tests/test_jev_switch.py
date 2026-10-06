@@ -1,4 +1,4 @@
-"""JS-1, JS-2 (cycle 19): one switch answers whether Jev runs for scoring, the
+"""One switch answers whether Jev runs for scoring, the
 résumé tailor, the auto-apply difficulty check and the auto-apply run.
 
 Hermetic: the config is passed in or written to the conftest's sandboxed
@@ -63,8 +63,8 @@ def test_the_master_switch_off_turns_every_area_off_in_every_mode(sdk, mode):
 
 
 def test_master_on_is_the_master_switch_alone():
-    """For the setup checks, which list every missing piece at once (JS-5). A
-    stray value reads as the Settings checkbox shows it (SP1 follow-up 3):
+    """For the setup checks, which list every missing piece at once. A
+    stray value reads as the Settings checkbox shows it:
     "no" is off in both places."""
     assert jev_switch.master_on(config={}) is True
     assert jev_switch.master_on(config={"jev_enabled": "no"}) is False
@@ -135,7 +135,7 @@ def test_fake_and_replay_skip_the_key_and_sdk_for_apply_and_difficulty(sdk, mode
 
 @pytest.mark.parametrize("mode", ["fake", "replay"])
 def test_an_exported_test_mode_opens_nothing(sdk, monkeypatch, mode):
-    """SP1 review B: the drain never reads AUTO_APPLY_JEV_MODE, so the gate does
+    """The drain never reads AUTO_APPLY_JEV_MODE, so the gate does
     not either. A shell's fake judge leaves a keyless live setup off, and
     client() builds nothing for it."""
     monkeypatch.setenv("AUTO_APPLY_JEV_MODE", mode)
@@ -195,8 +195,8 @@ def test_the_key_is_read_from_the_environment_at_call_time(sdk, monkeypatch):
 
 @pytest.mark.parametrize("text", ["{not json", "[1, 2]", "", "null"])
 def test_c8_a_config_file_that_will_not_parse_reads_jev_off(sdk, text):
-    """Finding 4-C8: the switches default on, so a config the user switched
-    Jev off in and then broke used to spend credits. Now it reads off, in the
+    """The switches default on, so a config the user switched Jev off in and
+    then broke would spend credits if it read as defaults. It reads off, in the
     same words as a switch turned off in Settings (which shows it off too)."""
     jev_switch.config_path().write_text(text, encoding="utf-8")
     for area in jev_switch.AREAS:
@@ -288,7 +288,7 @@ def test_the_sdk_probe_asks_find_spec_for_typesafe_sdk(monkeypatch):
 # --- the auto-apply mode ------------------------------------------------------------
 
 def test_apply_mode_reads_the_flag_then_the_setting_then_typesafe(monkeypatch):
-    """SP1 review B: the drain's own order, its --jev flag, else the Auto-apply
+    """The drain's own order, its --jev flag, else the Auto-apply
     judge setting, else typesafe, stripped and lower-cased. A blank setting reads
     as typesafe, and the environment's AUTO_APPLY_JEV_MODE is never read."""
     monkeypatch.setenv("AUTO_APPLY_JEV_MODE", "replay")
@@ -337,7 +337,7 @@ def test_key_saved_reads_a_broken_settings_backend_as_no_key(monkeypatch):
     assert jev_switch.key_saved() is False
 
 
-# --- the blocked-Start sentence (JS-5) ------------------------------------------------
+# --- the blocked-Start sentence -------------------------------------------------------
 
 def test_apply_blocked_is_empty_while_jev_is_on(sdk):
     assert jev_switch.apply_blocked(config=ON, env=KEY) == ""
@@ -376,11 +376,11 @@ def test_apply_blocked_keeps_the_master_switch_in_a_test_mode(sdk):
         "Auto-apply runs on Jev. Turn Jev on in Settings > Jev."
 
 
-# --- the Start gate: the drain's refusal of a test judge comes first (SP1 fix round 2) ---
+# --- the Start gate: the drain's refusal of a test judge comes first ---------------------
 
 def test_the_fixture_only_sentence_is_the_drains_refusal_of_a_test_judge():
     """The words `apply_run.py drain` and `one` print for the fake and replay
-    judges (cycle 16), which the Auto-apply panel's Start shows too."""
+    judges, which the Auto-apply panel's Start shows too."""
     assert jev_switch.FIXTURE_ONLY == (
         "Fake and replay judges are fixture-only; use typesafe for a production queue.")
     for mode in jev_switch.TEST_MODES:
@@ -421,7 +421,7 @@ _UNKNOWN_JUDGE = ("Unknown Auto-apply judge 'typesaf'; tick \"Show advanced sett
 
 
 def test_a_mode_jev_get_does_not_build_has_one_sentence():
-    """SP1 follow-up 2 (Minor 2): a hand-edited `"auto_apply_jev_mode":
+    """A hand-edited `"auto_apply_jev_mode":
     "typesaf"` reaches `jev.get`, which raises. `unknown_mode` names every mode
     outside `jev.MODES` in the words the drain prints, and `mode_refusal`
     gives it beside the fixture-only refusal."""
@@ -452,10 +452,10 @@ def test_start_blocked_refuses_an_unknown_mode_before_the_jev_gate(sdk):
                                             mode="typesaf") == _UNKNOWN_JUDGE, (found, switch)
 
 
-# --- the difficulty check's gate (SP6, DF-6, JS-5) ---------------------------------------
+# --- the difficulty check's gate ---------------------------------------------------------
 
 # the switch is an advanced field, so the sentence names the disclosure that shows
-# it (final review C M-6)
+# it
 DIFFICULTY_OFF = ("The difficulty check is switched off. Turn on Jev difficulty check in "
                   "Settings > Jev (tick Show advanced settings).")
 
@@ -466,7 +466,7 @@ def test_difficulty_blocked_is_empty_while_jev_is_on(sdk):
 
 @pytest.mark.parametrize("mode", ["typesafe", "fake", "replay"])
 def test_difficulty_blocked_gives_the_drains_sentence_with_the_master_switch_off(sdk, mode):
-    """JS-5: with the master switch off `apply_assess.py` refuses with the
+    """With the master switch off `apply_assess.py` refuses with the
     drain's reason, in every mode."""
     cfg = dict(ON, jev_enabled=False)
     assert jev_switch.difficulty_blocked(config=cfg, env=KEY, mode=mode) == \
@@ -625,7 +625,7 @@ def test_the_judges_with_an_llm_fallback_retry_on_the_quick_waits(sdk, monkeypat
     assert sum(jev.QUICK_RETRY_DELAYS_S) < 5 < sum(jev.RETRY_DELAYS_S)
 
 
-# --- stray switch values (SP1 follow-up 3) -------------------------------------------
+# --- stray switch values -------------------------------------------------------------
 
 # A hand-edited config.json can hold anything under a switch key. These read
 # off in jev_switch and in the Settings checkbox alike (test_qt_settings pins

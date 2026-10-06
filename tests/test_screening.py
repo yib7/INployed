@@ -1,4 +1,4 @@
-"""The screening set (cycle 18, TS-1, TS-2): every shipped screening question
+"""The screening set: every shipped screening question
 run through the runner's own mapping and option pick (`apply_screening`, the
 module the "Test my answers" button runs) for two synthetic profiles, under
 the fake, the noisy and the real judge.
@@ -19,7 +19,7 @@ correctly keeps a run that picks nothing from passing.
   runner target of `scripts/jev_record.ps1` records it): no wrong pick outside
   REAL_MISREADS (empty). The rule raises `pytest.fail`, which the harness
   never turns into a recorded divergence (an xfail). REAL_PICK_FLOOR is the
-  recording's rate (cycle 18: 125 of 152, no wrong pick); the rate prints
+  recording's rate (125 of 152, no wrong pick); the rate prints
   either way. The fixture pins the catalog's `today` to the recording
   day, as it does for the runner tests. In fake mode the test skips: its judge
   would be the fake, which the fake test holds already.
@@ -57,67 +57,51 @@ PROFILES: dict[str, dict] = json.loads(PROFILES_PATH.read_text(encoding="utf-8")
 QUESTIONS = apply_screening.load_questions()
 SEEDS = (1, 2, 3, 4, 5)
 
-# Share of non-null expectations picked correctly, at the rate the final run
-# measured (128 questions, 130 non-null expectations over both profiles),
-# rounded down to two places. Cycle 18 SP6c lowered them from 0.61 and
-# {0.60, 0.60, 0.60, 0.61, 0.59} (63; 62 62 62 63 61 of 103): a yes / no or
-# years fact now gives no value to a question it does not answer
-# (`apply_facts.answers_question`), which takes away nine picks the fake made
-# right by chance through another question's fact and adds four through the
-# derived facts. Its round 2 settles a narrower sponsorship question for a No
-# and takes unrestricted work authorization through the derived fact, and
-# added three questions for them (auth_unrestricted, auth_any_restrictions,
-# spon_h1b_require). years_similar_role expects Yes for the sponsor profile
-# (3 years): the saved years answer is the user's relevant experience, and
-# "in a similar role" asks the same thing. Round 3 reads every content word
-# of the label and help against the fact's own-question vocabulary: it added
-# 21 questions (the review's wrong-answer forms, mostly null, and the plain
-# forms each vocabulary passes), takes spon_tick's sponsor expectation to null
-# (needing sponsorship now or later says nothing of an H-1B), and refuses
-# onsite_qualified and reloc_select, which the fake picked right (62 of 108
-# on the 69 questions before, 58 after). Round 5 drops no word before the
-# vocabulary reads it but a trailing sentence from a fixed list: it added 19
-# questions (the review's wrong-settle forms, where the code before gave 29
-# wrong answers and now gives none; five expect a Yes for the citizen
-# profile), and the picks on the 90 questions before are unchanged (66 of
-# 121; 69 of 128 with the new ones). Round 7 added 19 questions: the
-# recheck's wrong-settle forms (a status word with no authorization word, a
-# job move, an office the candidate works in now, seven days a week, a years
-# count at one job) and two status lists under a label with no verb
-# (auth_noun_status, auth_noun_status_radio). The code before gave 34 wrong
-# answers on them and now gives none; the picks on the 109 questions before
-# are unchanged (69 of 128), and the status lists count as expected but
-# unpicked, since the fake maps no fact to them. Round 8 added four questions
-# that name the job's city (onsite_office_named_city, onsite_named_office,
-# onsite_based_in_city, reloc_named_city): the gate holds each back and the
-# fake never settles one, so they count as expected but unpicked. Round 9
-# (2026-09-27, a live run on the Contoso form) added eight questions: the three
-# Contoso questions as worded there (contoso_reloc_not_local,
-# contoso_spon_cpt_opt and contoso_auth_listed, the last two also with the
-# second sentence as help) and three that stay unanswered (a city the
-# candidate lives in, the UK, Canada). It also reads six relocation
-# questions the saved answers do answer: a No to relocating is No to
-# relocating without help, to moving for the job and to relocating to its
-# location; a Yes is Yes to "located in or willing to relocate" and to a
-# move with no relocation help. A No leaves "If you're not local, are you
-# willing to relocate?" open, since the candidate may be local. The fake
-# settles none of them, so its picks stay at 69 and its rate falls. Round 10
-# (2026-09-27, a live run on the Contoso form parked again) added that question with
-# the form's own options (contoso_reloc_options): sentences that say whether
-# the candidate lives in NYC or will relocate. The fake settles it for no
-# profile.
+# Share of non-null expectations picked correctly, at the rate a run measures,
+# rounded down to two places. A yes / no or years fact gives no value to a
+# question it does not answer (`apply_facts.answers_question`), so the fake
+# makes no pick through another question's fact, and many questions count as
+# expected but unpicked:
+# - the wrong-answer and wrong-settle forms (a parenthetical or help sentence
+#   on sponsorship, a status word with no authorization word, a job move, an
+#   office the candidate works in now, seven days a week, a years count at
+#   one job), mostly null; five expect a Yes for the citizen profile;
+# - two status lists under a label with no verb (auth_noun_status,
+#   auth_noun_status_radio), since the fake maps no fact to them;
+# - four questions that name the job's city (onsite_office_named_city,
+#   onsite_named_office, onsite_based_in_city, reloc_named_city): the gate
+#   holds each back and the fake never settles one;
+# - the Contoso questions as the form words them (contoso_reloc_not_local,
+#   contoso_spon_cpt_opt and contoso_auth_listed, the last two also with the
+#   second sentence as help; contoso_reloc_options with the form's own
+#   options, sentences that say whether the candidate lives in NYC or will
+#   relocate) and three that stay unanswered (a city the candidate lives in,
+#   the UK, Canada);
+# - six relocation questions the saved answers do answer: a No to relocating
+#   is No to relocating without help, to moving for the job and to relocating
+#   to its location; a Yes is Yes to "located in or willing to relocate" and
+#   to a move with no relocation help. A No leaves "If you're not local, are
+#   you willing to relocate?" open, since the candidate may be local. The
+#   fake settles none of them.
+# A narrower sponsorship question settles for a No, and unrestricted work
+# authorization comes through the derived fact (auth_unrestricted,
+# auth_any_restrictions, spon_h1b_require). years_similar_role expects Yes for
+# the sponsor profile (3 years): the saved years answer is the user's relevant
+# experience, and "in a similar role" asks the same thing. spon_tick's sponsor
+# expectation is null (needing sponsorship now or later says nothing of an
+# H-1B). The own-question vocabulary refuses onsite_qualified and reloc_select.
 FAKE_PICK_FLOOR = 0.45                                        # 69 of 152
 NOISY_PICK_FLOOR = {1: 0.44, 2: 0.44, 3: 0.44, 4: 0.44, 5: 0.44}  # 68 68 68 69 68 of 152
-# The real judge's floor, from cycle 18's recording (2026-09-27): 125 of 152
+# The real judge's floor, from the recording: 125 of 152
 # expected picks and no wrong one, 29 of them the judge's sure read of a
 # reworded relocation, on-site, work authorization or sponsorship question
-# (`apply_judge.settle_questions`). None would report the rate only. Round
-# 10's line on where the candidate lives settles contoso_reloc_options for
-# the citizen profile at 1.00 and costs two reads that were at 0.88:
-# reloc_contoso offers "I already live in the San Francisco Bay Area", and
-# the citizen profile's Anytown, California may be there, so its read fell
-# to 0.51; reloc_example_cities read No for the sponsor profile at 0.82.
-# Both are left unanswered, the safe side.
+# (`apply_judge.settle_questions`). None would report the rate only. The
+# line on where the candidate lives settles contoso_reloc_options for the
+# citizen profile at 1.00 and lowers two reads: reloc_contoso offers "I
+# already live in the San Francisco Bay Area", and the citizen profile's
+# Anytown, California may be there, so its read is 0.51; reloc_example_cities
+# reads No for the sponsor profile at 0.82. Both are left unanswered, the
+# safe side.
 REAL_PICK_FLOOR: float | None = 0.82                          # 125 of 152
 # (question id, profile) cases where a wrong pick by the real judge is
 # accepted, each with its cause. Empty: every wrong pick fails.
@@ -126,9 +110,8 @@ REAL_MISREADS: frozenset[tuple[str, str]] = frozenset()
 # (question id, profile) cases the fake picks wrong. The fake answers by word
 # overlap at full confidence. Both profiles give it the same words for a
 # worded option (every stored yes or no fact as "DESCRIPTION: Yes/No"), so it
-# picks by option order. A mapping to another question's fact no longer gives
-# a wrong pick: the own-question gate (cycle 18, SP6c) leaves that field
-# without a value.
+# picks by option order. A mapping to another question's fact gives no wrong
+# pick: the own-question gate leaves that field without a value.
 FAKE_MISREADS: frozenset[tuple[str, str]] = frozenset({
     ("auth_contoso", "sponsor"),
     ("auth_with_without", "citizen"),
@@ -278,13 +261,10 @@ def test_every_question_is_well_formed():
 
 
 def test_the_set_covers_the_topics_the_spec_names():
-    # cycle 18 SP6c round 3 added the review's wrong-answer forms and the
-    # plain forms each vocabulary passes (69 to 90), round 5 the second
-    # review's wrong-settle forms (90 to 109), round 7 the recheck's (109 to
-    # 128), round 8 four that name the job's city (128 to 132), round 9 the
-    # Contoso questions as worded there and three that stay open (132 to
-    # 140), round 10 the Contoso relocation question with its own options
-    # (140 to 141)
+    # past the core topics, the set holds the wrong-answer and wrong-settle
+    # forms, the plain forms each vocabulary passes, four questions that name
+    # the job's city, and the Contoso questions with three that stay open
+    # (141 questions)
     assert 55 <= len(QUESTIONS) <= 145
     assert {q["widget"] for q in QUESTIONS} == set(apply_screening.WIDGETS)
     prefixes = {q["id"].split("_")[0] for q in QUESTIONS}

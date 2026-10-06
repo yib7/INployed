@@ -69,7 +69,7 @@ def test_download_returns_immediately_when_ready(monkeypatch):
     assert session.calls == 1
 
 
-# -- exception chaining on the bounded-retry raises (audit P2 #4) --------------
+# -- exception chaining on the bounded-retry raises ----------------------------
 
 import aiohttp  # noqa: E402
 import pytest  # noqa: E402

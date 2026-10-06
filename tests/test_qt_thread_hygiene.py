@@ -1,6 +1,5 @@
-"""Dashboard thread hygiene (audit P1-5/P1-6/P2-5/P2-11/P2-19/P2-24/P2-30):
-routine actions must never do synchronous Drive/master reads on the UI thread,
-and assorted Qt fixes ride along.
+"""Dashboard thread hygiene: routine actions must never do synchronous
+Drive/master reads on the UI thread, plus a few Qt checks beside them.
 """
 import textwrap
 from unittest.mock import MagicMock
@@ -27,7 +26,7 @@ def _win(qtbot):
     return w
 
 
-# ── P1-5: no synchronous stats read on the UI thread ─────────────────────────
+# ── no synchronous stats read on the UI thread ───────────────────────────────
 
 def test_apply_df_views_does_not_read_stats_from_disk(qtbot, monkeypatch):
     """_refresh_stats must render from the cached frame the off-thread loader
@@ -58,7 +57,7 @@ def test_load_frames_carries_the_stats_frame(qtbot, monkeypatch, tmp_path):
     assert not loaded.stats.empty and int(loaded.stats.iloc[0]["total_scraped"]) == 5
 
 
-# ── P1-6: routine actions reload asynchronously ──────────────────────────────
+# ── routine actions reload asynchronously ────────────────────────────────────
 
 def test_block_company_reloads_async(qtbot, monkeypatch, tmp_path):
     w = _win(qtbot)
@@ -81,7 +80,7 @@ def test_settings_saved_reloads_async(qtbot, monkeypatch):
     assert called == [True]
 
 
-# ── P2-24: per-selection disk stats are cached ───────────────────────────────
+# ── per-selection disk stats are cached ──────────────────────────────────────
 
 def test_apply_ready_is_cached_between_calls(qtbot, monkeypatch):
     w = _win(qtbot)
@@ -108,7 +107,7 @@ def test_disk_cache_cleared_on_frame_apply(qtbot, monkeypatch):
     assert ("apply_ready", "j1") not in w._disk_cache
 
 
-# ── P2-11: a failed tailor-thread spawn surfaces in the status bar ───────────
+# ── a failed tailor-thread spawn surfaces in the status bar ──────────────────
 
 def test_start_tailor_spawn_failure_does_not_reraise(qtbot, monkeypatch):
     w = _win(qtbot)
@@ -121,7 +120,7 @@ def test_start_tailor_spawn_failure_does_not_reraise(qtbot, monkeypatch):
     assert "no threads" in w.statusBar().currentMessage()
 
 
-# ── P2-19: the JD panel renders as plain text ────────────────────────────────
+# ── the JD panel renders as plain text ───────────────────────────────────────
 
 def test_detail_card_jd_is_plain_text(qtbot):
     card = JobDetailCard()
@@ -138,7 +137,7 @@ def test_detail_card_jd_is_plain_text(qtbot):
     assert "&lt;b&gt;bold&lt;/b&gt;" in card.desc_view.document().toHtml()
 
 
-# ── P2-5: duplicate entry names keep both verbatim editors ───────────────────
+# ── duplicate entry names keep both verbatim editors ─────────────────────────
 
 _DUP_YAML = textwrap.dedent("""\
     basics:
@@ -172,7 +171,7 @@ def test_duplicate_entry_names_keep_both_verbatim_editors(qtbot, tmp_path):
     assert len(ed._verbatim_edits) == 2 or len(dup_keys) == 2
 
 
-# ── P2-30: scale docstring matches code; push-state has a public slot ────────
+# ── scale docstring matches code; push-state has a public slot ───────────────
 
 def test_apply_scale_docstring_matches_clamp():
     doc = MainWindow._apply_scale.__doc__ or ""

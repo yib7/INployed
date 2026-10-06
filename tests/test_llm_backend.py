@@ -54,7 +54,7 @@ def test_model_defaults_are_upgraded():
     assert config.MODEL_PRO == "gemini-3.5-flash"
 
 
-# P2-13: read at import (a module-level os.getenv), RESUME_TAILOR_MODEL_* would
+# Read at import (a module-level os.getenv), RESUME_TAILOR_MODEL_* would
 # make a Settings-written .env change invisible to a running dashboard until
 # restart. model_for() resolves the env fresh on every call, the way gemini_auth()
 # does, so a mid-process env change is picked up immediately with no ripple into

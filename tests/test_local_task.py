@@ -1,4 +1,4 @@
-"""SP7: local_task — the pure layer that keeps the local LinkedInJobsWatcher
+"""local_task — the pure layer that keeps the local LinkedInJobsWatcher
 Task-Scheduler task in step with the VM schedule. No real schtasks anywhere:
 `register` takes an injectable runner, and every test uses a fake."""
 import os

@@ -1,10 +1,10 @@
 """The Settings tab never turns a stored "off" on, and saves over a damaged
 config only after naming it.
 
-Finding 4-C2: `_checked` fell through to `bool(value)`, so a hand-edited
-`"auto_apply_submit": "false"` opened ticked and any unrelated Save wrote
-`true`. Finding 4-C1 (the tab's half): a damaged config shows the submit and
-Jev switches off, and Save keeps the damaged file beside the new one; a config
+`_checked` must not fall through to `bool(value)`, or a hand-edited
+`"auto_apply_submit": "false"` opens ticked and any unrelated Save writes
+`true`. The tab's half of the damaged-config rule: a damaged config shows the
+submit and Jev switches off, and Save keeps the damaged file beside the new one; a config
 that cannot be opened is never written over.
 """
 import json
@@ -114,7 +114,7 @@ def test_c2_a_real_true_still_ticks(qtbot, tmp_path):
     assert form._widgets["auto_apply_submit"].isChecked() is True
 
 
-# --- the tab's half of 4-C1 -------------------------------------------------------
+# --- the tab's half of the damaged-config rule -------------------------------------
 
 DAMAGED = '{"auto_apply_submit": false, "jev_enabled": false, "min_score": 6,}'
 

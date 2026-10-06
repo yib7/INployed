@@ -1,11 +1,11 @@
 """The dashboard keeps showing the Drive master while Google Drive is not running.
 
-Found 2026-09-26: Google Drive for desktop had stopped, so the whole ``D:`` drive
-and the master on it were gone. ``load_files`` skips an absent path without a
-word (the normal first run), so 29,933 jobs quietly became the 17,360 local ones
-and nothing on screen said why.
+When Google Drive for desktop stops, the whole ``D:`` drive and the master on it
+are gone. ``load_files`` skips an absent path without a word (the normal first
+run), so the full master's jobs would quietly shrink to the local ones with
+nothing on screen to say why.
 
-Every clean read of a source outside the repo now refreshes a local copy, and a
+Every clean read of a source outside the repo refreshes a local copy, and a
 source whose FOLDER is gone loads from that copy, with a banner naming the file,
 the copy's age and the fix. A folder that exists without the master is a fresh
 setup (or a master the user removed), so the copy never brings that back.

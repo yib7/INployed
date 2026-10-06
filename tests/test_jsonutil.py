@@ -33,7 +33,7 @@ def test_atomic_write_json_leaves_no_temp_file(tmp_path):
 
 
 def test_atomic_write_json_retries_replace_past_transient_lock(tmp_path, monkeypatch):
-    # SP2 review: CPython's open() on Windows doesn't grant FILE_SHARE_DELETE,
+    # CPython's open() on Windows doesn't grant FILE_SHARE_DELETE,
     # so os.replace can transiently fail with PermissionError while a lock-free
     # reader holds the destination open. A short retry must absorb that.
     p = tmp_path / "config.json"
@@ -74,7 +74,7 @@ def test_atomic_write_json_reraises_after_retries_exhausted(tmp_path, monkeypatc
 
 
 def test_atomic_write_json_cleans_up_tmp_when_replace_fails(tmp_path, monkeypatch):
-    # BONUS (SP3 review): if os.replace raises (e.g. Windows destination locked),
+    # if os.replace raises (e.g. Windows destination locked),
     # the tmp file must not be stranded, and the pre-existing target must be
     # left exactly as it was -- the write is all-or-nothing.
     p = tmp_path / "config.json"
@@ -93,10 +93,10 @@ def test_atomic_write_json_cleans_up_tmp_when_replace_fails(tmp_path, monkeypatc
 
 
 def test_replace_with_retry_zero_retries_still_replaces(tmp_path):
-    """audit C6-7: retries=0 made `range(0)` skip the loop, so the function
-    returned WITHOUT calling os.replace and without raising. Callers delete their
-    tmp file in `finally`, so the write silently vanished. "No retries" must
-    still mean "try once"."""
+    """retries=0 must still call os.replace once: a `range(0)` loop would skip
+    it and return WITHOUT raising, and callers delete their tmp file in
+    `finally`, so the write would silently vanish. "No retries" means "try
+    once"."""
     src = tmp_path / "src"
     dst = tmp_path / "dst"
     src.write_text("payload", encoding="utf-8")
@@ -109,11 +109,12 @@ def test_read_json_dict_reads_a_bom_prefixed_file(tmp_path):
     """A UTF-8 BOM must not turn a populated config into an empty one.
 
     read_json_dict catches ValueError, and json.loads raises exactly that on a
-    leading BOM, so the two together used to swallow a whole config file into
-    {} with nothing said. That is how scripts/setup.ps1's output was silently
+    leading BOM, so the two together would swallow a whole config file into
+    {} with nothing said. scripts/setup.ps1's output would then be silently
     ignored on a fresh install: PowerShell 5.1's `Set-Content -Encoding UTF8`
-    writes a BOM, so min_score / followup_days / gdrive_root never took effect
-    and the dashboard ran on hardcoded defaults. Notepad writes a BOM too.
+    writes a BOM, so min_score / followup_days / gdrive_root would never take
+    effect and the dashboard would run on hardcoded defaults. Notepad writes a
+    BOM too.
     """
     p = tmp_path / "config.json"
     p.write_bytes(b"\xef\xbb\xbf" + json.dumps({"min_score": 6}).encode("utf-8"))
@@ -142,10 +143,10 @@ def test_update_json_locked_survives_a_bom_prefixed_file(tmp_path):
 
 @pytest.mark.parametrize("damaged", ['{"min_score": 5, "gdrive_root": "G:', '["a list"]'])
 def test_update_json_locked_leaves_a_damaged_file_in_place(tmp_path, damaged):
-    # A hand edit that broke config.json used to be replaced by the one key the
-    # next column toggle wrote, and then (4-C1) moved aside with a new file
-    # holding only that key, so the submit switch read its default. Now the
-    # write is refused and the damaged file stays where every reader sees it.
+    # A hand edit that broke config.json must not be replaced by (or moved
+    # aside for) a new file holding only the one key the next column toggle
+    # writes, which would make the submit switch read its default. The write
+    # is refused and the damaged file stays where every reader sees it.
     p = tmp_path / "config.json"
     p.write_text(damaged, encoding="utf-8")
     with pytest.raises(jsonutil.JsonUnreadable):

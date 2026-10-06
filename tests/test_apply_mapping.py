@@ -1,6 +1,6 @@
-"""SP5: what the mapping request carries and how the planner reads a pick.
+"""What the mapping request carries and how the planner reads a pick.
 
-- READ-10: every button in the mapping request carries its DOM flags
+- Every button in the mapping request carries its DOM flags
   (`in_form`, `disabled`, `primary`); `FakeJev` never reads a boolean (an
   object's boolean entry goes with its key), so the flags leave its roles as
   they were.
@@ -47,7 +47,7 @@ def _strip_flags(state):
     return out
 
 
-# --- READ-10: the buttons' DOM flags ---------------------------------------------------------
+# --- the buttons' DOM flags ------------------------------------------------------------------
 
 def test_the_mapping_sends_each_buttons_form_disabled_and_primary_flags(catalog):
     digest = FormDigest(url_host="x", title="Apply", text="", fields=[_f(0, "Email", "email")],
@@ -136,7 +136,7 @@ def test_an_account_screen_never_clicks_the_sites_header_sign_in():
 
 
 def test_workdays_account_screen_takes_the_button_that_fits_the_screen():
-    # review M1: the captured screen draws "Create Account" twice (a click
+    # the captured screen draws "Create Account" twice (a click
     # filter over the real button) beside an in-page "Sign In"
     import apply_run
     from apply_judge import FillPlan
@@ -155,9 +155,9 @@ def test_workdays_account_screen_takes_the_button_that_fits_the_screen():
 
 
 def test_an_account_step_never_takes_a_judged_button_that_names_the_other_step():
-    # the fix round's Workday misses: the judge rates the screen's own "Sign
-    # In" (its "Already have an account?" link) the advance above "Create
-    # Account", and the sign-up clicked it and landed on the sign-in screen
+    # Workday's account screen: the judge rates the screen's own "Sign In"
+    # (its "Already have an account?" link) the advance above "Create
+    # Account"; a sign-up that clicks it lands on the sign-in screen
     import apply_run
     from apply_judge import FillPlan
     # the sign-up screen: a password and its confirmation (the boxes say sign-up)
@@ -192,13 +192,12 @@ def test_an_account_step_never_takes_a_judged_button_that_names_the_other_step()
 
 
 def test_the_password_boxes_say_whether_an_account_screen_signs_in_or_signs_up():
-    """Review R2-I4: Workday's sign-in (its own "Sign In", a "Create Account",
-    one password box) read as a sign-up once took "Create Account", typed the
-    master password into the sign-in's box and parked on the sign-up that
-    followed. The other-step rule holds only when the password boxes say no
-    other step than the read: `current-password` says sign-in, `new-password`
-    or two boxes say sign-up, one box that names neither lets the read
-    decide (review round 3, M2)."""
+    """Workday's sign-in (its own "Sign In", a "Create Account", one password
+    box) read as a sign-up takes "Create Account", types the master password
+    into the sign-in's box and parks on the sign-up that follows. The
+    other-step rule holds only when the password boxes say no other step than
+    the read: `current-password` says sign-in, `new-password` or two boxes say
+    sign-up, one box that names neither lets the read decide."""
     import apply_run
     from apply_judge import FillPlan
     floor = apply_judge.BUTTON_ADVANCE_MIN_CONF
@@ -229,7 +228,7 @@ def test_the_password_boxes_say_whether_an_account_screen_signs_in_or_signs_up()
 
 
 def test_a_one_box_sign_up_read_as_a_sign_up_takes_its_create_account():
-    """Review round 3, M2: a sign-up with one password box (Email, Password,
+    """A sign-up with one password box (Email, Password,
     Create Account, "Already have an account? Sign in") read as a sign-up:
     the one box names no step, the read decides, and neither the judged
     in-page Sign in nor the fallback takes the sign-in."""
@@ -253,9 +252,9 @@ def test_a_one_box_sign_up_read_as_a_sign_up_takes_its_create_account():
     Button(n=3, locator=(0, "#f"), text="Forgot password"),
 ])
 def test_a_one_box_screen_with_a_forgot_password_control_is_a_sign_in(forgot):
-    """Review round 4, M4: one password box with no autocomplete, a "Create
-    Account" beside "Sign In", read as a sign-up: its "Forgot your
-    password?" says a sign-in (R2-I4's case for this shape)."""
+    """One password box with no autocomplete, a "Create Account" beside
+    "Sign In", read as a sign-up: its "Forgot your password?" says a sign-in
+    (the Workday sign-in case for this shape)."""
     import apply_run
     from apply_judge import FillPlan
     floor = apply_judge.BUTTON_ADVANCE_MIN_CONF
@@ -299,11 +298,11 @@ def test_a_forms_own_next_is_its_way_on_when_the_header_took_the_advance():
     ("Save and Continue", True), ("Continue later", False), ("Save and continue later", False),
     ("Continue browsing jobs", False), ("Submit and continue", False),
     ("Continue with LinkedIn", False),
-    # review R2 Minor 5: a Next that goes on to the application names the job
+    # a Next that goes on to the application names the job
     ("Continue to job application", True), ("Next: job questions", True),
     ("Continue to more jobs", False), ("Continue job search", False)])
 def test_the_pages_own_next_leaves_a_later_a_browse_and_a_send(text, taken):
-    # review M2: only a Next that goes on with the application is taken
+    # only a Next that goes on with the application is taken
     import apply_run
     from apply_judge import FillPlan
     digest = FormDigest(url_host="x", title="My Information", text="Step 2 of 4", fields=[

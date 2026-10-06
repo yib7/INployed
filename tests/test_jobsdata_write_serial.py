@@ -1,4 +1,4 @@
-"""Master-CSV write serialization (audit P2-25/P2-28): the dashboard deletes on a
+"""Master-CSV write serialization: the dashboard deletes on a
 background queue while manual-add runs on a worker thread, so the local master's
 read-modify-write helpers must hold one shared lock or a concurrent pair can both
 read at N rows and last-writer-win, silently dropping a row.
@@ -47,7 +47,7 @@ def test_master_writes_hold_the_shared_lock(tmp_path):
 
 def test_concurrent_append_and_delete_lose_no_row(tmp_path, monkeypatch):
     """Interleaved appends + deletes over one master end with exactly the expected
-    rows — no lost update (audit P2-25)."""
+    rows — no lost update."""
     master = tmp_path / "linkedin_jobs_master.csv"
     monkeypatch.setattr(jobsdata, "HERE", tmp_path)   # isolate config.json
     # seed rows the deleter will target
@@ -83,8 +83,8 @@ def test_concurrent_append_and_delete_lose_no_row(tmp_path, monkeypatch):
 
 
 def test_manual_gz_append_failure_is_logged_not_silent(tmp_path, caplog, monkeypatch):
-    """A failed manual-gz convenience append must WARN (master/gz divergence was
-    previously swallowed with a bare `pass` — audit P2-28)."""
+    """A failed manual-gz convenience append must WARN (a bare `pass` would hide
+    the master/gz divergence)."""
     master = tmp_path / "linkedin_jobs_master.csv"
     real = jobsdata._append_dedup_csv
 

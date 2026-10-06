@@ -99,8 +99,8 @@ def test_requires_advanced_degree(text, expected):
         ("Architect", False),
         ("Cloud Architect", False),
         ("Enterprise Architect", False),
-        # --- positives: still caught via the OTHER seniority words, same as
-        # before this title was ever added to the junk list ------------------
+        # --- positives: still caught via the OTHER seniority words; bare
+        # "architect" is no junk word of its own ------------------------------
         ("Senior Solutions Architect", True),
         ("Sr. Solutions Architect", True),
         ("Staff Architect", True),
@@ -149,7 +149,7 @@ def test_add_filter_columns_flags_clearance_and_degree():
     assert list(out["filtered_out"]) == [False, True, True, False]
 
 
-# --- Easy Apply filter (SP2) -------------------------------------------------
+# --- Easy Apply filter -------------------------------------------------------
 # Clean, non-junk, >=40-char descriptions + benign titles so the OTHER
 # mechanical filters stay all-False and filtered_out reflects ONLY Easy Apply.
 

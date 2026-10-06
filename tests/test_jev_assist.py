@@ -1,11 +1,11 @@
-"""jev_assist: the tailor's Jev requests (TL-1 to TL-9).
+"""jev_assist: the tailor's Jev requests.
 
 Each helper asks the judge one kind of question and hands Jev's answers back as
 data; its caller composes. The helpers run here against the key-free FakeJev,
 against scripted judges where the exact probabilities matter, and against
 judges that fail: a helper returns None when Jev is off, when there is nothing
 to ask, when a request fails or comes back malformed, and once jev.Guarded's
-breaker is open, so its caller keeps the path it had before cycle 19.
+breaker is open, so its caller keeps the path it takes without Jev.
 
 No request leaves the process: every judge here is a fake, and the conftest
 drops TYPESAFE_API_KEY, so `jev_switch.client("tailor")` is None unless a test
@@ -170,7 +170,7 @@ def _atoms(judge):
     return jev_assist.atom_relevance(_JD, _TITLE, judge=judge)
 
 
-# TL-4's entries: each bullet with the atoms it was written from, as the run hands
+# faithfulness's entries: each bullet with the atoms it was written from, as the run hands
 # them over (the atoms as `compose._atom_payload` gives them).
 _CHESS = {"entry": "Chess Club", "bullets": [
     {"gkey": "cc_lead", "text": "Led weekly training sessions for 20 members.",
@@ -189,7 +189,7 @@ def _faith(judge):
     return jev_assist.faithfulness([_CHESS], judge=judge)
 
 
-# TL-6: a bullet whose opener "built" another bullet uses, and the palette,
+# pick_verb: a bullet whose opener "built" another bullet uses, and the palette,
 # {category: verbs}, grouped by the kind of action each verb expresses.
 _VERB_BULLET = "Built a sales model to analyze regional demand."
 _VERB_PALETTE = {"Build": ["Built", "Designed", "Engineered"],
@@ -202,7 +202,7 @@ def _verb(judge, palette=_VERB_PALETTE, current="built", taken=_VERB_TAKEN):
     return jev_assist.pick_verb(_VERB_BULLET, palette, current, taken, judge=judge)
 
 
-# TL-5's entries: each bullet's text, as the sweep hands them over.
+# sweep_flags's entries: each bullet's text, as the sweep hands them over.
 def _plain(entry):
     return {"entry": entry["entry"],
             "bullets": [{"gkey": b["gkey"], "text": b["text"]} for b in entry["bullets"]]}
@@ -212,7 +212,7 @@ def _sweep(judge):
     return jev_assist.sweep_flags([_plain(_CHESS)], judge=judge)
 
 
-# TL-7's groups: each bullet's drafts that passed the gate and TL-4.
+# best_variant's groups: each bullet's drafts that passed the gate and faithfulness.
 _DRAFTS = [{"gkey": "ac_sql", "drafts": [
     "Wrote SQL reports on warehouse sales data.",
     "Wrote weekly SQL reports on warehouse sales data for sales leaders."]}]
@@ -222,7 +222,7 @@ def _best(judge):
     return jev_assist.best_variant(_JD, _TITLE, _DRAFTS, judge=judge)
 
 
-# TL-8's input: the letter's sentences and its sources, the job left out.
+# letter_unsupported's input: the letter's sentences and its sources, the job left out.
 _SENTENCES = ["At Acme Data I wrote SQL reports on warehouse sales data.",
               "I led the analytics team through a warehouse migration."]
 _SOURCES = {"resume bullets": ["Wrote SQL reports on warehouse sales data."],
@@ -235,7 +235,7 @@ def _letter(judge):
     return jev_assist.letter_unsupported(_SENTENCES, _SOURCES, judge=judge)
 
 
-# TL-9's input: the report's keywords and the résumé's text.
+# keyword_meaning's input: the report's keywords and the résumé's text.
 _KEYWORDS = ["sql", "dashboards", "kubernetes"]
 _RESUME = "Wrote SQL reports on warehouse sales data. Built a sales dashboard."
 
@@ -250,7 +250,7 @@ _HELPERS = [pytest.param(_skills, id="skills_pick"), pytest.param(_atoms, id="at
             pytest.param(_best, id="best_variant"),
             pytest.param(_letter, id="letter_unsupported"),
             pytest.param(_meaning, id="keyword_meaning")]
-# The requests a helper sends: TL-6 asks the category, then a verb in it, and asks
+# The requests a helper sends: pick_verb asks the category, then a verb in it, and asks
 # its own category when the first request fails.
 _REQUESTS = {_verb: 2}
 
@@ -329,13 +329,14 @@ _GATE_ALONE = "the deterministic gate alone"
 @pytest.mark.parametrize("helper,step,fallback", [
     pytest.param(_skills, jev_assist.STEP_SKILLS, _LLM_PATH, id="skills_pick"),
     pytest.param(_atoms, jev_assist.STEP_SHORTLIST, _LLM_PATH, id="atom_relevance"),
-    # TL-4 has no LLM path to fall back to: without it the grounding gate runs alone.
+    # faithfulness has no LLM path to fall back to: without it the grounding gate runs alone.
     pytest.param(_faith, jev_assist.STEP_FAITHFULNESS, _GATE_ALONE, id="faithfulness"),
     pytest.param(_verb, jev_assist.STEP_VERB, _LLM_PATH, id="pick_verb"),
-    # Without TL-5 the sweep calls the model for every item, as it did before.
+    # Without sweep_flags the sweep calls the model for every item.
     pytest.param(_sweep, jev_assist.STEP_SWEEP_GATE, _LLM_PATH, id="sweep_flags"),
-    # Without TL-7 the run keeps the rephrase's first draft; without TL-8 the letter
-    # has its deterministic gate; without TL-9 the report has its literal line.
+    # Without best_variant the run keeps the rephrase's first draft; without
+    # letter_unsupported the letter has its deterministic gate; without
+    # keyword_meaning the report has its literal line.
     pytest.param(_best, jev_assist.STEP_BEST_OF, _LLM_PATH, id="best_variant"),
     pytest.param(_letter, jev_assist.STEP_LETTER, _LLM_PATH, id="letter_unsupported"),
     pytest.param(_meaning, jev_assist.STEP_ATS_MEANING, _LLM_PATH, id="keyword_meaning")])
@@ -373,7 +374,7 @@ def test_a_malformed_answer_returns_none(master, helper, judge):
 
 
 def test_once_the_breaker_opens_every_later_helper_returns_none(master):
-    """JS-3: one outage moves the rest of the run to the LLM path. The first step
+    """One outage moves the rest of the run to the LLM path. The first step
     exhausts the retries and opens the breaker; the later steps never reach the
     service and return None at once."""
     down = Down()
@@ -423,7 +424,7 @@ def test_nothing_to_ask_is_none_and_says_so(master):
 
 
 def test_a_step_asked_again_keeps_its_first_failure(master):
-    """TL-4 asks after every rewrite, so one run can ask a step many times. The first
+    """faithfulness asks after every rewrite, so one run can ask a step many times. The first
     failure stays on its line when a later request goes through: the report has to
     say that a check fell back, whatever came after it."""
     assert _faith(Failing()) is None
@@ -484,7 +485,7 @@ def test_a_request_too_big_to_fit_is_split_and_the_answers_line_up(master, monke
     assert [a for s, _q in split.requests for a in s["atoms"]] == _WHATS
 
 
-# ── TL-1 skills_pick ─────────────────────────────────────────────────────────
+# ── skills_pick ──────────────────────────────────────────────────────────────
 def test_skills_pick_is_one_request_a_noul_per_skill_and_the_focus(master):
     rec = Recording(jev.FakeJev())
     got = jev_assist.skills_pick(_JD, _TITLE, judge=rec)
@@ -550,7 +551,7 @@ def test_the_job_description_is_cut_to_its_cap(master):
     assert len(state["job"]["description"]) == jev_assist.JD_CHARS
 
 
-# ── TL-2 atom_relevance ──────────────────────────────────────────────────────
+# ── atom_relevance ───────────────────────────────────────────────────────────
 def test_atom_relevance_rates_every_atom_by_its_what(master):
     rec = Recording(jev.FakeJev())
     got = jev_assist.atom_relevance(_JD, _TITLE, judge=rec)
@@ -571,7 +572,7 @@ def test_atom_relevance_maps_each_probability_to_its_atom(master):
                    "pa_overview": 0.8, "cc_lead": 0.1}
 
 
-# ── TL-4 faithfulness ────────────────────────────────────────────────────────
+# ── faithfulness ─────────────────────────────────────────────────────────────
 def test_faithfulness_is_one_request_per_entry_with_three_questions_a_bullet(master):
     rec = Recording(jev.FakeJev())
     got = jev_assist.faithfulness([_ACME, _CHESS], judge=rec)
@@ -614,7 +615,7 @@ _ALL_THREE = "; ".join([_F["unsupported"], _F["inflates"], _F["adds_claim"]])
 
 @pytest.mark.parametrize("choice,confidence,inflates,adds,want", [
     pytest.param("verified", 0.6, 0.69, 0.69, "", id="verified-at-the-floor-passes"),
-    # VL-3: a low-confidence "verified" is the judge reading a faithful rephrase.
+    # a low-confidence "verified" is the judge reading a faithful rephrase.
     pytest.param("verified", 0.23, 0.1, 0.1, "", id="unsure-verified-passes"),
     pytest.param("unsupported", 0.6, 0.1, 0.1, _F["unsupported"], id="unsupported-at-the-floor"),
     pytest.param("unsupported", 0.59, 0.33, 0.1, "", id="unsure-unsupported-passes"),
@@ -623,7 +624,7 @@ _ALL_THREE = "; ".join([_F["unsupported"], _F["inflates"], _F["adds_claim"]])
     pytest.param("contradicted", 0.3, 0.1, 0.1, "", id="unsure-contradicted-passes"),
     pytest.param("verified", 1.0, 0.7, 0.1, _F["inflates"], id="inflates-at-the-flag"),
     pytest.param("verified", 0.3, 0.7, 0.1, _F["inflates"], id="inflates-flags-an-unsure-verified"),
-    # VL-3: adds_claim reads 0.5 to 0.95 on nearly every faithful rephrase, so it
+    # adds_claim reads 0.5 to 0.95 on nearly every faithful rephrase, so it
     # flags nothing alone and rides along in the finding of a bullet flagged otherwise.
     pytest.param("verified", 1.0, 0.1, 0.95, "", id="adds-claim-alone-passes"),
     pytest.param("verified", 1.0, 0.7, 0.7, "; ".join([_F["inflates"], _F["adds_claim"]]),
@@ -637,7 +638,7 @@ def test_faithfulness_flags_by_the_thresholds(master, choice, confidence, inflat
     assert got == {"cc_lead": want}
 
 
-# VL-3's planted bullets, as the live judge read them: (supported, its confidence,
+# Planted bullets, as the live judge read them: (supported, its confidence,
 # inflates, adds_claim) in, the finding out.
 @pytest.mark.parametrize("supported,confidence,inflates,adds,want", [
     pytest.param("verified", 0.98, 0.06, 0.17, "", id="faithful-1"),
@@ -656,7 +657,7 @@ def test_the_vl3_planted_bullets_get_their_findings(supported, confidence, infla
 
 
 class _NoConfidence:
-    """Picks `choice` (`category` for TL-6's category question) with no confidence
+    """Picks `choice` (`category` for pick_verb's category question) with no confidence
     and answers every noul 0.1."""
 
     def __init__(self, choice, category=None):
@@ -742,7 +743,7 @@ class InflationReader:
 def test_a_planted_led_the_team_inflation_is_flagged(master):
     """The gap `verify.py` documents: "Led the team" over an atom that says the
     candidate helped carries no distinctive token, so the grounding gate passes it.
-    TL-4 names it."""
+    faithfulness names it."""
     planted = {"entry": "Acme Data", "bullets": [
         {"gkey": "ac_sql", "text": "Led the team that wrote SQL reports on warehouse sales data.",
          "atoms": [{"id": "ac_sql",
@@ -781,7 +782,7 @@ def test_faithfulness_with_no_bullets_asks_nothing(master):
     assert judge.calls == 0
 
 
-# ── TL-6 pick_verb ───────────────────────────────────────────────────────────
+# ── pick_verb ────────────────────────────────────────────────────────────────
 class Staged:
     """Answers each question id with its scripted (choice, confidence), and raises
     the scripted exception for an id mapped to one."""
@@ -968,7 +969,7 @@ def test_the_tl6_constants_are_the_specs():
     assert not hasattr(jev_assist, "VERB_OPTIONS_MAX")
 
 
-# ── TL-5 sweep_flags ─────────────────────────────────────────────────────────
+# ── sweep_flags ──────────────────────────────────────────────────────────────
 _TELLS = ["contrast framing", "stacked adjectives", "filler or vague impact", "hype words",
           "padded list of three"]
 
@@ -1049,7 +1050,7 @@ def test_sweep_flags_with_no_bullets_asks_nothing(master):
     assert jev_assist.usage_line(jev_assist.STEP_SWEEP_GATE).endswith("; nothing to ask")
 
 
-# ── TL-7 best_variant ────────────────────────────────────────────────────────
+# ── best_variant ─────────────────────────────────────────────────────────────
 def test_best_variant_is_one_choice_per_bullet_over_its_numbered_drafts(master):
     rec = Recording(jev.FakeJev())
     got = jev_assist.best_variant(_JD, _TITLE, _DRAFTS, judge=rec)
@@ -1102,7 +1103,7 @@ def test_many_bullets_too_big_to_fit_are_split_and_the_picks_line_up(master, mon
     assert got == want
 
 
-# ── TL-8 letter_unsupported ──────────────────────────────────────────────────
+# ── letter_unsupported ───────────────────────────────────────────────────────
 def test_letter_unsupported_is_one_noul_per_sentence_against_the_sources(master):
     rec = Recording(jev.FakeJev())
     jev_assist.letter_unsupported(_SENTENCES, _SOURCES, judge=rec)
@@ -1140,7 +1141,7 @@ def test_the_letter_threshold_is_the_reports():
     assert jev_assist.LETTER_CLAIM_FLAG == 0.7
 
 
-# ── TL-9 keyword_meaning ─────────────────────────────────────────────────────
+# ── keyword_meaning ──────────────────────────────────────────────────────────
 def test_keyword_meaning_is_one_noul_per_keyword_against_the_resume(master):
     rec = Recording(jev.FakeJev())
     jev_assist.keyword_meaning(_KEYWORDS, _RESUME, judge=rec)
@@ -1182,7 +1183,7 @@ def test_the_meaning_threshold_is_the_reports():
 def test_every_judge_question_is_free_of_the_banned_phrasing():
     """The questions follow the rules the prompts do: `compose.style_violations`
     finds none of its `_STYLE_BANS` shapes in them, and they carry no em dash
-    (U+2014) and no clause that opens with a comma and "never". TL-4's findings
+    (U+2014) and no clause that opens with a comma and "never". faithfulness's findings
     count too: they ride in the reground prompt."""
     texts = [jev_assist.SKILL_QUESTION, jev_assist.ATOM_QUESTION,
              jev_assist.FOCUS_QUESTION, *jev_assist.SKILL_FOCUS.values(),

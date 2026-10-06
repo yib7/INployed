@@ -1,8 +1,8 @@
-"""Cycle 16/17 SP1: interface scaling.
+"""Interface scaling.
 
 `theme.set_scale(app, s)` sizes the whole UI off one factor — the app font's point
-size — and (cycle 17) does so WITHOUT re-applying the global stylesheet, which was
-the source of the scaling lag. The stylesheet is static (headings scale via the app
+size — and does so WITHOUT re-applying the global stylesheet, which causes
+the scaling lag. The stylesheet is static (headings scale via the app
 font, not a pinned px). Headless: the session QApplication (via qtbot) is enough.
 """
 import sys
@@ -41,11 +41,11 @@ def test_qss_is_static_with_no_pinned_font_size(qtbot):
 
 
 def test_set_scale_overrides_pinned_widget_fonts_live(qtbot):
-    # Live-scaling fix (fast path): a global stylesheet pins each widget's font, so a
-    # bare app.setFont() can't override an explicitly-set widget font — which is why
-    # the size used to change only after a restart. set_scale pushes the new font onto
+    # Live scaling (fast path): a global stylesheet pins each widget's font, so a
+    # bare app.setFont() can't override an explicitly-set widget font, and the size
+    # would change only after a restart. set_scale pushes the new font onto
     # the live widgets so it updates at once, WITHOUT the global stylesheet re-polish
-    # that caused the lag (so the stylesheet is left untouched).
+    # that causes the lag (so the stylesheet is left untouched).
     app = _app()
     try:
         before = app.styleSheet()
@@ -73,7 +73,7 @@ def test_set_scale_clamps_extremes(qtbot):
 
 
 def test_widget_created_after_rescale_gets_control_font(qtbot):
-    # Per-class app fonts (restyle cycle): a QPushButton created AFTER set_scale
+    # Per-class app fonts: a QPushButton created AFTER set_scale
     # must resolve the "control" type role (0.93 x live base) with no explicit
     # setFont — this is what keeps dialogs/popups built post-rescale on-scale.
     app = _app()
@@ -100,9 +100,9 @@ def test_apply_theme_accepts_scale(qtbot):
 def test_rescale_keeps_the_weight_the_stylesheet_paints(qtbot):
     """The QSS bolds QPushButton, QHeaderView::section and QLabel[heading], and
     paints them DemiBold whatever font the widget carries. sizeHint() is measured
-    from that font, so a rescale that pushed a Normal-weight font onto them asked
-    the layout for narrower text than got painted: "Start auto-apply run" came up
-    7px short at 125% and rendered with its S and its n sliced in half."""
+    from that font, so a rescale that pushes a Normal-weight font onto them asks
+    the layout for narrower text than gets painted: "Start auto-apply run" comes up
+    7px short at 125% and renders with its S and its n sliced in half."""
     app = _app()
     btn = QtWidgets.QPushButton("Start auto-apply run")
     head = QtWidgets.QLabel("Credentials")

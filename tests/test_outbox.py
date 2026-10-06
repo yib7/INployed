@@ -102,7 +102,7 @@ def test_rows_outbox_unique_filenames(tmp_path):
 
 
 def test_rows_outbox_write_is_atomic_no_partial_file_on_failure(tmp_path, monkeypatch):
-    # P2-28: the outbox rows file must be written via an atomic tmp+replace so a
+    # The outbox rows file must be written via an atomic tmp+replace so a
     # mid-write failure can never leave a truncated local_rows_*.csv.gz that the
     # VM merge would fold in. Simulate a to_csv that writes partial bytes to
     # whatever path it is handed, then raises: with the atomic path that path is

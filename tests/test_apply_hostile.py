@@ -1,5 +1,5 @@
-"""The runner against a hostile page (Phase 4 slice B probes, kept as
-regression tests): the job's ATS account is pinned, a password goes only over
+"""The runner against a hostile page, as
+regression tests: the job's ATS account is pinned, a password goes only over
 https, Chrome keeps its sandbox and takes no downloads, an emailed code comes
 only from the job's own senders, the queue never loses jobs to a read error,
 and a page's boxes are capped.
@@ -289,8 +289,8 @@ _MESSAGES = [
 
 
 def test_b4_read_inbox_never_picks_a_refused_sender():
-    """A judge that answers yes for the LinkedIn code (the probe's FakeJev
-    did, for a host named `linkedin-careers.evil.example`): the sender check
+    """A judge that answers yes for the LinkedIn code (as a FakeJev can, for
+    a host named `linkedin-careers.evil.example`): the sender check
     alone keeps it."""
     yes, no = jev.Answer("noul", noul=0.95), jev.Answer("noul", noul=0.05)
     answers = {"msg_0_from_site": yes, "msg_0_has_code": yes,

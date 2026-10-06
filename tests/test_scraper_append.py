@@ -53,7 +53,7 @@ def test_blocklist_refilters_whole_master(tmp_path, monkeypatch):
     assert pd.read_csv(m, dtype=str)["job_posting_id"].tolist() == ["2"]
 
 
-# P2-12: the blocklist is read from disk ONCE per master rewrite, not per 2000-row
+# the blocklist is read from disk ONCE per master rewrite, not per 2000-row
 # chunk. An explicit `blocklist=` bypasses the disk read entirely; append_to_master
 # loads it once and threads it through every chunk.
 
@@ -94,7 +94,7 @@ def test_unreadable_master_still_raises(tmp_path, monkeypatch):
         scraper.append_to_master(pd.DataFrame({"job_posting_id": ["9"]}))
 
 
-# P2-1: the external-exclude JSON dump and the per-run CSV write are copied to
+# the external-exclude JSON dump and the per-run CSV write are copied to
 # the VM and must survive a crash/kill mid-write. Both must route through the
 # module's atomic helpers (same-dir tempfile + os.replace), never a naked write
 # that can leave a truncated file behind.
@@ -180,8 +180,8 @@ def test_a_synchronous_collection_reaches_the_csv_without_a_second_call(
     When Bright Data finishes inside its one-minute synchronous window it returns
     the records themselves and never issues a snapshot id. Polling or downloading
     on that branch cannot work -- there is no snapshot to ask about -- and the
-    rows are already billed, so dropping them buys the collection twice. This is
-    the branch that crashed the 2026-09-09 run on "Extra data: line 2 column 1".
+    rows are already billed, so dropping them buys the collection twice. Read as
+    one JSON document, this branch fails on "Extra data: line 2 column 1".
     """
     label = scraper.RUN_LABELS[0]
     monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)

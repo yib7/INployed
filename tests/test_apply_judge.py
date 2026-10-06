@@ -162,7 +162,7 @@ def test_threshold_constants_match_the_spec_table():
     assert apply_judge.BUTTON_SUBMIT_MIN_CONF == 0.50
     assert apply_judge.BUTTON_ADVANCE_MIN_CONF == 0.50
     assert apply_judge.VERIFY_MIN == 0.80
-    # the flags park nothing on their own since 2026-09-22, so they have no gate
+    # the flags park nothing on their own, so they have no gate
     assert not hasattr(apply_judge, "PROHIBITED_MAX")
     assert not hasattr(apply_judge, "CAPTCHA_MAX")
     assert apply_judge.GROUNDING_MIN == 0.70
@@ -199,7 +199,7 @@ def test_page_questions_state_shape(catalog):
     assert state["fields"][8]["options"] == ["Yes", "No"]
     assert state["fields"][8]["required"] is True
     assert "placeholder" not in state["fields"][0]      # empty strings are dropped
-    # no kind_hint; the DOM flags (READ-10)
+    # no kind_hint; the DOM flags
     assert state["buttons"][0] == {"n": 0, "text": "Submit application", "in_form": False,
                                    "disabled": False, "primary": False}
     # `facts` is the one description map: the catalog's facts plus the special
@@ -213,7 +213,7 @@ def test_page_questions_state_shape(catalog):
 def test_page_questions_emit_every_question(catalog):
     digest = _greenhouse()
     state, q = apply_judge.page_questions(digest, catalog, _JOB)
-    # SP4: the page state and the page's signals are the read's own request
+    # the page state and the page's signals are the read's own request
     # (`read_questions`); the mapping asks the fields and the buttons
     assert "page_state" not in q and "has_captcha" not in q and "requires_account" not in q
     for i, f in enumerate(digest.fields):
@@ -327,7 +327,7 @@ def test_plan_consent_attest_needs_its_own_higher_floor(catalog, conf, expected)
         assert p.missing == [(_ARBITRATION, "checkbox")]
 
 
-# --- routine consents tick at the mapping floor (controller decision, SP5 round 2) --------------
+# --- routine consents tick at the mapping floor ----------------------------------------------
 
 @pytest.mark.parametrize("label, conf, ticked", [
     ("I agree to the privacy notice for candidates", 0.72, True),
@@ -350,7 +350,7 @@ def test_a_routine_consent_ticks_at_the_mapping_floor_and_a_commitment_does_not(
     assert (targets == []) is ticked
 
 
-# the probes of review R3-I1 (all keep CONSENT_MIN_CONF)
+# labels that keep CONSENT_MIN_CONF
 _CUT_300 = ("I have read the privacy notice for candidates and I understand how my personal "
             "information is collected, processed, stored and retained for this application, "
             "and I certify that the information provided in this application is true, "
@@ -378,7 +378,7 @@ _OPTIONAL_MARKETING = [
     ("I certify that the information provided is accurate", ""),
     ("I agree with the terms and conditions of the application", ""),
     ("I confirm that the information in this application is accurate", ""),
-    # the job's company before a possessive (review round 4, M2: no other name)
+    # the job's company before a possessive (no other name)
     ("I have read and accept Fabrikam's Privacy Policy", "Fabrikam"),
     ("I accept Acme's Privacy Policy", "Acme"),
     ("I have read and agree to Checkr's Privacy Policy", "Checkr"),
@@ -417,7 +417,7 @@ def test_a_label_that_names_only_routine_things_is_a_routine_consent(label, comp
     "I agree",
     "I Agree To Share My Data With Partners",
     "I agree to be contacted about the role",
-    # review R3-I1: other scripts, a label at the extractor's cap, commitments
+    # other scripts, a label at the extractor's cap, commitments
     # written as names, the contact family without this application or role
     "Я согласен на проверку судимости и Privacy Policy",
     "我同意背景调查 Privacy Policy",
@@ -430,12 +430,12 @@ def test_a_label_that_names_only_routine_things_is_a_routine_consent(label, comp
     ("I have read the Adatum Privacy Notice for Candidates", "Fabrikam"),
     # two capitalised words before a possessive are no single name
     ("I accept Talent Network's Privacy Policy", ""),
-    # review round 4, M2: a possessive name that is no job's company (two
+    # a possessive name that is no job's company (two
     # background-screening vendors)
     ("I have read and agree to Checkr's Privacy Policy", "Fabrikam"),
     ("I accept HireRight's Terms of Use", "Fabrikam"),
     ("I accept Acme's Privacy Policy", ""),
-    # review round 4, M1: a label that ends on a function word was cut
+    # a label that ends on a function word is cut
     ("I agree to the Privacy Policy and the", ""),
     ("I certify that the information provided is accurate and", ""),
     ("I agree with the terms and conditions of the", ""),
@@ -541,9 +541,9 @@ def test_page_questions_name_fields_by_position_and_carry_n(catalog):
 def test_button_roles_separate_a_wizard_continue_from_the_final_submit(catalog):
     """A multi-step form's Continue is often an HTML `type=submit` control and
     the extractor's `kind_hint` says `submit` for it (and for "Apply now": the
-    hint is a regex over the text). The live judge took the word literally
-    (advance 0.72 / submit 0.28, confidence 0.66, below the advance gate;
-    apply_entry 0.55 / submit 0.45 on a posting). The state now carries the
+    hint is a regex over the text). A judge that reads the hint takes the word
+    literally (advance 0.72 / submit 0.28, confidence 0.66, below the advance
+    gate; apply_entry 0.55 / submit 0.45 on a posting). The state carries the
     button text alone and the criteria say what each role is not for. The
     fake reads the same roles."""
     for role in ("advance", "submit"):
@@ -610,7 +610,7 @@ def test_page_questions_cap_help_options_and_text(catalog):
                         fields=[_f(0, "Country", "select", help=long_help,
                                    options=[f"opt{i}" for i in range(100)])])
     state, q = apply_judge.page_questions(digest, catalog, _JOB)
-    # 1,200 since 2026-09-22: LinkedIn's posting text began past character 600
+    # 1,200: LinkedIn's posting text can begin past character 600
     assert len(state["page"]["headline_text"]) == apply_judge.HEADLINE_CHARS == 1200
     assert len(state["fields"][0]["help"]) == 200
     assert len(state["fields"][0]["options"]) == 40
@@ -754,9 +754,8 @@ def test_plan_leave_blank_and_needs_generation(catalog):
 
 @pytest.mark.parametrize("required, action", [(False, "skip"), (True, "generate")])
 def test_only_a_required_open_ended_question_gets_a_draft(catalog, required, action):
-    """A live run on the Contoso form (2026-09-27) filled this optional question with
-    a line of the sheet about on-site work: an optional open-ended question
-    gets no draft, and a required one still does."""
+    """An optional open-ended question gets no draft (a line of the sheet about
+    on-site work does not answer it), and a required one still does."""
     label = "What are you looking for in your next role? What would you like to avoid?"
     digest = FormDigest(url_host="jobs.ashbyhq.com", title="t", text="",
                         fields=[_f(0, label, "textarea", required=required)])
@@ -826,9 +825,9 @@ def _split(pick, conf, probs):
 
 
 def test_plan_pools_the_sources_that_type_the_same_words(catalog):
-    # SP8b, live 2026-09-25 (date_mmddyyyy.html): the judge split a signature
-    # box between the full name (0.61, confidence 0.59) and the typed
-    # signature (0.29); both type the name, so the mapping stands at 0.90
+    # date_mmddyyyy.html: the judge splits a signature box between the full
+    # name (0.61, confidence 0.59) and the typed signature (0.29); both type
+    # the name, so the mapping stands at 0.90
     digest = FormDigest(url_host="x", title="t", text="", fields=[
         _f(0, "Signature (type your full name)", required=True)])
     answers = _page_answers(digest, {})
@@ -865,8 +864,8 @@ def _bank_with(*entries):
 
 
 @pytest.mark.parametrize("label,split,value", [
-    # SP8b review I2: two answer-bank entries that both hold "Yes"; the judge
-    # was unsure which applied, and the shared Yes is no agreement
+    # two answer-bank entries that both hold "Yes"; the judge is unsure
+    # which applies, and the shared Yes is no agreement
     ("Do you hold a current driver's license?",
      {"answer_over_18": 0.45, "answer_background_check": 0.30, "leave_blank": 0.25}, "Yes"),
     # and a number: the years of experience and an answer-bank entry both "2"
@@ -898,7 +897,7 @@ _SPONSORSHIP = "Will you now or in the future require visa sponsorship?"
 
 @pytest.mark.parametrize("confirmed", [True, False])
 def test_a_required_question_whose_answer_is_unconfirmed_parks(tmp_path, confirmed):
-    # cycle 18 (FL-1): the sheet says No, but the store's answers on
+    # the sheet says No, but the store's answers on
     # sponsorship (the yes/no and the authorization statement that names it)
     # are not confirmed, so the catalog has no fact for the question and the
     # required field parks; confirmed, the same page fills No
@@ -925,11 +924,11 @@ def test_a_required_question_whose_answer_is_unconfirmed_parks(tmp_path, confirm
 
 
 def test_a_portfolio_box_takes_the_github_fact_when_no_website_is_stored(tmp_path):
-    # SP8b, live 2026-09-25 (validation_errors.html's required Portfolio URL):
-    # with no website stored, `quick_map`'s website_url has no value and the
-    # box goes to the judge, which read it leave_blank at 0.54 to 0.65 while
-    # the GitHub fact said "GitHub profile URL"; the sheet's row is "GitHub /
-    # Portfolio", and its description now says so
+    # validation_errors.html's required Portfolio URL: with no website stored,
+    # `quick_map`'s website_url has no value and the box goes to the judge,
+    # which can read it leave_blank when the GitHub fact says only "GitHub
+    # profile URL"; the sheet's row is "GitHub / Portfolio", and its
+    # description says so
     (tmp_path / "apply.md").write_text(apply_data.build_markdown(_MASTER, _JOB, _bank()),
                                        encoding="utf-8")
     cat = apply_facts.build(tmp_path, answers=_bank(), today=date(2026, 9, 21))
@@ -1032,8 +1031,8 @@ def test_option_questions_cover_only_model_mapped_fields_with_options(catalog):
     answers = _page_answers(digest, mapping)
     p = apply_judge.plan(digest, catalog, answers)
     state, q = apply_judge.option_questions(digest, p, catalog=catalog)
-    # moved on purpose (cycle 18, FM-1): the two Yes / No selects (8, 9) are
-    # settled in code by the alias set and ride in no second request
+    # the two Yes / No selects (8, 9) are settled in code by the alias set
+    # and ride in no second request
     assert [(p.fields[n].action, p.fields[n].option) for n in (8, 9)] == [
         ("select", "Yes"), ("select", "No")]
     assert set(q) == {"field_10_pick"}
@@ -1213,9 +1212,8 @@ def test_fake_jev_end_to_end_over_the_greenhouse_digest(catalog):
     first = apply_judge.plan(digest, catalog, answers)
     # the option picks for the model-mapped selects are only known after the
     # mapping, and the second request resolves them; the Yes / No selects
-    # (8, 9) are settled in code by the alias set (moved on purpose, cycle
-    # 18, FM-1), so the first plan waits on the optional Gender alone and
-    # leaves the optional essay blank
+    # (8, 9) are settled in code by the alias set, so the first plan waits
+    # on the optional Gender alone and leaves the optional essay blank
     assert first.park_reason == "" and first.missing == [("Gender", "select"),
                                                          (_GREENHOUSE_ESSAY, "textarea")]
     state2, q2 = apply_judge.option_questions(digest, first, catalog=catalog)
@@ -1338,7 +1336,7 @@ def test_plan_reads_a_masked_sensitive_box_as_sensitive_before_a_password(catalo
     assert plan.park_reason == apply_judge.sensitive_reason("Passport number")
 
 
-# --- cycle 18 FM-1: a yes or no matches only an option in its own alias set ----------
+# --- a yes or no matches only an option in its own alias set ------------------------
 
 @pytest.mark.parametrize("options, value, want", [
     (["Yes - on a work visa (OPT/H-1B)", "U.S. citizen or permanent resident"], "Yes", None),
@@ -1358,7 +1356,7 @@ def _yes_no_digest(options):
 
 
 def test_a_plain_yes_no_list_is_settled_in_code_and_asks_the_judge_nothing(catalog):
-    # FM-1: a yes / no fact's value names one option of a plain Yes / No list
+    # a yes / no fact's value names one option of a plain Yes / No list
     # by its alias set; the plan takes it with no pick answer at all, and the
     # second request asks nothing for it
     digest = _yes_no_digest(("Yes", "No"))
@@ -1371,7 +1369,7 @@ def test_a_plain_yes_no_list_is_settled_in_code_and_asks_the_judge_nothing(catal
 
 
 def test_a_qualified_yes_no_list_waits_for_the_judges_pick(catalog):
-    # FM-1: a qualified option is the judge's pick; no pick yet is no answer
+    # a qualified option is the judge's pick; no pick yet is no answer
     options = ("Yes, I will require sponsorship", "No, I do not require sponsorship")
     digest = _yes_no_digest(options)
     answers = _page_answers(digest, {0: ("requires_sponsorship", 0.9)})
@@ -1393,13 +1391,13 @@ def _bool_catalog(**values):
 
 
 def test_the_pick_for_a_yes_no_fact_carries_every_yes_no_fact_the_catalog_holds(catalog):
-    # orchestrator decision 1: the mapped fact first, then the other yes / no
+    # the mapped fact first, then the other yes / no
     # facts with a value, each as "<description>: <Yes|No>"
     d = apply_facts.DESCRIPTIONS
     assert apply_judge.candidate_answer(catalog, "requires_sponsorship", "No") == "\n".join([
         f"{d['requires_sponsorship']}: No", f"{d['work_authorized']}: Yes",
         f"{d['willing_to_relocate']}: Yes", f"{d['onsite_ok']}: Yes"])
-    # a derived fact (cycle 18, SP6c) leads its own pick over the stored
+    # a derived fact leads its own pick over the stored
     # lines and adds no line to another's: the stored lines already say it
     assert catalog.value("authorized_without_sponsorship") == "Yes"
     assert apply_judge.candidate_answer(
@@ -1440,7 +1438,7 @@ def test_the_second_request_carries_the_combined_answer_for_a_qualified_list(cat
     assert q["field_0_pick"]["instructions"]["candidate_answer"] == combined
 
 
-# --- cycle 18 FM-2: past OPTIONS_CAP code decides only on the same words or an alias -------
+# --- past OPTIONS_CAP code decides only on the same words or an alias --------------------
 
 def test_a_long_list_is_settled_in_code_only_by_an_exact_or_alias_match(catalog):
     filler = [f"Option {i}" for i in range(apply_judge.OPTIONS_CAP + 5)]
@@ -1459,7 +1457,7 @@ def test_a_long_list_is_settled_in_code_only_by_an_exact_or_alias_match(catalog)
     assert (p.fields[0].action, p.fields[0].option) == ("select", "California (CA)")
 
 
-# --- cycle 18 FM-5: a number box takes a plain number; the phone only a phone's box -------
+# --- a number box takes a plain number; the phone only a phone's box ---------------------
 
 @pytest.mark.parametrize("label, ident, action", [
     ("Years of experience", "years", "skip"),
@@ -1495,7 +1493,7 @@ def test_a_number_box_whose_answer_is_no_plain_number_is_left_blank(value, actio
                                  if required else "")
 
 
-# --- cycle 18 FM-7: a decline is a refusal to answer ------------------------------------
+# --- a decline is a refusal to answer ---------------------------------------------------
 
 @pytest.mark.parametrize("text, declined", [
     ("I do not identify as a protected veteran", False),
@@ -1508,10 +1506,10 @@ def test_declines_reads_a_refusal_and_never_a_statement(text, declined):
     assert apply_judge.declines(text) is declined
 
 
-# --- cycle 18 SP6c: code settles an answer only for its own question ------------------------
+# --- code settles an answer only for its own question ---------------------------------------
 
 _OWN_QUESTIONS = [
-    # work_authorized: the plain forms (the screening set's, the fixtures', the brief's)
+    # work_authorized: the plain forms (the screening set's, the fixtures')
     ("work_authorized", "Are you legally authorized to work in the United States?", True),
     ("work_authorized", "Are you authorized to work in the US?", True),
     ("work_authorized", "Are you authorized to work in the US? *", True),
@@ -1521,7 +1519,7 @@ _OWN_QUESTIONS = [
                         "date?", True),
     ("work_authorized", "I am legally authorized to work in the United States.", True),
     ("work_authorized", "Do you have the legal right to work in the United States?", True),
-    # round 3: "what", "current" and "status" are no words of its own question
+    # "what", "current" and "status" are no words of its own question
     ("work_authorized", "What is your current work authorization status in the U.S.?",
      False),
     ("work_authorized", "Are you legally allowed to take up employment in the United States?",
@@ -1549,7 +1547,7 @@ _OWN_QUESTIONS = [
     ("requires_sponsorship", "Do you require visa sponsorship?", True),
     ("requires_sponsorship", "Will you need the company to sponsor an employment-based visa "
                              "(such as an H-1B) for you?", True),
-    # "continue" only before working (round 7, rule 8)
+    # "continue" only before working
     ("requires_sponsorship", "Will you require sponsorship in the future to continue working "
                              "in the United States?", True),
     ("requires_sponsorship", "Do you require sponsorship (e.g., H-1B, TN, O-1) to work for "
@@ -1598,12 +1596,11 @@ _OWN_QUESTIONS = [
     # willing_to_relocate
     ("willing_to_relocate", "Are you willing to relocate?", True),
     ("willing_to_relocate", "Would you be open to relocating for this role?", True),
-    # round 3: a sentence on assistance, a preamble on the office, a city: other words
+    # a sentence on assistance, a preamble on the office, a city: other words
     ("willing_to_relocate", "Are you willing to relocate for this position? Relocation "
                             "assistance is not provided.", False),
     ("willing_to_relocate", "I am willing to relocate to the job's location.", True),
-    # round 5: the job's location is out of the plan's reach, so a place is
-    # another word
+    # the job's location is out of the plan's reach, so a place is another word
     ("willing_to_relocate", "Are you willing to relocate to the job location (New York)?",
      False),
     ("willing_to_relocate", "Open to relocation", True),
@@ -1620,17 +1617,17 @@ _OWN_QUESTIONS = [
     # onsite_ok
     ("onsite_ok", "Are you willing to work on-site?", True),
     ("onsite_ok", "Are you willing to work on-site (in the office)?", True),
-    # final review I2: a count of days a week is a narrower form (the hybrid
-    # question), which a Yes alone settles
+    # a count of days a week is a narrower form (the hybrid question), which a
+    # Yes alone settles
     ("onsite_ok", "Are you able to work in the office 3 days a week?", False),
     ("onsite_ok", "Are you able to work on-site / in the office (3 days a week)?", False),
     ("onsite_ok", "Are you able to work in person at our office five days a week?", False),
-    # round 4: "comfortable" with on-site work is its own question
+    # "comfortable" with on-site work is its own question
     ("onsite_ok", "This role requires working in the office. Are you comfortable with this?",
      True),
     ("onsite_ok", "This role requires working in the office 3 days a week. Are you "
                   "comfortable with this?", False),
-    # round 3: an acknowledgement, a team: other words
+    # an acknowledgement, a team: other words
     ("onsite_ok", "I understand this position is fully on-site and I am able to work in the "
                   "office.", False),
     ("onsite_ok", "Our team works from the office. Which describes you?", False),
@@ -1645,13 +1642,13 @@ _OWN_QUESTIONS = [
     ("onsite_ok", "What is your current work authorization status in the U.S.?", False),
     # remote_only (derived): its own question says only
     ("remote_only", "Are you looking for a fully remote position only?", True),
-    # round 5: "open" and "willing" ask about accepting remote work
+    # "open" and "willing" ask about accepting remote work
     ("remote_only", "Are you only open to remote work?", False),
     ("remote_only", "Are you seeking remote-only roles?", True),
     ("remote_only", "Are you open to remote work?", False),
     ("remote_only", "Are you willing to work on-site?", False),
     ("remote_only", "What is your preferred work arrangement?", False),
-    # final review I1: "can you" and "would you" ask about accepting remote work
+    # "can you" and "would you" ask about accepting remote work
     ("remote_only", "Can you work remotely only?", False),
     ("remote_only", "Can you work remote only?", False),
     ("remote_only", "Would you work remote only?", False),
@@ -1661,7 +1658,7 @@ _OWN_QUESTIONS = [
     ("years_experience", "How many years of relevant experience do you have?", True),
     ("years_experience", "Years of relevant work experience", True),
     ("years_experience", "How many years of experience do you have in total?", True),
-    # round 7 (rule 6): a number in a years question asks another question
+    # a number in a years question asks another question
     ("years_experience", "Do you have at least 2 years of professional work experience?", False),
     ("years_experience", "Years of experience", True),
     ("years_experience", "Years of Experience *", True),
@@ -1678,8 +1675,7 @@ _OWN_QUESTIONS = [
     ("years_experience", "How many years of experience do you have working with React?", False),
     ("years_experience", "How many years of experience do you have in software engineering?",
      False),
-    # a role qualifier asks the total (round 2, decision 3); a number asks
-    # another question (round 7, rule 6)
+    # a role qualifier asks the total; a number asks another question
     ("years_experience", "Do you have 3 or more years of experience in a similar role?", False),
     ("years_experience", "Years of experience, not counting internships", False),
     ("years_experience", "Years with SQL", False),
@@ -1812,7 +1808,7 @@ def test_a_worded_list_whose_question_is_another_facts_asks_the_judge_nothing(tm
     assert apply_judge.reask_targets(own, cat, {}, kept, what="pick") == [0]
 
 
-# --- cycle 18 SP6c round 2: narrower forms, unrestricted work, role qualifiers ----------------
+# --- narrower forms, unrestricted work, role qualifiers ---------------------------------------
 
 _H1B = "Will you require H-1B sponsorship?"
 _NOW = "Do you currently require visa sponsorship to work in the U.S.?"
@@ -1868,11 +1864,11 @@ _FITS = [
                                        "H-1B?", "other"),
     # years_experience: a role qualifier asks the total, a named field or skill does not
     ("years_experience", "Do you have 3 or more years of experience in a similar role?",
-     "other"),                                  # a number (round 7, rule 6)
+     "other"),                                  # a number
     ("years_experience", "How many years of experience do you have in a similar position?",
      "own"),
     ("years_experience", "Years of experience in a similar capacity", "own"),
-    # one job's years (round 7, rule 6)
+    # one job's years
     ("years_experience", "How many years of experience do you have in this role?", "other"),
     ("years_experience", "Years of experience in a related role", "own"),
     ("years_experience", "How many years of experience relevant to this role do you have?",
@@ -1997,7 +1993,7 @@ def test_a_number_box_takes_the_total_years_for_a_role_qualifier_and_never_a_fie
     assert (p.fields[0].action, p.fields[0].value) == (action, "2" if action == "fill" else "")
 
 
-# --- cycle 18 SP6c round 3: every content word is the fact's own ------------------------------
+# --- every content word is the fact's own ------------------------------------------------------
 
 _CRIT_WITHOUT = "Are you legally authorized to work in the United States? (Without sponsorship)"
 _CRIT_SELECT_NO = ("Are you legally authorized to work in the United States? (If you will "
@@ -2006,11 +2002,11 @@ _AUTH = "Are you legally authorized to work in the United States?"
 _CRIT_HELP = "Answer No if you need sponsorship."
 _REMOTE_PREAMBLE = "This role is remote only. Are you comfortable with that?"
 
-# (fact, label, help, fit): the review's wrong answers, each refused or read
-# as the fact whose own question it is, and the plain forms in each
+# (fact, label, help, fit): wrong answers, each refused or read as the
+# fact whose own question it is, and the plain forms in each
 # vocabulary, each passing
 _WORDS = [
-    # Critical: a parenthetical, an instruction or a help sentence names sponsorship
+    # a parenthetical, an instruction or a help sentence names sponsorship
     ("work_authorized", _CRIT_WITHOUT, "", "other"),
     ("authorized_without_sponsorship", _CRIT_WITHOUT, "", "own"),
     ("requires_sponsorship", _CRIT_WITHOUT, "", "other"),
@@ -2022,11 +2018,11 @@ _WORDS = [
     ("requires_sponsorship", _AUTH, _CRIT_HELP, "other"),
     ("work_authorized", "Are you authorized to work in the United States (for any employer)?",
      "", "other"),
-    # I1: a statement before the question is read too
+    # a statement before the question is read too
     ("remote_only", _REMOTE_PREAMBLE, "", "other"),
     ("onsite_ok", _REMOTE_PREAMBLE, "", "other"),
     ("remote_only", "This role is remote only.", "", "other"),
-    # I2: another country, a clearance
+    # another country, a clearance
     ("work_authorized", "Are you authorized to work in Canada?", "", "other"),
     ("work_authorized", "Are you legally eligible to work in the United Kingdom?", "", "other"),
     ("requires_sponsorship", "Will you require sponsorship to work in the UK?", "", "other"),
@@ -2034,7 +2030,7 @@ _WORDS = [
                              "in the UK?", "", "other"),
     ("work_authorized", "Are you eligible to obtain a U.S. security clearance?", "", "other"),
     ("work_authorized", "Are you eligible for a security clearance?", "", "other"),
-    # I3: a skill, a tool or a duty, wherever it stands
+    # a skill, a tool or a duty, wherever it stands
     ("years_experience", "Python - years of experience", "", "other"),
     ("years_experience", "Java (years of experience)", "", "other"),
     ("years_experience", "Do you have experience with Python? How many years?", "", "other"),
@@ -2042,7 +2038,7 @@ _WORDS = [
      "other"),
     ("years_experience", "Years of experience building APIs", "", "other"),
     ("years_experience", "Years of experience", "Years of experience with Kubernetes.", "other"),
-    # I4: relocation assistance, a place already lived in
+    # relocation assistance, a place already lived in
     ("willing_to_relocate", "Do you require relocation assistance?", "", "other"),
     ("willing_to_relocate", "Will you need relocation assistance?", "", "other"),
     ("willing_to_relocate", "Are you located in or willing to relocate to Austin, TX?", "",
@@ -2052,7 +2048,7 @@ _WORDS = [
     ("willing_to_relocate", "Are you willing to relocate to Austin?", "", "other"),
     ("willing_to_relocate", "Are you willing to relocate to the job location (must live "
                             "within 50 miles)?", "", "other"),
-    # I5: a commute, a place, a preference
+    # a commute, a place, a preference
     ("onsite_ok", "Are you able to commute to our office?", "", "other"),
     ("onsite_ok", "Are you able to commute to our Austin office three days a week?", "",
      "other"),
@@ -2060,9 +2056,9 @@ _WORDS = [
     ("onsite_ok", "Would you rather work remotely than in the office?", "", "other"),
     ("remote_only", "Would you rather work remotely than in the office?", "", "other"),
     ("onsite_ok", "Are you willing to work on-site in New York?", "", "other"),
-    # round 4: "comfortable" with on-site work is its own question
+    # "comfortable" with on-site work is its own question
     ("onsite_ok", "Are you comfortable working on-site?", "", "own"),
-    # Minor 1: plain forms that pass
+    # plain forms that pass
     ("work_authorized", "Are you able to work in the US?", "", "own"),
     ("authorized_without_sponsorship", "Are you authorized to work in the US and will not "
                                        "require sponsorship?", "", "own"),
@@ -2080,12 +2076,12 @@ _WORDS = [
     ("work_authorized", "Are you legally authorized to work in the United States? * Required",
      "", "own"),
     ("requires_sponsorship", "Do you need visa sponsorship?", "", "own"),
-    # an employer's sponsorship (round 7, rule 8)
+    # an employer's sponsorship
     ("requires_sponsorship", "Will you now or in the future need an employer to sponsor your "
                              "visa?", "", "other"),
     ("requires_sponsorship", "Will you now or at any time in the future require sponsorship?",
      "", "own"),
-    # round 6: "If yes, please explain" is a neutral tail of the fixed list
+    # "If yes, please explain" is a neutral tail of the fixed list
     ("requires_sponsorship", "Do you require sponsorship to work in the US? (If yes, please "
                              "explain.)", "", "own"),
     ("authorized_without_sponsorship", "Can you work in the United States without the need "
@@ -2097,7 +2093,7 @@ _WORDS = [
     ("willing_to_relocate", "Are you willing to relocate for this role?", "", "own"),
     ("willing_to_relocate", "Are you open to relocation?", "", "own"),
     ("willing_to_relocate", "Would you move for this position?", "", "own"),
-    # round 5: a place name beside "the job location" is another word (the
+    # a place name beside "the job location" is another word (the
     # plan cannot check it is the job's location)
     ("willing_to_relocate", "Are you willing to relocate to the job location (New York)?", "",
      "other"),
@@ -2107,16 +2103,16 @@ _WORDS = [
     # hybrid is a narrower form of on-site work: a Yes to on-site settles it
     ("onsite_ok", "Are you willing to work a hybrid schedule?", "", "narrower"),
     ("onsite_ok", "Are you open to hybrid work?", "", "narrower"),
-    # round 5: "open" and "willing" ask about accepting remote work
+    # "open" and "willing" ask about accepting remote work
     ("remote_only", "Are you only open to remote roles?", "", "other"),
     ("remote_only", "Are you only willing to work remotely?", "", "other"),
     ("remote_only", "Are you looking for a remote role?", "", "other"),
     ("years_experience", "How many years of relevant professional experience do you have?", "",
      "own"),
     ("years_experience", "Years of overall experience", "", "own"),
-    # a number (round 7, rule 6)
+    # a number
     ("years_experience", "Do you have 5+ years of related industry experience?", "", "other"),
-    # round 6: "Please enter a number" is a neutral tail of the fixed list
+    # "Please enter a number" is a neutral tail of the fixed list
     ("years_experience", "Years of experience", "Please enter a number.", "own"),
     ("years_experience", "How many years of professional software development experience do "
                          "you have?", "", "other"),
@@ -2127,7 +2123,7 @@ _WORDS = [
      "own"),
     ("work_authorized", "Are you authorized to work in the US? (Yes/No)", "", "own"),
     ("work_authorized", "Are you authorized to work lawfully in the United States?", "", "own"),
-    # round 5: a lead such as "Please enter" is read; round 6: the years hold it
+    # a lead such as "Please enter" is read, and the years hold it
     ("years_experience", "Please enter your total years of experience", "", "own"),
     ("work_authorized", "Are you legally authorized to work in the country in which this job is "
                         "located?", "", "other"),
@@ -2200,8 +2196,8 @@ def test_a_cut_label_answers_no_fact_with_a_table():
     ("Can you work on-site 3 days a week?", {"work", "ONSITE", "DAYSWEEK"}),
     ("Can you work on-site three days per week?", {"work", "ONSITE", "DAYSWEEK"}),
     ("Will you require H-1B sponsorship?", {"require", "VISATYPE", "sponsorship"}),
-    # an example made of visa types only is one token (round 5: it is read,
-    # never dropped); a neutral tail of the fixed list is no word of the
+    # an example made of visa types only is one token (it is read, never
+    # dropped); a neutral tail of the fixed list is no word of the
     # question
     ("Do you require sponsorship (e.g., H-1B, TN, O-1)?",
      {"require", "sponsorship", "VISAEXAMPLE"}),
@@ -2412,7 +2408,7 @@ def test_a_custom_yes_no_list_mapped_by_hand_asks_the_judge_nothing_for_another_
             [0] if asked else []), label
 
 
-# --- cycle 18 SP6c round 4: "comfortable" with on-site work -----------------------------------
+# --- "comfortable" with on-site work ----------------------------------------------------------
 
 _COMFORT_OFFICE = ("This role requires working in the office 3 days a week. Are you "
                    "comfortable with this?")
@@ -2426,7 +2422,7 @@ _COMFORT_COMMUTE = "Are you comfortable commuting to our office?"
 # question; a remote role, a city, a negation or a commute is another, and
 # the new words open no other fact
 _COMFORT = [
-    # a count of days a week is the hybrid question (final review I2)
+    # a count of days a week is the hybrid question
     ("onsite_ok", _COMFORT_OFFICE, "narrower"),
     ("onsite_ok", _COMFORT_ONSITE, "own"),
     ("onsite_ok", "This position requires working on-site. Are you comfortable with that?",
@@ -2473,7 +2469,7 @@ def test_comfortable_with_on_site_work_takes_the_on_site_answer(tmp_path, label,
     pf = p.fields[0]
     if label == _COMFORT_OFFICE and value == "No":
         # 3 days a week is the hybrid question: a No to on-site work leaves
-        # it to the person (final review I2)
+        # it to the person
         assert (pf.action, pf.option, pf.fact_key) == ("skip", None, None)
         assert p.park_reason == f"required field without an answer: {label}"
         return
@@ -2509,17 +2505,17 @@ def test_comfortable_with_a_remote_role_a_city_a_negation_or_a_commute_gets_no_v
     assert apply_judge.reask_targets(digest, cat, {}, p, what="pick") == []
 
 
-# --- cycle 18 SP6c round 5: nothing is dropped before the allowlist reads it -----------------
+# --- nothing is dropped before the allowlist reads it ----------------------------------------
 
 _E1 = ("Are you legally authorized to work in the United States, e.g. as a citizen or "
        "permanent resident, without the need for sponsorship?")
 _E2_HELP = "For example, you hold a green card and will not need sponsorship now or in the future"
 _NBSP, _NBHYPHEN, _EN, _EM, _RSQUO = chr(0xA0), chr(0x2011), chr(0x2013), chr(0x2014), chr(0x2019)
 
-# (fact, label, help, fit): the review's wrong settles, each refused or read
-# as a narrower form, and the plain forms, each passing
+# (fact, label, help, fit): wrong settles, each refused or read as a
+# narrower form, and the plain forms, each passing
 _NOTHING_DROPPED = [
-    # 1, 2: an example or a help sentence names a citizen, a green card, sponsorship
+    # an example or a help sentence names a citizen, a green card, sponsorship
     ("work_authorized", _E1, "", "other"),
     ("authorized_without_sponsorship", _E1, "", "other"),
     ("requires_sponsorship", _E1, "", "other"),
@@ -2527,7 +2523,7 @@ _NOTHING_DROPPED = [
     ("authorized_without_sponsorship", _AUTH, _E2_HELP, "other"),
     ("requires_sponsorship", "Do you require sponsorship (e.g. as a green card holder)?", "",
      "other"),
-    # 3: no sponsorship now or on the start date: a Yes settles it, a No does not
+    # no sponsorship now or on the start date: a Yes settles it, a No does not
     ("authorized_without_sponsorship", "Are you currently able to work without sponsorship?", "",
      "narrower"),
     ("authorized_without_sponsorship", "Will you be able to work without sponsorship on your "
@@ -2536,34 +2532,34 @@ _NOTHING_DROPPED = [
                                        "date?", "", "narrower"),
     ("authorized_without_sponsorship", "Do you currently have unrestricted work "
                                        "authorization?", "", "narrower"),
-    # 4: accepting remote work
+    # accepting remote work
     ("remote_only", "Are you open to a remote-only position?", "", "other"),
     ("remote_only", "Are you willing to work remote only?", "", "other"),
-    # 5: the present job, no authorization word
+    # the present job, no authorization word
     ("work_authorized", "Are you currently employed in the US?", "", "other"),
     ("work_authorized", "Do you currently work in the US?", "", "other"),
-    # 6, 7: a parenthetical or an example on relocation
+    # a parenthetical or an example on relocation
     ("willing_to_relocate", "Are you willing to relocate to the job location (No Relocation "
                             "Assistance)?", "", "other"),
     ("willing_to_relocate", "Are you willing to relocate to the job location (At Your Own "
                             "Expense)?", "", "other"),
     ("willing_to_relocate", "Are you willing to relocate, for example to Austin or Denver, "
                             "without relocation assistance?", "", "other"),
-    # 8, 9: an example skill, a previous, prior, last or current role
+    # an example skill, a previous, prior, last or current role
     ("years_experience", "How many years of experience do you have, e.g. in Python?", "",
      "other"),
     ("years_experience", "How many years of experience in your previous role?", "", "other"),
     ("years_experience", "How many years of experience in your prior role?", "", "other"),
     ("years_experience", "How many years of experience in your last job?", "", "other"),
     ("years_experience", "How many years of experience in your current role?", "", "other"),
-    # 10: sponsorship held, a sponsor, a continued sponsorship
+    # sponsorship held, a sponsor, a continued sponsorship
     ("requires_sponsorship", "Do you have visa sponsorship?", "", "other"),
     ("requires_sponsorship", "Do you have a sponsor?", "", "other"),
     ("requires_sponsorship", "Will your employer continue to sponsor your visa?", "", "other"),
-    # 11: the present job, on-site
+    # the present job, on-site
     ("onsite_ok", "Are you currently working in an office?", "", "other"),
     ("onsite_ok", "Do you currently work on-site?", "", "other"),
-    # round 6: a word of ability asks about now
+    # a word of ability asks about now
     ("onsite_ok", "Are you currently able to work on-site?", "", "own"),
     # the plain forms
     ("work_authorized", "Are you able to work in the US?", "", "own"),
@@ -2605,7 +2601,7 @@ _NOTHING_DROPPED = [
     # "have" is read: only the facts whose own question uses it hold it
     ("requires_sponsorship", "Will you have visa sponsorship?", "", "other"),
     ("willing_to_relocate", "Have you relocated?", "", "other"),
-    # round 6: "authorization" and "allowed" are authorization words
+    # "authorization" and "allowed" are authorization words
     ("work_authorized", "Do you have work authorization in the US?", "", "own"),
     ("work_authorized", "Are you allowed to work in the US?", "", "own"),
     # a word in another script, a lead off the fixed list, a tail with a comma
@@ -2808,11 +2804,11 @@ def test_a_custom_yes_no_answer_takes_its_saved_question_word_for_word_in_order(
     assert p.fields[0].option == ("Yes" if action == "select" else None)
 
 
-# --- cycle 18 SP6c round 6: authorization words, more neutral tails, "please enter", now -------
+# --- authorization words, more neutral tails, "please enter", now ------------------------------
 
-# (fact, label, help, fit): each pass form refused on 12d81cf; each refusal kept
+# (fact, label, help, fit): forms that pass, and forms that stay refused
 _ROUND6 = [
-    # 1: "authorization", "authorisation" and "allowed" name work authorization
+    # "authorization", "authorisation" and "allowed" name work authorization
     ("work_authorized", "Do you have work authorisation in the United States?", "", "own"),
     ("work_authorized", "Are you allowed to work in the United States?", "", "own"),
     ("work_authorized", "Work authorization", "Do you have work authorization in the US?", "own"),
@@ -2822,10 +2818,10 @@ _ROUND6 = [
     ("work_authorized", "Do you currently have unrestricted work authorization?", "", "other"),
     ("work_authorized", "Do you have work authorization in Canada?", "", "other"),
     ("work_authorized", "Are you allowed to work in Canada?", "", "other"),
-    # the new topic words open no other fact
+    # these topic words open no other fact
     ("requires_sponsorship", "Do you have work authorization in the US?", "", "other"),
     ("authorized_without_sponsorship", "Do you have work authorization in the US?", "", "other"),
-    # 2: the new neutral tails, each compared whole
+    # more neutral tails, each compared whole
     ("requires_sponsorship", "Will you require visa sponsorship? If yes, please describe.", "",
      "own"),
     ("requires_sponsorship", "Will you require visa sponsorship? If so, please explain:", "",
@@ -2834,13 +2830,13 @@ _ROUND6 = [
      "own"),
     ("requires_sponsorship", "Will you require visa sponsorship? If yes, please explain which "
                              "visa.", "", "other"),
-    # 3: "please enter" leads the total
+    # "please enter" leads the total
     ("years_experience", "Enter your total years of professional experience", "", "own"),
     ("years_experience", "Years of experience (please enter a number)", "", "own"),
     ("years_experience", "Please enter your years of Python experience", "", "other"),
     ("years_experience", "Years of experience", "Please enter a number of years in Python.",
      "other"),
-    # 4: "currently" beside a word of ability or acceptance asks about now
+    # "currently" beside a word of ability or acceptance asks about now
     ("onsite_ok", "Are you currently willing to work in the office?", "", "own"),
     ("onsite_ok", "Are you currently open to working on-site?", "", "own"),
     ("onsite_ok", "Are you currently comfortable working on-site?", "", "own"),
@@ -2919,7 +2915,7 @@ def test_currently_able_to_work_on_site_takes_the_on_site_answer(tmp_path, value
     assert p.park_reason == ""
 
 
-# --- cycle 18 SP6c round 7, rule 1: a custom answer compares literal words --------------------
+# --- a custom answer compares literal words ---------------------------------------------------
 
 _H1B_HOLD = "Do you currently hold an H-1B visa?"
 _F1_HOLD = "Do you currently hold an F-1 visa?"
@@ -3002,7 +2998,7 @@ def test_a_custom_number_answer_settles_only_its_own_visa_type(tmp_path, label, 
     assert (p.fields[0].action, p.fields[0].value) == (action, "1" if action == "fill" else "")
 
 
-# --- cycle 18 SP6c round 7, rules 2 to 9: anchors, the company name, years, days, tails -------
+# --- anchors, the company name, years, days, tails --------------------------------------------
 
 _LEVER = ('Will you now, or in the future, require the Company to commence ("sponsor") an '
           'immigration case in order to employ you (for example, H-1B or other '
@@ -3023,9 +3019,9 @@ _CURRENT_OR_FUTURE = ("Are you authorized to work in the US without the need for
 _NOT_IN_FUTURE = ("Are you legally authorized to work in the United States and will not "
                   "require sponsorship in the future?")
 
-# (fact, label): each settled a value on 208241d; each asks another question
+# (fact, label): each asks another question, so it settles no value
 _ROUND7_OTHER = [
-    # rule 2: a status word needs an authorization word in its own sentence,
+    # a status word needs an authorization word in its own sentence,
     # and "legally" is none
     ("work_authorized", "Are you currently legally employed in the United States?"),
     ("work_authorized", "Are you legally employed in the US?"),
@@ -3046,13 +3042,13 @@ _ROUND7_OTHER = [
     ("authorized_without_sponsorship", "Are you able to work without restrictions?"),
     ("authorized_without_sponsorship", "Can you work without restrictions?"),
     ("authorized_without_sponsorship", "Can you work unrestricted?"),
-    # rule 5: "able" and "allowed" with no US ask when the candidate can start
+    # "able" and "allowed" with no US ask when the candidate can start
     ("work_authorized", "Are you able to work now?"),
     ("work_authorized", "Are you able to work at this time?"),
     ("work_authorized", "Are you able to take up work now?"),
     ("work_authorized", "Are you allowed to work now?"),
     ("work_authorized", "Are you currently allowed to work?"),
-    # rule 3: a plan or a status is no willingness to relocate
+    # a plan or a status is no willingness to relocate
     ("willing_to_relocate", "Will you be relocating for this position?"),
     ("willing_to_relocate", "Will you be relocating for this role?"),
     ("willing_to_relocate", "Will you be moving for this job?"),
@@ -3107,7 +3103,7 @@ _ROUND7_OTHER = [
     ("remote_only", "Do you work fully remote only?"),
     ("remote_only", "Does the position require remote work?"),
     ("remote_only", "Does your work require you to be remote only?"),
-    # rule 6: a number, or one job, in a years question
+    # a number, or one job, in a years question
     ("years_experience", "How many years of experience do you have in 1 role?"),
     ("years_experience", "How many years of experience do you have in 2 or more roles?"),
     ("years_experience", "How many years of experience do you have in 2024?"),
@@ -3122,10 +3118,10 @@ _ROUND7_OTHER = [
     ("years_experience", "Please enter your years of experience in 1 role"),
     ("years_experience", "Please enter 2 years of experience"),
     ("years_experience", "Enter how many years of experience you have in 2024"),
-    # rule 7: six or seven days a week
+    # six or seven days a week
     ("onsite_ok", "Are you able to work in the office 7 days a week?"),
     ("onsite_ok", "Are you willing to work on-site six days a week?"),
-    # rule 8: an employer's sponsorship, or continuing one
+    # an employer's sponsorship, or continuing one
     ("requires_sponsorship", "Does your employer require visa sponsorship?"),
     ("requires_sponsorship", "Will you require the company to continue your visa sponsorship?"),
     ("requires_sponsorship", "Does your company require visa sponsorship?"),
@@ -3139,9 +3135,9 @@ def test_a_status_a_plan_the_jobs_terms_a_number_or_one_job_asks_another_questio
     assert apply_judge.answers_question(key, "No", label) is False
 
 
-# (fact, label, help, company, fit): each refused on 208241d
+# (fact, label, help, company, fit): each a form the gate reads as the fact's own
 _ROUND7_OWN = [
-    # rule 9: Lever's own sponsorship question and its closing sentence
+    # Lever's own sponsorship question and its closing sentence
     ("requires_sponsorship", _LEVER, "", "", "own"),
     ("requires_sponsorship", _LEVER_CURLY, "", "", "own"),
     # the fixed trailing sentences
@@ -3176,12 +3172,12 @@ def test_lever_the_new_tails_the_company_name_and_no_sponsorship_later_ask_the_f
     assert apply_judge.asks_own_question(key, label, help_text, **kwargs) is True
 
 
-# (fact, label, company, fit): read the same on 208241d and now
+# (fact, label, company, fit): plain forms the anchors leave as they are
 _ROUND7_KEPT = [
     ("work_authorized", "Are you authorized for employment in the US?", "", "own"),
     ("work_authorized", "Are you able to work in the US?", "", "own"),
     ("work_authorized", "Are you allowed to work in the United States?", "", "own"),
-    # no country at all: left as it is (M2)
+    # no country at all: left as it is
     ("work_authorized", "Are you legally authorized to work?", "", "own"),
     ("authorized_without_sponsorship", "Are you able to work in the US without restrictions?",
      "", "own"),
@@ -3307,7 +3303,7 @@ def test_six_or_seven_days_a_week_is_no_set_phrase(label):
     assert "DAYSWEEK" not in apply_facts.question_tokens(label)
 
 
-# --- cycle 18 SP6c round 7, rule 4: a label with no verb settles only a plain Yes / No --------
+# --- a label with no verb settles only a plain Yes / No ---------------------------------------
 
 _STATUS_OPTIONS = ("U.S. Citizen", "Permanent Resident", "H-1B", "F-1 OPT", "TN", "Other")
 _NOUN_LABELS = ["Work authorization", "US Work Authorization", "Employment authorization",
@@ -3385,7 +3381,7 @@ def test_a_status_list_under_a_question_label_still_goes_to_the_judge(tmp_path):
     assert list(apply_judge.option_questions(digest, p, catalog=cat)[1]) == ["field_0_pick"]
 
 
-# --- cycle 18 final review: C1, I1, I2, M1 and M5 of the own-question gate --------------------
+# --- the own-question gate: Text customs, remote, hybrid, place names, status options ---------
 
 _TRAVEL = "Are you willing to travel?"
 _TRAVEL_FAR = "Are you willing to travel up to 75% of the time internationally?"
@@ -3393,7 +3389,7 @@ _F1_PETITIONS = "How many F-1 petitions have you had?"
 
 
 @pytest.mark.parametrize("eid, saved, value, asked, type_, options", [
-    # the reviewer's repros: a Text custom answer holding a yes / no
+    # a Text custom answer holding a yes / no
     ("hold_h1b", _H1B_HOLD, "No", _F1_HOLD, "select", ("Yes", "No")),
     ("hold_h1b", _H1B_HOLD, "No", _F1_HOLD, "text", ()),
     ("travel", _TRAVEL, "Yes", _TRAVEL_FAR, "radio", ("Yes", "No")),
@@ -3404,8 +3400,8 @@ _F1_PETITIONS = "How many F-1 petitions have you had?"
 @pytest.mark.parametrize("same", [False, True])
 def test_a_text_custom_yes_no_or_number_answers_only_its_own_saved_question(
         tmp_path, eid, saved, value, asked, type_, options, same):
-    # final review C1: every migrated v1 answer and every answer added with
-    # the default type is Text, and the gate read only the typed ones
+    # every migrated v1 answer and every answer added with the default type
+    # is Text, so the gate reads the Text ones too
     bank = standard_bank() + [custom(eid, saved, value)]
     cat = apply_facts.build(tmp_path, answers=bank, today=date(2026, 9, 21))
     key = f"answer_{eid}"
@@ -3427,7 +3423,7 @@ def test_a_text_custom_yes_no_or_number_answers_only_its_own_saved_question(
         assert (pf.action, pf.value) == ("fill", value)
 
 
-# final re-review N1: a Text custom whose value opens with a yes or a no is a
+# a Text custom whose value opens with a yes or a no is a
 # yes / no answer too, and settles only its saved question
 _CANADA = "Are you legally authorized to work in Canada?"
 _US_AUTH = "Are you legally authorized to work in the United States?"
@@ -3480,7 +3476,7 @@ def test_a_text_custom_yes_under_a_noun_phrase_settles_only_a_plain_yes_no(tmp_p
     assert apply_judge.option_questions(digest, p, catalog=cat)[1] == {}
 
 
-# final review I1: "can you" and "would you" ask whether the candidate
+# "can you" and "would you" ask whether the candidate
 # accepts a remote role; the saved fact says the candidate wants remote only
 _REMOTE_ACCEPT = ["Can you work remotely only?", "Can you work remote only?",
                   "Would you work remote only?", "Would you work fully remotely only?"]
@@ -3504,7 +3500,7 @@ def test_the_candidates_own_remote_search_still_settles_remote_only(label):
     assert apply_judge.question_fit("remote_only", label) == "own"
 
 
-# final review I2: a part-week office schedule is the hybrid question, so a
+# a part-week office schedule is the hybrid question, so a
 # No to on-site work says nothing about it
 _OFFICE_DAYS = ["Are you willing to work in the office 2 days a week?",
                 "Are you able to come into the office 3 days a week?",
@@ -3531,7 +3527,7 @@ def test_a_days_a_week_office_question_settles_only_a_yes_to_on_site_work(
     assert p.park_reason == ""
 
 
-# final review M1: a one-word company named for a place reads as the place
+# a one-word company named for a place reads as the place
 @pytest.mark.parametrize("company, key, label", [
     ("Canada", "work_authorized", "Are you legally authorized to work in Canada?"),
     ("Texas", "work_authorized", "Are you legally authorized to work in Texas?"),
@@ -3552,7 +3548,7 @@ def test_a_company_named_for_no_place_still_reads_as_the_company(key, label, fit
     assert apply_judge.question_fit(key, label, company="Acme") == fit
 
 
-# final review M5: status options under a verb label; the yes / no lines say
+# status options under a verb label; the yes / no lines say
 # Yes to three of them, and the saved authorization statement tells them apart
 _STATUS_VERB_OPTIONS = ("Yes, I am a U.S. citizen", "Yes, I am a permanent resident (green card)",
                         "Yes, I have a work visa", "No")
@@ -3592,7 +3588,7 @@ def test_a_list_the_yes_no_story_reads_keeps_its_request_byte_for_byte(tmp_path,
         json.dumps(old, sort_keys=True)
 
 
-# --- a held-back answer, asked whether it settles a reworded question (2026-09-26) ------------
+# --- a held-back answer, asked whether it settles a reworded question -------------------------
 
 _NY_OFFICE = "Are you willing to work in the office in New York?"
 
@@ -3652,7 +3648,7 @@ def test_only_a_sure_settle_answer_fills_the_held_back_field(tmp_path, settle, f
 
 _SURE_YES = _settle_answer("Yes", 0.99, {"Yes": 0.99, "No": 0.0, "not_settled": 0.01})
 _SURE_NO = _settle_answer("No", 0.99, {"Yes": 0.0, "No": 0.99, "not_settled": 0.01})
-# the Contoso questions (2026-09-27), as the form words them
+# the Contoso questions, as the form words them
 _CONTOSO_RELOCATE = "We work 5 days on-site in NYC. If you're not local, are you willing to relocate?"
 _CONTOSO_SPONSOR = ("Do you require visa sponsorship to work legally in the United States (now or "
                     "in the future)? This includes needing sponsorship for CPT, OPT or other visa "
@@ -3687,8 +3683,8 @@ def test_the_contoso_questions_are_asked_and_a_sure_read_fills_them(tmp_path, la
 ])
 def test_the_contoso_relocation_question_is_read_against_the_relocation_answer_whatever_its_mapping(
         tmp_path, mapped):
-    """A live run on the Contoso form (2026-09-27) parked on it: its question
-    sentence asks the move, so the relocation answer is read when the first
+    """The Contoso relocation question's sentence asks the move, so the
+    relocation answer is read when the first
     request mapped the field to relocation or on-site work, at any
     confidence."""
     cat = apply_facts.build(tmp_path, answers=standard_bank(), today=date(2026, 9, 26))
@@ -3742,7 +3738,7 @@ def test_a_field_mapped_to_another_fact_or_none_keeps_its_mapping(tmp_path, labe
     assert (p.fields[0].action, p.fields[0].option) == ("skip", None)
 
 
-# the options the Contoso form gives that question (2026-09-27)
+# the options the Contoso form gives that question
 _CONTOSO_RELOCATE_OPTIONS = ("I am in NYC and happy to work in office",
                              "I will relocate and am happy to work in office",
                              "I do not want to work in office")
@@ -3802,7 +3798,7 @@ def test_with_no_home_saved_a_relocation_read_carries_no_home_line(tmp_path):
                     {_CONTOSO_RELOCATE_OPTIONS[0]: 0.01, _CONTOSO_RELOCATE_OPTIONS[1]: 0.97,
                      _CONTOSO_RELOCATE_OPTIONS[2]: 0.0, "not_settled": 0.02}),
      _CONTOSO_RELOCATE_OPTIONS[1]),
-    # the live read with no home line (2026-09-27): the right option, unsure
+    # the recorded read with no home line: the right option, unsure
     (_settle_answer(_CONTOSO_RELOCATE_OPTIONS[1], 0.72,
                     {_CONTOSO_RELOCATE_OPTIONS[0]: 0.02, _CONTOSO_RELOCATE_OPTIONS[1]: 0.79,
                      _CONTOSO_RELOCATE_OPTIONS[2]: 0.0, "not_settled": 0.19}), None),
@@ -3996,7 +3992,7 @@ def test_the_user_s_note_rides_with_the_saved_answer(tmp_path):
         f"{apply_facts.DESCRIPTIONS['onsite_ok']}: Yes (the candidate's note:")
 
 
-# --- a lone tick box, settled in code (ship audit S5) ------------------------------------
+# --- a lone tick box, settled in code ----------------------------------------------------
 
 _SPONSOR_TICK = "I will require H-1B visa sponsorship now or in the future."
 _RELOCATE_TICK = "I am willing to relocate to the job's location."
@@ -4043,7 +4039,7 @@ def test_a_settle_read_never_ticks_a_lone_box_for_a_no(tmp_path):
     assert apply_judge.settled_pick(answers, f, "requires_sponsorship", cat) is None
 
 
-# --- the settle reads refused in code (ship audit S5) ------------------------------------
+# --- the settle reads refused in code ----------------------------------------------------
 
 def _auth_catalog(statement=""):
     facts = [apply_facts.Fact(k, v, apply_facts.DESCRIPTIONS[k], "bool")

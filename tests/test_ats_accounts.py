@@ -1,4 +1,4 @@
-"""Tests for the ATS-account ledger + master-password clipboard transit (SP2).
+"""Tests for the ATS-account ledger + master-password clipboard transit.
 
 local/ats_accounts.py keeps a JSON ledger of which ATS domains the candidate has
 accounts on (NEVER any password) and moves the single master password from the
@@ -220,7 +220,7 @@ def test_tenant_key_names_a_multi_tenant_ats_hosts_tenant(host, key):
 
 
 def test_lookup_finds_an_account_by_its_tenant_on_another_host_of_the_site(ledger):
-    # ACC-13: the account made on the careers host of an iCIMS tenant is found
+    # the account made on the careers host of an iCIMS tenant is found
     # from that tenant's other hosts, never from another tenant's
     ats_accounts.record("careers-gtsx.icims.com", email="me@example.com")
     assert ats_accounts.lookup("gtsx.icims.com")["email"] == "me@example.com"
@@ -230,7 +230,7 @@ def test_lookup_finds_an_account_by_its_tenant_on_another_host_of_the_site(ledge
 
 
 def test_lookup_takes_the_jobs_own_hosts_for_a_shared_sign_in_host(ledger):
-    # ACC-13: a sign-in on login.icims.com (no tenant in its name) for a job
+    # a sign-in on login.icims.com (no tenant in its name) for a job
     # whose careers host holds the account; a related host of another tenant
     # never lends its account to this one
     ats_accounts.record("careers-gtsx.icims.com", email="me@example.com")
@@ -250,7 +250,7 @@ def test_lookup_takes_the_jobs_own_hosts_for_a_shared_sign_in_host(ledger):
     ({"forbidden": "<>&"}, []),
 ])
 def test_unmet_rules_reads_the_stored_password_in_process(kr, rules, unmet):
-    # ACC-04: the rules the stored password misses, in words; the value never
+    # the rules the stored password misses, in words; the value never
     # comes back (SECRET is 20 characters, upper, lower, digits, a hyphen)
     kr.set_password(ats_accounts.SERVICE, "master", SECRET)
     got = ats_accounts.unmet_rules(rules)
@@ -270,7 +270,7 @@ def test_unmet_rules_names_each_missing_class(kr):
     (3, ["at least 3 of: an uppercase letter, a lowercase letter, a digit, a special character"]),
 ])
 def test_unmet_rules_counts_the_classes_a_count_rule_asks_for(kr, need, unmet):
-    # "3 of the following" (SP7 review I2): lowercase and a hyphen are two
+    # "3 of the following": lowercase and a hyphen are two
     kr.set_password(ats_accounts.SERVICE, "master", "all-lowercase")
     assert ats_accounts.unmet_rules({"upper": True, "lower": True, "digit": True,
                                      "special": True, "classes_needed": need}) == unmet
@@ -308,7 +308,7 @@ def test_set_master_password_mismatch_stores_nothing(kr, monkeypatch, capsys):
 
 
 def test_set_master_password_programmatic_path_never_prompts(kr, monkeypatch, capsys):
-    # SP3 wires this to QInputDialog: the dialog's value comes in as an argument
+    # the dashboard wires this to QInputDialog: the dialog's value comes in as an argument
     # and getpass must never fire (it would hang a GUI process).
     def no_prompt(prompt):
         raise AssertionError("getpass must not be called on the programmatic path")
@@ -471,7 +471,7 @@ def test_public_api_never_returns_the_password(kr, clip):
     assert "_get_master_password" not in getattr(ats_accounts, "__all__", ())
 
 
-# --- 4-C6: the writer never replaces a ledger it could not read -----------------
+# --- the writer never replaces a ledger it could not read -----------------------
 
 def _flaky_ledger_read(monkeypatch, ledger):
     real = Path.read_text

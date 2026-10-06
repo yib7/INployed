@@ -1,7 +1,7 @@
-"""Unique leading verbs from the curated, categorized active_words.md (cycle 22).
+"""Unique leading verbs from the curated, categorized active_words.md.
 
-SP1 — verb source + categorized palette + the no-reuse rule in the rephrase prompt.
-SP2 — the deterministic zero-reuse guarantee (leading_verb / reverb / dedupe_leading_verbs).
+- The verb source, the categorized palette and the no-reuse rule in the rephrase prompt.
+- The deterministic zero-reuse guarantee (leading_verb / reverb / dedupe_leading_verbs).
 
 No real LLM ever runs: compose.call / compose.reverb are monkeypatched. assets.active_verbs
 is lru-cached, so an autouse fixture clears it around every test (the fallback test patches
@@ -25,7 +25,7 @@ def _clear_active_verbs_cache():
     assets.active_verbs.cache_clear()
 
 
-# --- SP1: assets.active_verbs() parse + fallback --------------------------------
+# --- assets.active_verbs() parse + fallback -------------------------------------
 
 EXPECTED_CATEGORIES = [
     "Communication Skills", "Creative Skills", "Data / Financial Skills",
@@ -69,7 +69,7 @@ def test_active_verbs_falls_back_to_builtin_when_file_absent(monkeypatch, tmp_pa
     assert "Built" in flat and "Engineered" in flat        # assets._FALLBACK_VERBS
 
 
-# --- SP1: _render_verb_palette + the rephrase prompt rule ------------------------
+# --- _render_verb_palette + the rephrase prompt rule -----------------------------
 
 def test_render_verb_palette_groups_verbs_under_their_headings():
     palette = compose._render_verb_palette(
@@ -104,7 +104,7 @@ def test_rephrase_prompt_carries_categorized_palette_and_no_reuse_rule(monkeypat
     assert "reuse" in blob or "never repeat" in blob
 
 
-# --- SP2: leading_verb + reverb + dedupe_leading_verbs --------------------------
+# --- leading_verb + reverb + dedupe_leading_verbs -------------------------------
 
 SMALL_PALETTE = {"Technical Skills": ["Built", "Designed", "Engineered", "Automated", "Refactored"]}
 

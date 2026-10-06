@@ -32,8 +32,8 @@ def test_load_returns_defaults_when_file_absent(tmp_path):
 
 
 def test_projects_max_is_not_a_settings_field():
-    # Cycle 19: the project count + at-most/exactly-N mode moved out of Settings
-    # into the Resume Data tab's Resume Layout section (jobsdata.save_projects_count).
+    # The project count + at-most/exactly-N mode live in the Resume Data tab's
+    # Resume Layout section (jobsdata.save_projects_count), outside Settings.
     assert not any(f.key == "projects_max" for f in settings.SETTINGS_SCHEMA)
 
 
@@ -67,7 +67,7 @@ def test_watcher_still_honours_a_saved_mtime_stable_seconds(tmp_path, monkeypatc
 
 
 def test_ui_scale_pct_is_not_a_settings_field():
-    # Cycle 17: scaling moved to the bottom bar; ui_scale_pct is persisted via
+    # Scaling lives in the bottom bar; ui_scale_pct is persisted via
     # jobsdata (config.json), not the settings schema.
     assert "ui_scale_pct" not in {f.key for f in settings.SETTINGS_SCHEMA}
 
@@ -257,7 +257,7 @@ def test_choice_validate_gemini_auth():
     assert "gemini_auth" in settings.validate({"gemini_auth": "nope"})
 
 
-# --- SP5 (ED-11): field_problem is the per-field rule validate() loops over ----
+# --- field_problem is the per-field rule validate() loops over -----------------
 
 def test_field_problem_matches_validate_for_every_rule_kind():
     by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
@@ -504,7 +504,7 @@ def test_the_offsets_pattern_is_never_stricter_than_its_consumer(text):
 
 def test_pattern_is_declared_on_the_field_and_off_by_default():
     """A format rule is schema DATA, like `choices` — not a branch in validate()."""
-    # Cycle 21 Task 4: the About you section's graduation_month is the second rule.
+    # The About you section's graduation_month is the second rule.
     assert settings.Field("k", "L", "str", "", "S", "config").pattern is None
     by_key = {x.key: x for x in settings.SETTINGS_SCHEMA}
     for key in ("local_task_offsets", "graduation_month"):
@@ -627,7 +627,7 @@ def test_archive_mode_replaces_the_four_legacy_keys():
     assert f.choices == ("Keep everything", "Keep newest 20", "Keep newest 100", "Off")
     # Index 0 is the default, the reading that deletes nothing. A hand-edited
     # value matching no choice stays on screen as typed and Save flags it
-    # (settings_tab._set_combo, cycle 19's ST-7).
+    # (settings_tab._set_combo).
     assert f.choices[0] == f.default
 
 
@@ -846,7 +846,7 @@ SHOW_IF_GATES = {
     "RESUME_TAILOR_CLAUDE_MODEL_FLASH": ("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)),
     "RESUME_TAILOR_CLAUDE_MODEL_PRO": ("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)),
     "RESUME_TAILOR_CLAUDE_EFFORT": ("tailor_provider", ("claude",)),
-    # cycle 22: the cover letter's own model (per provider, tiers mode) and effort
+    # the cover letter's own model (per provider, tiers mode) and effort
     "RESUME_TAILOR_MODEL_COVER": ("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
     "RESUME_TAILOR_CLAUDE_MODEL_COVER": ("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)),
     "RESUME_TAILOR_CLAUDE_EFFORT_COVER": ("tailor_provider", ("claude",)),
@@ -867,7 +867,7 @@ SHOW_IF_GATES = {
     "tailor_fallback_flash_lite": ("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
     "tailor_fallback_flash": ("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
     "tailor_fallback_pro": ("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
-    # cycle 19: the Jev section's three area switches gate on its master switch,
+    # the Jev section's three area switches gate on its master switch,
     # and the three Jev options in the Resume section gate on the tailor's area
     # switch. is_visible walks both links, so either switch off hides those three.
     "jev_scoring": ("jev_enabled", ("True",)),
@@ -876,7 +876,7 @@ SHOW_IF_GATES = {
     "tailor_best_of_n": ("jev_tailor", ("True",)),
     "cover_letter_jev_check": ("jev_tailor", ("True",)),
     "tailor_ats_meaning": ("jev_tailor", ("True",)),
-    # cycle 22: how many difficulty checks run at once shows only while the
+    # how many difficulty checks run at once shows only while the
     # check itself does (its switch, and through it the Jev master switch).
     "auto_apply_check_parallel": ("jev_difficulty", ("True",)),
 }
@@ -948,7 +948,7 @@ def test_show_if_gates_resolve_transitively():
 
     Without the second half, tailor_provider="claude" hides `gemini_auth` but a
     stored `gemini_auth="api_key"` leaves the Gemini API-key box on screen with
-    nothing on the form governing it — the exact orphan this phase removes.
+    nothing on the form governing it — the orphan the second half prevents.
     """
     by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
     auth = by_key["gemini_auth"]
@@ -980,7 +980,7 @@ def test_is_visible_falls_back_to_the_gates_default_when_it_is_absent():
 
 
 def test_visible_keys_at_the_shipped_defaults_hides_the_nine_inapplicable_fields(tmp_path):
-    """The audit's headline finding, pinned. At the shipped defaults
+    """The fields no default setup can use stay hidden. At the shipped defaults
     (provider=gemini, tailor_provider=gemini, gemini_auth=vertex,
     RESUME_TAILOR_MODEL_MODE=tiers) these eleven describe machinery that cannot run
     — two Claude scorer pickers, the Claude tailor block (its mode field, its
@@ -1026,7 +1026,7 @@ ADVANCED_KEYS = {
     "stage1_model", "stage2_model", "stage1_model_claude", "stage2_model_claude",
     # scorer throughput / retry plumbing
     "stage1_concurrency", "stage2_concurrency", "rescore_cap", "repost_reuse_days",
-    # SP2 (cycle 20): the writer that rewrites Jev's findings for high-scoring jobs
+    # the writer that rewrites Jev's findings for high-scoring jobs
     "jev_writer",
     # a Stats-tab warning threshold
     "stale_after_hours",
@@ -1038,7 +1038,7 @@ ADVANCED_KEYS = {
     "RESUME_TAILOR_CLAUDE_MODEL_PRO",
     # how long the Claude tailor thinks: 'low' is right unless you want slower drafts
     "RESUME_TAILOR_CLAUDE_EFFORT",
-    # cycle 22: the cover letter's own model and effort; blank / 'same' keep today's
+    # the cover letter's own model and effort; blank / 'same' keep today's
     "RESUME_TAILOR_MODEL_COVER", "RESUME_TAILOR_CLAUDE_MODEL_COVER",
     "RESUME_TAILOR_CLAUDE_EFFORT_COVER",
     # VM plumbing, inert unless you run the cloud job-discovery VM
@@ -1047,23 +1047,16 @@ ADVANCED_KEYS = {
     # until you have decided one model's free quota is not enough for a day
     "stage1_models", "stage2_models", "model_limits", "tailor_fallback_models",
     "tailor_fallback_flash_lite", "tailor_fallback_flash", "tailor_fallback_pro",
-    # cycle 19: one Jev switch per area (the master switch stays in plain sight),
+    # one Jev switch per area (the master switch stays in plain sight),
     # and the Auto-apply judge mode, whose only other choice is the test judge
     "jev_scoring", "jev_tailor", "jev_difficulty", "auto_apply_jev_mode",
 }
 
 
 def test_the_advanced_set_is_declared_on_the_schema():
-    """PLAN.md's P4 calls this list "17 fields"; enumerating it gave 18 (4 + 5
-    singles + 6 + 3), and the four rate-limit rows added alongside the keypool
-    LIMITS fix made 22; dropping those four for one per-model table and adding
-    the multi-model rows makes 25; SP6's repost-reuse window (cycle 15) makes
-    26; cycle 19's three Jev area switches and the Auto-apply judge make 30;
-    cycle 20's SP2 writer switch makes 31; the Claude tailor's effort level makes 32;
-    cycle 22's cover-letter model (one per provider) and effort make 35.
-    The enumeration names every key explicitly, so it is the authoritative
-    half; see DECISIONS.md. Nothing in the UI hardcodes either number: the
-    checkbox counts at runtime."""
+    """The schema's `advanced` flags declare exactly ADVANCED_KEYS, 35 keys.
+    The enumeration names every key explicitly, so it is the source of truth.
+    Nothing in the UI hardcodes the count: the checkbox counts at runtime."""
     declared = {f.key for f in settings.SETTINGS_SCHEMA if f.advanced}
     assert declared == ADVANCED_KEYS
     assert len(ADVANCED_KEYS) == 35
@@ -1258,7 +1251,7 @@ def test_no_help_string_is_longer_than_the_cap():
     the field, the rest in `docs/USER_GUIDE.md`.
 
     The number is a BUDGET, and it is set with headroom on purpose. The longest
-    surviving help is `archive_mode` at 347, which earned its length in P2
+    surviving help is `archive_mode` at 347, which earns its length
     (four legacy keys collapsed into one dropdown, plus the secrets-on-disk
     note) — a cap three characters above it would fire on the next word anyone
     adds there and tell them to move it into the guide, which is the wrong advice
@@ -1273,13 +1266,13 @@ def test_no_help_string_is_longer_than_the_cap():
 
 
 def test_no_help_string_points_at_a_row_by_position():
-    """From the P3 review. "the Google engine above" was written when every field
-    was on screen; `show_if` now hides rows, so a positional word can point at
+    """A help string names a setting by its name. `show_if` hides rows, so a
+    positional word ("the Google engine above") can point at
     nothing — and does so in exactly the state where the sentence is being read.
-    `tailor_provider`'s help said "'gemini' uses the Google engine above" while
-    `gemini_auth`, the row it means, is gated on `tailor_provider == "gemini"` and
+    A `tailor_provider` help saying "'gemini' uses the Google engine above" would
+    mean `gemini_auth`, which is gated on `tailor_provider == "gemini"` and
     is therefore ABSENT whenever someone reads that sentence to decide whether to
-    switch back. Name the setting instead of its position.
+    switch back.
 
     `min_score`'s "at/above this score" is the numeric sense, not the positional
     one, so it is the single spelling this lint lets through.
@@ -1300,11 +1293,10 @@ def test_no_help_string_points_at_a_row_by_position():
 
 def test_no_label_or_help_carries_an_em_dash():
     """The maintainer's ban on em dashes covers every string a user reads, and a
-    Settings row is read more often than any prompt. c14's Phase 7 found the
-    three fallback-chain labels shipped as "Fallbacks — fast (selection)"
-    beside ten older "Tailor model — ..." rows and eighteen help strings
-    with the same dash; all of them now use a colon, a semicolon or a
-    parenthesis. Comments and docstrings are the repo's own prose and are not
+    Settings row is read more often than any prompt. The fallback-chain
+    labels, the "Tailor model" rows and every help string use a colon, a
+    semicolon or a parenthesis where a dash might go. Comments and
+    docstrings are the repo's own prose and are not
     covered (tests/test_prompt_hygiene.py draws the same line for prompts)."""
     dash = "—"
     offenders = {f.key: where for f in settings.SETTINGS_SCHEMA
@@ -1402,12 +1394,12 @@ def test_no_per_stage_rate_limit_boxes_remain():
         assert "per-stage requests" not in f.help, f.key
 
 
-# --- Auto-apply (cycle 16): the Jev judge, the submit gate, the browser --------
+# --- Auto-apply: the Jev judge, the submit gate, the browser -------------------
 
 def test_typesafe_api_key_is_a_masked_secret_in_the_jev_section():
     """The env-target rule: Field.key IS the environment-variable name, so the
-    key round-trips to .env under the exact name jev.TypeSafeJev reads. Cycle 19
-    moved the row from Auto-apply to Jev, since every Jev use spends it."""
+    key round-trips to .env under the exact name jev.TypeSafeJev reads. The row
+    sits in the Jev section, since every Jev use spends it."""
     f = {f.key: f for f in settings.SETTINGS_SCHEMA}["TYPESAFE_API_KEY"]
     assert (f.type, f.default, f.section, f.target) == ("str", "", "Jev", "env")
     assert f.secret and f.optional and f.restart
@@ -1486,7 +1478,7 @@ def test_the_new_auto_apply_fields_are_neither_advanced_nor_gated():
 
 
 def test_the_auto_apply_judge_stays_in_auto_apply_under_advanced():
-    """ST-5: its one other choice is the test-only judge the drain refuses, so
+    """Its one other choice is the test-only judge the drain refuses, so
     the row folds away with the other knobs whose default is already right."""
     f = {f.key: f for f in settings.SETTINGS_SCHEMA}["auto_apply_jev_mode"]
     assert f.section == "Auto-apply"
@@ -1494,13 +1486,13 @@ def test_the_auto_apply_judge_stays_in_auto_apply_under_advanced():
     assert f.show_if is None
 
 
-# --- cycle 19: the Jev section, the pause, the tailor's Jev options, Opus 5.5 -----
+# --- the Jev section, the pause, the tailor's Jev options, Opus 5.5 ---------------
 
 JEV_SECTION_KEYS = ["jev_enabled", "TYPESAFE_API_KEY", "jev_scoring", "jev_tailor",
                     "jev_difficulty"]
 JEV_TAILOR_OPTIONS = ("tailor_best_of_n", "cover_letter_jev_check", "tailor_ats_meaning")
 # The seven dropdowns that offer CLAUDE_MODELS: two scorer stages, the tailor's
-# one-model box, its three tiers and (cycle 22) its cover-letter model.
+# one-model box, its three tiers and its cover-letter model.
 CLAUDE_DROPDOWNS = {
     "stage1_model_claude", "stage2_model_claude", "RESUME_TAILOR_CLAUDE_MODEL_ALL",
     "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "RESUME_TAILOR_CLAUDE_MODEL_FLASH",
@@ -1513,7 +1505,7 @@ def _section_keys(section: str) -> list[str]:
 
 
 def test_the_jev_section_holds_the_master_switch_the_key_and_three_area_switches():
-    """ST-1: the master checkbox first and in plain sight, the key it spends,
+    """The master checkbox first and in plain sight, the key it spends,
     then one switch per area under the advanced fold, each gated on the master
     through the ordinary show_if wiring."""
     by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
@@ -1531,7 +1523,7 @@ def test_the_jev_section_holds_the_master_switch_the_key_and_three_area_switches
         assert f.advanced is True, key
         assert f.show_if == ("jev_enabled", ("True",)), key
     assert by_key["jev_tailor"].choices == ("True", "False")     # it gates the options
-    # ...and the check's own switch gates "Difficulty checks at once" (cycle 22)
+    # ...and the check's own switch gates "Difficulty checks at once"
     assert by_key["jev_difficulty"].choices == ("True", "False")
 
 
@@ -1565,7 +1557,7 @@ def test_saving_the_master_switch_turns_jev_off_where_jev_switch_reads_it():
 
 
 def test_each_provider_leads_its_section():
-    """ST-2, ST-3: the row that decides what the rest of the section means comes
+    """The row that decides what the rest of the section means comes
     first, and the Jev section leads with its master switch."""
     assert _section_keys("Scoring")[0] == "provider"
     assert _section_keys("Engine")[0] == "tailor_provider"
@@ -1582,8 +1574,8 @@ def test_the_provider_help_texts_say_what_jev_changes():
 
 
 def test_auto_apply_pause_minutes_is_a_config_int_from_0_to_60(tmp_path):
-    """ST-5: how long a paused run waits for the user's answer; 0 parks at once,
-    the behaviour every run had before the pause existed."""
+    """How long a paused run waits for the user's answer; 0 parks at once,
+    with no pause at all."""
     f = {f.key: f for f in settings.SETTINGS_SCHEMA}["auto_apply_pause_minutes"]
     assert (f.type, f.default, f.section, f.target) == ("int", 10, "Auto-apply", "config")
     assert (f.min, f.max) == (0, 60)
@@ -1596,7 +1588,7 @@ def test_auto_apply_pause_minutes_is_a_config_int_from_0_to_60(tmp_path):
 
 
 def test_auto_apply_check_parallel_is_a_config_int_from_1_to_10(tmp_path):
-    """Cycle 22: how many difficulty checks run at once, each in its own
+    """How many difficulty checks run at once, each in its own
     browser window on a temporary copy of the auto-apply profile. The drain's
     defaults carry the same 10 (`apply_run.DEFAULT_SETTINGS`)."""
     import apply_run
@@ -1619,7 +1611,7 @@ def test_auto_apply_check_parallel_is_a_config_int_from_1_to_10(tmp_path):
 
 
 def test_the_jev_tailor_options_default_off_and_show_only_while_jev_tailors():
-    """ST-6: the three extras sit in Resume, off by default, on screen only while
+    """The three extras sit in Resume, off by default, on screen only while
     both the master switch and the tailor's switch are on."""
     by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
     for key in JEV_TAILOR_OPTIONS:
@@ -1634,7 +1626,7 @@ def test_the_jev_tailor_options_default_off_and_show_only_while_jev_tailors():
 
 
 def test_opus_5_5_is_offered_in_all_six_claude_dropdowns_and_is_the_pro_default():
-    """ST-4: added to CLAUDE_MODELS, so every Claude dropdown offers it; the
+    """It is in CLAUDE_MODELS, so every Claude dropdown offers it; the
     deep tier defaults to it; opus-5 stays selectable; the scorer's Claude
     stages keep their defaults."""
     by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
@@ -1662,7 +1654,7 @@ CLAUDE_DEFAULTS = {
 
 
 def test_sonnet_5_5_is_offered_in_all_six_claude_dropdowns_and_no_default_moves():
-    """Cycle 21 Task 10: claude-sonnet-5-5 is one pick away everywhere a Claude
+    """claude-sonnet-5-5 is one pick away everywhere a Claude
     model is chosen, through the shared tuple. Nothing defaults to it, and the
     older ids stay listed so a stored config naming one keeps resolving."""
     by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
@@ -1679,7 +1671,7 @@ def test_sonnet_5_5_is_offered_in_all_six_claude_dropdowns_and_no_default_moves(
 
 
 def test_a_blank_choice_names_the_fix_in_plain_words():
-    """A stored choice the form keeps on screen (ST-7) can be blank; the note
+    """A stored choice the form keeps on screen can be blank; the note
     under it then asks for a pick, since "Not allowed: ." names nothing."""
     assert settings.validate({"provider": ""})["provider"] == "Pick one of the listed options."
     assert settings.validate({"provider": "openai"})["provider"] == "Not allowed: openai."
@@ -1688,7 +1680,7 @@ def test_a_blank_choice_names_the_fix_in_plain_words():
 def test_every_choice_default_is_one_of_its_choices():
     """Restore defaults and each field's reset button write a choice field's
     default, and the Settings tab opens a blank stored choice on its default
-    (SP1 review C) unless the field lists a blank entry. Save refuses a choice
+    unless the field lists a blank entry. Save refuses a choice
     outside the listed ones, so each of these holds only while the default is
     listed."""
     fields = [f for f in settings.SETTINGS_SCHEMA if f.type == "choice"]
@@ -1709,8 +1701,8 @@ def test_every_multichoice_default_is_among_its_choices():
 
 
 def test_a_blank_entry_is_declared_only_on_a_choice_field_and_names_no_choice():
-    """`Field.blank_label` gives a blank its own dropdown entry (SP1 follow-up
-    2). The Google Cloud location is the one field whose help gives a blank a
+    """`Field.blank_label` gives a blank its own dropdown entry. The Google
+    Cloud location is the one field whose help gives a blank a
     meaning of its own, and the label differs from every listed choice so the
     dropdown can tell the two apart."""
     declared = [f for f in settings.SETTINGS_SCHEMA if f.blank_label]
@@ -1732,7 +1724,7 @@ def test_a_blank_location_is_valid_and_other_blank_choices_still_ask_for_a_pick(
         "RESUME_TAILOR_MODEL_MODE": "Pick one of the listed options."}
 
 
-# --- SP1 follow-up 3: the Jev switches' reading rule -----------------------------------
+# --- the Jev switches' reading rule ----------------------------------------------------
 
 @pytest.mark.parametrize("value", [True, "true", " True ", "YES", "on", "1", 1], ids=repr)
 def test_switch_on_reads_true_and_the_on_words_as_on(value):

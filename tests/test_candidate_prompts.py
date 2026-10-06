@@ -1,15 +1,14 @@
-"""Cycle 21, Task 5: the candidate text in the stage 1, stage 2 and writer prompts.
+"""The candidate text in the stage 1, stage 2 and writer prompts.
 
-The three scorer prompts used to say "the candidate graduated May 2026" in fixed
-text. They now take that text from the candidate profile the user sets in the
-dashboard: candidate_prompt_vars(profile) returns nine strings, and the three
-*_TEMPLATE_RESUME templates carry them as placeholders. Every placeholder sits in
-the RESUME half, so the Claude lane's cached system prompt stays identical for
-every job in a run.
+The three scorer prompts take the candidate text from the candidate profile the
+user sets in the dashboard: candidate_prompt_vars(profile) returns nine strings,
+and the three *_TEMPLATE_RESUME templates carry them as placeholders. Every
+placeholder sits in the RESUME half, so the Claude lane's cached system prompt
+stays identical for every job in a run.
 
 At the default profile (Finished school, May 2026, no clearance) stage 2 and the
-writer render byte-identical to before this cycle; stage 1 changes (its new
-eligibility line, its shorter candidate paragraph).
+writer render byte-identical to their fixed-text prompts; stage 1 differs from
+its fixed text (its eligibility line, its shorter candidate paragraph).
 
 Every test runs against the sandboxed scoring constants that conftest rebinds, so
 the author's scoring_config.json never leaks in. Every pool below is a fake.
@@ -376,7 +375,7 @@ def test_the_writer_keeps_its_style_pins():
         assert kw in sj.WRITER_TEMPLATE_RESUME.lower(), kw
 
 
-# The WRITER_TEMPLATE_RESUME text before cycle 21, with {resume} and {today} left as
+# The fixed-text WRITER_TEMPLATE_RESUME, with {resume} and {today} left as
 # placeholders. Stage 2 has the same pin in test_score_jobs_claude.py
 # (_FROZEN_STAGE2_TEMPLATE); the writer had none, so it lives here. At the default
 # profile the placeholder-carrying template must render to exactly this text.

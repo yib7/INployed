@@ -1,6 +1,6 @@
-"""SP10/SP5: the toolkit-agnostic manual-add pipeline (parse -> tailor -> append).
+"""The toolkit-agnostic manual-add pipeline (parse -> tailor -> append).
 
-The user already chose this job (SP5/MA-1), so there is no scoring step at all;
+The user already chose this job, so there is no scoring step at all;
 `test_add_manual_job_never_calls_scorer` pins that. The résumé tailor is MOCKED
 exactly the way the existing suite mocks it (tailor_fn is a stand-in), so no
 real API key is ever needed and no money is spent.
@@ -75,11 +75,11 @@ def test_manual_id_is_stable_and_dedup_friendly():
     assert a != c             # different URL -> different id
 
 
-# ── MA-1: no scoring step at all -- save and tailor at once ───────────────────
+# ── no scoring step at all: save and tailor at once ─────────────────────────
 
 def test_add_manual_job_never_calls_scorer(monkeypatch, tmp_path):
     """The user already chose this job: add_manual_job must never touch the
-    scorer, in any form (this is the RED/GREEN pin for SP5/MA-1)."""
+    scorer, in any form."""
     master = tmp_path / "linkedin_jobs_master.csv"
     fake_tailor, _ = _fake_tailor_factory(tmp_path)
 
@@ -139,7 +139,7 @@ def test_add_manual_job_dedupes_on_readd(tmp_path):
 
 
 def test_add_manual_job_survives_tailor_failure(tmp_path):
-    """A tailor failure must not lose the job; it's still saved (MA-4)."""
+    """A tailor failure must not lose the job; it's still saved."""
     master = tmp_path / "linkedin_jobs_master.csv"
 
     def boom_tailor(job, **k):
@@ -152,7 +152,7 @@ def test_add_manual_job_survives_tailor_failure(tmp_path):
     assert pd.read_csv(master).iloc[0]["source"] == "manual"
 
 
-# ── MA-2: duplicate detection before any spend, and "Tailor again" ────────────
+# ── duplicate detection before any spend, and "Tailor again" ─────────────────
 
 def test_find_duplicate_matches_from_dataframe():
     jid = manual_add.manual_job_id(_JD, "https://x/1")
@@ -303,7 +303,7 @@ def test_fetch_url_text_strips_html(monkeypatch):
 
     import requests
     # This test exercises HTML stripping, not host policy — allow the stub host
-    # (P2-16 otherwise blocks unresolvable hosts, fail-closed).
+    # (the SSRF guard otherwise blocks unresolvable hosts, fail-closed).
     monkeypatch.setattr(manual_add, "_host_is_private", lambda h: False)
     monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp())
     out = manual_add.fetch_url_text("https://x/1")
@@ -352,7 +352,7 @@ def test_local_run_files_includes_manual(tmp_path):
     assert f in files
 
 
-# ── delete / update / master_row + removed-jobs filter (item 10) ──────────────
+# ── delete / update / master_row + removed-jobs filter ────────────────────────
 
 def _seed(master, jid, **over):
     rec = {"job_posting_id": jid, "url": f"https://x/{jid}", "job_title": "T",
@@ -456,7 +456,7 @@ def _big_master(path, n, jd="JD text " * 10):
 
 
 def test_master_row_finds_id_deep_in_multichunk_file(tmp_path, monkeypatch):
-    # UI-thread safety (audit P1): master_row must stream in bounded chunks, not
+    # UI-thread safety: master_row must stream in bounded chunks, not
     # read the whole master. A row deep in a multi-chunk file must still be found
     # with the same shape as before (all columns, NaN -> "").
     monkeypatch.setattr(jobsdata, "_MASTER_ROW_CHUNK", 10)
@@ -487,7 +487,7 @@ def test_master_row_reads_chunked_and_stops_at_first_hit(tmp_path, monkeypatch):
     assert len(chunks_read) == 1                             # stopped after first hit
 
 
-# ── SSRF hardening (audit P2-16) + dead-branch cleanup (P2-3) ─────────────────
+# ── SSRF hardening + the raw-line title guess ────────────────────────────────
 
 def test_fetch_url_text_rejects_private_and_metadata_hosts(monkeypatch):
     """A pasted "job link" pointing at localhost / RFC1918 / the cloud metadata
@@ -537,9 +537,8 @@ def test_fetch_url_text_caps_response_size(monkeypatch):
 
 
 def test_guess_title_company_uses_raw_lines():
-    # P2-3: the old first branch split _strip_html output on newlines that
-    # _strip_html had already collapsed — dead code. The raw-line path is the
-    # real behavior and must keep working.
+    # _strip_html collapses newlines, so the title guess reads the raw lines;
+    # that path must keep working.
     title, company = manual_add._guess_title_company(
         "Data Analyst\nAcme Corp\nBuild dashboards.")
     assert title == "Data Analyst" and company == "Acme Corp"

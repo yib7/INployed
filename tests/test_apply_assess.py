@@ -1,11 +1,11 @@
-"""The auto-apply difficulty check (cycle 19, SP6: DF-1 to DF-6).
+"""The auto-apply difficulty check.
 
-DF-3's score is pure code over counts the check reads from the first
+The score is pure code over counts the check reads from the first
 application page: a base by application system plus fixed steps, rounded half
 up and clamped to 1-10, with Easy Apply, a closed or dead posting and a payment
-page at 10 at once. DF-1 and DF-2: the gate, the profile and the walk to the
+page at 10 at once. Then the gate, the profile and the walk to the
 first application page on the local test pages, where the only click is an
-Apply entry. DF-6: the running Jev total.
+Apply entry, and the running Jev total.
 
 Hermetic: FakeJev and NoisyJev, local pages and routed hosts in an offline
 browser context, stores in tmp_path. No network.
@@ -28,7 +28,7 @@ import jev_switch
 # is missing; CI's browser step runs them); the score tables need neither.
 pytest_plugins = ["conftest_browser", "conftest_jev"]
 
-# --- DF-3: the score ---------------------------------------------------------------------
+# --- the score ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("system, base", [
@@ -171,7 +171,7 @@ def test_the_capped_steps_say_so():
     ]
 
 
-# --- DF-1: the gate ------------------------------------------------------------------------
+# --- the gate ------------------------------------------------------------------------------
 
 ON = {"jev_enabled": True, "jev_scoring": True, "jev_tailor": True, "jev_difficulty": True}
 KEY = {"TYPESAFE_API_KEY": "not-a-real-key"}
@@ -207,7 +207,7 @@ def test_the_gate_reads_the_auto_apply_judge_setting(sdk):
     assert aa.refusal(config=cfg, env=KEY) == jev_switch.FIXTURE_ONLY
 
 
-# --- DF-1: the profile ---------------------------------------------------------------------
+# --- the profile ---------------------------------------------------------------------------
 
 def test_the_profile_is_the_drains(monkeypatch, tmp_path):
     import apply_run
@@ -256,7 +256,7 @@ def test_a_singleton_lock_of_a_gone_process_is_free(tmp_path):
     assert aa.profile_busy(tmp_path / "profile") is False
 
 
-# --- DF-4: what the queue table shows -----------------------------------------------------
+# --- what the queue table shows -----------------------------------------------------------
 
 def test_the_age_shows_past_seven_days():
     now = datetime(2026, 9, 27, 12, 0)
@@ -323,7 +323,7 @@ def test_select_jobs():
     assert [e["job_posting_id"] for e in chosen] == ["2"] and unknown == ["9"]
 
 
-# --- DF-1: the command line ----------------------------------------------------------------
+# --- the command line ----------------------------------------------------------------------
 
 @pytest.fixture
 def cli(monkeypatch, tmp_path):
@@ -382,7 +382,7 @@ def test_main_needs_ids_or_all(cli, capsys):
     assert aa.main([]) == 2
 
 
-# --- DF-2: the walk, on the local test pages ---------------------------------------------
+# --- the walk, on the local test pages ---------------------------------------------------
 
 CAREERS = "https://careers.fabrikam.example"
 LINKEDIN_JOB = "https://www.linkedin.com/jobs/view/4438751519/"
@@ -446,7 +446,7 @@ def _check(context, tmp_path, url, *, judge=None, generate=True, answers=None, *
 
 
 def _only_entries(rec, clicks):
-    """DF-2's pin: nothing typed, ticked, picked, uploaded, pressed or
+    """The walk's pin: nothing typed, ticked, picked, uploaded, pressed or
     dispatched, and the only clicks are the Apply entries named."""
     assert {a.kind for a in rec.actions} <= _READ_ONLY, rec.actions
     assert [a.text.strip() for a in rec.actions] == clicks, rec.actions
@@ -610,7 +610,7 @@ def test_a_noisy_judge_never_types_or_clicks_past_the_entry(context, flow_server
     assert got is None or 1 <= got["score"] <= 10
 
 
-# --- DF-6: the run and its running total ------------------------------------------------
+# --- the run and its running total ------------------------------------------------------
 
 def test_run_stores_the_difficulty_and_prints_the_running_total(context, tmp_path, capsys):
     import apply_harness as h
@@ -706,7 +706,7 @@ def test_the_real_judge_reads_a_lever_form(context, tmp_path, jev_judge):
     _only_entries(rec, [])
 
 
-# === SP6 fix round 1 =======================================================================
+# === the check's gates, its browser and its walker =========================================
 
 UNKNOWN_JUDGE = ("Unknown Auto-apply judge 'typesaf'; tick \"Show advanced settings\" and pick "
                  "typesafe in Settings > Auto-apply.")
@@ -806,7 +806,7 @@ def test_main_holds_the_sentinel_while_it_checks(browser_cli):
 
 
 def test_main_opens_the_bundled_browser_when_chrome_does_not_start(browser_cli):
-    """Fix round 2: the sentinel covers the bundled browser too, so the check
+    """The sentinel covers the bundled browser too, so the check
     falls back to it as the drain does, holding the sentinel while it runs."""
     import profile_lock
     chromium = _FakeChromium(fail={"chrome"})
@@ -851,7 +851,7 @@ def test_the_checks_busy_sentence_names_every_holder():
     assert aa.PROFILE_BUSY == profile_lock.BUSY_LEAD + " Check difficulty once that window closes."
 
 
-# --- minors 2 to 4 -----------------------------------------------------------------------------
+# --- the busy sentence, the age, a required upload ---------------------------------------------
 
 def test_the_age_shows_past_seven_whole_days():
     now = datetime(2026, 9, 27, 12, 0)
@@ -876,7 +876,7 @@ def test_a_required_upload_with_no_file_is_listed_with_the_questions():
     assert got.notes == []
 
 
-# --- minor 7: a check that reads nothing leaves a trace ------------------------------------
+# --- a check that reads nothing leaves a trace ---------------------------------------------
 
 def test_a_failed_check_is_recorded_and_the_earlier_result_kept(context, tmp_path, capsys):
     import apply_queue
@@ -906,7 +906,7 @@ def test_the_failure_line_names_its_age():
     assert aa.failed_text({"score": 3}, now) == ""
 
 
-# --- minors 5 and 6: the walker decides as the drain does ----------------------------------
+# --- the walker decides as the drain does --------------------------------------------------
 
 class _ReadAs(jev.FakeJev):
     """The fake, reading every page as STATE at CONF."""
@@ -1015,7 +1015,7 @@ _GET_STARTED = ("<html><head><title>Data Analyst at Fabrikam</title></head><body
 
 
 def test_the_walker_follows_the_judges_apply_entry(context, tmp_path):
-    """Minor 6: the drain follows the judge's `apply_entry` on a posting
+    """The drain follows the judge's `apply_entry` on a posting
     (`posting_entry_choice`), so the check does too. "Get started" has no
     entry word (`apply_judge.entry_worded`), so the text match alone would
     find no Apply and score the posting a dead end at 10."""
@@ -1073,7 +1073,7 @@ _ACCOUNT_LINKS = ("Create an account", "Sign in", "Sign up", "Log in", "Next")
 @pytest.mark.parametrize("account", _ACCOUNT_LINKS)
 def test_a_judged_entry_that_reads_as_an_account_link_is_never_clicked(context, tmp_path,
                                                                        account):
-    """DF-2: a confident judged `apply_entry` on a sign-in, sign-up, log-in
+    """A confident judged `apply_entry` on a sign-in, sign-up, log-in
     or Next link in the posting body is refused, and the walker takes the
     text choice, the posting's own "Apply now"."""
     _serve(context, {"/jobs/7": _account_posting(account),
@@ -1087,7 +1087,7 @@ def test_a_judged_entry_that_reads_as_an_account_link_is_never_clicked(context, 
 
 @pytest.mark.parametrize("account", ("Create an account", "Sign in", "Log in"))
 def test_an_account_link_alone_on_a_posting_is_never_clicked(context, tmp_path, account):
-    """DF-2: with no Apply beside it, the refused account link leaves the
+    """With no Apply beside it, the refused account link leaves the
     walk with no click at all."""
     _serve(context, {"/jobs/7": _account_posting(account, apply=False)})
     _got, _why, rec, _ = _check(context, tmp_path, f"{CAREERS}/jobs/7",
@@ -1096,7 +1096,7 @@ def test_an_account_link_alone_on_a_posting_is_never_clicked(context, tmp_path, 
 
 
 def test_a_sign_in_to_apply_link_is_an_account_step_not_a_click(context, tmp_path):
-    """DF-2: "Sign in to apply" is Apply-worded, so the text choice finds it;
+    """A "Sign in to apply" link is Apply-worded, so the text choice finds it;
     it signs in all the same, so the walk notes the account step and does
     not click it."""
     _serve(context, {"/jobs/7": _account_posting("Sign in to apply", apply=False)})
@@ -1119,7 +1119,7 @@ def test_a_noisy_judge_never_clicks_an_account_link_in_the_posting(context, tmp_
     assert got is None or 1 <= got["score"] <= 10
 
 
-# === cycle 22 SP1: the worker's result line =================================================
+# === the worker's result line ===============================================================
 
 RESULT_KEYS = {"job_id", "outcome", "score", "band", "why", "requests", "usd"}
 
@@ -1321,7 +1321,7 @@ def test_a_run_that_recorded_nothing_is_an_error_result():
     assert got["outcome"] == "error" and got["job_id"] == "42" and set(got) == RESULT_KEYS
 
 
-# === cycle 22 final review fixes =============================================================
+# === a worker's crash, refusal and slot ======================================================
 
 def test_a_worker_crash_is_a_failed_job_with_its_traceback_logged(worker, capsys, caplog):
     import apply_queue

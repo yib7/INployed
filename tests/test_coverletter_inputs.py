@@ -1,7 +1,7 @@
-"""SP3 (cycle 15): the cover letter's two new inputs.
+"""The cover letter's two inputs beyond the tailored bullets.
 
-The letter used to be built from the tailored bullets alone. This pins the two
-fact sources that widen it and the plumbing that carries them:
+This pins the two fact sources that widen the letter past the tailored
+bullets and the plumbing that carries them:
 
   * the voice seed (`letter.seed` in the master yaml): `assets.letter_seed`
     reads it (trimmed, capped, blank when malformed), `master_validate` accepts
@@ -156,7 +156,7 @@ def test_flatten_entries_is_bounded_with_the_truncation_marker():
 def test_flatten_entries_trims_atoms_evenly_and_keeps_every_entry():
     """Over the cap, atoms come off the longest entries first and every entry
     keeps its header: a rich history loses detail evenly, and no employer
-    drops out of the letter (the 2026-09-20 report: 5 of 8 entries lost)."""
+    drops out of the letter."""
     big = {"experience": [{"org": f"Org {i}", "title": "T", "dates": "2020",
                            "achievements": [{"id": f"x{i}{j}", "what": f"o{i} " + "w" * 150}
                                             for j in range(6)]}
@@ -190,7 +190,7 @@ def test_flatten_entries_of_an_empty_master_is_blank():
 
 
 def test_chat_flattening_now_comes_from_assets():
-    """chat's private helper is the assets one, so SP4 can reuse one copy."""
+    """chat's private helper is the assets one, so every caller shares one copy."""
     assert chat._entries is assets.entry_lines
     assert chat.TRUNCATED_MARKER == assets.TRUNCATED_MARKER
     # chat's own callers (no atom filter) see exactly what they saw before

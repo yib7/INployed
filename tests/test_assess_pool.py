@@ -1,4 +1,4 @@
-"""The parallel difficulty check's profile copies (cycle 22, SP1): what the
+"""The parallel difficulty check's profile copies: what the
 snapshot leaves out and keeps, and the sweep of leftover slot folders. Fake
 profile trees under tmp_path; the real profile is never read."""
 from __future__ import annotations
@@ -208,7 +208,7 @@ def test_the_sweep_keeps_a_slot_with_a_locked_file_and_deletes_it_once_free(tmp_
     assert not slot.exists()
 
 
-# === cycle 22 SP2: the pool (coordinator) ===================================================
+# === the pool (coordinator) =================================================================
 #
 # A fake spawner stands in for the worker processes: no browser, no Jev, no
 # child Python. The profile, the slot root and the queue are tmp_path fakes.
@@ -464,7 +464,7 @@ def test_a_closed_window_stops_the_pool(pool, capsys, printed):
 
 
 def test_no_browser_starting_stops_the_pool_and_says_so_once(pool, capsys):
-    """Fix round 1: a worker that refuses (its result an error, its exit not 0)
+    """A worker that refuses (its result an error, its exit not 0)
     stops the pool as the one-job check stops: exit 1, the sentence once with
     no not-checked wrapper, no job after the running ones, nothing noted."""
     why = aa.NO_BROWSER.format(why="RuntimeError")
@@ -888,9 +888,9 @@ def test_the_parallel_default_is_in_the_auto_apply_defaults():
     assert apply_run.DEFAULT_SETTINGS["auto_apply_check_parallel"] == 10
 
 
-# === cycle 22 final review fixes =============================================================
+# === the copies' cleanup, worker crashes, worker output =========================================
 
-# --- I1: the copies are deleted however the run ends ---------------------------------------
+# --- the copies are deleted however the run ends -------------------------------------------
 
 def _stubborn_after_run(monkeypatch, fails):
     """rmtree refuses slot-1 for its first `fails` tries once the workers are
@@ -993,7 +993,7 @@ def test_the_real_profile_is_told_apart_from_a_slot(tmp_path, monkeypatch):
     assert not ap.is_real_profile(tmp_path / "elsewhere")
 
 
-# --- M1: a worker crash is that job's line; a refusal is marked ---------------------------
+# --- a worker crash is that job's line; a refusal is marked -------------------------------
 
 def test_a_worker_crash_is_its_jobs_line_and_the_pool_goes_on(pool, capsys):
     why = "the worker failed (QueueLockTimeout)"
@@ -1032,7 +1032,7 @@ def test_the_carve_out_literals_are_gone():
     assert 'is not in the queue",' not in source
 
 
-# --- M2: a worker's warnings reach the console; --verbose reaches the workers ------------
+# --- a worker's warnings reach the console; --verbose reaches the workers ----------------
 
 _WORKER_LOG = (
     "2026-10-01 10:00:00,100 apply_assess INFO job 1: walking\n"

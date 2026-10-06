@@ -1,9 +1,9 @@
-"""Untrusted text cannot close the fence it rides in (audit finding 4-C10).
+"""Untrusted text cannot close the fence it rides in.
 
 `common.fence_jd` and `apply_answergen.user_prompt` wrap employer text between
 `=== BEGIN UNTRUSTED ... ===` / `=== END UNTRUSTED ... ===` markers. Text that
-carried the end marker itself closed the fence early, and whatever followed it
-sat outside the fence. The marker's `=` runs are now stripped from the embedded
+carries the end marker itself would close the fence early, and whatever follows it
+would sit outside the fence. The marker's `=` runs are stripped from the embedded
 text; text with no marker passes through byte for byte, so no ordinary prompt
 changes. Synthetic data only.
 """

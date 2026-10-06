@@ -1,4 +1,4 @@
-"""SP4: the toolkit-agnostic half of the per-job "Ask AI" chat.
+"""The toolkit-agnostic half of the per-job "Ask AI" chat.
 
 `resume_tailor.chat` assembles one stable system-prompt payload per job (identity
 + the fenced JD + the folder's apply.md + a full master-file digest that rides
@@ -161,7 +161,7 @@ def test_untailored_context_says_the_job_was_never_tailored():
 
 
 def test_tailored_context_carries_the_master_digest_alongside_the_sheet(tmp_path):
-    """SP4: the digest rides along every turn, sheet or no sheet, so a follow-up
+    """The digest rides along every turn, sheet or no sheet, so a follow-up
     question can reach a fact the sheet's chosen subset left out."""
     ctx = chat.build_context(_folder(tmp_path), JOB)
     assert "rebuilt the ingestion pipeline" in ctx
@@ -340,8 +340,8 @@ def test_apply_sheet_excerpt_is_capped(tmp_path):
 
 
 def test_master_char_cap_is_eighty_thousand():
-    """30,000 cut a real 47,000-character digest mid-atom and left INployed,
-    leadership and the skills list out of every chat (2026-09-29)."""
+    """The cap holds a real 47,000-character digest whole: a 30,000 cap cuts it
+    mid-atom and leaves INployed, leadership and the skills list out of every chat."""
     assert chat.MASTER_CHAR_CAP == 80_000
 
 

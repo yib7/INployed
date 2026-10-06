@@ -1,10 +1,10 @@
-"""Cycle 21, Tasks 6 and 7: the mechanical filters follow the candidate profile.
+"""The mechanical filters follow the candidate profile.
 
-Task 6: a candidate who has finished school gets intern and co-op titles dropped
+A candidate who has finished school gets intern and co-op titles dropped
 before any scorer call (`filter_internship`). A candidate still in school keeps
 them.
 
-Task 7: the clearance filter is level-aware. A clearance the candidate holds
+The clearance filter is level-aware. A clearance the candidate holds
 passes; a clearance the employer sponsors passes when the candidate is open to
 sponsorship, unless the same sentence refuses to sponsor it. Only a sponsorship
 that governs the clearance counts, so visa and work-authorization sponsorship
@@ -36,7 +36,7 @@ GRAD = sj.candidate_profile(status="grad", graduation="May 2027", today=TODAY)
 CLEAN_DESC = "We are hiring a backend software engineer to build web apps and REST APIs."
 
 
-# --- Task 6: the title detector --------------------------------------------------
+# --- the title detector ----------------------------------------------------------
 
 @pytest.mark.parametrize("title", [
     "Data Science Intern",
@@ -132,7 +132,7 @@ def test_a_non_string_title_is_not_an_internship_title(value):
     assert sj.is_internship_title(value) is False
 
 
-# --- Task 6: the filter column ---------------------------------------------------
+# --- the filter column -----------------------------------------------------------
 
 def _title_frame(titles, desc=CLEAN_DESC):
     return pd.DataFrame({"desc": [desc] * len(titles), "title": titles})
@@ -208,7 +208,7 @@ def test_the_column_is_a_plain_bool_column():
     assert out["filter_internship"].dtype == bool
 
 
-# --- Task 6: SCORE_COLS and the master fold --------------------------------------
+# --- SCORE_COLS and the master fold ----------------------------------------------
 
 def test_score_cols_carry_filter_internship_right_after_filter_easy_apply():
     cols = sj.SCORE_COLS
@@ -263,7 +263,7 @@ def test_a_bool_internship_column_folds_into_an_all_empty_float64_master_chunk(
     assert pd.isna(out.loc["3", "filter_internship"])
 
 
-# --- Task 6: the rescore pass ----------------------------------------------------
+# --- the rescore pass ------------------------------------------------------------
 
 def _rescore_master(tmp_path, monkeypatch):
     """A master with two never-scored rows: an intern posting and a plain one."""
@@ -316,7 +316,7 @@ def test_the_rescore_pass_keeps_an_intern_row_for_a_student(tmp_path, monkeypatc
     assert bool(frame.loc["1", "filtered_out"]) is False
 
 
-# --- Task 6: main() --------------------------------------------------------------
+# --- main() ----------------------------------------------------------------------
 
 def _stub_main(monkeypatch, tmp_path, titles):
     """main() over a one-file input CSV with the scoring call faked."""
@@ -382,7 +382,7 @@ def test_main_prints_no_internship_line_for_a_student(monkeypatch, tmp_path, cap
     assert "internship / co-op" not in capsys.readouterr().out
 
 
-# --- Task 7: the clearance filter is level-aware ---------------------------------
+# --- the clearance filter is level-aware -----------------------------------------
 
 # The clearance table of tests/test_jd_filters.py::test_requires_clearance, copied
 # so the default profile is pinned to today's requires_clearance verdicts.
@@ -593,7 +593,7 @@ def test_the_default_arguments_are_no_clearance_and_not_open():
     assert sj.clearance_blocks(text, held_rank=0, sponsorship=False) is True
 
 
-# --- Task 7: the requirement list ------------------------------------------------
+# --- the requirement list --------------------------------------------------------
 
 @pytest.mark.parametrize(("text", "expected"), [
     ("Public Trust clearance is required.", [(1, False)]),
@@ -649,7 +649,7 @@ def test_a_match_that_spans_a_sentence_break_falls_back_to_one_unnamed_mention()
     assert sj.clearance_blocks("Must be able to hold; a clearance", 2) is False
 
 
-# --- Task 7: the level table -----------------------------------------------------
+# --- the level table -------------------------------------------------------------
 
 SECRET_REQUIRED = "Active Secret clearance required."
 PUBLIC_TRUST_REQUIRED = "Public Trust clearance is required."
@@ -718,7 +718,7 @@ def test_the_level_table(text, held, open_, blocks):
     assert sj.clearance_blocks(text, held, open_) is blocks
 
 
-# --- Task 7: a posting that refuses to sponsor blocks an open candidate ------------
+# --- a posting that refuses to sponsor blocks an open candidate --------------------
 
 @pytest.mark.parametrize("text", REFUSING_SENTENCES + [
     "The company can't sponsor a Secret clearance.",
@@ -947,7 +947,7 @@ def test_more_clearance_or_openness_never_turns_a_pass_into_a_block():
                 assert sj.clearance_blocks(text, rank, False), (text, rank)
 
 
-# --- Task 7: the filter column follows the profile -------------------------------
+# --- the filter column follows the profile ---------------------------------------
 
 def _clearance_frame(texts):
     return pd.DataFrame({"desc": [f"{t} {CLEAN_DESC}" for t in texts],
@@ -1025,7 +1025,7 @@ def test_the_rescore_pass_uses_the_clearance_profile(tmp_path, monkeypatch):
     assert bool(frame.loc["2", "filter_clearance"]) is True
 
 
-# --- Task 7: jev_facts and the student cue ---------------------------------------
+# --- jev_facts and the student cue -----------------------------------------------
 
 @pytest.mark.parametrize("text", [
     "Summer internship program for data analysts.",
@@ -1099,7 +1099,7 @@ def test_jev_facts_reads_the_configured_profile_when_none_is_given(monkeypatch):
     assert sj.jev_facts(text)["clearance"] is False
 
 
-# --- Final review, A: a graduate student keeps the postings for their own degree ---
+# --- a graduate student keeps the postings for their own degree --------------------
 
 GRAD_ENROLLMENT_TEXTS = [
     "Minimum qualifications: currently enrolled in a PhD program.",
@@ -1161,7 +1161,7 @@ def test_jev_facts_advanced_degree_is_the_detector_verdict_under_the_default_pro
         assert sj.jev_facts(text)["advanced_degree"] is sj.requires_advanced_degree(text), text
 
 
-# --- Final review: TypeScript is not Top Secret ------------------------------------
+# --- TypeScript is not Top Secret --------------------------------------------------
 
 TYPESCRIPT_WITH_SECRET = ("Must have an active Secret clearance and experience with JS/TS "
                           "and React.")
@@ -1214,7 +1214,7 @@ def test_a_top_secret_holder_and_a_secret_holder_read_the_typescript_row_alike()
     assert sj.clearance_blocks(TYPESCRIPT_WITH_SECRET, 1, False) is True
 
 
-# --- Final review: the polygraph negation needs the availability lookahead ---------
+# --- the polygraph negation needs the availability lookahead -----------------------
 
 @pytest.mark.parametrize("text", [
     "Relocation is not offered; polygraph required.",
@@ -1243,7 +1243,7 @@ def test_a_negated_polygraph_requirement_still_passes(text):
     assert sj.clearance_blocks(text) is False
 
 
-# --- Final review: "sponsor you to get a clearance" --------------------------------
+# --- "sponsor you to get a clearance" ----------------------------------------------
 
 @pytest.mark.parametrize("text", [
     "We will sponsor you to get a Secret clearance.",
@@ -1271,7 +1271,7 @@ def test_a_sponsor_to_get_something_else_or_a_refusal_is_no_offer(text):
     assert sj.clearance_blocks(text, 0, True) is True
 
 
-# --- Final review: pins for the pieces the last round added without a row ---------
+# --- the refusal phrase and the availability words, one pin each ------------------
 
 def test_a_for_phrase_after_the_sponsored_clearance_carries_the_refusal():
     """_FOR_PHRASE lets "for this role" sit between the sponsored clearance and the

@@ -62,7 +62,7 @@ def test_fallback_to_posted_date(tmp_path):
     df = pd.read_csv(p, dtype=str)
     assert df.loc[0, "job_description_formatted"] in ("", "nan") or pd.isna(df.loc[0, "job_description_formatted"])
 
-# P2-11: filtered_out truth-vocabulary must recognise the float-upcast ("1.0")
+# filtered_out truth-vocabulary must recognise the float-upcast ("1.0")
 # and trailing-space ("True ") spellings prune itself may have to skip -- kept
 # consistent with score_jobs.rows_needing_rescore so prune-written filtered rows
 # are not re-parked/retried forever.
@@ -78,7 +78,7 @@ def test_needs_rescore_treats_float_and_padded_filtered_out_as_filtered():
     assert bool(needs.iloc[2])       # "False" + unscored -> needs rescore
 
 
-# P1-2: chunk.get(COL) returns a bare None for an absent column, and pandas
+# chunk.get(COL) returns a bare None for an absent column, and pandas
 # turns that into a NaT/nan *scalar* whose .fillna/.isna raises AttributeError.
 # Both shapes are reachable: `score` only exists after score_jobs.py has run,
 # and the seen.db/CSV rebuild recipes can produce a master without
@@ -119,7 +119,7 @@ def test_main_reports_one_line_on_a_shape_surprise(tmp_path, capsys, monkeypatch
     assert "prune_master: cannot process" in err and "AttributeError" in err
 
 
-# MA-3: hand-added jobs (manual- ids, local/manual_add.py) keep blank score
+# hand-added jobs (manual- ids, local/manual_add.py) keep blank score
 # columns on purpose. The rescore pass (score_jobs.rows_needing_rescore) and the
 # prune's park step (_needs_rescore) both skip them, and the two readers agree
 # row for row on rows without an ERROR marker.
@@ -179,7 +179,7 @@ def test_the_manual_prefix_is_the_one_manual_add_writes():
 
 def test_prune_keeps_the_description_of_an_aged_hand_added_row(tmp_path):
     """The user may tailor a hand-added job again, and its pasted description
-    has no LinkedIn url to fetch it back from (MA-3)."""
+    has no LinkedIn url to fetch it back from."""
     p = _write(tmp_path, [{**BASE, "job_posting_id": "manual-1a2b"},
                           {**BASE, "job_posting_id": "2"}])
     r = pm.prune(p, retention_days=3, now=NOW, strip_summary=True)

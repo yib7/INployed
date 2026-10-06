@@ -30,10 +30,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # watcher.py (LOG_PATH/STATE_PATH, bound at *import* time — line 43 even mkdir's
 # the dir) and the apply-queue / ats-accounts stores all derive their on-disk
 # location from LOCALAPPDATA. A test that constructs any of them without an
-# explicit tmp path reads AND writes the user's live files. That happened: pytest
-# runs (some from worktrees) opened the real seen.db concurrently with the running
-# dashboard + scheduled watcher and corrupted it twice (2026-06-28, 2026-07-07);
-# app_status — the one table with no self-heal — was wiped both times. Redirect
+# explicit tmp path reads AND writes the user's live files. Pytest runs (some
+# from worktrees) that open the real seen.db concurrently with the running
+# dashboard + scheduled watcher can corrupt it, and app_status, the one table
+# with no self-heal, is lost with it. Redirect
 # LOCALAPPDATA to a throwaway dir for the whole session, BEFORE any `local/` module
 # is imported, so no test can ever touch the real profile. Subprocesses spawned by
 # tests inherit this env, closing the subprocess-monkeypatch pollution hole too.
@@ -396,9 +396,9 @@ def _hermetic_outbox_and_vm(tmp_path):
     """No test may touch the real <repo>/outbox/ or spawn gcloud.
 
     Any code path reaching outbox's module defaults (OUTBOX_DIR / RUN_STATS_CSV /
-    MASTER_CSV) or vm_sync.run_cmd from a test is a leak: between 2026-07-04 and
-    07-08 every full-suite run queued a REAL outbox/local_stats_*.csv (69 piled
-    up) and then 'pushed' them through a module-global subprocess fake. Redirect
+    MASTER_CSV) or vm_sync.run_cmd from a test is a leak: a full-suite run would
+    queue a REAL outbox/local_stats_*.csv and then 'push' it through a
+    module-global subprocess fake. Redirect
     the defaults into tmp and stub run_cmd with a fast deterministic failure.
     Tests that need push mechanics inject runner=/their own monkeypatch (applied
     later, so it wins). Same private-MonkeyPatch pattern as _hermetic_apply_queue."""
@@ -455,9 +455,9 @@ def _hermetic_claude_cli(request):
 def _hermetic_repo_data(tmp_path_factory):
     """No test may read the developer's REAL repo-root config and data files.
 
-    Measured over the full suite on 2026-08-27 with a Path.read_text probe: 316
-    tests read one of local/config.json (293), search_config.json (235),
-    scoring_config.json (215) or apply_answers.json (192) straight out of the
+    A Path.read_text probe over the full suite, run without this fixture, finds
+    over 300 tests reading one of local/config.json, search_config.json,
+    scoring_config.json or apply_answers.json straight out of the
     author's working tree. All four are git-ignored personal files, so those tests
     take one branch on this machine and the other on CI or a fresh clone — the
     exact "passes only on your machine" hazard the LOCALAPPDATA and load_dotenv
@@ -511,10 +511,10 @@ def _hermetic_repo_data(tmp_path_factory):
         mp.setattr(apply_answers, "STORE_PATH", d / "apply_answers.json")
         mp.setattr(apply_config, "APPLY_CONFIG", d / "apply_config.json")
         # resume_tailor.config keeps its OWN binding to local/config.json, so the
-        # jobsdata.HERE redirect above never covered it: config._config_json() read
-        # the author's real file. Caught in 3A by asking projects_max() for a
-        # default and getting 4 -- the value in the author's config.json, where a
-        # fresh clone has no file at all and answers 3.
+        # jobsdata.HERE redirect above does not cover it: config._config_json()
+        # would read the author's real file, and projects_max() would answer the
+        # value in the author's config.json, where a fresh clone has no file at
+        # all and answers 3.
         mp.setattr(rt_config, "CONFIG_JSON", d / "config.json")
         # The scorer's Jev switch reads local/config.json through its own binding
         # too (the VM copy has no settings module): the same sandbox file.

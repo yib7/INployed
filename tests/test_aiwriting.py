@@ -1,9 +1,9 @@
-"""The avoid-AI-writing pass on the cover-letter body (default ON since cycle 15).
+"""The avoid-AI-writing pass on the cover-letter body (default ON).
 
 `resume_tailor.aiwriting` vendors a bounded extract of the avoid-ai-writing
 skill (v3.18.0, MIT, Conor Bronsdon): a prompt block for the judgment calls and
 a small deterministic ban list for the patterns that are ALWAYS slop. It extends
-the existing two-arm gate. Since cycle 15 the prompt block rides in every letter
+the existing two-arm gate. The prompt block rides in every letter
 prompt whatever the toggle says, and the toggle decides one thing only: whether
 the deterministic ban list joins the gate (and so whether a hit buys the repair
 call). The two structural checks (bullet echo, uniform rhythm) are pinned in
@@ -35,9 +35,8 @@ BULLETS = {"a1": "Shipped the viewer with 178 tests",
 # the rules block, and nothing else moves), and the head's wording as a tripwire
 # for drift. A deliberate reword of the cover-letter prompt re-pins the head
 # here; a head that drifts without anyone meaning to is the failure this catches.
-# Cycle 10 re-pinned two em dashes out (see tests/test_prompt_hygiene.py for why
-# a prompt may not use them); cycle 15 re-pinned both heads for the narrative
-# brief and the humanizer pass.
+# The heads carry no em dashes (see tests/test_prompt_hygiene.py for why a prompt
+# may not use them).
 _TODAYS_GENERATE_HEAD = (
     'Write the body of a cover letter for an early-career candidate as narrative prose '
     'with ONE through-line. Open on the one thing about this role that connects to '
@@ -255,8 +254,8 @@ def test_settings_schema_exposes_the_toggle_defaulting_on():
 
 
 def test_the_attribution_survives_the_help_trim():
-    """The help string used to carry the credit, and P8 cut it from ~700 chars to
-    two sentences to sit under the schema's 350-char cap.
+    """The help string is two sentences, to sit under the schema's 350-char cap,
+    so the credit lives outside it.
 
     The attribution is not optional, so this asserts it MOVED rather than that it
     is gone: the full citation (name, version, licence, source path) lives in

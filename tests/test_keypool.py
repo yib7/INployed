@@ -162,7 +162,7 @@ def test_from_env_builds_free_members_and_vertex(monkeypatch, tmp_path):
     assert created[-1]["vertexai"] is True
     assert created[-1]["project"] == "proj"
     assert created[-1]["location"] == "global"
-    # every client (free and vertex) carries a bounded HTTP timeout (P1-4)
+    # every client (free and vertex) carries a bounded HTTP timeout
     assert all("http_options" in kwargs for kwargs in created)
 
 
@@ -181,7 +181,7 @@ def test_from_env_raises_without_any_credential(monkeypatch, tmp_path):
 UNKNOWN_MODEL = "gemini-3.1-pro-preview"
 
 
-# --- P0-2: unknown models must get DEFAULT_LIMITS RPM/RPD gating -----------
+# --- unknown models must get DEFAULT_LIMITS RPM/RPD gating -----------------
 
 def test_default_limits_exist_and_are_conservative():
     assert keypool.DEFAULT_LIMITS["rpm"] > 0
@@ -190,7 +190,7 @@ def test_default_limits_exist_and_are_conservative():
 
 def test_select_gates_unknown_model_by_default_limits_once_rpd_exhausted(tmp_path):
     # No vertex member -- if an unknown model isn't gated, _select would keep
-    # handing out the free key forever (the P0-2 infinite-loop bug).
+    # handing out the free key forever (an infinite loop).
     free = {"client": _client(lambda *_: _resp("FREE")), "kind": "free", "fp": "fp1"}
     pool = _pool([free], tmp_path)
     limits = keypool.LIMITS.get(UNKNOWN_MODEL, keypool.DEFAULT_LIMITS)
@@ -270,7 +270,7 @@ def test_the_sdk_honours_the_pin_and_the_vertex_member_drops_an_ambient_key(monk
     assert "aiplatform" in vertex._http_options.base_url
 
 
-# --- P1-4: from_env-built clients must carry an HTTP timeout ---------------
+# --- from_env-built clients must carry an HTTP timeout ---------------------
 
 def test_from_env_sets_default_http_timeout_on_free_and_vertex_clients(monkeypatch, tmp_path):
     created = []
@@ -313,7 +313,7 @@ def test_from_env_respects_score_http_timeout_s_env_override(monkeypatch, tmp_pa
         assert kwargs["http_options"].timeout == 45000
 
 
-# --- P2-8: UsageState robustness --------------------------------------------
+# --- UsageState robustness --------------------------------------------------
 
 def test_usage_state_load_survives_non_int_usage_value(tmp_path):
     p = tmp_path / "score_state.json"
@@ -379,7 +379,7 @@ def test_usage_state_save_content_round_trips(tmp_path):
     assert on_disk["usage"]["fpB:gemini-3.1-flash-lite"] == 500
 
 
-# --- P2-4: RPD state must roll over at Pacific midnight mid-process ----------
+# --- RPD state must roll over at Pacific midnight mid-process ----------------
 
 def test_select_frees_exhausted_key_after_pacific_midnight(tmp_path, monkeypatch):
     # A long-running process that crosses midnight Pacific: a key exhausted on
@@ -421,7 +421,7 @@ def test_generate_rolls_over_and_attributes_usage_to_new_day(tmp_path, monkeypat
     resp = asyncio.run(pool.generate(model=FLASH, contents="x", config=None))
     assert resp.text == "FREE"
     assert pool.stats() == {"free_calls": 1, "vertex_calls": 0}
-    pool._state.save()   # P2-23: saves are debounced; flush before reading disk
+    pool._state.save()   # saves are debounced; flush before reading disk
     on_disk = json.loads((tmp_path / "s.json").read_text(encoding="utf-8"))
     assert on_disk["date"] == "2020-01-02"
     assert on_disk["usage"]["fp1:" + FLASH] == 1
@@ -447,12 +447,12 @@ def test_vertex_quota_pool_error_chains_the_quota_exception(tmp_path, monkeypatc
         assert isinstance(e.__cause__, RuntimeError)
 
 
-# -- audit P2-1: separate quota vs transient retry budgets ---------------------
+# -- separate quota vs transient retry budgets ---------------------------------
 
 def test_mixed_quota_and_transient_errors_use_separate_budgets(tmp_path, monkeypatch):
     """Two vertex 429s then two generic transient errors must still succeed on
-    the fifth call: the old SHARED counter hit the transient threshold (3) after
-    429+429+error and gave up with only one generic failure observed."""
+    the fifth call: one SHARED counter would hit the transient threshold (3) after
+    429+429+error and give up with only one generic failure observed."""
     calls = {"n": 0}
 
     def responder(*_):
@@ -474,7 +474,7 @@ def test_mixed_quota_and_transient_errors_use_separate_budgets(tmp_path, monkeyp
     assert resp.text == "OK" and calls["n"] == 5
 
 
-# -- audit P2-23: debounced saves + concurrent-process merge -------------------
+# -- debounced saves + concurrent-process merge --------------------------------
 
 def test_usage_state_maybe_save_debounces(tmp_path):
     p = tmp_path / "s.json"
@@ -510,10 +510,10 @@ def test_save_merges_concurrent_process_counters(tmp_path):
 
 
 def test_atexit_flush_registered_once_per_state(tmp_path, monkeypatch):
-    """audit C6-8: the dashboard builds a fresh KeyPool per scoring run inside one
-    long-lived process, and __init__ called atexit.register unconditionally — so
-    handlers accumulated for the life of the app and every one of them wrote the
-    same state file at shutdown."""
+    """The dashboard builds a fresh KeyPool per scoring run inside one long-lived
+    process. An unconditional atexit.register in __init__ would pile up handlers
+    for the life of the app, every one of them writing the same state file at
+    shutdown."""
     import atexit as _atexit
 
     registered = []
@@ -531,14 +531,14 @@ def test_atexit_flush_registered_once_per_state(tmp_path, monkeypatch):
 
 # --- configured free-tier limits: the dashboard's numbers beat the built-in table --
 #
-# The 2026-09-08 incident this guards: scoring_config.json had migrated to
-# gemini-3.5-flash-lite / gemini-3.8-flash, neither of which is a LIMITS key, so
-# BOTH silently fell to DEFAULT_LIMITS {rpm 5, rpd 100}. Stage 1 ran at a third of
-# its real RPM, and stage 2 pinned all three keys at exactly 100 and spilled every
-# further call onto the paid Vertex backstop. Nothing logged; the run just crawled.
+# What this guards: a scoring_config.json that names models with no LIMITS key
+# (say gemini-3.5-flash-lite / gemini-3.8-flash) sends BOTH silently to
+# DEFAULT_LIMITS {rpm 5, rpd 100}. Stage 1 then runs at a third of its real RPM,
+# and stage 2 pins all three keys at exactly 100 and spills every further call
+# onto the paid Vertex backstop, with nothing logged.
 #
-# A model id is a moving target, so the fix is not "add two more rows" -- it is
-# that the numbers travel with the model choice, from the same Settings tab.
+# A model id is a moving target, so the numbers travel with the model choice,
+# from the same Settings tab.
 
 CONFIGURED_MODEL = "gemini-9.9-flash"   # a plausible id absent from LIMITS, as of today
 

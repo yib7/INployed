@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The curated style exemplar (cycle 10, SP5).
+"""The curated style exemplar.
 
 ``compose.rephrase`` shows the model a sample of the user's own writing labelled "STYLE
 EXEMPLAR (match this voice, length and density; NEVER copy its facts)". The source used
@@ -18,10 +18,10 @@ Two rules this file holds that production's own gate deliberately does not:
 
 * **The participial impact tail:** ``compose._STYLE_BANS`` matches a CLOSED verb list
   (``enabling|ensuring|allowing|driving|resulting in|...``) because a false positive
-  there buys a repair call that can damage a correct bullet. Cycle 11 widened that
-  pattern's REACH so the listed verb no longer has to sit directly after the comma,
-  which is what made it miss "..., minimizing manual review bottlenecks and enabling
-  product expansion", the exact tail the old exemplar taught. The verb LIST is still
+  there buys a repair call that can damage a correct bullet. That pattern's REACH
+  does not need the listed verb directly after the comma, so it catches "...,
+  minimizing manual review bottlenecks and enabling product expansion", the exact
+  tail the old exemplar taught. The verb LIST is still
   closed, so "..., reducing runtime from 4h to 20m" is still clean in production.
   Curation is not production: here the SHAPE is what must not be shown, so the check
   below stays broader -- any participle after a comma, listed or not.

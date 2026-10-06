@@ -1,11 +1,11 @@
-"""SP2 (cycle 15): jobsdata.md_to_text() and job_detail_fields' job_description_md
+"""Tests for jobsdata.md_to_text() and job_detail_fields' job_description_md
 precedence.
 
-Root cause (measured by the controller): pipeline/score_jobs.py drops the HTML
+Why: pipeline/score_jobs.py drops the HTML
 job_description_formatted and keeps LinkedIn's job_summary (a single ~5,000-char
 line with no newlines), but ALSO writes job_description_md (markdownify, ATX
-headings, **bold**, lists) into every scored row -- and job_detail_fields never
-read it. md_to_text is job_detail_fields' markdown counterpart to html_to_text
+headings, **bold**, lists) into every scored row, and job_detail_fields reads
+it. md_to_text is job_detail_fields' markdown counterpart to html_to_text
 above it: same pure-regex, no-dependency contract, so a scored row's card text
 gets its structure back.
 """

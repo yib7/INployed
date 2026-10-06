@@ -213,9 +213,9 @@ def test_the_mode_is_read_live_not_frozen_at_import(
         mode_env, all_env, resolve, mode_of, tier_defaults, one_model, monkeypatch):
     """Two calls in ONE process, no reload between them, different answers.
 
-    The tier vars gained this in P2-13 and the mode has to match: `llm.call`
+    The tier vars are read live too, and the mode has to match: `llm.call`
     resolves the model per call, and the dashboard tailors in-process, so a mode
-    frozen at import would need a relaunch that the tier vars no longer do.
+    frozen at import would need a relaunch that the tier vars do not.
     (What a restart IS still needed for is a .env EDIT -- os.environ is a startup
     snapshot. Different problem, same as every other .env key.)"""
     assert resolve(config.TIER_PRO) == tier_defaults[config.TIER_PRO]

@@ -1,4 +1,4 @@
-"""SP3: the jobs model + proxy + JobsTab (filter, sort, column toggle, coloring, actions)."""
+"""The jobs model + proxy + JobsTab (filter, sort, column toggle, coloring, actions)."""
 import pandas as pd
 from PySide6 import QtCore, QtWidgets
 
@@ -48,7 +48,7 @@ def test_model_background_role_tags(qapp):
 
 
 def test_score_cell_reads_hand_added_for_manual_rows(qapp):
-    # SP5/MA-3: a hand-added job is never scored, so its Score cell reads
+    # A hand-added job is never scored, so its Score cell reads
     # "hand-added" instead of a blank value; a scraped row is unaffected.
     df = _df().copy()
     df.loc[0, "job_posting_id"] = "manual-1"
@@ -110,7 +110,7 @@ def test_proxy_numeric_sort(qapp):
 
 
 def test_sort_by_score_does_not_crash_with_manual_rows(qapp):
-    # SP5/MA-3: "hand-added" is not numeric; the SORT_ROLE fallback must not
+    # "hand-added" is not numeric; the SORT_ROLE fallback must not
     # raise, and every row (manual included) must still come through the sort.
     df = _df().copy()
     df.loc[0, "job_posting_id"] = "manual-1"
@@ -191,9 +191,9 @@ def test_tab_min_score_filter(qtbot):
 
 
 def test_tab_min_score_filter_keeps_manual_rows(qtbot):
-    # SP5/MA-3: the per-tab quick-filter min score must not hide a hand-added
-    # row either -- only jobsdata.filter_high_unseen_with_count's own min_score
-    # gate was the other place this could leak through.
+    # The per-tab quick-filter min score must not hide a hand-added
+    # row either; jobsdata.filter_high_unseen_with_count's own min_score
+    # gate is the other place this could leak through.
     tab = JobsTab("all", COLS)
     qtbot.addWidget(tab)
     df = _df().copy()
@@ -207,7 +207,7 @@ def test_tab_min_score_filter_keeps_manual_rows(qtbot):
 
 
 def test_discovery_filters_live_in_popup(qtbot):
-    # Cycle 16 SP3: Min score / Day / Time / Reco / Easy moved into a Filters popup.
+    # Min score / Day / Time / Reco / Easy live in a Filters popup.
     tab = JobsTab("all", COLS)
     qtbot.addWidget(tab)
     for w in (tab.minscore, tab.day, tab.time, tab.reco, tab.easy):
@@ -231,7 +231,7 @@ def test_filters_button_shows_active_count(qtbot):
 
 
 def test_easy_filter_is_a_three_state_combo(qtbot):
-    # SP3: the Easy Apply checkbox became a combo with a Not-Easy-Apply state.
+    # The Easy Apply filter is a combo with a Not-Easy-Apply state.
     tab = JobsTab("all", COLS)
     qtbot.addWidget(tab)
     assert isinstance(tab.easy, QtWidgets.QComboBox)
@@ -269,7 +269,7 @@ def test_easy_combo_filters_rows(qtbot):
 
 
 def test_add_filter_row_lives_in_popup_and_counts(qtbot):
-    # Cycle 17 SP2: an extra filter (the Tracker's Follow-up-due checkbox) mounts in
+    # An extra filter (the Tracker's Follow-up-due checkbox) mounts in
     # the Filters popup and, when active, counts toward the badge.
     tab = JobsTab("tracker", COLS)
     qtbot.addWidget(tab)
@@ -515,9 +515,9 @@ def _df_with_gaps():
 
 
 def test_a_missing_cell_displays_as_empty_not_nan(qapp):
-    """c14 Phase 7: the Phase 3B synthetic master (NaN deep_score on every job
-    that never reached stage 2) put the word "nan" under a FULL deep bar on
-    every such row. pandas 3's astype(str) keeps NaN as NaN, so the model must
+    """A master with NaN deep_score on every job that never reached stage 2
+    must not put the word "nan" under a FULL deep bar on every such row.
+    pandas 3's astype(str) keeps NaN as NaN, so the model must
     blank it itself; a QVariant float NaN prints "nan"."""
     m = JobsTableModel(COL_IDS)
     m.set_dataframe(_df_with_gaps())

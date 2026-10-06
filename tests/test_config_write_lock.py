@@ -1,4 +1,4 @@
-"""config.json read-modify-write serialization (audit P1-1).
+"""config.json read-modify-write serialization.
 
 atomic_write_json makes each write all-or-nothing but does nothing about lost
 updates: two writers that both read before either writes each persist their own
@@ -49,7 +49,7 @@ def test_update_json_locked_merges_and_returns(cfg):
 
 
 def test_update_json_locked_refuses_a_corrupt_file(tmp_path):
-    # 4-C1: starting fresh dropped every key the write did not carry
+    # starting fresh would drop every key the write does not carry
     p = tmp_path / "broken.json"
     p.write_text("{not json", encoding="utf-8")
     with pytest.raises(jsonutil.JsonUnreadable):

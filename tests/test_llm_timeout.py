@@ -1,4 +1,4 @@
-"""Per-call escalating Gemini timeout + timeout-only retry (cycle 11 SP1).
+"""Per-call escalating Gemini timeout + timeout-only retry.
 
 The transport must give each `generate_content` a bounded timeout that ESCALATES
 across attempts (default 60->120->180s) and retry ONLY on a timeout; a hung server

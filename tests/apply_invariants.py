@@ -85,8 +85,8 @@ class Sends:
         context.add_init_script(_SEND_JS)
         # a tab `window.open` made keeps its first blank window for the page
         # it loads, and the init script does not run again for that page: a
-        # submit in such a tab went unseen (popup_step, found by the final
-        # review's SUBMITTED-WITHOUT-SEND, C-M3). Each tab's loaded page gets
+        # submit in such a tab would go unseen (the popup_step flow, caught by
+        # the SUBMITTED-WITHOUT-SEND check). Each tab's loaded page gets
         # the watch too; the document's mark keeps it to one
         context.on("page", self._watch_tab)
         for glob in flow.send_urls:
@@ -322,7 +322,7 @@ class Recorder:
     def focused(page) -> dict:
         """The focused element's live info, read in the frame that holds the
         focus: a key pressed while an input inside an iframe has the focus
-        goes to that input and its form (N4), so the main document's
+        goes to that input and its form, so the main document's
         `activeElement` (the `<iframe>`) is followed down, frame by frame."""
         try:
             info = dict(page.evaluate(_FOCUS_JS))

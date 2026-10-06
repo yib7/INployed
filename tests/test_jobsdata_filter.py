@@ -122,9 +122,9 @@ def test_live_resume_ids_handles_empty_or_non_dict():
     assert jobsdata.live_resume_ids(set()) == set()   # tolerant of a non-mapping
 
 
-# --- SP5: repost_key normalisation table ----------------------------------------
+# --- repost_key normalisation table ---------------------------------------------
 
-# Shared with tests/test_score_jobs.py (SP6): that file asserts its own
+# Shared with tests/test_score_jobs.py: that file asserts its own
 # pipeline-local repost_key copy agrees with jobsdata.repost_key on every row
 # here, so the two implementations can never quietly drift apart.
 REPOST_KEY_CASES = [
@@ -214,7 +214,7 @@ def test_repost_keys_vectorized_treats_a_missing_column_as_blank():
     assert list(jobsdata._repost_keys_vectorized(df)) == ["", ""]
 
 
-# --- SP5: suppress_reposts --------------------------------------------------------
+# --- suppress_reposts -------------------------------------------------------------
 
 def _row(jid, is_seen, extracted_date, title="Data Engineer", company="Acme",
          location="Seattle, WA", score="5"):
@@ -324,10 +324,10 @@ def test_suppress_reposts_collapse_handles_mixed_date_formats():
 
 
 def test_suppress_reposts_handles_a_timezone_mix_in_the_marks_and_the_dates():
-    """The live seen.db holds naive and offset-bearing timestamps in one column
-    (2026-09-20: `pd.to_datetime(format="mixed")` raised "Mixed timezones
-    detected" on the real data and the filter never ran). Both shapes parse,
-    both marks block, and the newest extracted_date still wins the collapse."""
+    """The live seen.db holds naive and offset-bearing timestamps in one column,
+    and `pd.to_datetime(format="mixed")` raises "Mixed timezones detected" on
+    that mix. Both shapes parse, both marks block, and the newest extracted_date
+    still wins the collapse."""
     df = pd.DataFrame([
         _row("A", "yes", "2026-08-01"),
         _row("B", "yes", "2026-08-02T09:00:00+00:00"),
@@ -350,8 +350,8 @@ def test_suppress_reposts_handles_a_timezone_mix_in_the_marks_and_the_dates():
 
 def test_filter_high_unseen_survives_a_suppression_failure(monkeypatch, caplog):
     """The filter runs on the UI thread with no guard at the call site; a
-    failure inside suppression shows the unsuppressed list with a warning
-    (until 2026-09-20 the timezone mix raised and the refresh died with it)."""
+    failure inside suppression shows the unsuppressed list with a warning, and
+    the refresh lives on."""
     df = pd.DataFrame([_row("A", "no", "2026-08-01", score="5"),
                        _row("B", "no", "2026-08-02", score="5")])
 
@@ -397,7 +397,7 @@ def test_filter_high_unseen_blocks_a_repost_of_a_low_score_mark():
     assert hidden == 1
 
 
-# --- SP5: filter_high_unseen wired to the repost window --------------------------
+# --- filter_high_unseen wired to the repost window -------------------------------
 
 def _checkpoint_df():
     return pd.DataFrame([
@@ -444,7 +444,7 @@ def test_filter_high_unseen_with_count_reports_the_hidden_total():
     assert hidden == 2
 
 
-# --- SP5/MA-3: hand-added (manual-*) rows are never scored, so a score-based
+# --- hand-added (manual-*) rows are never scored, so a score-based
 # filter must not hide them, regardless of min_score. They are NOT exempt from
 # the is_seen filter -- once dismissed/applied, they leave like any other row.
 

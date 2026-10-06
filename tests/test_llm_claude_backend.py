@@ -1,5 +1,5 @@
-"""Claude provider config — tier->model resolution + timeout schedule (SP2)
-plus llm.call() dispatch and the _call_claude retry envelope (SP3).
+"""Claude provider config — tier->model resolution + timeout schedule
+plus llm.call() dispatch and the _call_claude retry envelope.
 
 Mirror of test_llm_backend.py: tailor_provider(), claude_model_for(), and
 claude_timeout_schedule() resolve live from env > config.json > defaults.
@@ -113,7 +113,7 @@ def test_claude_model_defaults_are_correct(config_without_model_env):
     cfg = config_without_model_env
     assert cfg.CLAUDE_MODEL_FLASH_LITE == "claude-haiku-4-5"
     assert cfg.CLAUDE_MODEL_FLASH == "claude-sonnet-5"
-    assert cfg.CLAUDE_MODEL_PRO == "claude-opus-5-5"      # cycle 19: Opus 5.5 writes
+    assert cfg.CLAUDE_MODEL_PRO == "claude-opus-5-5"      # Opus 5.5 writes
 
 
 def test_claude_model_for_returns_tier_default(config_without_model_env):
@@ -449,7 +449,7 @@ def test_call_claude_transient_error_sleeps_and_advances(monkeypatch, claude_env
     assert recorded == [1.5]            # 1.5 * (idx + 1), idx=0 on first attempt
 
 
-# P1-3, Claude lane: a kinded error was already classified where it was raised
+# Claude lane: a kinded error was already classified where it was raised
 # (claude_cli runs is_rate_limit_message on the real stderr), so its message
 # must not be re-read by the substring classifier. A CLI error whose payload
 # quotes a job description about quotas is a transient, not a 429.
@@ -506,7 +506,7 @@ def test_call_claude_missing_cli_raises_immediately_no_sleeps(monkeypatch, claud
 
 
 def test_call_claude_cli_too_old_fails_fast_with_no_retry(monkeypatch, claude_env):
-    """VL-5: run_claude has already tried the model's one fallback when it
+    """run_claude has already tried the model's one fallback when it
     raises cli_too_old, so another attempt meets the same installed CLI. The
     kind must fail at once, never through the timeout ladder, the transient
     sleeps or the rate-limit backoff, even though its text carries a 400."""
@@ -548,7 +548,7 @@ def test_call_claude_unrecognized_model_fails_fast_with_no_retry(monkeypatch, cl
 
 
 def test_usage_names_the_model_that_ran_after_a_swap(monkeypatch, claude_env):
-    """VL-5 fix round: a call claude_cli answered on the fallback is booked
+    """A call claude_cli answered on the fallback is booked
     under the fallback, never under the model the tailor asked for."""
     def fake(system, user, model, *, json_out, tools, timeout_s, tier=None):
         return claude_cli.CLIResult("ok", 1, 2, 0, 0, model="claude-opus-5")

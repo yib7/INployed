@@ -118,7 +118,7 @@ def test_export_import_roundtrip(tmp_path):
 
 
 def test_registry_opens_in_wal_mode(tmp_path):
-    """P2 #5: a file-backed registry runs in WAL so readers and the writer don't
+    """A file-backed registry runs in WAL so readers and the writer don't
     block each other and a crash mid-write can't corrupt the DB."""
     reg = SeenRegistry(tmp_path / "wal.db")
     mode = reg._conn.execute("PRAGMA journal_mode").fetchone()[0]
@@ -127,7 +127,7 @@ def test_registry_opens_in_wal_mode(tmp_path):
 
 
 def test_import_rolls_back_on_mid_merge_failure(tmp_path, monkeypatch):
-    """P2 #6: a failure partway through import_from must roll the transaction
+    """A failure partway through import_from must roll the transaction
     back — the registry is left exactly as it was, not half-merged — and re-raise."""
     cur = SeenRegistry(tmp_path / "cur.db")
     cur.mark(["local1"])

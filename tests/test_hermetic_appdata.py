@@ -6,12 +6,11 @@ ats-accounts stores all derive their on-disk location from LOCALAPPDATA. A test
 that constructs any of them without an explicit tmp path would otherwise read AND
 write the user's live files.
 
-That actually happened: pytest runs (some from worktrees) opened the real seen.db
-concurrently with the running dashboard + scheduled watcher and corrupted it twice
-(2026-06-28, 2026-07-07). `app_status` — the one table with no self-heal — was
-wiped both times. conftest now redirects LOCALAPPDATA to a throwaway dir for the
-whole session; these tests fail loudly if that redirect is ever removed, instead
-of silently corrupting real data again.
+Pytest runs (some from worktrees) that open the real seen.db concurrently with
+the running dashboard + scheduled watcher can corrupt it, and `app_status`, the
+one table with no self-heal, is wiped with it. conftest redirects LOCALAPPDATA to
+a throwaway dir for the whole session; these tests fail loudly if that redirect
+is ever removed.
 """
 import os
 

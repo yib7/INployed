@@ -1,4 +1,4 @@
-"""Tests for the résumé artifact toggles + cover-letter tone knob (SP3 T3.4).
+"""Tests for the résumé artifact toggles + cover-letter tone knob.
 
 Covers:
   * coverletter.tone_directive — pure tone→instruction mapping with a
@@ -51,7 +51,7 @@ def test_generate_body_injects_tone_directive_into_prompt(monkeypatch):
     def fake_call(system, user, tier, *, json_out, temperature):
         captured["system"] = system
         captured["user"] = user
-        return "Body"          # sentence case: see P2-4 in verify.py
+        return "Body"          # sentence case: see verify.py
 
     monkeypatch.setattr(coverletter.compose, "call", fake_call)
     # avoid loading the real master_experience.yaml for the display name/location
@@ -95,7 +95,7 @@ def offline_tailor(monkeypatch, tmp_path):
     monkeypatch.setattr(run_mod.compose, "block_briefs", lambda *a, **k: {})
     monkeypatch.setattr(run_mod, "_resolve_bullets", lambda *a, **k: dict(bullets))
     monkeypatch.setattr(run_mod, "_trim_to_caps", lambda *a, **k: None)
-    # Cycle 12's item-level AI-writing sweep is an LLM touchpoint like every other one
+    # The item-level AI-writing sweep is an LLM touchpoint like every other one
     # stubbed here, so it is stubbed at the seam rather than at its transport: the
     # fixture's `sel` names an atom id ("a") that no master holds, and building the real
     # per-item payload would go looking for it.
@@ -256,15 +256,14 @@ def test_tone_threads_into_cover_letter(offline_tailor, monkeypatch):
     assert seen["tone"] == "impactful"
 
 
-# --- SP3: degraded runs say so (warnings + tailor_report.txt) -----------------
+# --- degraded runs say so (warnings + tailor_report.txt) ----------------------
 #
-# The stated pain with this pipeline was that failures surface late or not at all.
-# Two holes fed it: enforce_one_page returning ok=True on a two-page PDF (the page
-# count was computed every iteration and then discarded), and seven advisory `except`
-# blocks that only called log() — a transient Qt status line that is gone by the next
-# message. These tests pin the fix: a run that degrades emits warnings and leaves a
-# durable record in the output folder, while still producing every artifact it
-# produced before.
+# A failure must surface when it happens. Two holes would hide one: enforce_one_page
+# returning ok=True on a two-page PDF (the page count computed every iteration and
+# then discarded), and advisory `except` blocks that only call log(), a transient Qt
+# status line that is gone by the next message. These tests pin that a run that
+# degrades emits warnings and leaves a durable record in the output folder, while
+# still producing every artifact.
 
 def _report(out: Path) -> str:
     return (out / run_mod.REPORT_NAME).read_text(encoding="utf-8")
@@ -284,10 +283,9 @@ def _enforce_returning_pages(pages: int, pdf: Path):
 
 def test_over_length_resume_warns_and_still_ships_the_pdf(offline_tailor, monkeypatch,
                                                           tmp_path):
-    """The silent two-page PDF. tailor() used to check only `result.ok`, copy the PDF
-    out and report success; now it compares CompileResult.pages against
-    config.PAGE_LIMIT. The PDF still ships (a long résumé beats no résumé), the run
-    just stops claiming it was clean."""
+    """The silent two-page PDF. Beyond `result.ok`, tailor() compares
+    CompileResult.pages against config.PAGE_LIMIT. The PDF still ships (a long résumé
+    beats no résumé), and the run stops claiming it was clean."""
     pdf = tmp_path / "two_pages.pdf"
     pdf.write_bytes(b"%PDF-1.4 two")
     monkeypatch.setattr(run_mod, "enforce_one_page", _enforce_returning_pages(2, pdf))
@@ -352,8 +350,8 @@ _ADVISORY_CASES = [
                          ids=[c[0] for c in _ADVISORY_CASES])
 def test_each_advisory_failure_reaches_the_collector_and_the_report(
         offline_tailor, monkeypatch, opts, setup, expected):
-    """All seven advisory swallows. Each `except` still logs exactly as before; it now
-    ALSO records a warning, so a half-worked run leaves evidence that outlives the
+    """All seven advisory swallows. Each `except` logs, and ALSO records a warning,
+    so a half-worked run leaves evidence that outlives the
     status bar."""
     setup(monkeypatch)
     warns: list[str] = []
@@ -363,7 +361,7 @@ def test_each_advisory_failure_reaches_the_collector_and_the_report(
 
 
 def test_a_damaged_answer_store_reaches_the_warning_collector(offline_tailor, monkeypatch):
-    """A damaged Apply Answers file no longer skips the sheet (final review): apply_data
+    """A damaged Apply Answers file never skips the sheet: apply_data
     writes it with no answers and says so through `on_warning`, which the tailor hands
     its advisory, so the report names the answers left out."""
     def write(job, out_dir, *, on_warning=None, **_kw):
@@ -481,7 +479,7 @@ def test_line_field_keeps_an_ordinary_value_and_names_the_same_folder():
         assert output.sanitize(run_mod._line_field({"k": raw}, "k")) == output.sanitize(raw)
 
 
-# --- VL-5: a claude CLI too old for the chosen model --------------------------------
+# --- a claude CLI too old for the chosen model --------------------------------------
 
 _SWAP_LINE = ("model: the claude CLI is too old for claude-opus-5-5, so runs use "
               "claude-opus-5. Run `claude update` and restart the dashboard to use "

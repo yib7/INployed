@@ -83,7 +83,7 @@ def _hermetic(tmp_path, monkeypatch, jev_judge):
     monkeypatch.setenv("ATS_ACCOUNTS_PATH", str(tmp_path / "accounts.json"))
     monkeypatch.setattr(apply_config, "APPLY_CONFIG", tmp_path / "missing.json")
     monkeypatch.setattr(apply_answers, "STORE_PATH", tmp_path / "apply_answers.json")
-    # the runner reads its answers from the store (FL-1, FL-4): a confirmed one
+    # the runner reads its answers from the store: a confirmed bank
     apply_answers.save(_bank())
     monkeypatch.setenv("APPLY_QUEUE_PATH", str(tmp_path / "apply_queue.json"))
 
@@ -432,7 +432,7 @@ def test_a_generated_answer_is_verified_against_its_draft_in_code_and_the_sheet_
     assert "  - First name: ok (p_correct 0.90" in record         # the rest still go to the judge
 
 
-# --- SP6: the real generator behind the hook, drafts mocked, FakeJev grounding ------------
+# --- the real generator behind the hook, drafts mocked, FakeJev grounding -----------------
 
 _GROUNDED_DRAFT = "Built the ingestion pipeline at Acme Corp."
 _UNGROUNDED_DRAFT = ("Built the ingestion pipeline at Acme Corp. "
@@ -474,10 +474,10 @@ def _generator(text):
 
 def test_an_optional_open_ended_question_gets_no_draft_and_is_left_blank(
         context, fixture_url, job_folder, catalog_builder, tmp_path):
-    """A live run on the Contoso form (2026-09-27) filled the optional "What are you
-    looking for in your next role? What would you like to avoid?" with a line
-    of the sheet about on-site work: an optional open-ended question gets no
-    draft, and the form goes with it blank and named in the record."""
+    """An optional open-ended question ("What are you looking for in your next
+    role? What would you like to avoid?") gets no draft, even where a line of
+    the sheet about on-site work could fill it: the form goes with it blank and
+    named in the record."""
     _enqueue(job_folder, fixture_url("essays_four.html"))
     runner = _runner(context, tmp_path)
     runner.answergen, calls = _generator(_GROUNDED_DRAFT)
@@ -792,7 +792,7 @@ def test_default_accounts_continue_and_keep_password_private(
 
 def test_a_two_step_sign_in_types_the_address_then_the_password(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch, caplog):
-    # the iCIMS shape probed 2026-09-22: the address and Next on one screen,
+    # the iCIMS shape: the address and Next on one screen,
     # the password on the next; no ledger entry, the address is the signup email
     secret = "synthetic-two-step-password"
     monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: secret)
@@ -809,7 +809,7 @@ def test_a_two_step_sign_in_types_the_address_then_the_password(
 
 def test_an_address_screen_with_another_box_goes_as_the_form_and_the_password_follows(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
-    # the third review: a country picker beside the address makes the screen
+    # a country picker beside the address makes the screen
     # the form (the account step takes account boxes alone); the password
     # screen after it still signs in
     monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: "synthetic-password")
@@ -851,9 +851,9 @@ def test_a_signup_asking_for_an_ssn_parks_for_the_human_without_asking_for_it(
 
 def test_the_password_is_never_typed_on_linkedin_whatever_led_there(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
-    # the SP8-live review: a sign-up link on a login screen could lead to
-    # linkedin.com/signup and the old path typed the master password there;
-    # the page stands in for LinkedIn through a route, no network is used
+    # a sign-up link on a login screen can lead to linkedin.com/signup, and
+    # the master password is never typed there; the page stands in for
+    # LinkedIn through a route, no network is used
     html = (fixture_url("signup.html"))
     body = Path(__file__).parent.joinpath("fixtures", "forms", "signup.html").read_text(
         encoding="utf-8")
@@ -1084,7 +1084,7 @@ def test_job_posting_apply_opens_a_popup_that_the_loop_follows(
 
 def test_linkedin_shaped_posting_follows_its_apply_link_through_the_redirect(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
-    # the page the 2026-09-22 live run parked on: the Apply entry is a plain
+    # a LinkedIn-shaped posting: the Apply entry is a plain
     # link, the header search and the footer language picker are site chrome,
     # and the new tab is a redirector whose script moves on to the ATS. Served
     # off LinkedIn, the redirector moves on by its 1.5 s timer alone: the
@@ -1145,8 +1145,9 @@ def _serve_linkedin_posting(context, fixture_url):
                                          ("other", 0.20), ("job_posting", 0.10)])
 def test_a_linkedin_posting_is_the_posting_whatever_the_judge_reads(
         context, fixture_url, job_folder, catalog_builder, tmp_path, state, conf):
-    # the 2026-09-22 run parked GTS on "unsure what this page is (application_form,
-    # 0.33)": LinkedIn's header and upsells filled the judge's view of the page
+    # LinkedIn's header and upsells fill the judge's view of the page, so a
+    # low or wrong read ("unsure what this page is (application_form, 0.33)")
+    # never parks a LinkedIn posting
     _serve_linkedin_posting(context, fixture_url)
     _enqueue(job_folder, _LINKEDIN_JOB)
     runner = _runner(context, tmp_path)
@@ -1161,9 +1162,9 @@ def test_a_linkedin_posting_is_the_posting_whatever_the_judge_reads(
 @pytest.mark.parametrize("state", ["login_wall", "error_or_dead"])
 def test_a_linkedin_posting_the_judge_reads_as_signed_out_or_closed_still_goes_on(
         context, fixture_url, job_folder, catalog_builder, tmp_path, state):
-    # SP2: a LinkedIn job page is read without the judge; its own marks
+    # a LinkedIn job page is read without the judge; its own marks
     # (signed out, closed, applied) park it (tests/test_apply_entry.py), and
-    # a confident misread no longer does
+    # a confident misread does not
     _serve_linkedin_posting(context, fixture_url)
     _enqueue(job_folder, _LINKEDIN_JOB)
     runner = _runner(context, tmp_path)
@@ -1191,7 +1192,7 @@ class _UnsureJudge(jev.FakeJev):
 def test_an_unsure_read_of_a_form_is_acted_on_through_the_forms_own_gates(
         context, fixture_url, job_folder, catalog_builder, tmp_path):
     # an unsure read of a form (under the floor twice) goes on as its guess,
-    # and the form's own gates decide the rest (review I5: the path is the
+    # and the form's own gates decide the rest (the path is the
     # unsure rule's, `apply_route.unsure_step`, never the sure read's)
     _enqueue(job_folder, fixture_url("ashby_steps.html"))
     runner = _runner(context, tmp_path)
@@ -1247,10 +1248,9 @@ class _FormAsAccountJudge(jev.FakeJev):
 def test_an_application_form_read_as_a_sign_in_is_never_sent_by_the_account_step(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch,
         state, conf, submit_on):
-    # the review of the unsure-read change: the account step filled a one-page
-    # form it took for a sign-in and clicked its "Submit application" in park
-    # mode. A page of form boxes is the form, whatever it is read as: its own
-    # gate parks it or sends it.
+    # the account step never fills a one-page form it takes for a sign-in or
+    # clicks its "Submit application" in park mode. A page of form boxes is the
+    # form, whatever it is read as: its own gate parks it or sends it.
     monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: "synthetic-password")
     _enqueue(job_folder, fixture_url("lever_single.html"))
     runner = _runner(context, tmp_path, auto_apply_submit=submit_on)
@@ -1325,9 +1325,9 @@ def _count_password_fills(monkeypatch):
 def test_a_sign_up_inside_the_application_form_takes_the_password_and_stops_at_the_gate(
         context, job_folder, catalog_builder, tmp_path, monkeypatch, submit_on, button,
         resume, conf):
-    # the second review: one page that creates the account and sends the
+    # one page that creates the account and sends the
     # application. The master password is for job applications only (the
-    # user's rule, 2026-09-22): the form step types it, and only the submit
+    # user's rule): the form step types it, and only the submit
     # gate sends, so park mode stops there with the page filled
     typed = _count_password_fills(monkeypatch)
     _serve_combined(context, button, resume, extra=not resume)
@@ -1417,7 +1417,7 @@ def test_an_account_screen_alone_whose_button_reads_as_sending_parks_before_typi
         context, job_folder, catalog_builder, tmp_path, monkeypatch, submit_on, button, html):
     # with a sign-up's boxes alone, the gate cannot tell a button that starts
     # the application from one that sends it: submitting on, a wrong
-    # "submitted" would lose the job (the fourth review), so the human signs in
+    # "submitted" would lose the job, so the human signs in
     typed = _count_password_fills(monkeypatch)
     _serve_combined(context, button, html=html)
     _enqueue(job_folder, _COMBINED_URL)
@@ -1453,7 +1453,7 @@ def test_a_form_gets_the_master_password_once_per_site(
                       {"STATE": "application_form", "CONF": 0.9})()
     out = runner.drain(cap=1)[0]
     assert typed == [1], out
-    # SP7 (ACC-12): the park names what the page says about it; a sign-in's
+    # the park names what the page says about it; a sign-in's
     # box is never typed again, whatever the page says
     assert (out.status, out.reason) == (
         "needs_human", "the form on careers.fabrikam.example asked for the master password "
@@ -1480,10 +1480,10 @@ _THE_FORM = """<!doctype html><html><head><title>Apply</title></head><body>
 @pytest.mark.parametrize("submit_on", [False, True])
 def test_a_sign_up_read_as_the_form_does_not_count_as_the_filled_application(
         context, job_folder, catalog_builder, tmp_path, monkeypatch, submit_on):
-    # the fourth review: the form step made the account and marked the run's
-    # form filled, so the "Apply now" after it went to the submit gate and a
-    # submit-mode run finished "submitted" with nothing sent. A page of a
-    # sign-up's boxes and a password makes an account, not the application
+    # a page of a sign-up's boxes and a password makes an account and leaves
+    # the application unfilled: the "Apply now" after it never goes to the
+    # submit gate, where a submit-mode run would finish "submitted" with
+    # nothing sent
     typed = _count_password_fills(monkeypatch)
     context.route("https://careers.fabrikam.example/**", lambda route: route.fulfill(
         body=_THE_FORM if route.request.url.endswith("/form") else _SIGN_UP_THEN_APPLY,
@@ -1514,8 +1514,8 @@ def test_a_sign_up_read_as_the_form_does_not_count_as_the_filled_application(
         assert record.count("SUBMIT CLICKED") == 1
     else:
         # park mode takes no chance on an Apply after a page that took the
-        # password: it may be an application's review (the next test). SP3's
-        # container ruling: on a page read as a posting it is no submit
+        # password: it may be an application's review (the next test). On a
+        # page read as a posting it is no submit
         # either, so the job waits for the person with the reason
         assert "Apply now (apply_entry)" not in record, record
         assert out.status == "needs_human", out
@@ -1543,15 +1543,15 @@ function review() {
 
 @pytest.mark.parametrize("stored, html", [
     (True, _CONTACT_THEN_REVIEW),
-    # round 4: an optional box left blank (no master password) counts too
+    # an optional box left blank (no master password) counts too
     (False, _CONTACT_THEN_REVIEW.replace(
         'Password * <input type="password" name="pw" autocomplete="new-password" required>',
         'Password (optional) <input type="password" name="pw" autocomplete="new-password">'))])
 def test_park_mode_never_clicks_an_apply_after_a_page_with_a_password_box(
         context, job_folder, catalog_builder, tmp_path, monkeypatch, stored, html):
-    # the fourth review, round 3: an application that asks only for contact
-    # details and a password, then a review page with "Apply" read as a
-    # posting: park mode clicked it as the Apply entry and sent the application
+    # an application that asks only for contact details and a password, then
+    # a review page with "Apply" read as a posting: park mode never clicks it
+    # as the Apply entry, which would send the application
     if stored:
         _count_password_fills(monkeypatch)
     _serve_combined(context, "", html=html)
@@ -1573,7 +1573,7 @@ def test_park_mode_never_clicks_an_apply_after_a_page_with_a_password_box(
     out = runner.drain(cap=1)[0]
     page = next(p for p in context.pages if not p.is_closed())
     assert page.locator("body[data-submitted]").count() == 0, out
-    # SP3's container ruling: an Apply on a fieldless page read as a posting
+    # an Apply on a fieldless page read as a posting
     # is no submit, even after a filled page; the job waits for the person
     assert out.status == "needs_human", out
     assert out.reason.startswith("the Apply button (Apply) may open or start an application"), out
@@ -1607,9 +1607,9 @@ def test_the_ledger_takes_an_account_only_from_a_page_that_makes_one(
                                         ("review_page", 0.9)])
 def test_after_a_handed_off_sign_ups_submit_only_a_confirmation_counts(
         context, job_folder, catalog_builder, tmp_path, monkeypatch, read, conf):
-    # the fourth review, round 4: the gate clicked a handed-off sign-up's
-    # "Create account and apply", a welcome page came next ("Start your
-    # application"), and the job read "submitted (unconfirmed)"
+    # the gate clicks a handed-off sign-up's "Create account and apply" and a
+    # welcome page comes next ("Start your application"): that is no
+    # confirmation, so the job never reads "submitted (unconfirmed)"
     _count_password_fills(monkeypatch)
     welcome = ("<!doctype html><html><body><h1>Your account is ready</h1>"
                "<a href='/apply/42/start'>Start your application</a></body></html>")
@@ -1637,7 +1637,7 @@ def test_after_a_handed_off_sign_ups_submit_only_a_confirmation_counts(
 
 def test_an_optional_profile_password_on_a_sent_application_is_no_account_page(
         context, job_folder, catalog_builder, tmp_path, monkeypatch):
-    # round 4: a stored master password went into an optional "save your
+    # a stored master password goes into an optional "save your
     # profile" box; the portal page after the send is no reason to stop
     typed = _count_password_fills(monkeypatch)
     portal = ("<!doctype html><html><body><h1>Your candidate profile</h1>"
@@ -1675,11 +1675,10 @@ _SIGN_UP_AND_APPLY = """<!doctype html><html><head><title>Create account</title>
 
 def test_a_form_after_an_account_pages_submit_waits_for_the_user(
         context, job_folder, catalog_builder, tmp_path, monkeypatch):
-    # the fourth review, round 2: submitting on, the gate clicked "Create
-    # account and apply", the application form came next, and the job was
-    # marked submitted with nothing sent. Going on instead sent a real
-    # application twice when its page reset itself to the form (round 3):
-    # the run can tell neither, so the job waits for the user
+    # submitting on, the gate clicks "Create account and apply" and the
+    # application form comes next: either nothing was sent yet, or the page
+    # reset itself to the form after a send and going on would send the
+    # application twice. The run can tell neither, so the job waits for the user
     typed = _count_password_fills(monkeypatch)
     context.route("https://careers.fabrikam.example/**", lambda route: route.fulfill(
         body=_THE_FORM if route.request.url.endswith("/form") else _SIGN_UP_AND_APPLY,
@@ -1698,8 +1697,8 @@ def test_a_form_after_an_account_pages_submit_waits_for_the_user(
 
 def test_a_submit_the_guard_stopped_sent_nothing_and_parks(
         context, job_folder, catalog_builder, tmp_path, monkeypatch):
-    # the fourth review, round 2: the submit button's own formaction posted
-    # off the sites, the guard stopped the post, and the job read "submitted"
+    # the submit button's own formaction posts off the sites and the guard
+    # stops the post: nothing was sent, so the job parks
     _count_password_fills(monkeypatch)
     hits = []
     context.route("https://collector.example.net/**",
@@ -1725,7 +1724,7 @@ def test_a_submit_the_guard_stopped_sent_nothing_and_parks(
 
 def test_a_submit_that_reached_the_site_before_the_guard_stopped_a_post_never_reads_unsent(
         context, job_folder, catalog_builder, tmp_path, monkeypatch):
-    # final review A-I3: the submit's script posts the application to the
+    # the submit's script posts the application to the
     # site's own API, then submits a hidden form off the sites. The guard
     # stops that post; the application went already, so the job never reads
     # "nothing was sent" (a Re-queue would send it twice)
@@ -1834,9 +1833,8 @@ def _routed_unit_run(context, tmp_path, job_folder, html, **settings):
     # the page is not the application's site (`about:blank`)
     ('<label>Password <input type="password" name="pw" required></label>', "blank",
      "a password box on about, outside the application site"),
-    # (a text box the planner read as a password by its autocomplete: since
-    # final review B-I2 only a masked input is one,
-    # `test_only_a_masked_input_is_a_password_box`)
+    # (a text box with a password's autocomplete is no password box: only a
+    # masked input is one, `test_only_a_masked_input_is_a_password_box`)
     # a masked one-time code or security answer is no account password
     ('<label>One-time password <input type="password" name="otp" required></label>', "site",
      "One-time password is not a password box for an account"),
@@ -1846,7 +1844,7 @@ def _routed_unit_run(context, tmp_path, job_folder, html, **settings):
     ('<form action="https://collector.example.net/take" method="post"><label>Password '
      '<input type="password" name="pw" required></label><button>Next</button></form>', "site",
      "the password box's form posts to collector.example.net, outside the allowed sites"),
-    # final review A-M1: LinkedIn may load in the tab and never takes the password
+    # LinkedIn may load in the tab and never takes the password
     ('<form action="https://www.linkedin.com/take" method="post"><label>Password '
      '<input type="password" name="pw" required></label><button>Next</button></form>', "site",
      "the password box's form posts to www.linkedin.com, outside the allowed sites")])
@@ -1867,7 +1865,7 @@ def test_the_master_password_goes_only_into_a_password_input_on_the_application_
 
 
 @pytest.mark.parametrize("html, planned", [
-    # final review B-I2: sites put autocomplete="new-password" on an ordinary
+    # sites put autocomplete="new-password" on an ordinary
     # box to stop the browser's autofill; that box takes its fact
     ('<label>City * <input type="text" name="city" autocomplete="new-password" required>'
      '</label>', "fact"),
@@ -1892,7 +1890,7 @@ def test_only_a_masked_input_is_a_password_box(
 
 
 def test_a_control_read_without_its_secret_keeps_a_masked_box_a_password_box():
-    # final review B R2 nit: an older capture's field (no `secret` key) and a
+    # an older capture's field (no `secret` key) and a
     # hand-built `Field` are password boxes when their ident names a masked
     # input; a text box with a password's autocomplete is still none
     masked = "input|password|pw|pw||||||password"
@@ -1954,7 +1952,7 @@ def test_the_password_guard_stops_a_page_leaving_the_sites_and_lets_go_after(
 
 def test_the_password_guard_stops_a_post_to_linkedin_a_get_may_load(
         context, job_folder, catalog_builder, tmp_path, monkeypatch):
-    # final review A-M1: LinkedIn is an allowed site for a load and never the
+    # LinkedIn is an allowed site for a load and never the
     # application's site, so a form post there with the password is stopped
     _count_password_fills(monkeypatch)
     run = _routed_unit_run(context, tmp_path, job_folder, """<body>
@@ -2026,16 +2024,16 @@ def test_a_code_gate_before_any_submit_never_clicks_a_button_that_sends(
 
 @pytest.mark.parametrize("sends, read, status", [
     (0.9, "review_page", "ready_to_submit"), (0.1, "review_page", "needs_human"),
-    # the live judge read a form's own "Apply" and a signup form's "Create
+    # the live judge reads a form's own "Apply" and a signup form's "Create
     # account and apply" as sending at 0.67 and 0.48, and every posting's
-    # Apply entry at 0.15 or less (SP8b)
+    # Apply entry at 0.15 or less
     (0.48, "review_page", "ready_to_submit"), (0.30, "review_page", "needs_human"),
-    # the controller's ruling: a fieldless page's Apply after an earlier fill
+    # a fieldless page's Apply after an earlier fill
     # counts only on a page read as a review or a form
     (0.9, "job_posting", "needs_human")])
 def test_a_posting_read_after_a_filled_form_goes_to_the_submit_gate(
         context, job_folder, catalog_builder, tmp_path, sends, read, status):
-    # SP3 (INV-01): its Apply is the submit only with the judge's word that
+    # its Apply is the submit only with the judge's word that
     # it sends the finished application (`button_{n}_sends`)
     run = _unit_run(context, tmp_path, job_folder, """
       <body><h1>Your application</h1>
@@ -2161,7 +2159,7 @@ def test_can_submit_submit_button():
         False, "submit button confidence 0.45 below 0.50")
     # the live judge's lowest reads of a true submit (the single-page form's
     # "Submit application": 0.70 and 0.74 in the first recording, 0.60 in
-    # the second, 2026-09-25) clear the gate
+    # the second) clear the gate
     for conf in (0.60, 0.70):
         plan.buttons["submit"] = (3, conf)
         assert apply_run.can_submit(plan, _ok_verification(), _ON) == (True, "")
@@ -2230,7 +2228,7 @@ def test_runner_discovers_dynamic_listbox_options_before_planning(
     class InspectingJev(jev.FakeJev):
         def judge(self, state, questions):
             if any(q.startswith("field_") for q in questions):
-                # the mapping (SP4: asked after the page read) carries the options
+                # the mapping (asked after the page read) carries the options
                 country = next((f for f in state.get("fields", [])
                                 if f.get("id_or_name") == "country"), None)
                 if country is not None:
@@ -2312,7 +2310,7 @@ def test_write_record_hides_a_password_field_value(tmp_path):
 
 
 def test_write_record_lists_a_cleared_value_apart_from_the_filled_ones(tmp_path):
-    # final review M8 (G5 item 6): an optional answer taken out after its
+    # an optional answer taken out after its
     # check failed, or a box the page wrote and the run emptied, is no value
     # the employer received
     entry = apply_queue.new_entry("7", company="Acme", title="Engineer",
@@ -2447,7 +2445,7 @@ def test_hold_returns_when_every_page_is_closed(tmp_path):
 def test_hold_waits_inside_playwright_so_a_closed_window_is_seen(tmp_path):
     # Playwright's sync API dispatches a page's close event only while one of
     # its own calls runs; `time.sleep` blocks it, so a hold that sleeps never
-    # sees the user close the window (the 2026-09-22 drain sat on after it)
+    # sees the user close the window
     class Ctx:
         def __init__(self):
             self.pages = [1]
@@ -2492,7 +2490,7 @@ def test_hold_ends_when_a_real_page_closes_on_its_own(_browser):
 def hermetic_cli(monkeypatch):
     """The CLI never reads the developer's .env or config: `_load_env` is a
     no-op and `load_settings` returns the defaults (a test may override). The
-    drain's Jev gate (JS-5) finds a key in the environment and the SDK, so a
+    drain's Jev gate finds a key in the environment and the SDK, so a
     test gets past it to the judge it patches; the switch reads the sandbox's
     config file, where it is on."""
     import settings
@@ -2510,7 +2508,7 @@ def hermetic_cli(monkeypatch):
 
 def test_main_prints_an_errors_type_and_step_never_its_message(hermetic_cli, monkeypatch,
                                                                capsys, caplog):
-    # final review A-M6 (RES-05): a Playwright message carries the page's
+    # a Playwright message carries the page's
     # words and the values typed; the frames go to the log
     monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev_harness.judge())
     message = "Locator.fill: typed 'synthetic-typed-value' into #email"
@@ -2644,7 +2642,7 @@ def test_main_unexpected_error_exits_1(hermetic_cli, monkeypatch, capsys):
             raise RuntimeError("boom")
     monkeypatch.setattr(apply_run, "Runner", R)
     assert apply_run.main(["drain", "--jev", "typesafe"]) == 1
-    # the type and the step only (final review A-M6)
+    # the type and the step only
     err = capsys.readouterr().err
     assert "apply_run: error: RuntimeError at " in err and "boom" not in err
 
@@ -2696,7 +2694,7 @@ def test_doctor_reads_the_key_from_the_saved_settings_too(tmp_path, capsys, monk
 
 
 def test_doctor_names_the_jev_switch_and_fails_while_it_is_off(tmp_path, capsys, monkeypatch):
-    """JS-5: the drain refuses while Jev is switched off, so the doctor says so
+    """The drain refuses while Jev is switched off, so the doctor says so
     and exits 2 with every other row in place."""
     import settings
     import setup_check
@@ -2740,7 +2738,7 @@ def test_main_settings_come_from_the_loader_and_flags_override(hermetic_cli, mon
 def test_the_drain_defaults_match_the_settings_schema():
     """A run with no config reads `DEFAULT_SETTINGS`, and `load_settings` keeps
     only the keys it names, so each one carries its Settings row's default. The
-    pause's wait (cycle 19) is one of them."""
+    pause's wait is one of them."""
     import settings
     schema = {f.key: f.default for f in settings.SETTINGS_SCHEMA}
     assert apply_run.DEFAULT_SETTINGS["auto_apply_pause_minutes"] == 10
@@ -2748,7 +2746,7 @@ def test_the_drain_defaults_match_the_settings_schema():
         assert schema[key] == default, key
 
 
-# --- JS-5: the drain refuses while Jev cannot run, before a judge, a claim or a browser --
+# --- the drain refuses while Jev cannot run, before a judge, a claim or a browser --
 
 _JEV_OFF = "Auto-apply runs on Jev. Turn Jev on in Settings > Jev."
 
@@ -2815,7 +2813,7 @@ def _real_settings_no_key(monkeypatch, config):
 
 
 def test_the_panel_gate_and_the_drain_gate_give_one_answer(monkeypatch, capsys):
-    """SP1 review B: Start predicts the drain it launches (no --jev flag). The
+    """Start predicts the drain it launches (no --jev flag). The
     shell exports AUTO_APPLY_JEV_MODE=fake, the Auto-apply judge setting says
     typesafe and no key is saved: both gates name the missing key."""
     from qt import apply_queue_panel
@@ -2829,8 +2827,8 @@ def test_the_panel_gate_and_the_drain_gate_give_one_answer(monkeypatch, capsys):
 @pytest.mark.parametrize("stored", ["fake", "replay"])
 def test_the_panel_gate_gives_the_drains_refusal_of_a_test_judge(monkeypatch, capsys,
                                                                    stored, switch):
-    """SP1 fix round 2: `drain` refuses the fake and replay judges as
-    fixture-only before its Jev gate (cycle 16), so the Start gate names that
+    """`drain` refuses the fake and replay judges as
+    fixture-only before its Jev gate, so the Start gate names that
     refusal. With the Auto-apply judge setting on either one and no key, the
     panel's gate gives the sentence `main` prints for drain, with the master
     switch on and off."""
@@ -2846,7 +2844,7 @@ def test_the_panel_gate_gives_the_drains_refusal_of_a_test_judge(monkeypatch, ca
 @pytest.mark.parametrize("stored", ["fake", "replay"])
 def test_check_setup_and_the_doctor_give_the_drains_refusal_of_a_test_judge(
         monkeypatch, capsys, tmp_path, stored, switch):
-    """SP1 follow-up 1: with the Auto-apply judge setting on a test judge and
+    """With the Auto-apply judge setting on a test judge and
     no key, Check setup's first auto-apply line and the doctor's first warning
     are the sentence `main` prints for drain, and the doctor exits 2. While
     Jev is off its line follows, the order the drain checks them in."""
@@ -2874,11 +2872,11 @@ _UNKNOWN_JUDGE = ("Unknown Auto-apply judge 'typesaf'; tick \"Show advanced sett
 @pytest.mark.parametrize("switch", [True, False])
 def test_the_panel_gate_gives_the_drains_refusal_of_an_unknown_judge(monkeypatch, capsys,
                                                                      switch, key, verb):
-    """SP1 follow-up 2 (Minor 2): a hand-edited `"auto_apply_jev_mode":
-    "typesaf"` left Start on while the drain went on to `jev.get`, which
-    raised. `drain` and `one` now refuse the mode before their Jev gate and
-    `jev.get`, and the panel's gate gives the sentence `main` prints, with or
-    without a key and with the master switch on and off."""
+    """A hand-edited `"auto_apply_jev_mode": "typesaf"` never leaves Start on
+    while the drain goes on to `jev.get`, which raises. `drain` and `one`
+    refuse the mode before their Jev gate and `jev.get`, and the panel's gate
+    gives the sentence `main` prints, with or without a key and with the
+    master switch on and off."""
     from qt import apply_queue_panel
     _real_settings_no_key(monkeypatch, {"jev_enabled": switch, "auto_apply_jev_mode": "typesaf"})
     if key:
@@ -2912,10 +2910,10 @@ def test_check_setup_and_the_doctor_give_the_drains_refusal_of_an_unknown_judge(
 @pytest.mark.parametrize("stored", ["", "   ", None])
 def test_a_blank_judge_setting_drains_on_typesafe_whatever_the_shell_exports(
         monkeypatch, capsys, stored):
-    """SP1 review B: a blank setting reads as typesafe, its default. The drain
-    used to hand the blank to the gate and to `jev.get`, which both fell back
-    to AUTO_APPLY_JEV_MODE, so a shell's fake judge ran a production queue past
-    the fixture-only refusal."""
+    """A blank setting reads as typesafe, its default. Handed to the gate and
+    to `jev.get` as is, the blank would fall back to AUTO_APPLY_JEV_MODE in
+    both, and a shell's fake judge would run a production queue past the
+    fixture-only refusal."""
     _real_settings_no_key(monkeypatch, {"auto_apply_jev_mode": stored})
     assert apply_run.main(["drain"]) == 2
     assert capsys.readouterr().err.strip() == _NO_KEY
@@ -2923,7 +2921,7 @@ def test_a_blank_judge_setting_drains_on_typesafe_whatever_the_shell_exports(
 
 def test_a_judge_setting_in_another_case_is_refused_as_fixture_only(monkeypatch, capsys):
     """A hand-edited "Fake" is the fake judge: the drain refuses it as
-    fixture-only, where it used to slip past that check and build FakeJev."""
+    fixture-only before it can build FakeJev."""
     _real_settings_no_key(monkeypatch, {"auto_apply_jev_mode": "Fake"})
     assert apply_run.main(["drain"]) == 2
     assert "fixture-only" in capsys.readouterr().err
@@ -2941,7 +2939,7 @@ def _never_past_the_probe_gate(monkeypatch):
 
 def test_probe_with_a_judge_refuses_while_jev_is_switched_off(hermetic_cli, monkeypatch,
                                                                  capsys):
-    """SP1 review A: `probe --judge` asks the judge on every page, a Jev use, so
+    """`probe --judge` asks the judge on every page, a Jev use, so
     the master switch stops it in every mode with exit 2 and the Start button's
     sentence, before a judge or a browser. Without --judge the probe reads the
     page with no judge, whatever the switch says."""
@@ -2968,10 +2966,10 @@ def test_probe_names_a_missing_key_in_the_start_buttons_words(hermetic_cli, monk
 @pytest.mark.parametrize("switch", [True, False])
 def test_probe_with_a_judge_names_an_unknown_judge_before_the_jev_gate(monkeypatch, capsys,
                                                                        switch, key):
-    """SP1 follow-up 3: a hand-edited Auto-apply judge ("typesaf") made `probe
-    --judge` ask for a key, and with a key it went on to jev.get's error. It
-    exits 2 with the drain's sentence for that mode before a judge or a
-    browser, whatever the key and the master switch say."""
+    """With a hand-edited Auto-apply judge ("typesaf"), `probe --judge` asks
+    for no key and never reaches jev.get's error. It exits 2 with the drain's
+    sentence for that mode before a judge or a browser, whatever the key and
+    the master switch say."""
     _real_settings_no_key(monkeypatch, {"jev_enabled": switch, "auto_apply_jev_mode": "typesaf"})
     if key:
         monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key")
@@ -2982,10 +2980,10 @@ def test_probe_with_a_judge_names_an_unknown_judge_before_the_jev_gate(monkeypat
 
 @pytest.mark.parametrize("mode", ["fake", "replay"])
 def test_the_jev_gate_main_asks_passes_a_test_judge_with_no_key_or_sdk(monkeypatch, mode):
-    """SP1 review I: the fake and replay judges need neither a key nor the SDK,
+    """The fake and replay judges need neither a key nor the SDK,
     so the gate `main` asks before `drain`, `one` and `probe --judge` passes
     them while the master switch is on. `drain` and `one` refuse them as
-    fixture-only before they reach it (cycle 16); the suite drains on them
+    fixture-only before they reach it; the suite drains on them
     through Runner."""
     monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
     monkeypatch.setattr(jev_switch, "sdk_installed", lambda: False)
@@ -3050,11 +3048,11 @@ def test_a_test_judge_keeps_its_own_refusal_whatever_the_jev_switch_says(
     assert "fixture-only" in err and "Settings > Jev" not in err
 
 
-# --- cycle 18: the store is the one source of the answers (FL-2, FL-4) ------------------
+# --- the store is the one source of the answers -----------------------------------------
 
 def test_prepare_refreshes_the_sheet_from_the_store_before_the_facts(
         context, job_folder, tmp_path):
-    # FL-2: the sheet was written when the store said Yes; the store now says No
+    # the sheet was written when the store said Yes; the store now says No
     apply_answers.save(standard_bank(willing_to_relocate="No", address_street="9 New Street"))
     sheet = job_folder / "apply.md"
     before = sheet.read_text(encoding="utf-8")
@@ -3088,8 +3086,8 @@ def test_prepare_goes_on_when_the_sheet_refresh_fails(
 
 def test_prepare_logs_a_plain_reason_when_the_sheet_lacks_a_refreshable_section(
         context, job_folder, tmp_path, monkeypatch, caplog):
-    # fix round 1, item 2: say what is known ("the sheet's answer sections
-    # were not refreshed"), not a guess at which heading is missing
+    # the log says what is known ("the sheet's answer sections were not
+    # refreshed") and makes no guess at which heading is missing
     monkeypatch.setattr(apply_data, "refresh_answer_sections", lambda folder, answers: False)
     e = _enqueue(job_folder, "https://boards.greenhouse.io/acme/jobs/1")
     run = apply_run._JobRun(_runner(context, tmp_path), context, e)
@@ -3121,7 +3119,7 @@ def _damaged_store():
 
 def test_a_drain_over_a_damaged_store_claims_nothing(context, fixture_url, job_folder,
                                                      tmp_path):
-    # FL-4: the store is read before the first claim
+    # the store is read before the first claim
     _enqueue(job_folder, fixture_url("ashby_steps.html"))
     _damaged_store()
     with pytest.raises(apply_answers.AnswerStoreError):
@@ -3151,7 +3149,7 @@ _HEADER = ('Answers not confirmed: "Are you willing to relocate?", '
 
 def test_a_drain_names_the_answers_not_confirmed_once_on_the_console_and_in_the_report(
         context, fixture_url, job_folder, catalog_builder, tmp_path, capsys):
-    # FL-4: two built-ins not confirmed and one missing; their questions only
+    # two built-ins not confirmed and one missing; their questions only
     bank = [e for e in unconfirmed(standard_bank(), "willing_to_relocate", "onsite_ok")
             if e["id"] != "gender"]
     apply_answers.save(bank)
@@ -3235,7 +3233,7 @@ def test_code_field_pick_prefers_the_verification_box(labels, expected):
     assert picked is not None and picked.label == expected
 
 
-# --- cycle 18 FM-1: the read-back check takes the judge's qualified pick as before -------------
+# --- the read-back check takes the judge's qualified pick --------------------------------------
 
 def test_the_read_back_check_takes_a_qualified_pick_and_no_yes_inside_one():
     assert apply_run.pick_holds("No, I do not require sponsorship",
@@ -3247,21 +3245,21 @@ def test_the_read_back_check_takes_a_qualified_pick_and_no_yes_inside_one():
     assert apply_run.pick_holds("Y", "Yes")
 
 
-# --- cycle 18: the Ashby-style replica, answered from the typed store -----------------------
+# --- the Ashby-style replica, answered from the typed store ---------------------------------
 
 def test_the_ashby_relocation_replica_fills_and_verifies_from_the_typed_answers(
         _browser, flow_server, tmp_path):
-    # the Contoso incident's questions: legal authorization among qualified
+    # a Contoso-style form's questions: legal authorization among qualified
     # options only, where a stored Yes is none of "Yes - on a work visa
     # (OPT/H-1B)" (the judge's pick over every yes / no fact takes "U.S.
-    # citizen or permanent resident ..."; before cycle 18 the bare "Yes"
-    # took the visa, SP3 fix round 1), sponsorship on Yes / No buttons
+    # citizen or permanent resident ..."; the bare "Yes" never takes the
+    # visa), sponsorship on Yes / No buttons
     # (settled in code by the alias set) and relocation among combined
     # options; the confirmation marker shows only for the store's answers.
     # The relocation label names no place, so the gate reads it as the
     # stored relocation fact's own question and the run confirms it end to
-    # end with the other two (SP6c round 5 had a place-named copy of this
-    # form park instead: test_the_ashby_relocation_place_replica_parks_on_a_
+    # end with the other two (a place-named copy of this form parks:
+    # test_the_ashby_relocation_place_replica_parks_on_a_
     # job_location_the_run_cannot_check)
     f = h.flow("ashby_relocation")
     assert (f.submit, f.status) == (True, "submitted")
@@ -3283,7 +3281,7 @@ def test_the_ashby_relocation_replica_fills_and_verifies_from_the_typed_answers(
         assert verified.get(label) is True, (label, verified)
 
 
-# --- cycle 18 SP6c round 5: a place-named copy parks on a job location the run cannot check ---
+# --- a place-named copy parks on a job location the run cannot check --------------------------
 
 def test_the_ashby_relocation_place_replica_parks_on_a_job_location_the_run_cannot_check(
         _browser, flow_server, tmp_path):
@@ -3312,7 +3310,7 @@ def test_the_ashby_relocation_place_replica_parks_on_a_job_location_the_run_cann
     assert not [e for e in events if e["kind"] == "verify"]
 
 
-# --- cycle 18 FM-6: a draft is reused only for the same question in the same place -----------
+# --- a draft is reused only for the same question in the same place --------------------------
 
 def test_a_draft_key_names_the_label_the_help_and_the_section():
     import dataclasses
@@ -3374,7 +3372,7 @@ def test_a_generic_follow_up_gets_a_draft_of_its_own_each_time(tmp_path):
                                                 "Draft 4."]
 
 
-# --- cycle 18 FM-2: a list whose options could not be read ------------------------------
+# --- a list whose options could not be read ---------------------------------------------
 
 _UNREAD_AUTH = """<body><form>
   <span id="auth-label">Work authorization</span>
@@ -3479,8 +3477,8 @@ def _typed_yes_no_parks_or_stays_blank(run, seen, digest, field, box, value, req
 @pytest.mark.parametrize("required", [True, False])
 def test_a_yes_or_no_typed_into_a_list_that_never_opens_is_taken_out(
         context, job_folder, catalog_builder, tmp_path, monkeypatch, required):
-    # SP3 fix round 1 (FM-2): the list showed nothing, so the "Yes" typed to
-    # bring its options stayed in the box and read back as a verified answer
+    # the list shows nothing, so the "Yes" typed to bring its options stays
+    # in the box; it must never read back as a verified answer
     run = _unit_run(context, tmp_path, job_folder, _NEVER_OPENS)
     seen = _decisions(monkeypatch, run)
     digest = apply_form.extract(run.page)
@@ -3492,8 +3490,8 @@ def test_a_yes_or_no_typed_into_a_list_that_never_opens_is_taken_out(
 @pytest.mark.parametrize("required", [True, False])
 def test_a_yes_or_no_typed_into_a_typeahead_of_qualified_answers_is_taken_out(
         context, job_folder, catalog_builder, tmp_path, monkeypatch, required):
-    # SP3 fix round 1 (FM-2): the typeahead offered only "Yes, I will ..." and
-    # "No, I do not ...", and the typed "No" stayed as the answer
+    # the typeahead offers only "Yes, I will ..." and "No, I do not ...", so
+    # the typed "No" must never stay as the answer
     run = _unit_run(context, tmp_path, job_folder, _QUALIFIED_TYPEAHEAD)
     seen = _decisions(monkeypatch, run)
     digest = apply_form.extract(run.page)
@@ -3503,7 +3501,7 @@ def test_a_yes_or_no_typed_into_a_typeahead_of_qualified_answers_is_taken_out(
                                        "Sponsorship")
 
 
-# --- cycle 18 FM-4: an optional answer that failed its check is taken out -------------------
+# --- an optional answer that failed its check is taken out ----------------------------------
 
 class _FailsEveryCheck:
     """A judge that reads every typed value as wrong."""
@@ -3537,7 +3535,7 @@ def test_an_optional_answer_that_failed_its_check_is_cleared(
     assert run.pages[-1]["cleared"] == ["Nickname"]
     assert nick.n not in run._last_filled
     assert [ev["fields"] for what, ev in seen if what == "cleared_optional"] == [["Nickname"]]
-    # final review M8: the record lists the value under Cleared alone
+    # the record lists the value under Cleared alone
     text = apply_run.write_record(tmp_path / "record", {}, "needs_human", "x", run.pages, {},
                                   "", missing=[]).read_text(encoding="utf-8")
     assert "Nickname: JD" not in text and "- Cleared:\n  - Nickname\n" in text
@@ -3559,7 +3557,7 @@ def test_an_optional_answer_that_failed_its_check_and_cannot_be_cleared_parks(
     assert h.policy_park(parked.value.status, parked.value.reason) is True
 
 
-# --- SP6 fix round 1: the drain and the difficulty check never share the profile --------------
+# --- the drain and the difficulty check never share the profile -------------------------------
 
 @pytest.mark.parametrize("verb", [["drain"], ["one", "42"]])
 @pytest.mark.parametrize("holder", ["chrome", "sentinel"])
@@ -3612,7 +3610,7 @@ def test_one_gives_the_job_back_when_a_check_takes_the_profile_after_the_read(
     assert (entry["status"], entry["attempts"], entry["claimed_by"]) == ("queued", 0, "")
 
 
-# --- cycle 19 SP7: park and resume ---------------------------------------------------------------
+# --- park and resume -----------------------------------------------------------------------------
 # pause_form.html asks three required questions no saved answer holds (What is
 # your favourite query language?, Preferred team, Number of conference talks
 # given); the suite never waits (`apply_pause.NEVER_WAIT`), and each test here
@@ -3764,10 +3762,10 @@ def test_a_timeout_or_park_it_parks_with_the_reason_it_had_before(
 
 def test_a_window_closed_during_a_pause_on_a_sendable_page_may_have_been_sent(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
-    # final review A I-2: pause_form.html shows its Submit application button
-    # during the pause, and the person has the browser: they may have sent it
-    # there before closing the tab. The job ends with the check-whether note
-    # (it was the closed-tab end, whose note offers a Re-queue)
+    # pause_form.html shows its Submit application button during the pause,
+    # and the person has the browser: they may have sent it there before
+    # closing the tab. The job ends with the check-whether note, never the
+    # closed-tab end, whose note offers a Re-queue
     _pauses_on(monkeypatch, tmp_path)
 
     def _closes(page, job_id, minutes, **kw):
@@ -3873,7 +3871,7 @@ def test_a_value_flagged_save_is_kept_for_future_runs_and_the_run_reads_it(
 def test_a_missing_answer_carries_the_fields_help_options_and_type(
         context, fixture_url, job_folder, catalog_builder, tmp_path):
     # no pause (the suite never waits): the park's missing answers keep what
-    # Answer now prefills (PR-7)
+    # Answer now prefills
     _enqueue(job_folder, fixture_url("pause_form.html"))
     out = _runner(context, tmp_path).drain(cap=1)[0]
     assert out.status == "needs_human", out

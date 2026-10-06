@@ -1,23 +1,23 @@
-"""SP4: page reading that holds up.
+"""Page reading that holds up.
 
-- READ-06: a page read as a review with a confident advance and no submit
+- A page read as a review with a confident advance and no submit
   clicks the advance (a wizard's middle step misread as the review), a review
   with its submit goes to the gate, a final-shaped advance on a review goes
   to the gate in either mode.
 - The page read: its own request, the mapping only on a page the run acts
   on; a misread Choice gives way to the Nouls and the page's structure (the
-  sign-up behind a login wall's link, NAV-03; a sign-up read as a sign-in;
+  sign-up behind a login wall's link; a sign-up read as a sign-in;
   a code screen after the submit; a bot check read as `other`); an unsure
   read goes on as the kind the structure settles; a sure `other` whose
   structure settles a kind is that kind; a job the site says was applied to
-  and a closed posting park with their own reasons (TERM-04, READ-08); an
-  Apply apart from a job-alert box is the entry (READ-09).
-- READ-04 (a ticker never makes a page new), NAV-07 (tracker hops), NAV-08
-  (job boards), NAV-09 (an email Apply), ALLOW-01, ALLOW-02, NAV-05 (a step
-  in a new tab), NAV-04 (a loading skeleton).
-- Study G9 (a modal, a content frame first), G4 (header chrome, unnamed
-  icons), G14 (a frame found by its URL), G13 (a privacy step's accept, never
-  its decline).
+  and a closed posting park with their own reasons; an Apply apart from a
+  job-alert box is the entry.
+- A ticker never makes a page new; tracker hops, job boards, an email Apply,
+  which sites are application sites, a step in a new tab, a loading
+  skeleton.
+- What the judge reads first: a modal, a content frame first, header chrome
+  and unnamed icons, a frame found by its URL, a privacy step's accept and
+  never its decline.
 
 Headless Chromium through the module-scoped test browser; the fixtures are
 served by the flow server, fake hosts are routed; the judge is `FakeJev`,
@@ -128,7 +128,7 @@ def _digest(buttons, fields=()):
         buttons=[apply_form.Button(i, (0, f"#b{i}"), text) for i, text in enumerate(buttons)])
 
 
-# --- READ-06: a review read with only Next clicks the Next --------------------------------------
+# --- a review read with only Next clicks the Next -----------------------------------------------
 
 def test_a_wizard_step_read_as_a_review_clicks_its_next_and_reaches_the_gate(
         _browser, flow_server, tmp_path):
@@ -246,7 +246,7 @@ def test_a_posting_with_no_field_is_mapped_for_its_buttons_alone(context, flow_s
 
 def test_a_sign_up_page_behind_the_create_account_link_misread_as_a_form_is_the_sign_up(
         context, flow_server, tmp_path, monkeypatch):
-    # NAV-03: the page the login wall's link leads to is read as the loop reads
+    # the page the login wall's link leads to is read as the loop reads
     # any page; the judge's Choice misreads it as a form, its Nouls and the box
     # that makes the password read it as the sign-up
     monkeypatch.setattr(apply_run.ats_accounts, "_get_master_password", lambda: h.PASSWORD)
@@ -306,7 +306,7 @@ _CLOSED = ("<!doctype html><html><head><title>Data Engineer - Fabrikam</title></
 
 
 def test_a_job_the_site_says_was_applied_to_is_never_applied_to_again(context, tmp_path):
-    # TERM-04's ATS part
+    # the ATS's own word that the job was applied to
     _serve(context, {"/jobs/7": _APPLIED, "/apply": "<body><h1>Apply</h1></body>"})
     out, rec, _ = _drain(context, tmp_path, f"{CAREERS}/jobs/7")
     assert out.status == "needs_human", out
@@ -317,7 +317,6 @@ def test_a_job_the_site_says_was_applied_to_is_never_applied_to_again(context, t
 
 
 def test_a_closed_posting_has_its_own_reason(context, tmp_path):
-    # READ-08
     _serve(context, {"/jobs/7": _CLOSED})
     out, _, _ = _drain(context, tmp_path, f"{CAREERS}/jobs/7")
     assert out.status == "needs_human", out
@@ -344,7 +343,7 @@ class _AlertRolesExchanged(jev.FakeJev):
 
 def test_an_apply_apart_from_a_job_alert_box_is_the_entry_when_the_roles_are_exchanged(
         _browser, flow_server, tmp_path):
-    # READ-09: the judged entry is the alert box's own button; the Apply-worded
+    # the judged entry is the alert box's own button; the Apply-worded
     # control apart from the box is the entry
     r = h.run_flow(h.flow("posting_with_alert_box"), _AlertRolesExchanged(), "exchanged",
                    browser=_browser, server=flow_server, workdir=tmp_path)
@@ -366,7 +365,7 @@ def test_a_posting_the_judge_reads_as_other_is_the_posting_its_structure_settles
     assert moved and moved[0]["to"] == "job_posting", moved
 
 
-# --- READ-04: a structural "did not advance" signature --------------------------------------------
+# --- a structural "did not advance" signature -----------------------------------------------------
 
 def test_a_step_that_comes_back_the_same_does_not_advance_whatever_its_ticker_says(
         _browser, flow_server, tmp_path):
@@ -390,13 +389,13 @@ def test_the_signature_ignores_times_counts_and_the_judges_read():
     c = apply_run.page_signature("https://x.example/apply?step=2",
                                  digest("Step two: tell us about your experience"))
     assert c != a
-    # review M2: two steps that differ only by their step number are two pages
+    # two steps that differ only by their step number are two pages
     one = apply_run.page_signature("https://x.example/apply", digest("Work Experience 1 of 3"))
     two = apply_run.page_signature("https://x.example/apply", digest("Work Experience 2 of 3"))
     assert one != two
 
 
-# --- NAV-07, NAV-08, NAV-09, ALLOW-01, ALLOW-02: trackers, job boards, email ----------------------
+# --- trackers, job boards, email, application sites -----------------------------------------------
 
 def test_an_ad_trackers_hop_is_waited_out_and_never_the_destination(
         _browser, flow_server, tmp_path):
@@ -417,7 +416,7 @@ def test_a_job_boards_link_to_the_company_site_is_followed_once(_browser, flow_s
 
 def test_a_board_whose_company_link_lands_on_another_board_reads_that_board_the_same_way(
         _browser, flow_server, tmp_path):
-    # review I4: LinkedIn, a board, a second board, the company's form
+    # LinkedIn, a board, a second board, the company's form
     r = _flow("aggregator_chain", _browser, flow_server, tmp_path)
     assert r.ok and not r.breaks, r
     boards = [a for a in r.actions if "dice.com" in a.url or "ziprecruiter.com" in a.url]
@@ -443,7 +442,7 @@ def test_a_chain_of_job_boards_past_the_bound_parks_and_no_board_is_the_applicat
 
 def test_two_job_boards_that_link_to_each_other_park_at_the_first_board_seen_again(
         _browser, flow_server, tmp_path):
-    # review R2-M3: glassdoor -> ziprecruiter -> glassdoor; a board read once
+    # glassdoor -> ziprecruiter -> glassdoor; a board read once
     # is never read again, and the page budget is never what ends it
     flow = dataclasses.replace(
         h.flow("aggregator_chain"), name="aggregator_loop", status="needs_human",
@@ -463,7 +462,7 @@ def test_two_job_boards_that_link_to_each_other_park_at_the_first_board_seen_aga
 
 def test_a_boards_lone_apply_link_off_the_board_is_its_company_link(
         _browser, flow_server, tmp_path):
-    # review M7: the off-site control reads just "Apply now"
+    # the off-site control reads just "Apply now"
     flow = dataclasses.replace(
         h.flow("aggregator_company_site"), name="aggregator_plain_apply",
         routes=lambda base: h.board_chain_routes(base, ("www.dice.com",), plain_apply=True))
@@ -501,7 +500,7 @@ def _job_run(context, tmp_path, url="https://www.linkedin.com/jobs/view/1/"):
 
 @pytest.mark.parametrize("host", ["www.dice.com", "click.appcast.io", "www.indeed.com"])
 def test_the_master_password_never_goes_to_a_job_board_or_a_tracker(context, tmp_path, host):
-    # ALLOW-02: even once admitted as where LinkedIn's Apply led
+    # even once admitted as where LinkedIn's Apply led
     run = _job_run(context, tmp_path)
     run.allowed.add(host)
     run.ats_hosts.add(host)
@@ -511,12 +510,11 @@ def test_the_master_password_never_goes_to_a_job_board_or_a_tracker(context, tmp
 @pytest.mark.parametrize("host", ["acme.jobs2web.com", "acme.careers-page.com",
                                   "jobs.dover.com", "apply.jazz.co", "acme.wellfound.com"])
 def test_the_missing_platforms_are_application_sites(context, tmp_path, host):
-    # ALLOW-01
     run = _job_run(context, tmp_path)
     assert run._allowed_site(host) and run._password_ok(host)
 
 
-# --- NAV-05: a click that opens its next page in a new tab ----------------------------------------
+# --- a click that opens its next page in a new tab ------------------------------------------------
 
 @pytest.mark.parametrize("name", ["popup_step_park", "popup_step"])
 def test_a_step_opened_in_a_new_tab_is_the_next_page_and_nothing_is_clicked_twice(
@@ -527,14 +525,14 @@ def test_a_step_opened_in_a_new_tab_is_the_next_page_and_nothing_is_clicked_twic
     assert len(nexts) == 1, nexts
     adopted = _decisions(Path(r.trace), "click_popup")
     assert adopted, adopted
-    # the trace keeps an address without its query (final review C-M1): the
+    # the trace keeps an address without its query: the
     # run's own actions show the new tab it went on in is step 2's
     assert [a for a in r.actions if "step=2" in a.url], r.actions
 
 
-# --- what the judge reads first: study G9, G13, G14, G4 --------------------------------------------
+# --- what the judge reads first: a modal, frames, chrome, a privacy step -------------------------
 
-# The captured Workday popup's shape (review I3): a 442 x 451 px dialog, no
+# The captured Workday popup's shape: a 442 x 451 px dialog, no
 # aria-modal, the header and the posting (its Apply still showing) behind it
 def _workday_page(attrs='data-automation-activepopup="true"'):
     return f"""<!doctype html><html><head><title>Analyst - Fabrikam</title></head><body>
@@ -555,7 +553,7 @@ def _workday_page(attrs='data-automation-activepopup="true"'):
 @pytest.mark.parametrize("attrs", ['data-automation-activepopup="true"', ""])
 def test_workdays_start_popup_is_the_page_its_text_first_and_its_controls_alone(
         browser_page, attrs):
-    # G9: Workday's own marker, and a dialog on top of the page without it
+    # Workday's own marker, and a dialog on top of the page without it
     browser_page.set_viewport_size({"width": 1400, "height": 900})
     browser_page.set_content(_workday_page(attrs))
     d = apply_form.extract(browser_page)
@@ -569,7 +567,7 @@ def test_workdays_start_popup_is_the_page_its_text_first_and_its_controls_alone(
 
 
 def test_a_dropped_bot_check_frame_leaves_the_popup_the_page(context, tmp_path):
-    # R2-M2: dropping a reCAPTCHA frame's control rebuilds the digest; the
+    # dropping a reCAPTCHA frame's control rebuilds the digest; the
     # Workday popup it read stays the page
     captcha = "https://www.google.com/recaptcha/api2/anchor?k=1"
     _serve(context, {"/job/7": _workday_page().replace(
@@ -621,7 +619,7 @@ def test_an_open_onetrust_preference_center_is_consent_and_never_the_pages_modal
 
 
 def test_a_fieldless_posting_frame_is_read_before_the_host_pages_text(browser_page):
-    # G9, iCIMS: the posting's frame holds no field; its words must come
+    # iCIMS: the posting's frame holds no field; its words must come
     # first, inside the read's head
     chrome = "Careers home. Our locations. Benefits. Sign in. " * 40
     frame = ("<h1>Software Developer</h1><h2>Overview</h2><p>Build the tools.</p>"
@@ -636,7 +634,7 @@ def test_a_fieldless_posting_frame_is_read_before_the_host_pages_text(browser_pa
 
 
 def test_a_content_frame_is_read_before_the_host_pages_chrome(browser_page):
-    # G9: an iCIMS content frame, a Greenhouse embed
+    # an iCIMS content frame, a Greenhouse embed
     chrome = "Our company. " * 60
     frame = ("<h1>Apply for Data Engineer</h1><label for=f>First name</label><input id=f>"
              "<button type=button>Submit application</button>")
@@ -667,7 +665,7 @@ def _posting_with_frames(context, frames: dict) -> object:
 
 
 def test_an_embedded_video_and_an_ad_stay_in_place_behind_the_posting(context):
-    # R2-M1: a 640 x 360 video and a 300 x 250 ad reading "Apply now" are
+    # a 640 x 360 video and a 300 x 250 ad reading "Apply now" are
     # big enough to be content frames; neither is the page's site or an ATS
     page = _posting_with_frames(context, {
         "https://video.example/embed/1": ("<body><p>Meet the team. Play video.</p></body>",
@@ -684,7 +682,7 @@ def test_an_embedded_video_and_an_ad_stay_in_place_behind_the_posting(context):
 
 
 def test_an_ats_frame_is_read_before_the_careers_page_that_embeds_it(context):
-    # R2-M1: the run's own predicate still takes a Greenhouse embed first
+    # the run's own predicate still takes a Greenhouse embed first
     page = _posting_with_frames(context, {
         "https://boards.greenhouse.io/embed/job_app": (
             "<body><h1>Apply for Payroll Analyst</h1><label for=f>First name</label>"
@@ -698,7 +696,7 @@ def test_an_ats_frame_is_read_before_the_careers_page_that_embeds_it(context):
 
 def test_a_workday_header_and_a_top_bar_are_chrome_and_an_icon_with_no_name_is_dropped(
         browser_page):
-    # G4: a header's Sign In invites a login misread; an unnamed icon is noise
+    # a header's Sign In invites a login misread; an unnamed icon is noise
     browser_page.set_content("""<body>
       <div data-automation-id="headerContainer"><button type="button">Sign In</button>
         <button type="button">Search for Jobs</button></div>
@@ -717,7 +715,7 @@ def test_a_workday_header_and_a_top_bar_are_chrome_and_an_icon_with_no_name_is_d
 
 
 def test_a_locator_finds_its_frame_by_url_when_an_earlier_frame_went_away(browser_page, fixture_url):
-    # G14: an ad frame detaching between the read and the act shifts the indexes
+    # an ad frame detaching between the read and the act shifts the indexes
     browser_page.goto(fixture_url("job_posting.html"))
     browser_page.set_content(
         "<body><iframe id=ad src='about:blank'></iframe>"
@@ -732,14 +730,14 @@ def test_a_locator_finds_its_frame_by_url_when_an_earlier_frame_went_away(browse
 
 
 def test_a_privacy_agreement_first_is_a_step_accepted_to_go_on(_browser, flow_server, tmp_path):
-    # G13: Taleo's "Privacy Agreement", I Accept and I Decline
+    # Taleo's "Privacy Agreement", I Accept and I Decline
     r = _flow("privacy_gate", _browser, flow_server, tmp_path)
     assert r.ok and not r.breaks, r
     clicked = [a.text for a in r.actions if a.kind == "click"]
     assert clicked[:1] == ["I Accept"] and "I Decline" not in clicked, clicked
 
 
-# --- NAV-04 / READ-02: a loading skeleton is no read of the page ------------------------------------
+# --- a loading skeleton is no read of the page ------------------------------------------------------
 
 class _SkeletonAsSignUp(jev.FakeJev):
     """The fake, reading any page that says it is loading as a sign-up at
@@ -765,9 +763,9 @@ def test_a_loading_skeleton_is_waited_out_before_the_page_is_read(_browser, flow
 
 def test_a_skeleton_that_clears_right_after_it_was_read_is_read_again(_browser, flow_server,
                                                                       tmp_path):
-    """SP5 round 2, the skeleton flake under load: the form came between the
-    read and the loading check, the check saw no placeholder, and the read of
-    the skeleton went to the judge. Here the form comes during the first read
+    """A skeleton under load: the form can come between the read and the
+    loading check, so the check sees no placeholder and the read of the
+    skeleton would go to the judge. Here the form comes during the first read
     itself (`?clear=now`), every time: the loading state is the one the read
     was taken under, and the page is read again."""
     import dataclasses
@@ -830,7 +828,7 @@ _FORM = FormDigest(url_host="jobs.example.com", title="Apply", text="Apply for B
 
 @pytest.mark.parametrize("looks", [
     [True],             # the placeholder showed before the read and cleared after it
-    [False, True],      # painted between the look and the read (review round 3, M1)
+    [False, True],      # painted between the look and the read
 ])
 def test_a_skeleton_seen_before_or_after_the_read_is_read_again(looks):
     run = _ScriptedRead(looks, [_SKELETON, _FORM])
@@ -848,7 +846,7 @@ _STEP_TWO = FormDigest(url_host="jobs.example.com", title="Apply", text="Step 2 
 
 
 def test_each_step_of_a_wizard_at_one_url_gets_its_own_placeholder_wait():
-    """R2-M4: the placeholder's one wait is per step (the URL and the step
+    """The placeholder's one wait is per step (the URL and the step
     before it). A single-page wizard's second step loads behind a skeleton
     at the first step's URL, and it is waited out like the first."""
     # each step: the placeholder is up at the first look and gone at the next
@@ -863,7 +861,7 @@ def test_each_step_of_a_wizard_at_one_url_gets_its_own_placeholder_wait():
 
 
 def test_a_placeholder_that_stays_up_on_one_step_is_waited_on_once(monkeypatch):
-    """M10 still holds within a step: a re-read of the same step (the loop's
+    """One wait per page holds within a step: a re-read of the same step (the loop's
     `_reread`, `last_sig` unchanged) does not wait on the placeholder again."""
     monkeypatch.setattr(apply_limits, "LOADING_WAIT_S", 0.0)     # the wait runs out at once
     run = _ScriptedRead([True, True, True], [_SKELETON] * 3)
@@ -876,9 +874,9 @@ def test_a_placeholder_that_stays_up_on_one_step_is_waited_on_once(monkeypatch):
 
 def test_a_wizard_whose_second_step_loads_at_the_same_url_waits_out_both_skeletons(
         _browser, flow_server, tmp_path):
-    """R2-M4 end to end: `skeleton_wizard.html` keeps one URL and shows each
-    step behind a skeleton that stays until it is read. The click's own busy
-    wait (ADV-07) is cut short here, so the second skeleton reaches the read."""
+    """The per-step wait end to end: `skeleton_wizard.html` keeps one URL and
+    shows each step behind a skeleton that stays until it is read. The click's
+    own busy wait is cut short here, so the second skeleton reaches the read."""
     f = dataclasses.replace(
         h.flow("skeleton_then_form"), name="skeleton_wizard", start="skeleton_wizard.html",
         timing=(*h.flow("skeleton_then_form").timing, (("apply_limits", "BUSY_WAIT_S"), 0.3)))
@@ -891,7 +889,7 @@ def test_a_wizard_whose_second_step_loads_at_the_same_url_waits_out_both_skeleto
     assert not any(w["still_loading"] for w in waited), waited
 
 
-# --- study G13: a privacy step's accept is its way on, its decline never ---------------------------
+# --- a privacy step's accept is its way on, its decline never --------------------------------------
 
 @pytest.mark.parametrize("buttons, roles, step", [
     (("I Accept", "I Decline"), {"advance": (1, 0.9), "other": (0, 0.9)}, ("advance", 0)),
@@ -946,7 +944,7 @@ _STEP2 = """<!doctype html><html><head><title>Apply - step 2</title></head><body
 
 def test_a_tab_that_opens_a_moment_after_the_click_is_followed_before_any_second_click(
         context, tmp_path, monkeypatch):
-    # review M5: the click's own wait ends before the tab opens
+    # the click's own wait ends before the tab opens
     real = apply_run.apply_fill.click
     monkeypatch.setattr(apply_run.apply_fill, "click",
                         lambda page, digest, n, **kw: real(page, digest, n,
@@ -966,7 +964,7 @@ _LINGERING = """<!doctype html><html><head><title>Analyst - Fabrikam</title></he
 
 def test_a_placeholder_that_never_clears_costs_one_short_wait_per_page(context, tmp_path,
                                                                      monkeypatch):
-    # review M10: a widget's region stays busy; the read goes on after
+    # a widget's region stays busy; the read goes on after
     # LOADING_WAIT_S, once for the page, and the trace says so
     monkeypatch.setattr(apply_limits, "EMPTY_READ_MAX_S", 8.0)
     monkeypatch.setattr(apply_limits, "LOADING_WAIT_S", 1.0, raising=False)
@@ -984,7 +982,7 @@ def test_a_placeholder_that_never_clears_costs_one_short_wait_per_page(context, 
     assert all(d["waited_ms"] < 6500 for d in waits), waits
 
 
-# --- review M11: the site's header never holds the entry or the way on ------------------------------
+# --- the site's header never holds the entry or the way on ------------------------------------------
 
 _HEADER_ENTRY = """<!doctype html><html><head><title>Analyst - Fabrikam</title></head><body>
 <div data-automation-id="header"><button type="button"

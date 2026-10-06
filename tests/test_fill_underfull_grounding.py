@@ -5,12 +5,12 @@ the fill as GROUP AUGMENTATION: it appends the spare id to that group in `sel` a
 re-keys `bullets[old_gk]` onto `bullets[new_gk]`. `run._run_bullet_passes` snapshots
 `ctx.bullets` BEFORE the pass runs and hands that snapshot to the grounding gate as its
 revert target -- but a committed fill is keyed under `new_gk`, which the snapshot never
-held, so a bullet the gate has to flag is DROPPED outright instead of reverted to its
-grounded original. A real run lost its lead bullet this way (a 2026-09-14 tailor
-run) even though the pre-fill text was perfectly grounded.
+held, so with no gate of its own a bullet the gate has to flag would be DROPPED outright,
+never reverted to its grounded original, even when the pre-fill text is perfectly
+grounded (a lead bullet can vanish this way).
 
-Tests 1-3 hit `compose.fill_underfull` directly, at the unit the fix lives in. Tests 4-5
-go through the real `Pass` + `_run_bullet_passes` wiring, because the regression itself
+Tests 1-3 hit `compose.fill_underfull` directly, at the unit the gate lives in. Tests 4-5
+go through the real `Pass` + `_run_bullet_passes` wiring, because the failure itself
 is a mismatch between two files (compose.py's re-key, run.py's snapshot) a
 compose-only test cannot see.
 
@@ -37,8 +37,8 @@ _CACHED = (
 # One project, "Sandbox", with exactly the two atoms this file needs: `s_over` is the
 # bullet under test and `s_audit` is its only spare -- the one atom fill_underfull may
 # legitimately fold in. `s_audit` carries a dotted version string on purpose: the
-# driver-level tests (4, 5) are also the guard that Task 1's tokenizer fix (a dotted
-# version is one figure) and this task's gate do not re-break each other.
+# driver-level tests (4, 5) also guard that the tokenizer's rule (a dotted version is
+# one figure) and this gate do not break each other.
 _MASTER = textwrap.dedent("""
     basics:
       name: Jane Q. Public
@@ -130,7 +130,7 @@ def _sel():
 
 def test_an_ungrounded_fill_is_not_committed(engine, monkeypatch):
     """Pins the defect at its source: a fill that introduces a token neither atom
-    supports must never be committed. RED today: the bullet is re-keyed to
+    supports must never be committed. With no gate, the bullet is re-keyed to
     's_over+s_audit' carrying the ungrounded text regardless."""
     sel = _sel()
     bullets = {"s_over": ORIGINAL}
@@ -156,9 +156,8 @@ def test_a_rejected_fill_is_reported_with_its_tokens_and_text(engine, monkeypatc
 def test_a_grounded_fill_still_commits_and_rekeys(engine, monkeypatch):
     """Guards against over-rejection: a fill that folds in only the spare atom's own
     material -- including its dotted version string -- must still commit and re-key.
-    This is the SP1+SP2 trigger case (with this gate in place it fails on the
-    pre-Task-1 tokenizer, so it also guards that fix); green before and after this
-    task, on purpose."""
+    With this gate in place it fails on a tokenizer that splits a dotted version, so
+    it also guards the tokenizer's rule."""
     sel = _sel()
     bullets = {"s_over": ORIGINAL}
     monkeypatch.setattr(compose, "call", _fake_bullets(("s_over", GROUNDED_FILL)))
@@ -173,11 +172,11 @@ def test_a_grounded_fill_still_commits_and_rekeys(engine, monkeypatch):
 
 
 def test_the_pass_driver_keeps_the_bullet_when_a_fill_is_ungrounded(engine, monkeypatch):
-    """The regression itself, through the REAL wiring. Before this task the pass had
-    no gate of its own, so the fill committed the ungrounded text; the driver's OWN
-    grounding gate then looked for the pre-fill text under the fallback snapshot's OLD
-    gkey, found nothing (the snapshot never held the NEW, re-keyed gkey), and dropped
-    the bullet outright. RED today: ctx.bullets == {} and a warning
+    """The failure itself, through the REAL wiring. With no gate of its own in the
+    pass, the fill commits the ungrounded text; the driver's OWN grounding gate then
+    looks for the pre-fill text under the fallback snapshot's OLD gkey, finds nothing
+    (the snapshot never held the NEW, re-keyed gkey), and drops the bullet outright,
+    leaving ctx.bullets == {} and a warning
     "grounding: [underfull fill] dropped bullet 's_over+s_audit' (ungrounded: Deloitte)"."""
     sel = _sel()
     bullets = {"s_over": ORIGINAL}

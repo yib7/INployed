@@ -1,13 +1,12 @@
 """`docs/ARCHITECTURE.md`'s résumé-engine module table lists every module, and only real ones.
 
 That table is the map a reader uses to find their way around `local/resume_tailor/`, and it
-rots in both directions. A module added with no row is invisible: cycle 12 added
-`itemcheck.py` and the table said nothing, and nothing failed. A row for a module that has
-been deleted or renamed is worse, because it sends a reader looking for a file that is not
-there; a prior cycle deleted parts of the tree that were documented and never real.
+rots in both directions. A module added with no row is invisible, and nothing fails. A row
+for a module that has been deleted or renamed is worse, because it sends a reader looking
+for a file that is not there.
 
-Both directions are checked here, as set equality. The alternative is a reviewer noticing,
-and a reviewer noticed four gaps by hand once already.
+Both directions are checked here, as set equality, so no gap waits on a reader to notice it
+by hand.
 
 The test reads the markdown as text. It deliberately does not import the package: a bad
 import here would be a `load_dotenv()` at module scope away from placing a billed call, and

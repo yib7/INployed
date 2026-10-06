@@ -75,8 +75,8 @@ def test_verbatim_blocks_roundtrip(tmp_path, monkeypatch):
     assert jobsdata.load_verbatim_blocks() == {"Globex": ["A", "B"]}
 
 
-# P0-1: _append_dedup_csv must never treat an unreadable-but-existing master
-# as empty - that path used to silently overwrite the cumulative CSV with just
+# _append_dedup_csv must never treat an unreadable-but-existing master
+# as empty - that path would silently overwrite the cumulative CSV with just
 # the one new record. It must raise instead, and leave the file untouched.
 
 def test_append_dedup_csv_raises_and_preserves_file_when_read_errors(tmp_path, monkeypatch):
@@ -117,9 +117,9 @@ def test_append_dedup_csv_still_creates_file_when_missing(tmp_path):
     assert list(pd.read_csv(path, dtype={"job_posting_id": str})["job_posting_id"]) == ["1"]
 
 
-# P1-2: _append_dedup_csv's and _drop_ids_from_csv's WRITE must also be atomic
+# _append_dedup_csv's and _drop_ids_from_csv's WRITE must also be atomic
 # (tmp + os.replace via csv_io.write_csv_gz_atomic) so a crash mid-write never
-# truncates the cumulative master. This is separate from the P0-1 read guard above.
+# truncates the cumulative master. This is separate from the read guard above.
 
 def test_append_dedup_csv_write_leaves_file_untouched_on_replace_failure(tmp_path, monkeypatch):
     path = tmp_path / "linkedin_jobs_master.csv"
@@ -163,7 +163,7 @@ def test_drop_ids_from_csv_still_drops_ids_correctly(tmp_path):
     assert list(out["job_posting_id"]) == ["1", "3"]
 
 
-# P1-1: filter_high_unseen must never crash when a df has 'score' but no
+# filter_high_unseen must never crash when a df has 'score' but no
 # 'deep_score' column, and must not silently misalign against a non-default
 # index (drop_duplicates/removed-jobs filtering in load_files produces one).
 

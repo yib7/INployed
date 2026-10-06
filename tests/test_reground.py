@@ -201,9 +201,9 @@ def test_a_recovered_overview_is_restored_and_reported(engine, monkeypatch):
 
 
 def test_two_drops_both_recovered_leave_no_warning(engine, monkeypatch):
-    """The commonest shape in the 2026-09-15 batch, pinned from a real report: one run
-    lost TWO bullets to the prologue gate, the re-ask brought both back, and the
-    dashboard still counted the resume among the ones "with warnings". The single-drop
+    """A common shape, pinned from a real report: one run loses TWO bullets to the
+    prologue gate and the re-ask brings both back; the dashboard must not count the
+    resume among the ones "with warnings". The single-drop
     test above pins the severity of one recovered drop; this one pins that the count of
     drops changes nothing. A run whose every drop was recovered ships a complete,
     grounded resume, so it warns zero times however many bullets the re-ask had to

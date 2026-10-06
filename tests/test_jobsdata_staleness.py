@@ -1,4 +1,4 @@
-"""run_staleness: classify how fresh the latest pipeline run is (Cycle 15 SP4)."""
+"""run_staleness: classify how fresh the latest pipeline run is."""
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path

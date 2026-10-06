@@ -157,8 +157,8 @@ def test_post_submit_foreign_frame_controls_are_dropped_before_the_judge(monkeyp
 
 
 def test_a_foreign_frame_loses_its_controls_and_the_page_goes_on():
-    # the 2026-09-22 iCIMS sign-in: hCaptcha's frame carried "Verify" and
-    # "Refresh Challenge" buttons and the old check parked the whole job
+    # an iCIMS sign-in: hCaptcha's frame carries "Verify" and "Refresh
+    # Challenge" buttons, and they never park the whole job
     job = _job()
     main = SimpleNamespace(url=job.page.url, parent_frame=None)
     job.page.frames = [main,
@@ -180,7 +180,7 @@ def test_a_foreign_frame_loses_its_controls_and_the_page_goes_on():
     "https://assets.braintreegateway.com/web/3.97.2/html/hosted-fields-frame.min.html",
     "https://www.linkedin.com/embed/feed/apply"])
 def test_a_payment_or_a_linkedin_frame_on_the_form_loses_its_fields(frame_url):
-    # final review B-M7: a card frame's "ZIP" box and a LinkedIn widget's
+    # a card frame's "ZIP" box and a LinkedIn widget's
     # boxes on the company's form are never planned; the form's own box is
     job = _job()
     job.page = Mock(url="https://boards.greenhouse.io/acme/jobs/1")
@@ -241,7 +241,7 @@ def test_code_gate_submit_uses_submit_no_retry_path(monkeypatch):
     monkeypatch.setattr(job, "_click", clicked)
     # the application's answers are on the site, so the button may send what
     # the site held for the code (before them it is the account's own check,
-    # a step control: SP8b review I1, tests/test_apply_submit.py)
+    # a step control: tests/test_apply_submit.py)
     job.form_filled = True
 
     job._code_gate(digest, plan, {"filled": []})
@@ -254,7 +254,7 @@ def test_code_gate_submit_uses_submit_no_retry_path(monkeypatch):
     assert not job.submit_clicked and job._code_may_send
 
 
-# --- the relaxed rules (2026-09-22): sites, the password's sites, the human check ---------
+# --- sites, the password's sites, the human check -----------------------------------------
 
 @pytest.mark.parametrize("host,site", [
     ("careers-gtsx.icims.com", "icims.com"), ("login.icims.com", "icims.com"),
@@ -355,7 +355,7 @@ def test_a_challenge_headless_or_unsolved_parks(monkeypatch):
 
 def test_linkedin_and_the_inbox_are_matched_by_exact_host():
     # their domains carry other people's content: a Google Form, a Google
-    # sign-in frame, a Microsoft form (the SP8-live review)
+    # sign-in frame, a Microsoft form
     job = _job()
     job.r._run_context = {"inbox_url": "https://mail.google.com/mail/u/0/"}
     job._build_allowlist()

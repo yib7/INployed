@@ -1,11 +1,11 @@
-"""SP2: the entry. An Easy Apply job stops at once and nothing is ever filled
-on LinkedIn (EZ-01, EZ-02); LinkedIn's pages are read without the judge
-(READ-02, READ-03, TERM-04's LinkedIn part, NAV-06, NAV-10); every page
-settles before it is read and an empty or unsure read is taken again
-(NAV-01, NAV-02, NAV-03, study G5); a cookie banner is declined, never
-accepted, and is chrome to the extractor (study G1); an entry click follows
-whatever it did first (NAV-11, study G15). Then the SP1 review's carry-over
-(N1 to N6).
+"""The entry. An Easy Apply job stops at once and nothing is ever filled
+on LinkedIn; LinkedIn's pages are read without the judge; every page
+settles before it is read and an empty or unsure read is taken again; a
+cookie banner is declined, never accepted, and is chrome to the extractor;
+an entry click follows whatever it did first. The later sections check
+login-wall evidence, the harness's sign-in words, CI's browser step,
+frames, `loop_step`, the trace, consent roots, late tabs and LinkedIn's
+top card.
 
 Headless Chromium through the module-scoped test browser; the fixtures are
 served by the flow server, LinkedIn and the application's fake host are
@@ -127,7 +127,7 @@ def _codes(breaks):
     return sorted({b.split(":")[0] for b in breaks})
 
 
-# === Easy Apply (EZ-01, EZ-02) ==================================================================
+# === Easy Apply =================================================================================
 
 def test_an_easy_apply_entry_ends_at_once_and_opens_no_page(context, flow_server, tmp_path):
     # LinkedIn is routed to the fixture all the same, so a run that did open
@@ -254,7 +254,7 @@ def test_a_form_the_judge_reads_on_linkedin_parks_with_the_easy_apply_reason(con
     assert [a for a in rec.actions if h.on_linkedin(a.url)] == []
 
 
-# === the LinkedIn job page handler (READ-02, READ-03, TERM-04, NAV-06, NAV-10) ================
+# === the LinkedIn job page handler ============================================================
 
 @pytest.mark.parametrize("url, kind", [
     ("https://www.linkedin.com/jobs/view/4438751519/", "job"),
@@ -487,7 +487,7 @@ def test_a_linkedin_subdomain_the_job_did_not_start_on_is_linkedin_too(context, 
     assert not run._password_ok("www.linkedin.com")
 
 
-# === settling (NAV-01, NAV-02, NAV-03, study G5) ================================================
+# === settling ===================================================================================
 
 def test_the_settle_holds_while_a_skeleton_shows(context, monkeypatch):
     monkeypatch.setattr(apply_click, "SETTLE_QUIET_S", 0.3)
@@ -659,7 +659,7 @@ class _ErrorPageNeverLoads(_SlowErrorPage):
 
 @pytest.mark.parametrize("page_type", [_NoErrorPage, _ErrorPageNeverLoads])
 def test_the_wait_for_the_error_page_ends_at_its_cap(monkeypatch, page_type):
-    """Review round 5, Minor 2: with no error page, or one that never loads,
+    """With no error page, or one that never loads,
     the retry waits `GOTO_ERROR_PAGE_S` at most, then its pause."""
     monkeypatch.setattr(apply_run.apply_fill, "settle", lambda page, timeout_s: {"ms": 0})
     page = page_type() if page_type is _ErrorPageNeverLoads else page_type(lag_ms=0)
@@ -672,10 +672,10 @@ def test_the_wait_for_the_error_page_ends_at_its_cap(monkeypatch, page_type):
 
 
 def test_the_retry_of_a_dropped_first_load_waits_for_chromiums_error_page(monkeypatch):
-    """SP5 fix round 4 (the full suite under -n auto): the retry waited a
-    fixed `GOTO_RETRY_S` for Chromium's error page; on a busy machine the
-    error page committed after it and cut the retry short. The retry now
-    waits for the error page to be up, then its pause."""
+    """The retry waits for Chromium's error page to be up, then its pause. A
+    fixed `GOTO_RETRY_S` wait is too short on a busy machine (the full suite
+    under -n auto): the error page commits after it and cuts the retry
+    short."""
     monkeypatch.setattr(apply_run.apply_fill, "settle", lambda page, timeout_s: {"ms": 0})
     page = _SlowErrorPage(lag_ms=int(apply_limits.GOTO_RETRY_S * 1000) + 400)
     rows = apply_run.open_page(page, f"{CAREERS}/apply/42")
@@ -702,7 +702,7 @@ _LATE_SIGNUP = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 
 def test_the_sign_up_page_behind_a_create_account_link_is_read_once_it_renders(
         context, flow_server, tmp_path, monkeypatch):
-    # NAV-03: the sign-up page renders its form after `load`; it is read once
+    # the sign-up page renders its form after `load`; it is read once
     # it holds still (a quiet window that outlasts the 800 ms render)
     monkeypatch.setattr(apply_click, "SETTLE_QUIET_S", 1.2)
     monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: h.PASSWORD)
@@ -720,7 +720,7 @@ def test_the_sign_up_page_behind_a_create_account_link_is_read_once_it_renders(
     assert any(e["kind"] == "decision" and e["what"] == "settled" for e in pages[1]["events"])
 
 
-# === consent banners (study G1) =================================================================
+# === consent banners ============================================================================
 
 def test_a_cookie_dialog_over_the_posting_is_declined_and_never_accepted(
         _browser, flow_server, tmp_path):
@@ -841,7 +841,7 @@ def test_a_banner_that_comes_back_is_dismissed_at_most_the_limit(context, tmp_pa
     assert run.page.locator("#cookie-bar").count() == 1      # back again, and left alone
 
 
-# === entry clicks (NAV-11, study G15) ===========================================================
+# === entry clicks ===============================================================================
 
 _ENTRY = """<body><h1>Analytics Engineer</h1>
 <a id="same" href="/apply">Apply</a>
@@ -924,9 +924,7 @@ def test_a_flow_that_must_open_no_page_breaks_when_one_opens(_browser, flow_serv
     assert "PAGE-OPENED" in _codes(r.breaks), r
 
 
-# === the SP1 review's carry-over ====================================================================
-
-# --- N1: a login wall's evidence is the page it describes ------------------------------------------
+# --- a login wall's evidence is the page it describes ----------------------------------------------
 
 _LOGIN = """<!doctype html><html><head><title>Sign in - Fabrikam Careers</title></head><body>
 <h1>Sign in to continue your application</h1>
@@ -960,27 +958,27 @@ def test_a_login_wall_park_names_the_sign_up_page_with_its_own_evidence(
     out, _ = _drain(context, tmp_path, f"{CAREERS}/login", _ReadsByTitle())
     assert out.reason.startswith(f"login wall (the create-account link led to {CAREERS}/register:"
                                  " read as job_posting "), out.reason
-    # (a job search's box beside only a search button is no box of a page since
-    # SP5's EXT-16; the talent network's own box and button are its evidence)
+    # (a job search's box beside only a search button is no box of a page;
+    # the talent network's own box and button are its evidence)
     assert "boxes: Your email" in out.reason and "Join the network" in out.reason
     assert "Password" not in out.reason          # the sign-in page's boxes are not its evidence
 
 
-# --- N2: the harness exempts sign-in words as the loop does ------------------------------------------
+# --- the harness exempts sign-in words as the loop does ----------------------------------------------
 
 @pytest.mark.parametrize("text, park, account, worded", [
     # the account step's own exemption (`_sends_application(account_only=True)`)
     ("Send code", False, True, False), ("Send me a link", True, True, False),
     ("Sign in to apply", False, True, False), ("Send verification code", False, True, False),
     ("Send application", False, True, True), ("Submit application", True, True, True),
-    # anywhere else the loop routes a send word to the gate (M-6)
+    # anywhere else the loop routes a send word to the gate
     ("Send code", False, False, True), ("Send me a link", True, False, True),
     ("Finish", False, False, True), ("Continue", True, False, False)])
 def test_the_harness_exempts_sign_in_words_as_the_loop_does(text, park, account, worded):
     assert h.submit_worded(text, park_mode=park, account_step=account) is worded
 
 
-# --- N3: CI reads the masked screenshots back ---------------------------------------------------------
+# --- CI reads the masked screenshots back -------------------------------------------------------------
 
 def test_ci_installs_pillow_where_the_browser_tests_run():
     ci = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
@@ -989,7 +987,7 @@ def test_ci_installs_pillow_where_the_browser_tests_run():
 
 
 def test_ci_runs_every_module_that_opts_into_the_browser():
-    # final review C-I1: the browser step selects its modules by the
+    # the browser step selects its modules by the
     # `conftest_browser` opt-in, never a hand-kept list a new module misses
     ci = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     step = ci.split("- name: Run auto-apply browser tests", 1)[1].split("\n  readme-setup:", 1)[0]
@@ -1013,9 +1011,9 @@ def test_ci_runs_every_module_that_opts_into_the_browser():
 
 @pytest.mark.parametrize("required", [True, False])
 def test_a_browser_that_cannot_launch_fails_where_ci_requires_it(monkeypatch, required):
-    # final review C N3: CI's browser step sets APPLY_BROWSER_REQUIRED, so a
+    # CI's browser step sets APPLY_BROWSER_REQUIRED, so a
     # Chromium that installs and then cannot launch fails the step there;
-    # anywhere else the browser tests skip as before
+    # anywhere else the browser tests skip
     import conftest_browser
 
     class _Chromium:
@@ -1034,7 +1032,7 @@ def test_a_browser_that_cannot_launch_fails_where_ci_requires_it(monkeypatch, re
     assert re.search(rf'^\s+{conftest_browser.BROWSER_REQUIRED_ENV}: "1"$', env, re.M), env
 
 
-# --- N4: an Enter inside a frame is tied to the frame's form -------------------------------------------
+# --- an Enter inside a frame is tied to the frame's form -----------------------------------------------
 
 def test_an_enter_pressed_in_a_frame_is_read_in_that_frame(context):
     page = context.new_page()
@@ -1054,7 +1052,7 @@ def test_an_enter_pressed_in_a_frame_is_read_in_that_frame(context):
     assert "ENTER-OUTSIDE-GATE" in _codes(h.invariant_breaks(_Out(), rec, h.Sends(rec)))
 
 
-# --- N5: `loop_step` says what `_loop` does ------------------------------------------------------------
+# --- `loop_step` says what `_loop` does ----------------------------------------------------------------
 
 class _Step(Exception):
     pass
@@ -1131,7 +1129,7 @@ def _read_as(state, conf):
     ("linkedin:linkedin_closed.html", None, False),
     ("linkedin-other:form", ("application_form", 0.95), False),
     ("linkedin-other:posting", ("job_posting", 0.95), False),
-    # SP4: the read combined with the structure, the unsure fallback, `other`
+    # the read combined with the structure, the unsure fallback, `other`
     ("captcha.html", ("other", 0.55), False),
     ("signup.html", ("login_wall", 0.55), False),
     ("job_posting.html", ("other", 0.9), False),
@@ -1173,7 +1171,7 @@ def test_loop_step_says_what_the_loop_does(context, flow_server, tmp_path, monke
     assert _category(said) == did, (said, did)
 
 
-# --- N6: the trace never writes a field's value through its text fallback ---------------------------
+# --- the trace never writes a field's value through its text fallback -------------------------------
 
 def test_the_trace_writes_a_dataclass_or_a_valued_object_by_its_type_alone(tmp_path):
     trace = apply_trace.Trace(tmp_path, attempt=1, job_id="42")
@@ -1194,8 +1192,6 @@ def test_the_trace_writes_a_dataclass_or_a_valued_object_by_its_type_alone(tmp_p
     assert row["many"] == ["<PlannedField>"] and row["both"] == "['a', 'b']"
     assert "jane.secret" not in text and "hunter2" not in text
 
-
-# === SP2 review round 1 ==============================================================================
 
 def _page_run(context, tmp_path, url):
     """A prepared `_JobRun` whose page is at `url` (the caller routes it)."""
@@ -1224,7 +1220,7 @@ _POSTING = (FORMS / "job_posting.html").read_text(encoding="utf-8")
 _ELSEWHERE = "https://elsewhere.example"
 
 
-# --- I-1: a consent wrapper with no size of its own ------------------------------------------------
+# --- a consent wrapper with no size of its own -----------------------------------------------------
 
 def test_a_sizeless_consent_wrapper_is_found_and_its_banner_declined(context, flow_server):
     page = context.new_page()
@@ -1242,7 +1238,7 @@ def test_the_wrapper_flow_declines_the_banner_and_reaches_the_form(_browser, flo
     assert clicks[0] == "Reject All" and "Accept All Cookies" not in clicks, clicks
 
 
-# --- I-2: consent roots never swallow the application's own content ---------------------------------
+# --- consent roots never swallow the application's own content --------------------------------------
 
 def test_a_section_named_trusted_is_no_consent_banner(context):
     page = context.new_page()
@@ -1282,7 +1278,7 @@ def test_a_consent_block_inside_the_form_keeps_its_checkbox_and_its_decline(cont
     assert apply_form.consent_control(page) is None
 
 
-# --- I-3: every browser context of the suite is offline ---------------------------------------------
+# --- every browser context of the suite is offline --------------------------------------------------
 
 # a documentation address (RFC 5737, never routed on the internet): without
 # the guard the request fails on its own, never reaching a site
@@ -1327,7 +1323,7 @@ def test_the_local_fixture_server_still_answers_through_the_guard(browser_page, 
     assert browser_page.locator("h1").inner_text() == "Analytics Engineer"
 
 
-# --- I-4: the LinkedIn click guard counts by job ---------------------------------------------------
+# --- the LinkedIn click guard counts by job --------------------------------------------------------
 
 @pytest.mark.parametrize("url, job", [
     ("https://www.linkedin.com/jobs/view/4438751519/", "4438751519"),
@@ -1379,7 +1375,7 @@ def test_the_handler_clicks_at_most_its_cap_per_job(context, tmp_path, monkeypat
     assert [a.text for a in rec.actions if a.kind == "click"] == ["Apply"] * 3
 
 
-# --- M-1: the two-pane view ---------------------------------------------------------------------------
+# --- the two-pane view --------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("html, offsite, easy", [
     ('<main><h1>E</h1><ul><li><button aria-label="Easy Apply filter.">Easy Apply</button></li>'
@@ -1402,7 +1398,7 @@ def test_the_two_pane_view_reads_the_jobs_own_pane(_browser, flow_server, tmp_pa
     assert decision["found"] == "offsite", decision
 
 
-# --- M-2: LinkedIn frames on a company's page; profile Applies ---------------------------------------
+# --- LinkedIn frames on a company's page; profile Applies --------------------------------------------
 
 _WITH_LINKEDIN_FRAME = ("<body><h1>Analytics Engineer</h1><p>About the role.</p>"
                         "<a class='btn' href='/apply/form'>Apply now</a>"
@@ -1437,7 +1433,7 @@ def test_no_entry_choice_picks_an_apply_that_sends_a_stored_profile(label):
         (None, "")
 
 
-# --- M-3: the consent pre-step's frames and links ------------------------------------------------------
+# --- the consent pre-step's frames and links -----------------------------------------------------------
 
 @pytest.mark.parametrize("control, found", [
     ('<a href="/privacy/cookies">Reject cookies</a>', None),
@@ -1475,7 +1471,7 @@ def test_the_consent_pre_step_never_clicks_in_a_bot_check_or_foreign_frame(
     assert rec.actions == [] and run._consent_clicks == 0
 
 
-# --- M-4: a form whose footer renders late ------------------------------------------------------------
+# --- a form whose footer renders late -----------------------------------------------------------------
 
 _LATE_FOOTER = """<body><form onsubmit="return false"><h1>Apply for Analytics Engineer</h1>
 <label>Full name * <input name="name" required></label>
@@ -1497,7 +1493,7 @@ def test_a_form_whose_footer_renders_late_is_read_once_it_renders(context, tmp_p
     assert (out.status, out.reason) == ("ready_to_submit", "auto_apply_submit is off"), out
 
 
-# --- M-5: the host is checked after every new settle ---------------------------------------------------
+# --- the host is checked after every new settle --------------------------------------------------------
 
 def _elsewhere(context):
     context.route(f"{_ELSEWHERE}/**",
@@ -1560,7 +1556,7 @@ def test_an_unsure_page_that_moves_off_the_site_is_never_read_again(context, tmp
     assert judge.hosts == ["careers.fabrikam.example"]
 
 
-# --- M-6: the harness's sign-in exemption is the account step's alone ----------------------------------
+# --- the harness's sign-in exemption is the account step's alone ---------------------------------------
 
 def test_a_send_code_click_breaks_the_invariants_only_outside_the_account_step():
     class _Out:
@@ -1582,7 +1578,7 @@ def test_the_recorder_marks_the_account_steps_clicks(_browser, flow_server, tmp_
     assert all(not a.in_account for a in clicks if a.text == "Continue")
 
 
-# --- M-7: a tab the Apply opens late ----------------------------------------------------------------------
+# --- a tab the Apply opens late ---------------------------------------------------------------------------
 
 _LATE_TAB = _POSTING.replace(
     '<a class="btn" id="apply" href="ashby_steps.html" target="_blank" rel="opener">Apply now</a>',
@@ -1607,7 +1603,7 @@ def test_a_tab_the_apply_opens_late_is_adopted(context, tmp_path, monkeypatch):
     assert _decisions(folder / "apply_trace" / "attempt-1", "late_popup")
 
 
-# --- M-8: a signed-in page whose offsite Apply is a window.open button -----------------------------------
+# --- a signed-in page whose offsite Apply is a window.open button ----------------------------------------
 
 def test_an_offsite_apply_button_that_opens_a_tab_by_script(_browser, flow_server, tmp_path):
     r = _flow("linkedin_button_popup", _browser, flow_server, tmp_path)
@@ -1616,7 +1612,7 @@ def test_an_offsite_apply_button_that_opens_a_tab_by_script(_browser, flow_serve
     assert entry["popup"] is True and entry["signal"] == "popup", entry
 
 
-# --- M-9: the probe opens a page the run's way --------------------------------------------------------
+# --- the probe opens a page the run's way -------------------------------------------------------------
 
 def test_the_probe_reads_a_page_whose_load_never_fires(context, monkeypatch):
     monkeypatch.setattr(apply_limits, "PROBE_GOTO_MS", 3_000)
@@ -1629,7 +1625,7 @@ def test_the_probe_reads_a_page_whose_load_never_fires(context, monkeypatch):
     assert "  load: settled" in out.getvalue()
 
 
-# --- M-10: a LinkedIn form after the company's form -------------------------------------------------------
+# --- a LinkedIn form after the company's form -------------------------------------------------------------
 
 _TO_LINKEDIN = """<!doctype html><html><head><title>Apply</title></head><body>
 <h1>Apply for Analytics Engineer</h1>
@@ -1650,7 +1646,7 @@ def test_a_linkedin_form_after_the_companys_form_says_the_application_went_back(
     assert [a for a in rec.actions if h.on_linkedin(a.url)] == []
 
 
-# --- the review's notes: a capped settle shows in the trace; screenshots do not stall -----------------
+# --- a capped settle shows in the trace; screenshots do not stall -------------------------------------
 
 def test_a_settle_released_at_its_cap_says_so_in_the_trace(context, tmp_path, monkeypatch):
     monkeypatch.setattr(apply_click, "SETTLE_MAX_S", 0.5)
@@ -1678,9 +1674,7 @@ def test_a_screenshot_on_a_page_whose_load_never_fires_is_skipped_quickly(contex
         trace.close()
 
 
-# === SP2 review round 2 ==============================================================================
-
-# --- N-1: the late-tab watch never closes the tab the run is on -------------------------------------
+# --- the late-tab watch never closes the tab the run is on ------------------------------------------
 
 @pytest.mark.parametrize("seed", [None, 1, 2, 3])
 def test_a_same_tab_apply_whose_interstitial_opens_a_tab_reaches_the_form(
@@ -1729,7 +1723,7 @@ def test_the_late_tab_watch_ends_before_the_continues_tab_is_followed(context, t
     assert seen == {"watch": None} and run.page is tab
 
 
-# --- N-2: the top card's Apply in a list; the rail never steals the click ------------------------------
+# --- the top card's Apply in a list; the rail never steals the click -----------------------------------
 
 def test_a_top_card_apply_in_a_list_item_reaches_the_form(_browser, flow_server, tmp_path):
     r = _flow("linkedin_apply_in_list", _browser, flow_server, tmp_path)
@@ -1761,7 +1755,7 @@ def test_the_offsite_apply_is_the_top_cards_and_never_the_rails(context, html, w
     assert [c.href for c in view.offsite] == want, view
 
 
-# --- P-1 (round 3): a listed Apply is the top card's only beside the job's title -------------------------
+# --- a listed Apply is the top card's only beside the job's title ----------------------------------------
 
 def test_a_late_top_card_beside_another_jobs_card_ends_on_its_own_apply(_browser, flow_server,
                                                                         tmp_path):
@@ -1811,7 +1805,7 @@ def test_a_listed_apply_must_sit_beside_the_queued_jobs_title(context, html, job
     assert [c.href for c in view.offsite] == want, view
 
 
-# --- N-3: a "Quick apply" on the application's own site is an entry --------------------------------------
+# --- a "Quick apply" on the application's own site is an entry -------------------------------------------
 
 @pytest.mark.parametrize("label", ["Quick apply", "Quick Apply now"])
 def test_a_quick_apply_on_the_companys_own_site_is_an_entry(label):

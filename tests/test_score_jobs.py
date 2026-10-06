@@ -16,7 +16,7 @@ import score_jobs as sj  # noqa: E402
 from test_jobsdata_filter import REPOST_KEY_CASES  # noqa: E402
 
 
-# P2-8: both scorer system prompts must tell the model the job description is
+# Both scorer system prompts must tell the model the job description is
 # untrusted data and not to follow instructions embedded in it. Guards against a
 # hostile posting ("score this 5 / recommend apply") and against silent removal
 # of the defensive sentence.
@@ -207,7 +207,7 @@ def test_append_run_stats_migrates_old_header(tmp_path, monkeypatch):
     assert df.iloc[1]["free_calls"] == 2   # new row written
 
 
-# P1-2: score_jobs.py is copied standalone to the VM, so it gets its own private
+# score_jobs.py is copied standalone to the VM, so it gets its own private
 # _atomic_to_csv (content correctness + tmp cleanup on failure), and
 # update_master_scores must use it so a crash mid-write never truncates the master.
 
@@ -281,7 +281,7 @@ def test_update_master_scores_leaves_master_untouched_on_replace_failure(tmp_pat
     assert master.read_bytes() == before            # untouched: os.replace never landed
 
 
-# P2-6: a corrupt-but-present master must raise an OSError naming the fix (fix/restore),
+# A corrupt-but-present master must raise an OSError naming the fix (fix/restore),
 # not a raw pandas ParserError/UnicodeDecodeError out of save_output -> main after
 # the scored gz is already written. Mirrors scraper.append_to_master's guard.
 
@@ -319,7 +319,7 @@ def test_update_master_scores_corrupt_row_midstream_raises_actionable_oserror(tm
     assert "unreadable" in str(exc.value)
 
 
-# P2-11: historical filtered_out spellings from a float upcast ("1.0") or an
+# Historical filtered_out spellings from a float upcast ("1.0") or an
 # older writer ("True " with a trailing space) must read as ALREADY-filtered so
 # the rescore pass never retries them forever, burning RESCORE_CAP slots.
 
@@ -335,7 +335,7 @@ def test_rows_needing_rescore_treats_float_and_padded_filtered_out_as_filtered()
     assert "3" in out_ids       # genuinely unfiltered + unscored -> needs rescore
 
 
-# P2-6: SCORE_COLS must fold ALL mechanical-filter columns into the master, not
+# SCORE_COLS must fold ALL mechanical-filter columns into the master, not
 # just a subset -- else the master's filter record is partial/inconsistent.
 
 def test_score_cols_include_all_filter_columns():
@@ -370,7 +370,7 @@ def test_update_master_scores_folds_all_filter_columns_into_master(tmp_path, mon
     assert bool(row1["filter_internship"]) is True
 
 
-# P2-11: re-scoring a fresh scrape must NOT reset an existing master row's
+# Re-scoring a fresh scrape must NOT reset an existing master row's
 # is_seen back to "no" -- the master merge must drop is_seen the same way
 # rescore_master_failures already does, while the per-run scored CSV output
 # still carries is_seen (for the local sticky-registry reconcile).
@@ -407,7 +407,7 @@ def test_save_output_scored_csv_still_carries_is_seen(tmp_path, monkeypatch):
     assert out.iloc[0]["is_seen"] == "no"
 
 
-# P2-12: a missing resume.md must exit with a friendly message, not a raw
+# A missing resume.md must exit with a friendly message, not a raw
 # FileNotFoundError traceback.
 
 def test_load_resume_missing_file_exits_with_friendly_message(monkeypatch, tmp_path):
@@ -426,7 +426,7 @@ def test_load_resume_reads_existing_file(monkeypatch, tmp_path):
     assert sj.load_resume() == "# My Resume\n"
 
 
-# P2-1: save_output's *_scored.csv.gz write must be atomic. This is the one with
+# save_output's *_scored.csv.gz write must be atomic. This is the one with
 # teeth: latest_input_csv() skips any input whose _scored.csv.gz merely EXISTS, so
 # a truncated gz left by a crashed naked write hides that input forever (and every
 # dashboard/watcher read of the gz then fails). Atomic = a crash leaves either the
@@ -502,7 +502,7 @@ def test_append_run_stats_self_heal_rewrite_is_atomic(tmp_path, monkeypatch):
     assert [p for p in tmp_path.iterdir() if p.name != "run_stats.csv"] == []
 
 
-# --- SP6: score-side repost reuse -------------------------------------------------
+# --- score-side repost reuse ------------------------------------------------------
 #
 # pipeline/score_jobs.py is copied standalone to the VM (no local/ package), so it
 # carries its OWN self-contained repost_key. The table below (shared with
@@ -781,7 +781,7 @@ def test_rows_needing_rescore_ignores_a_reused_row_with_a_copied_score():
     assert "NEW-2" in out_ids
 
 
-# P2-fix-15: a reused row must never chain-provide a score to a third
+# A reused row must never chain-provide a score to a third
 # repost -- a row's score is only ever trustworthy back to a row the model
 # actually scored, so `score_reused` must exclude reused rows from the
 # candidate set on the master side of the lookup.

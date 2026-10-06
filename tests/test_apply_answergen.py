@@ -283,7 +283,7 @@ def test_answer_returns_none_when_the_judge_fails_and_names_only_the_error_type(
     assert "AQ.secret" not in out.note
 
 
-# --- a transient model error: one more draft call (RES-04) -----------------------------
+# --- a transient model error: one more draft call --------------------------------------
 
 def _busy_then(monkeypatch, errors, reply=GROUNDED):
     """`llm.call` raising `errors` in turn, then answering `reply`; the calls."""

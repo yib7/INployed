@@ -1,5 +1,5 @@
-"""SP2: the Qt shell builds with its full tab set, a dark theme, and a
-single-instance lock. (Cycle 33 SP3 grew the set to eight — Auto-apply.)
+"""The Qt shell builds with its full tab set (eight, Auto-apply among them), a
+dark theme, and a single-instance lock.
 
 The bottom block covers the window's outer vertical splitter: opening the
 detail card's description grows the detail pane to ~half the splitter, and
@@ -18,7 +18,7 @@ from qt.main_window import TAB_TITLES, MainWindow
 def test_eight_tabs_with_titles(qtbot):
     w = MainWindow()
     qtbot.addWidget(w)
-    assert w.tab_count() == 8      # cycle 33 SP3 added the Auto-apply tab
+    assert w.tab_count() == 8      # the Auto-apply tab is among them
     assert w.tab_titles() == TAB_TITLES
     assert "Auto-apply" in TAB_TITLES
 
@@ -47,7 +47,7 @@ def test_single_instance_lock(tmp_path):
 
 
 def test_main_exits_silently_when_lock_already_held(monkeypatch):
-    # P2-2: a second instance must exit(0) quietly -- the live instance's own
+    # a second instance must exit(0) quietly -- the live instance's own
     # FS-watcher/poll already picks up new files, so a modal here only interrupts
     # the user for no reason.
     monkeypatch.setattr(qt_app._UILock, "acquire", lambda self: False)
@@ -288,7 +288,7 @@ def test_rendering_a_job_while_expanded_does_not_re_enter_the_resize(qtbot,
     assert win.splitter.sizes() == before
 
 
-# ---- cycle 22: the dashboard sweeps the difficulty check's leftover profile copies ----
+# ---- the dashboard sweeps the difficulty check's leftover profile copies --------------
 
 def test_the_startup_sweep_runs_off_the_ui_thread(monkeypatch):
     import threading

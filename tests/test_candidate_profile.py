@@ -1,6 +1,6 @@
-"""Cycle 21, Task 3: the candidate's school status and clearance, resolved.
+"""The candidate's school status and clearance, resolved.
 
-score_jobs.load_scoring_config() gains four keys (education_status,
+score_jobs.load_scoring_config() reads four keys (education_status,
 graduation_month, clearance_level, clearance_sponsorship) and candidate_profile()
 turns them into one CandidateProfile the prompts, the filters and the Jev scorer
 read. The resolver is pure: every input is an argument that defaults to the module

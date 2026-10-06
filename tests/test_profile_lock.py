@@ -1,4 +1,4 @@
-"""Who holds the auto-apply browser profile (SP6 fix round 1): Chrome's own
+"""Who holds the auto-apply browser profile: Chrome's own
 lock, or the sentinel every browser `apply_run.launch_profile` opens takes.
 No browser starts here: Chrome's lock is simulated and the sentinel is held
 by a second lock handle, as another process would hold it."""

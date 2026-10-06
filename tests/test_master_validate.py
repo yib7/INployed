@@ -95,7 +95,7 @@ def test_check_setup_returns_two_keys():
 
 
 def test_check_setup_reports_a_damaged_answer_store_as_one_problem(tmp_path, monkeypatch):
-    # cycle 18: a damaged store raises AnswerStoreError, with no silent fallback
+    # a damaged store raises AnswerStoreError, with no silent fallback
     # to defaults; Check setup names it once and says how to recover
     from resume_tailor import apply_answers
     store = tmp_path / "apply_answers.json"

@@ -1,12 +1,13 @@
-"""TL-7 to TL-9 as the run meets them: the three Jev options, each off by default.
+"""The three Jev options as the run meets them, each off by default.
 
-  TL-7 best of three   the rephrase writes three drafts of every bullet; the drafts
-                       that pass the grounding gate and TL-4 go to Jev, which keeps
-                       the one that shows the most of what the job asks for.
-  TL-8 letter check    Jev reads each cover-letter sentence against the letter's
-                       sources; a flagged sentence goes to the letter's repair call.
-  TL-9 ATS meaning     Jev reads each ATS keyword against the résumé's text, for a
-                       meaning-level coverage line beside the literal one.
+  best of three   the rephrase writes three drafts of every bullet; the drafts
+                  that pass the grounding gate and the faithfulness check go to
+                  Jev, which keeps the one that shows the most of what the job
+                  asks for.
+  letter check    Jev reads each cover-letter sentence against the letter's
+                  sources; a flagged sentence goes to the letter's repair call.
+  ATS meaning     Jev reads each ATS keyword against the résumé's text, for a
+                  meaning-level coverage line beside the literal one.
 
 Each is read through `config.best_of_n()`, `config.cover_letter_jev_check()` and
 `config.ats_meaning()`, and runs only while Jev is on for the tailor. With an option
@@ -61,9 +62,10 @@ def prompt_assets(monkeypatch):
 
 
 class Judge:
-    """TL-4 as `faith.Flagger` answers it (a bullet opening with one of `prefixes`
-    inflates), and every TL-7 choice picked as `pick` (the first draft when `pick`
-    is not an option). `choice_down` makes every TL-7 request raise."""
+    """The faithfulness check as `faith.Flagger` answers it (a bullet opening with
+    one of `prefixes` inflates), and every best-of-three choice picked as `pick`
+    (the first draft when `pick` is not an option). `choice_down` makes every
+    best-of-three request raise."""
 
     def __init__(self, *prefixes, pick="draft 2", choice_down=False):
         self.flagger = faith.Flagger(*prefixes)
@@ -96,7 +98,7 @@ def _best_of(monkeypatch, drafts, judge):
     return got, logs
 
 
-# ── TL-7: the drafts prompt ───────────────────────────────────────────────────
+# ── best of three: the drafts prompt ──────────────────────────────────────────
 def test_the_drafts_prompt_is_the_rephrase_prompt_with_the_drafts_rule(engine, prompt_assets,
                                                                        monkeypatch):
     rec = faith.Recorder({"bullets": []})
@@ -128,7 +130,7 @@ def test_rephrase_drafts_reads_up_to_three_distinct_texts_per_bullet(engine, pro
     assert got == {"h1": ["a", "b", "c"], "h2": ["x"]}
 
 
-# ── TL-7: the pick ────────────────────────────────────────────────────────────
+# ── best of three: the pick ───────────────────────────────────────────────────
 def test_jev_picks_among_the_drafts_that_pass_the_gate_and_tl4(engine, monkeypatch):
     """h1's first draft inflates and h2's first is ungrounded, so neither goes to
     the pick: h1 has two drafts left, and Jev keeps its second; h2 has one, which
@@ -137,7 +139,7 @@ def test_jev_picks_among_the_drafts_that_pass_the_gate_and_tl4(engine, monkeypat
     got, logs = _best_of(monkeypatch, {"h1": [_H1_LED, _H1, _H1_ALT],
                                        "h2": [_H2_KAFKA, _H2]}, judge)
     assert got == {"h1": _H1_ALT, "h2": _H2}
-    # TL-4 read every grounded draft once, h2's Kafka draft never
+    # the faithfulness check read every grounded draft once, h2's Kafka draft never
     assert judge.faith_requests == [[_H1_LED, _H1, _H1_ALT, _H2]]
     (questions,), = [judge.choice_requests]
     assert questions == {"bullet_0": {
@@ -150,7 +152,8 @@ def test_jev_picks_among_the_drafts_that_pass_the_gate_and_tl4(engine, monkeypat
 def test_with_no_draft_passing_a_grounded_draft_goes_on(engine, monkeypatch):
     """No draft passes both checks: the first draft the grounding gate passes goes on,
     else the rephrase's first draft, which is what the run would have had with the
-    option off. The prologue gate and TL-4 then treat it as they treat any bullet."""
+    option off. The prologue gate and the faithfulness check then treat it as they
+    treat any bullet."""
     judge = Judge("led", "wrote")
     got, _logs = _best_of(monkeypatch, {"h1": [_H1_LED], "h2": [_H2_KAFKA, _H2]}, judge)
     assert got == {"h1": _H1_LED, "h2": _H2}
@@ -173,8 +176,8 @@ def test_a_pick_that_fails_keeps_the_first_passing_draft(engine, monkeypatch):
 
 
 def test_a_tl4_check_that_cannot_run_leaves_the_gate_alone(engine, monkeypatch):
-    """TL-4 down: every grounded draft passes, as every bullet does when the gate
-    stands alone, and the pick still runs."""
+    """The faithfulness check down: every grounded draft passes, as every bullet does
+    when the gate stands alone, and the pick still runs."""
     class FaithDown(Judge):
         def judge(self, state, questions):
             if "bullets" in state:
@@ -200,7 +203,7 @@ def test_the_pick_is_always_one_of_the_rephrases_drafts(engine, monkeypatch):
     assert got["h1"] in (_H1, _H1_ALT)
 
 
-# ── TL-7 in the whole run ─────────────────────────────────────────────────────
+# ── best of three in the whole run ────────────────────────────────────────────
 def _drafts_asked(calls):
     return [c for c in calls if c["stage"] == "rephrase"
             and compose.REPHRASE_DRAFTS_SHAPE in c["user"]]
@@ -233,7 +236,7 @@ def test_with_jev_off_the_option_asks_for_no_drafts(pinned_engine, stub_template
 
 def test_with_the_breaker_open_the_run_asks_for_one_draft(pinned_engine, stub_template_head,
                                                          tmp_path, monkeypatch):
-    """JS-3: one outage moves the rest of the run to the LLM path. The breaker opens
+    """One outage moves the rest of the run to the LLM path. The breaker opens
     at the first Jev step, before the rephrase, so drafts nothing could judge are
     never paid for: with all three options on, every call and pinned prompt is the
     Jev-off recording's, the rephrase prompt among them."""
@@ -256,7 +259,7 @@ def test_the_option_getters_default_off(monkeypatch):
         False, False, False)
 
 
-# ── TL-8: the cover letter check ──────────────────────────────────────────────
+# ── the cover letter check ────────────────────────────────────────────────────
 _BULLETS = {"a1": "Wrote SQL reports on warehouse sales data."}
 _BACKGROUND = "- Acme Data, Analyst Intern\n    - wrote SQL reports on warehouse sales data"
 _SEED = "I want work where the data is the product."
@@ -290,7 +293,7 @@ class LetterCalls:
 
 
 class ClaimReader:
-    """A TL-8 judge: a sentence holding one of `words` claims more than its sources
+    """A letter-check judge: a sentence holding one of `words` claims more than its sources
     (0.9); every other sentence passes. Keeps each request's state."""
 
     def __init__(self, *words, down=False):
@@ -376,8 +379,8 @@ def test_the_gate_and_the_check_share_one_repair_and_the_gate_decides(letter):
 
 
 def test_a_repair_with_no_claim_is_todays_prompt(letter):
-    """The gate alone found something: the repair prompt is byte for byte what it
-    was before TL-8, check on or off."""
+    """The gate alone found something: the repair prompt carries no claims note
+    and is byte for byte the same, check on or off."""
     letter.unseen[_BODY] = ["Kubernetes"]
     letter.generate()
     today = letter.calls.repair_user()
@@ -407,7 +410,7 @@ def style_gate(letter, monkeypatch):
 
 def test_a_repair_the_check_drove_goes_back_through_the_style_gate(letter, style_gate):
     """The repair call writes new letter text after the style gate ran, so a repair
-    TL-8 asked for goes through the gate again, and its em dash never prints."""
+    the letter check asked for goes through the gate again, and its em dash never prints."""
     body = letter.generate(judge=ClaimReader("led"))
     assert style_gate == [_BODY, _DASHED]
     assert body == compose._strip_em_dashes(_DASHED) and chr(0x2014) not in body
@@ -451,7 +454,7 @@ def test_the_claims_note_is_free_of_the_banned_phrasing():
     assert compose.style_violations(note) == [] and chr(0x2014) not in note
 
 
-# ── TL-8 in the run ───────────────────────────────────────────────────────────
+# ── the cover letter check in the run ─────────────────────────────────────────
 def _letter_run(monkeypatch, tmp_path, option):
     """The golden run with a cover letter: the body call is captured and the render
     fails (an advisory), so the run reaches the letter and goes on."""
@@ -524,7 +527,7 @@ def test_the_standalone_letter_builds_a_judge_only_with_the_option(tmp_path, mon
     assert any(line.startswith("jev letter check:") for line in logs) == (option == "1")
 
 
-# ── TL-9: the ATS meaning line ────────────────────────────────────────────────
+# ── the ATS meaning line ──────────────────────────────────────────────────────
 _KEYWORDS = ["python", "dashboards", "etl", "kubernetes"]
 _PAGE = "Built Python services and sales dashboarding views. Loaded warehouse data nightly."
 

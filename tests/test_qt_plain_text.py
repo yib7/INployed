@@ -1,10 +1,10 @@
 """Scraped and page text shows as written in the dashboard, never as HTML.
 
-Finding 4-C4: Qt labels, message boxes and tooltips guess a string's format,
-so a parked question, a form's help text or a company name that starts like a
-tag rendered as HTML, and an `<img src=...>` there loaded a file with no click
-(the probe saw sizeHint jump from 240x40 to 3852x2427). Every label is now plain
-text from birth, a label that shows composed markup sets RichText itself and
+Qt labels, message boxes and tooltips guess a string's format, so a parked
+question, a form's help text or a company name that starts like a tag would
+render as HTML, and an `<img src=...>` there would load a file with no click (a
+probe saw sizeHint jump from 240x40 to 3852x2427). Every label is plain text
+from birth, a label that shows composed markup sets RichText itself and
 escapes what it inserts, and message box and tooltip text goes through
 `plaintext.literal`.
 """

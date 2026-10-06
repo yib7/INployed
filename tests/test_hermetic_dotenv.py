@@ -85,7 +85,7 @@ def test_the_dirt_does_not_reach_the_next_test():
     assert "RESUME_TAILOR_GEMINI_AUTH" not in os.environ
 
 
-# -- the judge's key (C review M6) --------------------------------------------
+# -- the judge's key ----------------------------------------------------------
 
 _JUDGE_KEY = "TYPESAFE_API_KEY"
 _JUDGE_KEY_CANARY = "INPLOYED_JUDGE_KEY_CANARY"
@@ -105,7 +105,7 @@ def test_the_judge_key_reaches_only_a_recording_run():
 
 
 def test_the_scorer_switch_never_reaches_a_test():
-    """SCORE_USE_JEV beats the dashboard config (JS-4), so a shell export would
+    """SCORE_USE_JEV beats the dashboard config, so a shell export would
     turn Jev scoring on for every test that asks `jev_score.use_jev()`. The
     outer test below starts this one in a fresh pytest with the switch set."""
     assert os.environ.get("SCORE_USE_JEV") is None

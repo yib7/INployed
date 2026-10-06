@@ -1,4 +1,4 @@
-"""SP8a: the auto-apply run's resilience (the offline half of SP8).
+"""The auto-apply run's resilience, the parts tested offline.
 
 - Chrome's own error page (`chrome-error://chromewebdata/`, a load the
   network dropped) reads as a failed load: one retry of a GET on the allowed
@@ -194,7 +194,7 @@ def test_after_the_send_a_post_the_network_dropped_is_never_sent_again(
                                             ("namenotresolved", "ERR_NAME_NOT_RESOLVED")])
 def test_a_send_that_never_made_its_connection_parks_as_nothing_sent(
         _browser, flow_server, tmp_path, error, failure):
-    # SP8a review M7: a refused connection or a name that did not resolve
+    # a refused connection or a name that did not resolve
     # means nothing left the machine: the job is never "submitted
     # (unconfirmed)", and the POST is still never sent again
     posts: list[str] = []
@@ -243,7 +243,7 @@ _GET_FORM = """<!doctype html><html><head><title>Apply for Analytics Engineer</t
 
 def test_after_the_send_the_get_that_carried_it_is_never_loaded_again_when_a_post_went_first(
         _browser, flow_server, tmp_path):
-    # SP8a review M6: every request the submit click caused counts as the
+    # every request the submit click caused counts as the
     # send, the draft's POST before it too
     send = _drop_first("connectionreset", body=h.CONFIRMATION_HTML)
     saves: list[str] = []
@@ -277,7 +277,7 @@ _SPA_FORM = """<!doctype html><html><head><title>Apply for Analytics Engineer</t
 
 def test_after_a_fetch_send_the_thank_you_page_the_script_led_to_is_never_loaded_again(
         _browser, flow_server, tmp_path):
-    # SP8a review R3-I1: every GET up to the click's first navigation may be
+    # every GET up to the click's first navigation may be
     # the send, so the thank-you page a script loads after the fetch is never
     # loaded again (the network cannot tell it from a script GET send after
     # a draft's save): the job ends "submitted (unconfirmed)", sent once
@@ -314,7 +314,7 @@ _DRAFT_FORM = """<!doctype html><html><head><title>Apply for Analytics Engineer<
 
 def test_a_script_get_send_after_a_draft_save_that_came_back_is_never_loaded_again(
         _browser, flow_server, tmp_path):
-    # SP8a review R3-I1: the draft's POST to the application's host came back
+    # the draft's POST to the application's host came back
     # before the GET, which is still the click's own first navigation
     saves: list[str] = []
     send = _drop_first("connectionreset", body=h.CONFIRMATION_HTML)
@@ -343,7 +343,7 @@ _INTERSTITIAL = """<!doctype html><html><head><title>One moment</title></head><b
 
 def test_a_script_get_send_from_the_page_a_post_led_to_is_never_loaded_again(
         _browser, flow_server, tmp_path):
-    # SP8a review R4-M1: after the click's first navigation a GET is loaded
+    # after the click's first navigation a GET is loaded
     # again only when an HTTP redirect from the send led to it, or when its
     # address has no query; a GET send carries the answers in its query
     posts: list[str] = []
@@ -375,7 +375,7 @@ def closed_port():
 
 def test_after_a_post_send_the_page_its_http_redirect_led_to_is_loaded_again(
         _browser, flow_server, tmp_path, closed_port):
-    # SP8a review R4-M1: the POST's answer is a 303 to a thank-you address
+    # the POST's answer is a 303 to a thank-you address
     # with a query. The routes never see a redirect their own answer made, so
     # the redirected load goes to a closed local port and fails; the retry
     # is a new load, which the routes answer
@@ -426,7 +426,7 @@ _BEACON_FORM = """<!doctype html><html><head><title>Apply for Analytics Engineer
 
 def test_a_script_get_send_after_a_beacon_is_never_loaded_again(
         _browser, flow_server, tmp_path):
-    # SP8a review R2-M4 addition and R3-I1: the GET is the click's own first
+    # the GET is the click's own first
     # navigation, so it may be the send, a beacon that came back before it or not
     beacons: list[str] = []
     send = _drop_first("connectionreset", body=h.CONFIRMATION_HTML)
@@ -445,7 +445,7 @@ def test_a_script_get_send_after_a_beacon_is_never_loaded_again(
 
 
 def test_a_get_after_the_clicks_navigation_is_loaded_again_only_when_the_sends_answer_led_to_it():
-    # SP8a review R2-M4 addition, R3-I1 and R4-M1: `led_on` decides only for
+    # `led_on` decides only for
     # a GET after the click's first navigation (`caused` holds a POST form's
     # own navigation here): an HTTP redirect from a send that came back, or
     # an address with no query after one came back; the click's own rows
@@ -482,7 +482,7 @@ def test_a_get_after_the_clicks_navigation_is_loaded_again_only_when_the_sends_a
 
 
 def test_an_answer_counts_only_for_a_request_the_watch_holds():
-    # SP8a review R3-M2: the context reports every tab's answers; the id of a
+    # the context reports every tab's answers; the id of a
     # request the watch does not hold may be reused by a later one
     from unittest.mock import Mock
 
@@ -500,7 +500,7 @@ def test_an_answer_counts_only_for_a_request_the_watch_holds():
     assert watch.answered == {id(held)}
 
 
-# --- a malformed queue entry (RES-09)-------------------------------------------------------
+# --- a malformed queue entry --------------------------------------------------------------
 
 def _queue(tmp_path, *entries):
     """A queue file holding `entries` as written, hand-edited ones included."""
@@ -592,7 +592,7 @@ _SET_UP_ERROR = "the set-up broke at /private/queue/path"
 
 def test_a_job_that_cannot_be_set_up_logs_its_frames_and_retries_its_queue_write(
         _browser, tmp_path, monkeypatch, caplog):
-    # SP8a review M10, M11: the frames and never the message, and the one
+    # the frames and never the message, and the one
     # retrying queue write
     import logging
 
@@ -642,7 +642,7 @@ def test_a_malformed_entry_is_a_dead_end_inside_the_policy():
     ({"attempts": "twice"}, "attempts must be a number"),
 ])
 def test_a_malformed_entry_names_what_each_value_must_be(entry, problem):
-    # SP8a review M14: what the value must be, and its type, with no
+    # what the value must be, and its type, with no
     # contrast framing
     import apply_run
     assert apply_run.entry_problem(entry) == problem
@@ -650,7 +650,7 @@ def test_a_malformed_entry_names_what_each_value_must_be(entry, problem):
 
 @pytest.mark.parametrize("after", ["submit click", "code step"])
 def test_a_judge_down_after_a_possible_send_is_a_dead_end_inside_the_policy(after):
-    """RES-02's one park: the judge stays down once something may have been
+    """The outage's one park: the judge stays down once something may have been
     sent, so the job is never re-queued (at most one send per job). Any
     other stop after the submit click stays outside the policy, and the
     re-queue before a send is no park at all."""
@@ -663,7 +663,7 @@ def test_a_judge_down_after_a_possible_send_is_a_dead_end_inside_the_policy(afte
     assert h.policy_park("queued", f"{down}; {apply_run.REQUEUED_NOTE}") is False
 
 
-# --- an unexpected error's reason (RES-05) -----------------------------------------------------
+# --- an unexpected error's reason ----------------------------------------------------------------
 
 _CALL_LOG = ("Locator.fill: Timeout 5000ms exceeded.\nCall log:\n  - waiting for "
              "locator(\"#first_name\")\n  - fill(\"Jane Doe\") on <input id=first_name>")
@@ -691,7 +691,7 @@ def test_an_unexpected_error_names_its_type_and_step_and_never_its_message(
     assert "Jane Doe" not in log and "Call log" not in log
 
 
-# --- the judge request's size (RES-03) ----------------------------------------------------------
+# --- the judge request's size -------------------------------------------------------------------
 
 _COUNTRIES = [f"Country number {i} of the long list" for i in range(40)]
 
@@ -787,7 +787,7 @@ def test_the_run_maps_a_long_form_in_parts_and_plans_every_field(tmp_path):
 
 
 def test_the_module_docstring_names_the_wall_clock_by_its_constant():
-    # RES-08: the docstring once said eight minutes while the constant said 15
+    # the docstring names the wall clock by its constant, so the two agree
     import re
 
     import apply_run
@@ -798,7 +798,7 @@ def test_the_module_docstring_names_the_wall_clock_by_its_constant():
     assert apply_limits.JOB_WALL_CLOCK_S == 15 * 60
 
 
-# --- the judge's outage (RES-02) ---------------------------------------------------------------
+# --- the judge's outage ------------------------------------------------------------------------
 
 class _Busy(Exception):
     """A service error the way the TypeSafe SDK raises one: `status`, and
@@ -857,7 +857,7 @@ def test_a_judge_that_stays_down_opens_the_breaker_and_later_requests_fail_at_on
 
 
 def test_a_refused_key_or_a_long_retry_after_opens_the_breaker_without_a_wait():
-    # C review M5: a retired or renamed model (404, 410) is refused like a key
+    # a retired or renamed model (404, 410) is refused like a key
     for error in (_Busy(401), _Busy(403), _Busy(404), _Busy(410),
                   _Busy(429, retry_after_ms=600_000)):
         sleeps: list[float] = []
@@ -878,7 +878,7 @@ def test_a_request_the_service_rejects_passes_through_without_a_retry():
 
 
 def test_the_guard_counts_the_requests_the_judge_answered():
-    # SP8a review R2-I1: an outage counts toward a job's cap only after the
+    # an outage counts toward a job's cap only after the
     # judge answered in the drain, so the guard keeps the count
     guarded = jev.Guarded(_Flaky([_Busy(503)], inner=_Answers()), sleep=lambda s: None)
     assert guarded.answers == 0
@@ -899,7 +899,7 @@ def test_the_guard_counts_the_requests_the_judge_answered():
     ([_Busy(409)] * 4, False), ([_Busy(500, retry_after_ms=600_000)], False),
     ([_Busy(529), _Busy(500), _Busy(500), _Busy(500)], False), ([_Busy(401)], False)])
 def test_only_an_error_a_request_can_cause_is_the_requests_fault(errors, fault):
-    # SP8a review R3-M1 and R4-M2: a 5xx other than 503 and 529 or a timeout
+    # a 5xx other than 503 and 529 or a timeout
     # on every try; never a busy or overloaded service, a dropped connection
     # (most often the network's), a long Retry-After or a refused key
     guarded = jev.Guarded(_Flaky(errors), sleep=lambda s: None)
@@ -995,7 +995,7 @@ def test_a_judge_that_stays_down_hands_the_job_back_and_stops_the_drain(
     assert (a["status"], a["attempts"], a["claimed_by"], a["started_at"]) == ("queued", 0, "", "")
     assert a["notes"] == reason
     # the judge answered nothing in the drain: a global outage, no job's
-    # doing, counts toward no cap, and the job goes behind the next (R2-I1)
+    # doing, counts toward no cap, and the job goes behind the next
     assert a.get("outages", 0) == 0
     assert (b["status"], b["attempts"]) == ("queued", 0)
     assert a["queued_at"] >= b["queued_at"]
@@ -1011,9 +1011,9 @@ def test_a_judge_that_stays_down_hands_the_job_back_and_stops_the_drain(
 @pytest.mark.parametrize("status", [401, 404])
 def test_a_refused_key_hands_the_job_back_with_its_attempt_counted(
         _browser, flow_server, tmp_path, status):
-    # SP8a review M1: only an error the service may get over gives the attempt
+    # only an error the service may get over gives the attempt
     # back; a refused key is no outage of this job's, so none is counted.
-    # C review M5: a retired model (404) stops the drain the same way, so it
+    # a retired model (404) stops the drain the same way, so it
     # never fails every job in the batch
     import apply_run
     sleeps: list[float] = []
@@ -1030,7 +1030,7 @@ def test_a_refused_key_hands_the_job_back_with_its_attempt_counted(
 class _DownFor:
     """The fake judge, except that a request about a job of `companies`
     fails with `status` (a 500 by default, a failure that job's own request
-    causes, SP8a review R3-M1), or with what `error` makes."""
+    causes), or with what `error` makes."""
 
     def __init__(self, companies, status: int = 500, error=None):
         self.companies = set(companies)
@@ -1046,7 +1046,7 @@ class _DownFor:
 
 def test_a_judge_down_for_every_job_parks_none_and_the_queue_turns(
         _browser, flow_server, tmp_path):
-    # SP8a review R2-I1: a long outage for everyone is no job's doing: drain
+    # a long outage for everyone is no job's doing: drain
     # after drain each job goes back with nothing counted, behind the next
     sleeps: list[float] = []
     runs, jobs, _ = _two_jobs([_Flaky([_Busy(529)] * 20) for _ in range(4)], _browser,
@@ -1060,7 +1060,7 @@ def test_a_judge_down_for_every_job_parks_none_and_the_queue_turns(
 
 def test_a_job_whose_own_request_downs_the_judge_twice_parks_and_the_queue_moves_on(
         _browser, flow_server, tmp_path):
-    # SP8a review M1 and R2-I1: the judge answers the other jobs and fails on
+    # the judge answers the other jobs and fails on
     # this one's request in two drains: it parks at the cap; without the cap
     # it would stop every drain once it reached the queue's head
     import apply_run
@@ -1089,7 +1089,7 @@ def test_a_job_whose_own_request_downs_the_judge_twice_parks_and_the_queue_moves
                          ids=["529", "503", "429", "dropped"])
 def test_a_busy_service_or_a_dropped_connection_under_the_same_job_twice_never_parks_it(
         _browser, flow_server, tmp_path, error):
-    # SP8a review R3-M1 and R4-M2: a busy or overloaded service, or a
+    # a busy or overloaded service, or a
     # network that drops the connection, is no request's doing, even when the
     # judge answered the other jobs: the job goes back each time with no
     # outage counted
@@ -1107,7 +1107,7 @@ def test_a_busy_service_or_a_dropped_connection_under_the_same_job_twice_never_p
 
 
 def test_the_harness_accepts_a_cap_park_only_for_a_requests_error_after_an_answer():
-    # SP8a review R2-I1 and R3-M1: the cap's park is a dead end only after
+    # the cap's park is a dead end only after
     # the judge answered in the drain, and only for an error a request can
     # cause; a park in a global outage or a busy service is outside the policy
     import apply_run
@@ -1123,14 +1123,14 @@ def test_the_harness_accepts_a_cap_park_only_for_a_requests_error_after_an_answe
     assert cap("_Busy 408") is True and cap("TimeoutError") is True
     for status in (529, 503, 429, 409, 425):
         assert cap(f"_Busy {status}") is False, status
-    # R4-M2: a dropped connection is most often the network's
+    # a dropped connection is most often the network's
     for kind in ("ConnectionError", "ConnectionResetError", "BrokenPipeError"):
         assert cap(kind) is False, kind
 
 
 def test_a_request_the_judge_rejects_ends_that_job_and_the_drain_goes_on(
         _browser, flow_server, tmp_path):
-    # SP8a review M1: a 400 (or a request too large for the service) is the
+    # a 400 (or a request too large for the service) is the
     # request's own fault: that job fails with the status named, the next runs
     sleeps: list[float] = []
     (outcomes,), jobs, _ = _two_jobs([_Flaky([_Busy(400)])], _browser, flow_server,
@@ -1191,8 +1191,8 @@ def _down(*a, **k):
 
 @pytest.mark.parametrize("step", ["login", "fill"])
 def test_an_outage_inside_the_account_step_reaches_the_run(step, monkeypatch):
-    """The account step's catch-all (ACC-10) lets a judge outage through to
-    the run's breaker (RES-02); it is never noted as the step's own error."""
+    """The account step's catch-all lets a judge outage through to the
+    run's breaker; it is never noted as the step's own error."""
     import apply_run
     import apply_account_flow
     from apply_form import Field, FormDigest
@@ -1217,7 +1217,7 @@ def test_an_outage_inside_the_account_step_reaches_the_run(step, monkeypatch):
     assert run.errors == [] and accounts.last_error == ""
 
 
-# --- a tab the site closes (RES-06), one tab per job (RES-07) ---------------------------------
+# --- a tab the site closes, one tab per job ---------------------------------------------------
 
 _CAREERS = "https://careers.fabrikam.example"
 _FORMS = REPO / "tests" / "fixtures" / "forms"
@@ -1415,7 +1415,7 @@ class _Held:
 
 
 def test_a_left_tab_whose_clock_or_relative_time_ticks_has_not_moved_on(_browser):
-    # SP8a review M3: the print leaves out what changes while a page stands
+    # the print leaves out what changes while a page stands
     # still (`_VOLATILE_TEXT`), and keeps a step marker and the words
     import apply_page
     page = _browser.new_page()
@@ -1435,7 +1435,7 @@ def test_a_left_tab_whose_clock_or_relative_time_ticks_has_not_moved_on(_browser
 
 
 def test_a_linkedin_tab_is_never_taken_over_as_the_flow(tmp_path, monkeypatch):
-    # SP8a review M4: LinkedIn is an allowed site, and never the company's flow
+    # LinkedIn is an allowed site, and never the company's flow
     import apply_page
     import apply_limits
     monkeypatch.setattr(apply_limits, "TAKEOVER_WAIT_S", 0)
@@ -1453,7 +1453,7 @@ _RESET = "net::ERR_CONNECTION_RESET"
 
 
 def test_a_new_tabs_failed_first_load_is_taken_by_its_own_tab_whatever_else_is_held(tmp_path):
-    # SP8a review M5 and R2-M3: a new tab's first load names no tab when it
+    # a new tab's first load names no tab when it
     # fails; by the error page its tab is known, so the load is tied to it,
     # a closed tab's is dropped, another tab's goes to that tab, and a load
     # still tied to no tab stays held and is never taken
@@ -1482,7 +1482,7 @@ def test_a_new_tabs_failed_first_load_is_taken_by_its_own_tab_whatever_else_is_h
 
 
 def test_a_held_first_load_tied_to_no_tab_is_never_taken(tmp_path):
-    # SP8a review R2-M3: once the error tab is known a load still tied to no
+    # once the error tab is known a load still tied to no
     # tab is another tab's (one that closed before it was reported): taking
     # it would load a stale address in this tab
     import apply_run
@@ -1496,7 +1496,7 @@ def test_a_held_first_load_tied_to_no_tab_is_never_taken(tmp_path):
 
 def test_a_popup_that_failed_and_closed_earlier_never_hides_the_next_tabs_load(
         _browser, flow_server, tmp_path, monkeypatch):
-    # SP8a review R2-M3: a tracker's window whose first load failed and that
+    # a tracker's window whose first load failed and that
     # closed at once is held beside the Apply tab's own dropped first load;
     # the Apply tab's load is still the one loaded again
     import apply_run
@@ -1521,7 +1521,7 @@ def test_a_popup_that_failed_and_closed_earlier_never_hides_the_next_tabs_load(
     assert drop.seen == ["GET", "GET"]
 
 
-# --- the judge down once something may have been sent (RES-02, SP8a review I1) ---------------
+# --- the judge down once something may have been sent ----------------------------------------
 
 class _GoesDown(jev.FakeJev):
     """The fake judge until `off` is set, then a service that stays down (a
@@ -1626,7 +1626,7 @@ def test_a_judge_down_after_the_submit_sent_ends_the_job_submitted_unconfirmed(
 
 def test_a_judge_down_at_the_first_look_after_the_submit_still_reads_the_confirmation(
         _browser, tmp_path, monkeypatch):
-    # SP8a review M8: received words the page did not show before the click
+    # received words the page did not show before the click
     # need no judge
     posts: list[str] = []
     judge = _GoesDown()
@@ -1677,7 +1677,7 @@ def test_a_judge_down_after_the_code_step_of_a_filled_application_asks_the_perso
     assert outcomes[0].status == "needs_human", outcomes
     assert reason.startswith(f"{apply_run.CHECK_SENT_REASON}: the run stopped after the code "
                              f"step ({apply_run.JUDGE_DOWN_REASON}: _Busy 529 at "), reason
-    # final review A R2-M5: no request watch runs before the submit gate, so
+    # no request watch runs before the submit gate, so
     # the reason never says nothing was seen leaving
     assert reason.endswith("; the run was not watching requests at this step"), reason
     assert h.policy_park(outcomes[0].status, reason) is True
@@ -1685,7 +1685,7 @@ def test_a_judge_down_after_the_code_step_of_a_filled_application_asks_the_perso
 
 def test_a_code_step_click_whose_tab_closes_is_never_taken_over_or_handed_back(
         _browser, tmp_path, monkeypatch):
-    # final review A-I1: the code step's click after the application's
+    # the code step's click after the application's
     # answers may send what the site held for the code. The job's tab closes
     # inside the click, with the tab that opened it moved on to the form: the
     # person checks the job, which is never re-queued or taken over, and the
@@ -1727,7 +1727,7 @@ _ACCOUNT_CODE = (_FORMS / "verify_email_code.html").read_text(encoding="utf-8").
 def test_a_judge_down_after_an_account_code_hands_the_job_back_to_the_queue(
         _browser, tmp_path, monkeypatch):
     # the account's own code, before any of the application's answers went
-    # on a page, sends nothing of the application (SP8a review M9)
+    # on a page, sends nothing of the application
     import apply_run
     posts: list[str] = []
     judge = _GoesDown()

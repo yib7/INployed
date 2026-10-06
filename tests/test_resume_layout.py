@@ -291,10 +291,10 @@ def test_enforce_fixed_counts_fallback_to_default_line_targets(monkeypatch):
 
 
 def test_length_hint_has_floor_and_ceiling():
-    """A3: the hint carries a soft floor (>=90% single-line, >=75% of the last line of
-    a multi-line bullet) plus a hard ceiling. SP3: the ceiling is measure.char_budget —
-    the real MEASURED capacity of that many printed lines, not target_lines * a flat
-    chars-per-line, which overshot what fits (measure.char_budget explains why)."""
+    """The hint carries a soft floor (>=90% single-line, >=75% of the last line of
+    a multi-line bullet) plus a hard ceiling. The ceiling is measure.char_budget —
+    the real MEASURED capacity of that many printed lines; target_lines * a flat
+    chars-per-line overshoots what fits (measure.char_budget explains why)."""
     cap1, cap2 = measure.char_budget(1), measure.char_budget(2)
     h1 = compose._length_hint(1)
     assert str(cap1) in h1                          # ceiling = one line's real capacity
@@ -345,7 +345,7 @@ def test_skill_targets_methods_default_is_seven():
 
 
 def test_complete_to_count_keeps_model_order_then_completes_from_pool():
-    """SP1: the model's relevance order leads; the pool completes up to the target."""
+    """The model's relevance order leads; the pool completes up to the target."""
     pool = ["Python", "SQL", "C", "Java", "R", "Go", "Rust", "Kotlin"]
     assert compose._complete_to_count("Go, Python", pool, 5) == [
         "Go", "Python", "SQL", "C", "Java"]                # model 2 first, then pool order
@@ -374,8 +374,8 @@ def test_complete_to_count_preserves_merged_token_and_skips_its_components():
     assert out == ["Gemini/OpenAI/Claude API", "Git", "Docker"]   # components skipped
 
 
-# --- SP7: anchor picked tokens to the line's own pool (select, never invent) -----
-# The model's picked tokens are no longer kept verbatim: a token is kept only if it is
+# --- anchor picked tokens to the line's own pool (select, never invent) ----------
+# The model's picked tokens are never kept verbatim: a token is kept only if it is
 # anchored to THIS line's pool. A bare token / '(conceptual)' qualifier must trace to a
 # pool skill; a MERGED token ('/'-join or an 'X (a, b, c)' paren list) survives only
 # when EVERY member it names anchors (the umbrella label is packaging, not a member).
@@ -491,10 +491,10 @@ def test_complete_to_count_topup_pool_order_when_jd_matches_nothing(monkeypatch)
 
 
 def test_finalize_skill_lines_drops_bottom_to_fit_one_line(monkeypatch):
-    """SP1 + width measurement: when the chosen items overflow one printed line (by real
+    """Width measurement: when the chosen items overflow one printed line (by real
     rendered glyph width, not char count), the least-relevant tail is dropped until they
     fit — never padded, never wrapped."""
-    # Languages pool holds exactly the fed tokens so all four ANCHOR (SP7) -- this test
+    # Languages pool holds exactly the fed tokens so all four ANCHOR; this test
     # isolates the width TRIM, not the anchor gate; empty pools elsewhere stay empty.
     monkeypatch.setattr(skills, "_skill_pools", lambda: {
         "Languages": ["Python", "SQL", "JavaScript", "TypeScript"],
@@ -627,7 +627,7 @@ def test_word_trim_still_takes_a_clause_cut_near_the_budget():
 def test_word_trim_never_introduces_a_style_violation():
     """A trim can only REMOVE text, so it cannot un-fix what the style gate fixed.
 
-    This is what makes `retrim=True` on the style-gate pass safe (SP2): the
+    This is what makes `retrim=True` on the style-gate pass safe: the
     re-trim runs after the last repair and no later pass re-checks the phrasing,
     so a trim that could manufacture a banned pattern would ship one. It cannot —
     `_word_trim` returns a prefix aligned to a word boundary, and none of
@@ -726,11 +726,11 @@ def test_trim_to_caps_never_trims_verbatim(monkeypatch):
 
 def test_style_gate_retrims_a_repair_that_overshoots_its_line_budget(
         master_tmp, monkeypatch):
-    """SP2(a): the style gate is the LAST bullet pass, and its repair REWRITES the
-    bullet. The prompt asks the model to stay within `max_chars`, but nothing
-    verified that, and `compile.enforce_one_page` downstream only drops whole
-    bullets — it never re-trims text. So a repair that came back longer than the
-    text it replaced shipped over its line budget and silently wrapped onto an
+    """The style gate is the LAST bullet pass, and its repair REWRITES the
+    bullet. The prompt asks the model to stay within `max_chars`, which nothing
+    else verifies, and `compile.enforce_one_page` downstream only drops whole
+    bullets — it never re-trims text. So a repair that comes back longer than the
+    text it replaced would ship over its line budget and silently wrap onto an
     extra line. `Pass("style gate", ..., retrim=True)` closes that.
 
     Driven through the real driver and the real `Pass` object rather than by
@@ -966,7 +966,7 @@ def test_compile_tex_suppresses_console_window(tmp_path, monkeypatch):
 
 def test_compile_tex_passes_timeout_180(tmp_path, monkeypatch):
     """compile_tex must bound the pdflatex subprocess so a stuck MiKTeX package-install
-    prompt cannot block the tailor thread forever (P1-5)."""
+    prompt cannot block the tailor thread forever."""
     from types import SimpleNamespace
 
     from resume_tailor import compile as rt_compile

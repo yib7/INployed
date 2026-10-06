@@ -183,7 +183,7 @@ def test_tone_and_research_are_passed_through(offline_cover):
     run_mod.generate_cover_letter(_JOB, out_dir, tone="enthusiastic")
     assert rec["tone"] == "enthusiastic"
     assert rec["research_text"] == "a company blurb"
-    # cycle 15: the background block and the voice seed ride along, built from
+    # the background block and the voice seed ride along, built from
     # the fixture's synthetic master (the shape is pinned in
     # tests/test_coverletter_inputs.py)
     assert "built the pipeline" in rec["background"]

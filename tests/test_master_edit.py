@@ -187,7 +187,7 @@ def test_edit_ops_raise_on_bad_target(master, op, args):
         getattr(master_edit, op)(*args)
 
 
-# --- P1-9: master_edit's cache-clear must also cover the two alias functions, or a
+# --- master_edit's cache-clear must also cover the two alias functions, or a
 # restore_bytes (the dashboard's "revert to opening state") keeps serving stale alias
 # groups to the ATS layer / Methods line until an app restart ------------------------
 
@@ -259,7 +259,7 @@ def test_validation_raises(master, section, data, msg):
         master_edit.append_entry(section, data)
 
 
-# --- SP5 (ED-10): entry_problems is the pure, ALL-problems form of the same
+# --- entry_problems is the pure, ALL-problems form of the same
 # checks, so the add-entry dialog can list every problem inline instead of only
 # the first one `_validate` raises on. -----------------------------------------
 
@@ -290,10 +290,9 @@ def test_validate_still_raises_on_the_first_problem_only():
         master_edit._validate("projects", {"name": "", "dates": ""})
 
 
-# --- cycle 18 gap: atom_problems is entry_problems' twin for a single achievement
-# added through add_atom, so the add-atom dialog can list every problem inline (and
-# add_atom itself refuses to write one) instead of the dialog's old one-shot "what
-# + angle" check that only ran once, on submit, and never caught an em dash. -------
+# --- atom_problems is entry_problems' twin for a single achievement added
+# through add_atom, so the add-atom dialog can list every problem inline, an em
+# dash included, and add_atom itself refuses to write one. ----------------------
 
 def test_atom_problems_empty_for_a_valid_atom(master):
     import yaml
@@ -348,7 +347,7 @@ def test_add_atom_rejects_an_em_dash(master):
     assert master.read_bytes() == before
 
 
-# --- I6 (final review): a broken master's YAMLError must escape as a ValueError
+# --- a broken master's YAMLError must escape as a ValueError
 # carrying the line and column, so the Qt editor's existing
 # `except (ValueError, OSError)` handlers catch it and keep what the user
 # typed, where a bare ruamel.yaml.YAMLError would fall through every one of

@@ -96,8 +96,8 @@ def _section_title(key):
 
 
 def test_engine_problems_name_the_section_each_fix_lives_in(monkeypatch):
-    """SP1 review E: the Settings tab titles the Engine section "Résumé
-    tailor", so an [Engine] line named a section the user cannot find. Each
+    """The Settings tab titles the Engine section "Résumé tailor", so an
+    [Engine] line naming "Engine" names a section the user cannot find. Each
     line carries the title of the section holding the setting it names: the
     tailor's billing and provider, and the scoring provider under Scoring."""
     _stub_config(monkeypatch, {"gemini_auth": "api_key"}, {})
@@ -171,7 +171,7 @@ def test_job_data_problems_never_invents_a_problem(monkeypatch):
     assert setup_check.job_data_problems() == []
 
 
-# --- auto_apply_warnings truth table (cycle 16) ---------------------------------
+# --- auto_apply_warnings truth table --------------------------------------------
 
 def _aa(**kw):
     base = dict(has_key=True, jev_mode="typesafe", sdk_found=True,
@@ -235,8 +235,8 @@ _FIXTURE_ONLY = "Fake and replay judges are fixture-only; use typesafe for a pro
 
 @pytest.mark.parametrize("mode", ["fake", "replay"])
 def test_auto_apply_warnings_name_the_drains_refusal_of_a_test_judge(mode):
-    """SP1 follow-up 1: `apply_run.py drain` refuses the fake and replay judges
-    as fixture-only (cycle 16), so Check setup and the doctor say so in the
+    """`apply_run.py drain` refuses the fake and replay judges
+    as fixture-only, so Check setup and the doctor say so in the
     drain's sentence. The test judges need no key and no SDK, so neither row
     joins it; the Playwright and Chromium rows still do."""
     assert _aa(jev_mode=mode) == [_FIXTURE_ONLY]
@@ -252,7 +252,7 @@ def test_auto_apply_warnings_never_refuse_the_live_judge_as_fixture_only():
 
 
 def test_auto_apply_warnings_jev_switched_off_is_named_in_every_mode():
-    """JS-5: Jev switched off stops every Jev use, the test judges included
+    """Jev switched off stops every Jev use, the test judges included
     (`probe --judge` runs them), so its line leads the typesafe rows and
     follows a test judge's refusal, the order the drain checks them in. The
     rows after it still list what else a run needs."""
@@ -269,7 +269,7 @@ _UNKNOWN_JUDGE = ("Unknown Auto-apply judge 'typesaf'; tick \"Show advanced sett
 
 
 def test_auto_apply_warnings_name_the_drains_refusal_of_an_unknown_judge():
-    """SP1 follow-up 2: the drain refuses a judge mode `jev.get` does not build
+    """The drain refuses a judge mode `jev.get` does not build
     before its Jev gate, so Check setup and the doctor lead with that sentence.
     The key and SDK rows belong to the typesafe judge; the Jev switch and
     Playwright rows still follow."""
@@ -452,7 +452,7 @@ def test_module_found_uses_find_spec_without_importing():
     assert "no_such_module_zzz" not in sys.modules
 
 
-# --- claude CLI version against the selected models (VL-5) ----------------------
+# --- claude CLI version against the selected models -----------------------------
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
 import claude_cli  # noqa: E402

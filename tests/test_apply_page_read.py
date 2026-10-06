@@ -1,4 +1,4 @@
-"""SP4: the page read as its own small request, and the code that combines it.
+"""The page read as its own small request, and the code that combines it.
 
 - `apply_judge.read_questions`: a trimmed state (host, path shape, title, the
   text's head, a field census, button texts) and atomic questions (the
@@ -104,7 +104,7 @@ def test_the_read_is_a_small_request_of_a_choice_and_atomic_nouls():
         assert noul["type"] == "noul" and "`" in noul["instructions"]
         assert set(noul["criteria"]) == {"true", "false"}
         assert noul["criteria"]["true"]["examples"], qid
-    # every signal the brief names, and a Noul for each kind but `other`
+    # every signal the read asks about, and a Noul for each kind but `other`
     assert set(apply_judge.READ_NOUL_IDS) == {
         "page_job_description", "page_apply_entry", "page_applicant_details", "page_sign_in",
         "page_create_account", "page_received", "page_already_applied", "page_closed",
@@ -276,7 +276,7 @@ def test_an_unsure_read_takes_the_structures_kind_when_its_guess_is_ruled_out():
 STATUS = FormDigest(url_host="x", title="Application status",
                     text="You have already applied to this job. We will be in touch.",
                     fields=[], buttons=[])
-# I1's shapes: a sign-in's prompt and a screening question, both questions
+# a sign-in's prompt and a screening question, both questions
 SIGN_IN_STATUS = FormDigest(url_host="x", title="Sign in",
                             text="Already applied? Sign in to check the status of your "
                                  "application.",
@@ -306,7 +306,7 @@ def test_already_applied_is_the_pages_own_statement_on_a_page_with_nothing_to_fi
     boxed = FormDigest(url_host="x", title="Apply", text="You have already applied.",
                        fields=FORM.fields, buttons=FORM.buttons)
     assert apply_judge.page_facts(boxed).already_applied == ""
-    # R2-I1: a condition, on a sign-in page or on a page with no box at all
+    # a condition, on a sign-in page or on a page with no box at all
     for sentence in ("If you have already applied, sign in with the email you used.",
                      "Returning candidate? If you have already applied for a job, sign in "
                      "below.",
@@ -342,7 +342,7 @@ def test_the_already_applied_noul_alone_never_parks_a_pre_submit_thanks_page():
     assert step.startswith("park: a confirmation page before any submit"), step
 
 
-# I2: an open posting's boilerplate (synthetic wording of the shape)
+# an open posting's boilerplate (synthetic wording of the shape)
 OPEN_UNTIL_FILLED = FormDigest(
     url_host="x", title="Data Engineer",
     text="About the role: build the pipelines. The role stays open until the position is "
@@ -397,7 +397,7 @@ def test_an_apply_entry_is_read_by_its_words(text, entry):
 
 
 def test_a_recaptcha_notice_is_no_bot_check():
-    # M1: the invisible check's notice asks nothing of the person
+    # the invisible check's notice asks nothing of the person
     signin = FormDigest(url_host="x", title="Sign in",
                         text="Sign in. This site is protected by reCAPTCHA and the Google Privacy "
                              "Policy and Terms of Service apply.",

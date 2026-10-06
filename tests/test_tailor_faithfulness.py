@@ -1,15 +1,15 @@
-"""TL-4 as the run meets it: the faithfulness check after the rephrase and after
+"""The faithfulness check as the run meets it: after the rephrase and after
 every later rewrite.
 
 The deterministic grounding gate (`verify.enforce_grounded`) traces only
 distinctive tokens, so a claim written in lowercase common words passes it: "Led
 the team" over an atom that says the candidate helped carries nothing it can
-check (`verify.py`'s docstring states the gap). With Jev on, TL-4 asks the judge
+check (`verify.py`'s docstring states the gap). With Jev on, the check asks the judge
 about every bullet against the atoms it was written from. A flagged bullet gets
 one reground call with its finding named; still flagged, it reverts to its last
-passing version, or is dropped exactly as the grounding gate drops one. TL-4 may
+passing version, or is dropped exactly as the grounding gate drops one. The check may
 only reject, revert or drop a bullet; the reground call writes any new text, and
-the grounding gate still runs as before.
+the grounding gate still runs.
 
 Nothing here calls a model or Jev: `compose.call` is replaced in every test, and
 every judge is a fake. The whole runs reuse the golden module's pinned engine,
@@ -48,7 +48,7 @@ _ATOMS = {
 }
 _INFLATION = jev_assist.FINDINGS["inflates"]
 
-# Harbor's bullets: h1 as the atom has it, and the inflation TL-4 exists to catch.
+# Harbor's bullets: h1 as the atom has it, and the inflation the check exists to catch.
 # Every token of both passes the grounding gate.
 _H1 = "Helped the team move the billing service to a queue-based design."
 _H1_LED = "Led the team that moved the billing service to a queue-based design."
@@ -145,8 +145,8 @@ def test_the_finding_rule_tells_the_model_to_keep_the_bullets_role():
 
 @pytest.mark.parametrize("findings", [None, {}, {"h1": ""}], ids=["none", "empty", "passing"])
 def test_without_a_finding_the_prompt_is_todays(engine, monkeypatch, findings):
-    """No finding, no change: the Jev-off prompt stays word for word what it was,
-    which `test_tailor_jev.py`'s recording pins against the engine before TL-4."""
+    """No finding, no change: the Jev-off prompt stays word for word the one
+    `test_tailor_jev.py`'s recording pins against an engine with no faithfulness check."""
     today = _reground(monkeypatch, {"h1": ["Kafka"]})
     got = _reground(monkeypatch, {"h1": ["Kafka"]}, findings=findings)
     assert (got.systems, got.users) == (today.systems, today.users)
@@ -162,7 +162,7 @@ def test_the_finding_rule_is_free_of_the_banned_phrasing():
 
 # ── the check in the pass driver (run._check_faithfulness) ───────────────────
 class Flagger:
-    """A TL-4 judge: a bullet opening with one of `prefixes` inflates (0.95) and every
+    """A faithfulness judge: a bullet opening with one of `prefixes` inflates (0.95) and every
     other answer passes. Keeps each request's bullets; with `answers` set, the
     service goes down after that many requests."""
 
@@ -613,7 +613,7 @@ def _golden_with_reground(monkeypatch, stages, answer):
 
 def test_a_planted_led_the_team_inflation_is_caught(planted, tmp_path, monkeypatch):
     """Nothing in "Led a team of 9 students ..." is a distinctive token the helped
-    atom lacks, so the grounding gate passes it. TL-4 flags it, one reground call
+    atom lacks, so the grounding gate passes it. The check flags it, one reground call
     names the finding, and the regrounded text is the one that ships."""
     assert verify.unseen_tokens(_RC_LED, verify.group_source_text(["rc_lead"])) == []
     regrounds = _golden_with_reground(monkeypatch, planted, _RC_REGROUNDED)

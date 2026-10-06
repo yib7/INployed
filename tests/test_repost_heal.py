@@ -1,11 +1,12 @@
 """Repost score reuse must carry all six score columns, and reused rows that an
 earlier build wrote blank are healed from their source row.
 
-Cycle 21. Since 0b0d664 `reuse_repost_scores` copied `_REPOST_REUSE_COLS`
-(score, reason, deep_score, strengths, gaps, recommendation) from a master row,
-but `load_master_for_reuse` projected only the identity columns plus `score`, so
-a reused repost got a real score and a blank reason, deep_score, strengths, gaps
-and recommendation. Task 1 fixes the loader; Task 2 heals the rows already written.
+`reuse_repost_scores` copies `_REPOST_REUSE_COLS` (score, reason, deep_score,
+strengths, gaps, recommendation) from a master row, so `load_master_for_reuse`
+must project all six: a loader that projects only the identity columns plus
+`score` gives a reused repost a real score and a blank reason, deep_score,
+strengths, gaps and recommendation. The first section checks the loader; the
+second heals the rows already written blank.
 
 Every test points the master and the run folders at tmp_path.
 """
@@ -66,7 +67,7 @@ def _write_master(tmp_path, monkeypatch, records):
     return master
 
 
-# --- Task 1: the loader reads all six reuse columns ------------------------------
+# --- the loader reads all six reuse columns --------------------------------------
 
 def test_load_master_for_reuse_reads_the_five_text_and_deep_columns(tmp_path, monkeypatch):
     _write_master(tmp_path, monkeypatch, [_master_record("OLD-1")])
@@ -169,7 +170,7 @@ def test_a_reused_repost_keeps_all_six_values_through_run_scoring(tmp_path, monk
     assert row["recommendation"] == "apply"
 
 
-# --- Task 2: heal the reused rows already written blank --------------------------
+# --- heal the reused rows already written blank ----------------------------------
 
 NAN = float("nan")
 SECRET = "distinctive reason text 9f3a"   # must never reach the one-shot's output
@@ -770,12 +771,11 @@ def test_heal_reused_reports_an_unreadable_master_and_exits_nonzero(
     assert "master" in str(exc.value.code).lower()
 
 
-# --- 3.5e (cycle 23): a chain of reused rows heals in one pass -------------------
+# --- a chain of reused rows heals in one pass -----------------------------------
 # A reused row whose source was itself a reused row written blank: A copies B,
-# B copies C. One pass used to heal B from C and leave A blank (B was still blank
-# in the pass's snapshot); the phase 3B synthetic master needed a second write
-# pass to heal 13 more. A blank cell now follows the chain to the first row that
-# holds a value, and stops at a cycle.
+# B copies C. A pass that reads only its snapshot heals B from C and leaves A blank
+# (B is still blank in the snapshot). A blank cell follows the chain to the first
+# row that holds a value, and stops at a cycle.
 
 def _chain_frame():
     return pd.DataFrame([

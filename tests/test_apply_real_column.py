@@ -1,4 +1,4 @@
-"""SP8b: the flow matrix's real-judge column (`apply_harness.real_judge`,
+"""The flow matrix's real-judge column (`apply_harness.real_judge`,
 `run_real`, the real column in `rates` and `summary`, the flows a replay
 leaves out, the traced page reads).
 

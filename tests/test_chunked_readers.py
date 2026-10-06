@@ -1,6 +1,5 @@
-"""Audit P2-21/P2-22 + BACKLOG chunked-stream item: the whole-master readers now
-stream in bounded chunks. These tests force multi-chunk paths (chunk=2) and
-assert BEHAVIOR EQUIVALENCE with the old full-read implementations.
+"""The whole-master readers stream in bounded chunks. These tests force
+multi-chunk paths (chunk=2) and assert BEHAVIOR EQUIVALENCE with a full read.
 """
 import gzip
 import sys
@@ -35,7 +34,7 @@ _ROWS = [
 ]
 
 
-# ── watcher.has_unseen_high_score (P2-21) ────────────────────────────────────
+# ── watcher.has_unseen_high_score ────────────────────────────────────────────
 
 def test_high_score_probe_finds_hit_beyond_first_chunk(tmp_path, monkeypatch):
     monkeypatch.setattr(watcher, "_SCAN_CHUNK", 2)
@@ -74,7 +73,7 @@ def test_high_score_probe_survives_a_file_that_is_not_gzip_at_all(tmp_path):
     assert watcher.has_unseen_high_score(p, 4) is False
 
 
-# ── csv_io.reconcile_file (P2-21) ────────────────────────────────────────────
+# ── csv_io.reconcile_file ────────────────────────────────────────────────────
 
 class _Reg:
     def __init__(self, ids):
@@ -105,7 +104,7 @@ def test_reconcile_file_no_change_means_no_rewrite(tmp_path, monkeypatch):
     assert not list(tmp_path.glob("*.tmp"))                  # tmp cleaned up
 
 
-# ── outbox.write_rows_outbox (P2-22) ─────────────────────────────────────────
+# ── outbox.write_rows_outbox ─────────────────────────────────────────────────
 
 def test_rows_outbox_chunked_matches_ids_across_chunks(tmp_path, monkeypatch):
     monkeypatch.setattr(outbox, "_ROWS_CHUNK", 2)
@@ -150,7 +149,7 @@ def test_drop_ids_streams_across_chunks(tmp_path, monkeypatch):
     assert not list(tmp_path.glob("*.tmp"))
 
 
-# ── byte stability of the dashboard-side rewriters (audit C6-1 / P2-26) ───────
+# ── byte stability of the dashboard-side rewriters ────────────────────────────
 #
 # The three streaming rewriters must not REFORMAT the rows they aren't changing.
 # With inferred per-chunk dtypes pandas reads score "5" as int64 and writes back
@@ -202,12 +201,12 @@ def test_reconcile_file_does_not_reformat_untouched_numeric_cells(tmp_path, monk
     assert "3,4,9,no,C" in text          # blank is_seen still defaults to "no"
 
 
-# ── C6-3: the no-op reconcile must not recompress the whole master ───────────
+# ── the no-op reconcile must not recompress the whole master ─────────────────
 
 def test_reconcile_file_noop_does_not_rewrite(tmp_path, monkeypatch):
     """The watcher fires reconcile_file on every tick and "nothing to do" is the
-    normal case. The rewrite used to run in full (decompress + re-serialize +
-    gzip a ~90 MB master) and only the os.replace was skipped."""
+    normal case. A narrow probe settles it first, so the full rewrite
+    (decompress + re-serialize + gzip a ~90 MB master) never starts."""
     monkeypatch.setattr(csv_io, "_RECONCILE_CHUNK", 2)
     master = tmp_path / "master.csv"
     master.write_text(
@@ -257,7 +256,7 @@ def test_reconcile_file_with_empty_registry_is_a_noop(tmp_path):
     assert master.read_bytes() == before
 
 
-# ── P2-3: the is_seen blank-normalization must be PERSISTED, not discarded ───
+# ── the is_seen blank-normalization must be PERSISTED, not discarded ─────────
 
 def test_reconcile_on_a_master_with_no_is_seen_column_adds_it(tmp_path, monkeypatch):
     """_needs_reconcile returns True when the column is missing entirely, and

@@ -1,19 +1,19 @@
-"""The Qt Apply Answers editor (cycle 18, SP4): typed rows, so a saved answer
+"""The Qt Apply Answers editor: typed rows, so a saved answer
 reaches a form exactly one way.
 
-Every row is typed (`ED-1`): a yes/no combo, a number line edit with a shape
+Every row is typed: a yes/no combo, a number line edit with a shape
 validator, a choice combo, or a multi-line text box with a live counter. A
 built-in's question is a read-only label; a custom question is editable.
-Under each row a preview line (`ED-2`) reads `apply_answers.fact_value` on the
-row's current, unsaved state. Changing an answer confirms its row (`ED-3`);
+Under each row a preview line reads `apply_answers.fact_value` on the
+row's current, unsaved state. Changing an answer confirms its row;
 the top counts line and each row's warning highlight track unset/unconfirmed
-rows live. `AddAnswerDialog` (`ED-4`) keeps OK disabled while the candidate
+rows live. `AddAnswerDialog` keeps OK disabled while the candidate
 collides with a built-in or fails `validate`. Only custom rows delete, after a
-confirmation (`ED-5`). Save blocks on `validate` errors and shows `warnings`
-after a clean save (`ED-6`). A damaged store shows its error, offers "Restore
-backup" only when a good `.bak` exists (`ED-7`), and never renders or saves
+confirmation. Save blocks on `validate` errors and shows `warnings`
+after a clean save. A damaged store shows its error, offers "Restore
+backup" only when a good `.bak` exists, and never renders or saves
 defaults over it. A migration's review list shows as a banner the user
-dismisses by saving (`ED-8`). "Test my answers" (`ED-9`) runs the shipped
+dismisses by saving. "Test my answers" runs the shipped
 screening set against the saved, confirmed answers with the live judge, off
 the UI thread; disabled with no TypeSafe key.
 """
@@ -71,7 +71,7 @@ def _custom(eid, question, etype="text", answer="", note="", confirmed=False):
             "note": note, "confirmed": confirmed, "status": "active"}
 
 
-# --- ED-1: row widgets by type ---------------------------------------------------------
+# --- row widgets by type ---------------------------------------------------------------
 
 def test_yes_no_row_is_a_combo_box_with_only_three_options(qtbot, tmp_path):
     store = tmp_path / "apply_answers.json"
@@ -173,7 +173,7 @@ def _write_v2(path, entries):
 
 
 def test_a_spaced_or_cased_option_shows_and_saves_as_its_option(qtbot, tmp_path, monkeypatch):
-    # final review UI I2: the run reads "Yes " as Yes, so the editor does too,
+    # the run reads "Yes " as Yes, so the editor does too,
     # and the next save writes the option in place of an empty answer
     store = tmp_path / "apply_answers.json"
     _write_v2(store, [_entry("work_authorized", "yes_no", "Yes ", confirmed=True),
@@ -214,7 +214,7 @@ def test_a_stored_value_that_names_no_option_is_kept_and_flagged(qtbot, tmp_path
 
 def test_a_long_migrated_note_loads_whole_and_blocks_save_until_shortened(
         qtbot, tmp_path, monkeypatch):
-    # final review UI I3 / S2: the note is the user's own version 1 text
+    # the note is the user's own version 1 text
     store = tmp_path / "apply_answers.json"
     _seed_v1(store, [{"id": "work_authorized", "question": "x",
                       "answer": "Yes, " + "a" * 467}])
@@ -276,7 +276,7 @@ def test_changing_country_back_to_us_switches_address_state_to_a_combo(qtbot, tm
     assert widget.currentText() == "Not set"   # "Ontario" is not a US state
 
 
-# --- ED-2: preview -----------------------------------------------------------------------
+# --- preview -----------------------------------------------------------------------------
 
 def test_preview_says_not_set_when_the_answer_is_empty(qtbot, tmp_path):
     store = tmp_path / "apply_answers.json"
@@ -325,7 +325,7 @@ def test_preview_for_a_text_row(qtbot, tmp_path):
         "Forms will get: LinkedIn"
 
 
-# --- ED-3: confirmed, "Confirm all", counts and highlight ---------------------------------
+# --- confirmed, "Confirm all", counts and highlight ---------------------------------------
 
 def test_changing_the_answer_confirms_the_row(qtbot, tmp_path):
     store = tmp_path / "apply_answers.json"
@@ -357,7 +357,7 @@ def test_confirm_all_ticks_every_set_row_but_not_unset_rows(qtbot, tmp_path):
 
 
 def test_confirm_all_leaves_the_untouched_legal_seeds_for_their_own_tick(qtbot, tmp_path):
-    # final review UI I1: the seeds claim authorization, no sponsorship and
+    # the seeds claim authorization, no sponsorship and
     # zero years, so each needs the user's own tick
     store = tmp_path / "apply_answers.json"
     _seed_v2(store, apply_answers.seed_defaults())
@@ -376,7 +376,7 @@ def test_confirm_all_leaves_the_untouched_legal_seeds_for_their_own_tick(qtbot, 
 
 def test_confirm_all_leaves_the_seeded_statement_after_the_user_sets_sponsorship(
         qtbot, tmp_path):
-    # final re-review N2: the seeded statement says no sponsorship is needed,
+    # the seeded statement says no sponsorship is needed,
     # so a Yes to sponsorship must not carry it through Confirm all
     store = tmp_path / "apply_answers.json"
     _seed_v2(store, apply_answers.seed_defaults())
@@ -448,7 +448,7 @@ def test_typing_into_a_number_box_confirms_it_and_updates_the_preview_and_counts
     assert not row["frame"].property("callout")
 
 
-# --- ED-4: Add ------------------------------------------------------------------------
+# --- Add ------------------------------------------------------------------------------
 
 def test_add_dialog_ok_disabled_until_a_question_is_entered(qtbot, tmp_path):
     store = tmp_path / "apply_answers.json"
@@ -505,7 +505,7 @@ def test_add_dialog_refuses_a_years_heading_the_run_fills_from_the_number(qtbot,
 ])
 def test_add_dialog_accepts_a_question_the_run_hands_to_a_custom_answer(qtbot, tmp_path,
                                                                        question):
-    # final review UI C1: the guide tells the user to add these word for word
+    # the guide tells the user to add these word for word
     store = tmp_path / "apply_answers.json"
     _seed_v2(store, apply_answers.with_missing_builtins([]))
     ed = _editor(qtbot, store)
@@ -621,7 +621,7 @@ def test_adding_an_answer_appends_a_confirmed_row(qtbot, tmp_path):
     assert row["confirmed_cb"].isChecked() is True
 
 
-# --- PR-9: Add answer prefilled from a form's question ------------------------------
+# --- Add answer prefilled from a form's question ------------------------------------
 
 _CDL = {"question": "Do you hold a CDL? (If not, please explain.)",
         "help": "Commercial driver license", "type": "yes_no", "options": ["Yes", "No"]}
@@ -646,7 +646,7 @@ def test_prefill_puts_the_saved_question_and_its_type_in_the_dialog(qtbot, tmp_p
 
 
 def test_a_prefilled_answer_passes_the_own_question_gate_next_time(qtbot, tmp_path):
-    """PR-6: the saved question is the label plus its help, so the run's
+    """The saved question is the label plus its help, so the run's
     own-question gate matches the same field word for word."""
     import apply_facts
     dlg = _prefilled(qtbot, tmp_path, _CDL)
@@ -784,7 +784,7 @@ def test_the_add_answer_button_opens_the_same_dialog_empty(qtbot, tmp_path, monk
     assert seen and seen[0].question_edit.text() == ""
 
 
-# --- ED-5: Delete ----------------------------------------------------------------------
+# --- Delete ----------------------------------------------------------------------------
 
 def test_builtin_rows_have_no_delete_button(qtbot, tmp_path):
     store = tmp_path / "apply_answers.json"
@@ -812,7 +812,7 @@ def test_deleting_a_custom_row_asks_first_and_names_the_question(qtbot, tmp_path
     assert not any(r["id"] == "github" for r in ed.rows)
 
 
-# --- ED-6: Save ------------------------------------------------------------------------
+# --- Save ------------------------------------------------------------------------------
 
 def test_save_blocks_on_a_validate_error_and_writes_nothing(qtbot, tmp_path, monkeypatch):
     store = tmp_path / "apply_answers.json"
@@ -864,7 +864,7 @@ def test_save_with_no_warnings_shows_none(qtbot, tmp_path, monkeypatch):
     assert not shown
 
 
-# --- ED-7: damaged store ----------------------------------------------------------------
+# --- damaged store ----------------------------------------------------------------------
 
 def test_damaged_store_shows_error_and_never_renders_defaults(qtbot, tmp_path):
     store = tmp_path / "apply_answers.json"
@@ -939,7 +939,7 @@ def test_restore_backup_declined_leaves_the_damaged_file(qtbot, tmp_path, monkey
     assert store.read_text(encoding="utf-8") == "not json{"
 
 
-# --- ED-8: review banner -----------------------------------------------------------------
+# --- review banner -----------------------------------------------------------------------
 
 def test_review_banner_lists_each_review_item(qtbot, tmp_path):
     store = tmp_path / "apply_answers.json"
@@ -1039,7 +1039,7 @@ def test_collect_preserves_an_unknown_key_on_a_loaded_entry(qtbot, tmp_path):
     assert out["extra_key"] == [1, 2]
 
 
-# --- ED-9: "Test my answers" -------------------------------------------------------
+# --- "Test my answers" -------------------------------------------------------------
 #
 # `local/apply_screening.py` (Agent A's module, built in parallel) is not
 # imported at module scope by `answers_tab.py`: it lands lazily inside the
@@ -1228,7 +1228,7 @@ def test_test_answers_spend_shows_the_cost_the_judge_reports(qtbot, tmp_path, mo
     _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
     monkeypatch.setattr(at, "_current_jev_mode", lambda: "typesafe")
     monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
-    # final review S5: a counter of this test's own, so the simulated request
+    # a counter of this test's own, so the simulated request
     # stays out of the session's usage summary
     session = jev._USAGE
     session_before = dict(session)
@@ -1275,8 +1275,7 @@ def test_test_answers_failure_shows_a_message_and_re_enables_the_button(
     assert "failed" in ed.status.text().lower()
 
 
-# --- Fix round 1: the judge the Auto-apply judge setting names, not a hard-coded
-# "typesafe" ---------------------------------------------------------------------
+# --- the judge the Auto-apply judge setting names, not a hard-coded "typesafe" ---
 
 def test_test_answers_fake_mode_builds_the_fake_judge_and_skips_the_key_check(
         qtbot, tmp_path, monkeypatch):
@@ -1307,7 +1306,7 @@ def test_test_answers_fake_mode_builds_the_fake_judge_and_skips_the_key_check(
 
 
 def test_test_answers_reads_the_mode_and_the_saved_key_where_the_drain_does(monkeypatch):
-    """SP1 review B: one reader for each. The mode is `jev_switch.apply_mode`
+    """One reader for each. The mode is `jev_switch.apply_mode`
     (the setting, else typesafe; never AUTO_APPLY_JEV_MODE) and the saved key
     is `jev_switch.key_saved`, the probes the Auto-apply panel's Start uses."""
     monkeypatch.setenv("AUTO_APPLY_JEV_MODE", "fake")
@@ -1326,7 +1325,7 @@ def test_test_answers_reads_the_mode_and_the_saved_key_where_the_drain_does(monk
 
 @pytest.mark.parametrize("mode", ["fake", "replay"])
 def test_test_answers_runs_a_test_judge_that_start_refuses(qtbot, tmp_path, monkeypatch, mode):
-    """SP1 fix round 2: the Start gate refuses the fake and replay judges as
+    """The Start gate refuses the fake and replay judges as
     the drain does (fixture-only). Test my answers is a probe: with the switch
     on, no key and no SDK it stays on, and a click runs the screening set with
     the judge the setting names."""
@@ -1352,7 +1351,7 @@ def test_test_answers_runs_a_test_judge_that_start_refuses(qtbot, tmp_path, monk
     assert isinstance(seen["judge"], jev.FakeJev if mode == "fake" else jev.ReplayJev)
 
 
-# --- SP1 review A: the master switch stops every Jev use, Test my answers too ---------
+# --- the master switch stops every Jev use, Test my answers too -----------------------
 
 _JEV_OFF = "Auto-apply runs on Jev. Turn Jev on in Settings > Jev."
 
@@ -1413,7 +1412,7 @@ def test_test_answers_click_checks_the_jev_gate_again(qtbot, tmp_path, monkeypat
     assert ed.status.text() == _JEV_OFF
 
 
-# --- SP1 follow-up 3: a judge mode `jev.get` does not build -------------------------
+# --- a judge mode `jev.get` does not build ------------------------------------------
 
 _UNKNOWN_JUDGE = ("Unknown Auto-apply judge 'typesaf'; tick \"Show advanced settings\" "
                   "and pick typesafe in Settings > Auto-apply.")
@@ -1497,7 +1496,7 @@ def test_test_answers_result_line_names_the_judge_mode(qtbot, tmp_path, monkeypa
     assert "fake" in seen["dialog"].spend_label.text().lower()
 
 
-# --- final review fixes: the banner, Restore backup, Test my answers ------------------
+# --- the banner, Restore backup, Test my answers --------------------------------------
 
 def test_review_banner_tells_the_user_to_tick_confirmed_and_its_button_confirms_nothing(
         qtbot, tmp_path, monkeypatch):
@@ -1517,7 +1516,6 @@ def test_review_banner_tells_the_user_to_tick_confirmed_and_its_button_confirms_
 
 def test_the_review_banner_stays_when_the_save_behind_its_button_fails(
         qtbot, tmp_path, monkeypatch):
-    # final review UI M9
     store = tmp_path / "apply_answers.json"
     _seed_v1(store, [{"id": "work_authorized", "question": "x",
                       "answer": "Yes, " + "a" * 467}])
@@ -1537,7 +1535,6 @@ def _damaged_with_bak(tmp_path):
 
 
 def test_restore_backup_keeps_the_damaged_file_and_names_it(qtbot, tmp_path, monkeypatch):
-    # final review UI I4
     store, bak = _damaged_with_bak(tmp_path)
     damaged = store.with_name(store.name + ".damaged")
     damaged.write_text("an older damaged copy", encoding="utf-8")
@@ -1570,7 +1567,7 @@ def test_revert_after_a_restore_goes_back_to_the_restored_answers(qtbot, tmp_pat
 
 def test_a_save_during_a_test_run_leaves_the_button_off_until_the_run_ends(
         qtbot, tmp_path, monkeypatch):
-    # final review UI I7: one run at a time
+    # one run at a time
     store = tmp_path / "apply_answers.json"
     _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
     monkeypatch.setattr(at, "_current_jev_mode", lambda: "typesafe")
@@ -1593,7 +1590,7 @@ def test_a_save_during_a_test_run_leaves_the_button_off_until_the_run_ends(
 
 
 def test_a_settings_save_refreshes_the_test_answers_button(qtbot, tmp_path, monkeypatch):
-    # final review UI I8: a key set in Settings turns the button on at once
+    # a key set in Settings turns the button on at once
     from types import SimpleNamespace
 
     from qt import main_window as mw
@@ -1614,7 +1611,6 @@ def test_a_settings_save_refreshes_the_test_answers_button(qtbot, tmp_path, monk
 
 
 def test_the_fake_judge_result_line_says_it_is_free_and_makes_no_requests():
-    # final review U3
     text = at._spend_text("fake", {"requests": 0, "input_tokens": 0, "usd": 0.0})
     assert text == "Judge: fake. The fake judge is free and makes no requests."
     assert "live" not in at._spend_text("replay", {"requests": 0, "usd": 0.0})
@@ -1639,7 +1635,7 @@ def test_test_answers_wording_names_saved_answers_in_plain_words(qtbot, tmp_path
     assert not any("live judge" in w.text() for w in dlg.findChildren(QtWidgets.QLabel))
 
 
-# --- cycle 19 SP7 (PR-6): the file changed on disk by a paused run's save -------------------
+# --- the file changed on disk by a paused run's save ----------------------------------------
 
 def _run_saves(store, question="Preferred team", answer="Platform"):
     """What a paused run's "Save for future runs" does to the store."""
@@ -1696,7 +1692,7 @@ def test_the_tabs_own_save_reads_as_no_change_on_disk(qtbot, tmp_path, monkeypat
 
 
 def test_a_save_over_an_answer_a_paused_run_saved_keeps_both(qtbot, tmp_path, monkeypatch):
-    # SP7 review I5: the tab's rows predate the run's save; its own save
+    # the tab's rows predate the run's save; its own save
     # merges the answer added on disk in, never drops it
     store = tmp_path / "apply_answers.json"
     _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])

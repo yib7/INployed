@@ -1,4 +1,4 @@
-"""SP4: score preview visibility + the worker-backed job actions (mocked backends)."""
+"""Score preview visibility + the worker-backed job actions (mocked backends)."""
 import os
 import types
 from unittest.mock import MagicMock
@@ -127,7 +127,7 @@ def test_the_scorer_switch_comes_from_jev_switch_switched_off(qtbot, monkeypatch
 def test_a_dashboard_launched_scorer_names_what_is_missing(qtbot, monkeypatch, capsys,
                                                          state, reason):
     """With the switches on, the scorer handed the dashboard's environment
-    prints its one warning naming the missing piece (JS-4)."""
+    prints its one warning naming the missing piece."""
     import jev_score
     w = _win(qtbot)
     monkeypatch.setattr(mw_pipeline, "gdrive_root_dir", lambda paths: None)
@@ -149,7 +149,7 @@ def test_console_python_swaps_pythonw_for_python(monkeypatch):
 
 
 def test_scale_bar_nudges_clamp_and_persist(qtbot, monkeypatch):
-    # Cycle 17 SP1: the bottom scale bar drives one persisted scale, 10% steps,
+    # The bottom scale bar drives one persisted scale, 10% steps,
     # clamped to [50, 200], persisted via jobsdata (not the settings schema).
     w = _win(qtbot)
     saved = {}
@@ -226,7 +226,7 @@ def _tracker_button_texts(tab):
 
 
 def test_tracker_toolbar_has_no_set_status_button(qtbot):
-    # Cycle 16 SP3: Set status removed from the toolbar (right-click status covers it).
+    # Set status is off the toolbar (right-click status covers it).
     w = _win(qtbot)
     texts = _tracker_button_texts(w.tracker_tab)
     assert "Set status" not in texts
@@ -236,7 +236,7 @@ def test_tracker_toolbar_has_no_set_status_button(qtbot):
 
 
 def test_tracker_followup_lives_in_filters_popup(qtbot):
-    # Cycle 17 SP2: Follow-up due only moved off the bar into the Filters popup.
+    # Follow-up due only sits in the Filters popup, off the bar.
     w = _win(qtbot)
     tab = w.tracker_tab
     assert w.tracker_due_only.parentWidget() is tab._filters_popup
@@ -257,8 +257,7 @@ def _stub_vm_hooks(monkeypatch):
     """These tests exercise the pipeline-run mechanics only. The real post-scrape
     hooks read the 28 MB master, write REAL files into <repo>/outbox/, and spawn
     gcloud — and the module-global Popen fake below leaks into vm_sync's
-    subprocess.run, so they'd 'push' with the fake. (That combination silently
-    queued 69 stats files over 2026-07-04..08.) Hook behavior is covered by
+    subprocess.run, so they'd 'push' with the fake. Hook behavior is covered by
     tests/test_qt_outbox_hooks.py."""
     monkeypatch.setattr(MainWindow, "_push_seen_ids_to_vm",
                         staticmethod(lambda log: None))
@@ -333,8 +332,8 @@ def test_show_preview_renders_segments(qtbot):
 
 
 def test_mark_ids_seen_writes_registry_and_refreshes_views(qtbot, monkeypatch):
-    # SP6: the registry write stays synchronous on the UI thread, but the CSV
-    # rewrite moved to the background write queue and the views refresh from the
+    # the registry write stays synchronous on the UI thread, but the CSV
+    # rewrite runs on the background write queue and the views refresh from the
     # in-memory frame — no blocking reload_data.
     def sync_run_async(owner, fn, on_done=None, on_error=None):
         on_done(fn()) if on_done else fn()
@@ -465,9 +464,9 @@ def test_apply_selected_reads_the_flag_on_the_ui_thread(qtbot, monkeypatch):
 
 
 def test_bar_primary_is_find_new_jobs_and_apply_lives_on_card(qtbot):
-    # Restyle 3c: Tailor/Apply moved onto the job detail card (same object
+    # Tailor/Apply live on the job detail card (same object
     # identities via the btn_tailor/btn_apply aliases); the bottom bar's
-    # rightmost job action — and its primary — is now Find new jobs. A
+    # rightmost job action — and its primary — is Find new jobs. A
     # separator then the utility cluster (interface size + Restart) follows.
     w = _win(qtbot)
     items = [w._action_bar.itemAt(i).widget() for i in range(w._action_bar.count())]
@@ -701,7 +700,7 @@ def test_apply_sheet_preview_renders_markdown_keeps_raw_copy(qtbot):
 
 
 def test_apply_sheet_pop_out_shows_sheet_and_copies(qtbot):
-    # Cycle 16 SP6: an Expand button opens the apply sheet in a large window.
+    # An Expand button opens the apply sheet in a large window.
     from qt.apply_panel import ApplyPanel
     p = ApplyPanel()
     qtbot.addWidget(p)
@@ -1076,7 +1075,7 @@ def test_tailor_warning_lines_carry_no_absolute_path():
 
 
 def test_tailor_dialog_block_carries_the_run_log_warnings_and_none_of_its_notes():
-    """c13 split the run report into warnings (streamed to `on_warning`, so the
+    """The run report splits into warnings (streamed to `on_warning`, so the
     dashboard reads the job as degraded) and notes (report only: a drop the
     re-ask recovered, the rejected text, a refused underfull fill). The dialog
     is built from what streamed, so it must carry every warning line as the
@@ -1195,7 +1194,7 @@ def test_check_setup_reports_ok(qtbot, monkeypatch):
     # all-good case doesn't depend on the developer's shell exporting a provider.
     monkeypatch.delenv("RESUME_TAILOR_PROVIDER", raising=False)
     monkeypatch.delenv("SCORE_PROVIDER", raising=False)
-    # The auto-apply rows (cycle 16) are pinned the same way: a key in the
+    # The auto-apply rows are pinned the same way: a key in the
     # environment, both packages found, Chromium present. Without these the
     # all-good case would depend on the developer's .env and installs.
     monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
@@ -1321,7 +1320,7 @@ def test_import_tracker_decline_is_noop(qtbot, monkeypatch, tmp_path):
     assert not w.registry.import_from.called
 
 
-# ── SP2: post-scrape seen-id sync to the VM (best-effort, never fails the scrape) ──
+# ── post-scrape seen-id sync to the VM (best-effort, never fails the scrape) ───────
 def _capture_log():
     logs = []
     return logs, types.SimpleNamespace(write=logs.append, flush=lambda: None)
@@ -1358,7 +1357,7 @@ def test_push_seen_ids_to_vm_pushes_when_configured(monkeypatch, tmp_path):
 
 
 def test_push_seen_ids_writes_to_outbox_not_the_scrapers_read_path(monkeypatch, tmp_path):
-    """THE ratchet guard for the 2026-08-26 silent-zero-rows outage.
+    """THE ratchet guard against a silent-zero-rows scrape.
 
     write_external_exclude_ids() dumps load_exclude_ids(), and load_exclude_ids()
     reads EXTERNAL_EXCLUDE_FILE straight back in WITHOUT windowing it. Aim the push
@@ -1382,9 +1381,9 @@ def test_push_seen_ids_writes_to_outbox_not_the_scrapers_read_path(monkeypatch, 
     import outbox
     assert written["p"] != scraper.EXTERNAL_EXCLUDE_FILE
     # Assert against the module that OWNS the outbox path, not the literal name.
-    # main_window used to rebuild `repo / "outbox"` by hand, which is a second
-    # copy of the expression the conftest redirect does not cover -- so this line
-    # was mkdir'ing into the real repo every time the suite ran.
+    # A `repo / "outbox"` rebuilt by hand in main_window is a second copy of
+    # the expression the conftest redirect does not cover, so it would mkdir
+    # into the real repo every time the suite runs.
     assert written["p"].parent == outbox.OUTBOX_DIR
 
 
@@ -1510,7 +1509,7 @@ def test_check_setup_surfaces_a_dead_job_data_token(qtbot, monkeypatch):
 
 
 def test_check_setup_runs_the_claude_version_check_on_the_worker(qtbot, monkeypatch):
-    """VL-5: the claude CLI version check starts a subprocess, so it runs inside
+    """The claude CLI version check starts a subprocess, so it runs inside
     the worker callable and its line reaches the Check setup dialog from there."""
     w = _win(qtbot)
     from resume_tailor import master_validate

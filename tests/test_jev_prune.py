@@ -1,4 +1,4 @@
-"""The SP8 replay-cache prune: `jev.ReplayJev.used_keys` and `jev.prune_cache`
+"""The replay-cache prune: `jev.ReplayJev.used_keys` and `jev.prune_cache`
 (covered in `test_jev.py`), and the harness wiring on top of them --
 `jev_harness.Session.prune`, `write_used_keys`, `prune_if_asked`, and
 `conftest_jev`'s `pytest_sessionfinish` hook that calls them.
@@ -147,7 +147,7 @@ def test_prune_if_asked_with_no_replay_refuses_with_no_keys(tmp_path):
 
 
 def test_prune_if_asked_refuses_on_a_narrowed_reason_before_touching_the_cache(tmp_path):
-    # SP8 review: a caller-supplied narrowed_reason (a run that was not the
+    # a caller-supplied narrowed_reason (a run that was not the
     # whole RUNNER_TESTS set) refuses immediately, even on an otherwise clean
     # replay with keys to spare: jev.prune_cache is never reached
     cache = tmp_path / "cache.json"
@@ -161,7 +161,7 @@ def test_prune_if_asked_refuses_on_a_narrowed_reason_before_touching_the_cache(t
 
 
 def test_prune_if_asked_refuses_on_a_skip_reason_before_touching_the_cache(tmp_path):
-    # SP8 fix round 2: a jev_judge test that skipped for its own reason (not
+    # a jev_judge test that skipped for its own reason (not
     # the spend cap, not an unrecorded miss) never asked for its keys, so
     # skip_reason refuses the same way narrowed_reason does, before
     # jev.prune_cache is ever reached
@@ -179,7 +179,7 @@ def test_prune_if_asked_refuses_on_a_skip_reason_before_touching_the_cache(tmp_p
 
 
 def test_prune_if_asked_refuses_after_a_divergence(tmp_path):
-    # final review D I1: a replay assertion turned into an xfail counts as no
+    # a replay assertion turned into an xfail counts as no
     # failure, and the test stopped before its later requests: their keys
     # were never asked for
     cache = tmp_path / "cache.json"
@@ -329,7 +329,7 @@ def test_one(jev_judge):
 
 
 def test_a_diverged_replay_refuses_to_prune(pytester, monkeypatch, tmp_path):
-    # final review D I1: the test asks k1, its assertion fails (an xfail in
+    # the test asks k1, its assertion fails (an xfail in
     # replay mode, no failure), and it never asks k2; the prune would drop k2
     later = {**STATE, "page": {"title": "Review your application"}}
     k1, k2 = jev.ReplayJev.key_for(STATE, QUESTIONS), jev.ReplayJev.key_for(later, QUESTIONS)
@@ -371,7 +371,7 @@ def test_prune_never_fires_without_the_env_var(pytester, monkeypatch, tmp_path):
     assert set(json.loads(cache.read_text(encoding="utf-8"))) == {used_key, "stale-key"}
 
 
-# --- SP8 review: pruning refuses unless the whole RUNNER_TESTS set ran (no -k/-m, no ------------
+# --- pruning refuses unless the whole RUNNER_TESTS set ran (no -k/-m, no ------------------------
 # --- deselection, no missing file, no node id narrower than a file) -----------------------------
 
 _INNER_A = '''
@@ -479,7 +479,7 @@ def test_marked(jev_judge):
 
 
 def test_an_unrecorded_skip_blocks_the_prune(pytester, monkeypatch, tmp_path):
-    # SP8 review: a jev_unrecorded miss turns the test's own report into a
+    # a jev_unrecorded miss turns the test's own report into a
     # skip (conftest_jev.pytest_runtest_makereport), never a failure, so
     # testsfailed stays 0. The miss itself must still block the prune
     # (jev.prune_cache's own misses gate)
@@ -492,17 +492,16 @@ def test_an_unrecorded_skip_blocks_the_prune(pytester, monkeypatch, tmp_path):
     pytester.syspathinsert(REPO / "local")
     pytester.makepyfile(test_inner=_INNER_UNRECORDED_PRUNE.format(STATE=STATE,
                                                                   QUESTIONS=QUESTIONS))
-    # SP8 fix round 3: test_inner.py's own `pytest_plugins = ["conftest_jev"]`
-    # loads the plugin too late to register the `jev_unrecorded` marker
-    # before this same module's `@pytest.mark.jev_unrecorded` line is
-    # evaluated at import time (a module's own `pytest_plugins` list is
-    # only considered once the module has fully imported, after its
-    # decorators already ran): an order-dependent `PytestUnknownMarkWarning`
-    # this test's own `-W error::...` then promoted to a collection error,
-    # only masked when an earlier test in the same process happened to
-    # register the same mark first. `-p conftest_jev` forces the plugin in
-    # before collection starts, the same way
-    # test_jev_harness.py's two `_INNER_UNRECORDED` tests already do.
+    # test_inner.py's own `pytest_plugins = ["conftest_jev"]` loads the
+    # plugin too late to register the `jev_unrecorded` marker before this
+    # same module's `@pytest.mark.jev_unrecorded` line is evaluated at
+    # import time (a module's own `pytest_plugins` list is only considered
+    # once the module has fully imported, after its decorators ran): an
+    # order-dependent `PytestUnknownMarkWarning` that this test's own
+    # `-W error::...` would promote to a collection error, masked only when
+    # an earlier test in the same process registers the same mark first.
+    # `-p conftest_jev` forces the plugin in before collection starts, the
+    # same way test_jev_harness.py's two `_INNER_UNRECORDED` tests do.
     result = pytester.runpytest_inprocess("-q", "-rs", "-p", "no:cacheprovider",
                                           "-p", "conftest_jev",
                                           "-W", "error::pytest.PytestUnknownMarkWarning")
@@ -510,7 +509,7 @@ def test_an_unrecorded_skip_blocks_the_prune(pytester, monkeypatch, tmp_path):
     result.stdout.fnmatch_lines(["*jev prune refused:*miss*"])
 
 
-# --- SP8 fix round 2: a jev_judge test's own skip, apart from a spend-cap stop or an ------------
+# --- a jev_judge test's own skip, apart from a spend-cap stop or an -----------------------------
 # --- unrecorded miss, must also block the prune (it never got to ask for its keys) --------------
 
 _INNER_EXTERNAL_SKIP = '''
@@ -530,7 +529,7 @@ def test_skipped_for_its_own_reason(jev_judge):
 
 
 def test_a_jev_judge_tests_own_skip_blocks_the_prune(pytester, monkeypatch, tmp_path):
-    # a real-world unsafe prune (SP8 fix round 2): a test that requests
+    # an unsafe prune: a test that requests
     # jev_judge but skips for a reason of its own (a platform skipif, an
     # importorskip, a pytest.skip() in the body, as here) never calls the
     # judge, so it leaves no replay miss for jev.prune_cache's own gate to
@@ -572,10 +571,9 @@ def test_unrelated_skip():
 
 
 def test_an_unrelated_tests_skip_never_blocks_the_prune(pytester, monkeypatch, tmp_path):
-    # a test that never requests jev_judge was never going to touch the
-    # cache either way (the SP8 fix round 2 runner-replay finding: a
-    # POSIX-only test skipped on Windows, with no jev_judge fixture, does
-    # not block a clean prune)
+    # a test that never requests jev_judge does not touch the cache either
+    # way (a POSIX-only test skipped on Windows, with no jev_judge fixture,
+    # does not block a clean prune)
     cache = tmp_path / "cache.json"
     used_key = jev.ReplayJev.key_for(STATE, QUESTIONS)
     _seed(cache, {used_key: {"page_state": {"kind": "choice", "choice": "application_form",

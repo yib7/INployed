@@ -1,17 +1,17 @@
-"""SP6: advancing and repair.
+"""Advancing and repair.
 
-- The popup guard reads a name (SP5 review round 9): a real question whose
+- The popup guard reads a name: a real question whose
   own words hold confirm, finish, complete, done, send, submit or apply is
-  opened; every send shape rounds 4 to 8 found stays refused; a note about
+  opened; every known send shape stays refused; a note about
   required marks ("* Required field") is no question and no star.
 - Values the page reshapes: a masked phone typed key by key, a phone beside a
-  country code as its national digits (FILL-04); a text date in the format
-  its box names (FILL-05); a number box's number (FILL-06); an upload widget
-  that resets its input, read from its chip and never uploaded twice
-  (FILL-01); each verified in code. Escape only while a menu shows (FILL-08).
-- The fill's record: how each field was acted on and its error (FILL-15),
-  a draft made once per question (FILL-12), a page read again keeping its
-  listboxes' options (FILL-09).
+  country code as its national digits; a text date in the format
+  its box names; a number box's number; an upload widget
+  that resets its input, read from its chip and never uploaded twice;
+  each verified in code. Escape only while a menu shows.
+- The fill's record: how each field was acted on and its error,
+  a draft made once per question, a page read again keeping its
+  listboxes' options.
 
 Headless Chromium through the module-scoped test browser; no network, no
 judge but `FakeJev` or a scripted one."""
@@ -58,9 +58,9 @@ def _fill(page, *planned):
     return {f.n: f.value for f in out}
 
 
-# === the popup guard reads a name (review round 9) ===================================================
+# === the popup guard reads a name ====================================================================
 
-# Real questions the round-8 guard refused (review round 9's table): each is
+# Real questions a send-word guard can refuse: each is
 # a popup the run must open and answer.
 _QUESTIONS = {
     "workday_imperative": """<div><button type="button" id="q" aria-haspopup="listbox"
@@ -89,12 +89,12 @@ _QUESTIONS = {
     "workday_answered": """<div><button type="button" id="q" aria-haspopup="listbox"
         aria-label="Please confirm you are at least 18 years of age I confirm Required"
         >I confirm</button></div>""",
-    # the SP6 review's round 9 probes, as it wrote them
+    # a starred finish date, and a send-by-post box read again
     "q9_starred_finish_date": """<div><span>Expected finish date *</span><button type="button"
         id="q" aria-haspopup="listbox" aria-label="Expected finish date">Select</button></div>""",
     "q9_reread_send_by_post_box": """<div><span>Delivery method</span><button type="button"
         id="q" aria-haspopup="listbox">Send by post</button></div>""",
-    # SP6 review R2-I3: a last-step verb is read by what follows it, and a
+    # a last-step verb is read by what follows it, and a
     # label naming a document and the value asked of it is a question
     "r2_finish_month": """<div><button type="button" id="q" aria-haspopup="listbox"
         aria-label="Finish month">Select</button></div>""",
@@ -108,7 +108,7 @@ _QUESTIONS = {
         <button type="button" id="q" aria-haspopup="menu">Complete</button></div>""",
 }
 
-# Every send shape rounds 4 to 8 found (and a few beside them): never opened.
+# Send shapes the guard refuses: never opened.
 _SENDS = {
     "shown_and_aria": """<div><button type="button" id="q" aria-haspopup="menu"
         aria-label="Submit your application right now">Submit your application right now</button>
@@ -135,7 +135,7 @@ _SENDS = {
         <svg width="10" height="10"><path d="M0 0 L10 0 L5 8 z"/></svg></button></div>""",
     "title_finish": """<div><button type="button" id="q" aria-haspopup="menu"
         title="Finish">&#9662;</button></div>""",
-    # the SP6 review's ten (I1): a leading send verb, or a shown send under a
+    # a leading send verb, or a shown send under a
     # label that names the application, a document, a step or an action
     "n_submit_for_review_box": """<div class="field"><span>Your application</span><button
         type="button" id="q" aria-haspopup="menu">Submit for review</button></div>""",
@@ -159,14 +159,14 @@ _SENDS = {
     "n_icon_submit_resume_req": """<div><button type="button" id="q" aria-haspopup="menu"
         aria-required="true" aria-label="Submit resume">
         <svg width="10" height="10"><path d="M0 0 L10 0 L5 8 z"/></svg></button></div>""",
-    # SP6 review R2-I3: a last-step verb alone or before the send is refused
+    # a last-step verb alone or before the send is refused
     "r2_done": """<div><button type="button" id="q" aria-haspopup="menu">Done</button></div>""",
     "r2_complete_application": """<div><button type="button" id="q" aria-haspopup="menu"
         aria-label="Complete application"><svg width="10" height="10"><path d="M0 0 L10 0 L5 8 z"/>
         </svg></button></div>""",
     "r2_finalize": """<div><button type="button" id="q" aria-haspopup="menu">Finalize</button>
         </div>""",
-    # SP6 review R2-M4: a <label for> that names the send, over an icon arrow
+    # a <label for> that names the send, over an icon arrow
     "r2_label_for_the_send": """<div><label for="q">Submit application</label><button
         type="button" id="q" aria-haspopup="menu"><svg width="10" height="10">
         <path d="M0 0 L10 0 L5 8 z"/></svg></button></div>""",
@@ -209,10 +209,10 @@ def test_every_send_shape_stays_refused(browser_page, shape):
     ("Submit your application or save a draft", True), ("Confirm and submit", True),
     ("Finish", True), ("Done", True), ("I confirm", True), ("Apply", True),
     ("Apply with", True), ("Apply now", True), ("Send", True),
-    # a submit or send leading a short name, whatever follows (SP6 review I1)
+    # a submit or send leading a short name, whatever follows
     ("Submit for review", True), ("Submit resume", True), ("Submit and continue", True),
     ("Send to recruiter", True), ("Submit a source", True), ("Send by post", True),
-    # a last-step verb by what follows it (SP6 review R2-I3)
+    # a last-step verb by what follows it
     ("Complete application", True), ("Finalize", True), ("Finish now", True),
     ("Finish month", False), ("Confirm your citizenship status", False),
     ("Complete your degree details", False),
@@ -239,7 +239,7 @@ def test_a_question_shaped_aria_label_and_its_answer_are_never_read_as_a_name():
     assert apply_send_words.popup_refusal({"shown": "Submit", "label": "Your application"})
     assert apply_send_words.popup_refusal({"shown": "", "named": "Submit application"})
     assert apply_send_words.popup_refusal({"shown": "", "label": "Submit application"})
-    # a label that asks is never read as a name (SP6 review R2-M4)
+    # a label that asks is never read as a name
     assert apply_send_words.popup_refusal({"shown": "Select", "label": "Expected finish date *"}) == ""
     assert apply_send_words.popup_refusal({"shown": "Complete", "label": "Resume status"}) == ""
 
@@ -255,12 +255,12 @@ def test_a_question_label_asks_for_a_value_and_never_names_the_send(text, asks):
     assert apply_send_words.question_label(text) is asks
 
 
-# --- review M2: the extractor reads the send rule too ---------------------------------------------
+# --- the extractor reads the send rule too --------------------------------------------------------
 
 def test_an_unmarked_question_with_a_send_word_in_its_middle_is_offered(browser_page):
     # "Expected finish date" and "Finish month" by their own aria-labels, no
-    # star, no aria-required: fields, opened by discovery (SP6 review
-    # R2-I3); an unmarked "Complete application" stays a button
+    # star, no aria-required: fields, opened by discovery; an unmarked
+    # "Complete application" stays a button
     browser_page.set_content("""<body><form>
       <div><button type="button" id="efd" aria-haspopup="listbox" aria-label="Expected finish date"
         onclick="document.body.dataset.opened = 1">Select</button></div>
@@ -276,7 +276,7 @@ def test_an_unmarked_question_with_a_send_word_in_its_middle_is_offered(browser_
     assert browser_page.evaluate("document.body.dataset.opened") == "1"
 
 
-# --- review round 9, Minor: a note about required marks is no question and no star ----------------
+# --- a note about required marks is no question and no star ---------------------------------------
 
 def test_a_required_field_note_beside_a_menu_is_no_question_and_no_star(browser_page):
     browser_page.set_content("""<body><form>
@@ -302,7 +302,7 @@ def test_a_required_field_note_beside_a_menu_is_no_question_and_no_star(browser_
 
 
 def test_a_note_that_ends_in_a_parenthesised_star_is_no_question(browser_page):
-    # final review B-M5: "Required fields are marked with an asterisk (*)"
+    # "Required fields are marked with an asterisk (*)"
     # beside an unlabelled menu is a note, never the menu's question, starred
     # or not (the starred one parked as a required field without an answer)
     browser_page.set_content("""<body><form>
@@ -318,7 +318,7 @@ def test_a_note_that_ends_in_a_parenthesised_star_is_no_question(browser_page):
     assert [(f.label, f.required) for f in d.fields] == [("Start month", True)]
 
 
-# === values the page reshapes (FILL-01, FILL-04, FILL-05, FILL-06, FILL-08) =============================
+# === values the page reshapes ===========================================================================
 
 def test_a_masked_phone_is_typed_key_by_key_and_verified_by_its_digits(browser_page, fixture_url):
     browser_page.goto(fixture_url("masked_phone.html"))
@@ -358,8 +358,8 @@ def test_a_number_box_takes_the_number(browser_page):
       <label>Years of experience <input id="y" type="number"></label></form></body>""")
     d = apply_form.extract(browser_page)
     s, y = _by_label(d, "Expected salary"), _by_label(d, "Years of experience")
-    # moved on purpose (cycle 18, FM-5): a value that is no plain number
-    # leaves the box blank ("$120,000" was 120000 and "5+" was 5)
+    # a value that is no plain number leaves the box blank ("$120,000" is
+    # never typed as 120000, nor "5+" as 5)
     errors: list = []
     out = apply_fill.apply(browser_page, FillPlan(fields=[
         _planned(s, "fill", "$120,000"), _planned(y, "fill", "5+")]), errors=errors)
@@ -454,11 +454,11 @@ def test_a_reshaped_value_is_verified_in_code_never_by_the_judge(tmp_path):
 
 
 def test_a_pasted_cover_letter_and_a_search_boxs_match_are_verified_in_code(tmp_path):
-    # SP8b, live 2026-09-25: the judge read the cover letter's read-back, the
-    # sheet's own words with its line breaks folded, at 0.79 (the gate needs
-    # 0.80) and parked native_required_submit on "could not verify"; it read
-    # "Anytown, California, United States", the match a City list box took
-    # for "Anytown", at 0.20 and Lever's "Anytown, CA, United States" for
+    # the judge can read the cover letter's read-back, the sheet's own words
+    # with its line breaks folded, at 0.79 (the gate needs 0.80) and park
+    # native_required_submit on "could not verify"; it can read "Anytown,
+    # California, United States", the match a City list box takes for
+    # "Anytown", at 0.20 and Lever's "Anytown, CA, United States" for
     # "Anytown, CA" at 0.44. A string comparison settles all three.
     from unittest.mock import Mock
 
@@ -534,11 +534,11 @@ def test_the_upload_reset_flow_uploads_once_and_reaches_the_gate(_browser, flow_
     assert [a.kind for a in r.actions].count("upload") == 1
 
 
-# === the fill's record (FILL-09, FILL-12, FILL-15) ==============================================
+# === the fill's record ==========================================================================
 
 def test_each_fields_act_is_recorded_with_how_and_its_error(browser_page, _browser, flow_server,
                                                            tmp_path):
-    # FILL-15: the fill says how it acted on each field and the error's type
+    # the fill says how it acted on each field and the error's type
     browser_page.set_content("""<body><form><label>Phone <input id="p" type="tel"
       placeholder="(___) ___-____"></label><label>Name <input id="n"></label></form></body>""")
     d = apply_form.extract(browser_page)
@@ -626,7 +626,7 @@ def test_a_page_read_again_takes_its_listboxes_options_without_opening_them(brow
 
 
 
-# --- SP6 review I5: a file of the same name the page showed before this run's upload ---------------
+# --- a file of the same name the page showed before this run's upload ------------------------------
 
 def test_a_kept_resume_of_the_same_name_never_stands_for_this_jobs_upload(
         _browser, flow_server, tmp_path):
@@ -656,7 +656,7 @@ def test_an_upload_is_skipped_only_after_this_run_uploaded_and_saw_it(browser_pa
     assert browser_page.evaluate("document.body.dataset.uploads") == "1"
 
 
-# --- SP6 review R2-M1: a widget that replaces the kept chip in place --------------------------------------
+# --- a widget that replaces the kept chip in place --------------------------------------------------------
 
 def test_an_upload_that_replaced_a_kept_chip_of_its_name_is_verified_and_made_once(
         _browser, flow_server, tmp_path):

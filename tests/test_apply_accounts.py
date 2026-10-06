@@ -1,14 +1,13 @@
-"""SP7: accounts and email.
+"""Accounts and email.
 
 - The ledger's account for a sign-in host that names no tenant, found by
-  the job's own hosts (ACC-13).
-- The account check by code in one-character boxes (ACC-06), never with a
-  code older than the job (ACC-07), or by a link in the email opened on an
-  allowed host only (ACC-05); the Workday account path to the gate.
-- A create-account button (ACC-01), one sign-in without a ledger entry
-  (ACC-02), an account that exists (ACC-03), password rules (ACC-04), a
-  slow sign-up (ACC-09), an account step's error (ACC-10), a sign-in only
-  with another site (ACC-11), a sign-up shown again (ACC-12).
+  the job's own hosts.
+- The account check by code in one-character boxes, never with a code
+  older than the job, or by a link in the email opened on an allowed host
+  only; the Workday account path to the gate.
+- A create-account button, one sign-in without a ledger entry, an account
+  that exists, password rules, a slow sign-up, an account step's error, a
+  sign-in only with another site, a sign-up shown again.
 - The password invariants the harness asserts on every run.
 
 Headless Chromium through the module-scoped test browser for the flows; no
@@ -49,7 +48,7 @@ def _job_run(tmp_path, *hosts: str) -> "apply_run._JobRun":
     return run
 
 
-# === the ledger by tenant (ACC-13) =======================================================================
+# === the ledger by tenant ================================================================================
 
 def test_a_shared_sign_in_host_finds_the_account_made_on_the_jobs_careers_host(ledger, tmp_path):
     ats_accounts.record("careers-gtsx.icims.com", "jane.doe@example.com")
@@ -69,7 +68,7 @@ def test_an_account_made_on_a_shared_sign_in_host_is_kept_under_the_jobs_tenant(
     assert "cboe.wd1.myworkdayjobs.com" in ats_accounts.list_accounts()
 
 
-# === codes and links from the inbox (ACC-05, ACC-06, ACC-07) ===============================================
+# === codes and links from the inbox ========================================================================
 
 def _events(r, kind: str) -> list[dict]:
     import json
@@ -82,8 +81,8 @@ def _events(r, kind: str) -> list[dict]:
 
 def test_a_code_in_six_boxes_is_typed_from_the_first_and_the_fresh_code_is_used(
         _browser, flow_server, tmp_path):
-    # ACC-06: the six one-character boxes are one code field, typed from its
-    # first box; ACC-07: the older code above it in the inbox is never read
+    # the six one-character boxes are one code field, typed from its first
+    # box; the older code above it in the inbox is never read
     r = h.run_flow(h.flow("otp_six_boxes"), jev.FakeJev(), "fake", browser=_browser,
                    server=flow_server, workdir=tmp_path)
     assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
@@ -104,7 +103,7 @@ _ADVANCE_JS = ("<script>const bs = Array.from(document.querySelectorAll('input')
 @pytest.mark.parametrize("moves_on", [True, False])
 def test_the_six_boxes_hold_the_code_whether_or_not_they_move_the_focus_on(
         browser_page, tmp_path, moves_on):
-    # ACC-06: typed from the first box; a widget that keeps the focus in the
+    # typed from the first box; a widget that keeps the focus in the
     # first box gets each character in its own box
     import apply_form
     browser_page.set_content(f"<body>{_BOXES}{_ADVANCE_JS if moves_on else ''}</body>")
@@ -130,8 +129,8 @@ def test_a_code_longer_than_the_boxes_parks_before_typing(browser_page, tmp_path
 
 
 def test_the_workday_account_path_reaches_the_gate(_browser, flow_server, tmp_path):
-    # the checkpoint: the start popup, the Create Account button (ACC-01),
-    # the account checked by the emailed link (ACC-05), the sign-in, the
+    # the checkpoint: the start popup, the Create Account button, the
+    # account checked by the emailed link, the sign-in, the
     # wizard; the link is opened in a tab of its own and never logged
     r = h.run_flow(h.flow("workday_signin_modal"), jev.FakeJev(), "fake", browser=_browser,
                    server=flow_server, workdir=tmp_path)
@@ -169,7 +168,7 @@ def test_a_control_beside_the_step_judged_its_way_on_is_never_clicked(judged):
         0, apply_run.apply_judge.BUTTON_ADVANCE_MIN_CONF)
 
 
-# === a sign-in with no account in the ledger and no sign-up (ACC-02) =====================================
+# === a sign-in with no account in the ledger and no sign-up ==============================================
 
 _NO_SIGNUP = (h.FIXTURES_DIR / "forms" / "login_wall.html").read_text(encoding="utf-8").replace(
     '<p><a href="signup.html">Create an account</a></p>', "")
@@ -212,7 +211,7 @@ def test_a_sign_in_the_one_try_does_not_pass_parks_with_what_to_do(
 
 def test_an_account_step_that_raises_names_its_error_type_and_step(
         _browser, flow_server, tmp_path, monkeypatch):
-    # ACC-10: the park says the account step failed and how (the exception's
+    # the park says the account step failed and how (the exception's
     # type and the step), never the exception's words (they may quote a value)
     real = apply_run.apply_form.resolve
 
@@ -336,7 +335,7 @@ class _LinkPick:
 
 def test_the_judge_picks_the_accounts_link_from_a_message_that_holds_two(
         _browser, flow_server, tmp_path):
-    # ACC-05's link pick in a run (SP8b): the message holds a job alerts'
+    # the link pick in a run: the message holds a job alerts'
     # confirmation first and the account's check second, both on the
     # application's site; the judge's pick is the link opened
     judge = _LinkPick()
@@ -507,7 +506,7 @@ def _left_behind(page) -> dict:
 
 def test_a_verification_link_a_server_redirects_to_another_host_is_never_read(
         browser_page, tmp_path, monkeypatch, redirecting_site):
-    # I1 (SP7 review): the link is on the allowed host, and its server's 302
+    # the link is on the allowed host, and its server's 302
     # sends the tab to another host. That host is never asked for (so its
     # page never runs, sets no cookie, opens no popup), and the park names it
     run, read = _link_run(tmp_path, browser_page, monkeypatch)
@@ -547,7 +546,7 @@ def test_a_verification_link_redirected_on_its_own_host_is_read(
 
 def test_a_verification_pages_popups_load_nothing_and_are_closed(
         browser_page, tmp_path, monkeypatch, redirecting_site):
-    # N3 (SP7 review): a popup of the link's tab on any host, by a script's
+    # a popup of the link's tab on any host, by a script's
     # open or a link with a target, is never asked for and never left open
     run, _ = _link_run(tmp_path, browser_page, monkeypatch)
     assert run._open_link(f"http://127.0.0.1:{redirecting_site.port}/opener") == (
@@ -569,7 +568,7 @@ def test_a_verification_link_redirected_without_end_does_not_open(
 @pytest.mark.parametrize("path, scheme", [("/jsloc", "javascript"), ("/dataloc", "data")])
 def test_a_verification_link_redirected_to_an_address_with_no_host_names_its_scheme(
         browser_page, tmp_path, monkeypatch, redirecting_site, path, scheme):
-    # R3-M1 (SP7 review): a Location with no host (a javascript: or data:
+    # a Location with no host (a javascript: or data:
     # address) is stopped like any other, and the park names its scheme
     run, read = _link_run(tmp_path, browser_page, monkeypatch)
     with pytest.raises(apply_run._Parked, match=rf"the emailed link went on to a {scheme}: "
@@ -586,7 +585,7 @@ def test_a_verification_link_redirected_to_an_address_with_no_host_names_its_sch
     ("/human", "the page says 'Verify you are human'")])
 def test_a_verification_link_answered_by_a_bot_check_parks_for_the_person(
         browser_page, tmp_path, monkeypatch, redirecting_site, path, said):
-    # R3-M2 (SP7 review): the site's bot check in place of the link's page.
+    # the site's bot check in place of the link's page.
     # A check's answer to the fetch never reaches the tab, so its script
     # never runs and never uses the link; the park asks the person to open
     # the link
@@ -608,10 +607,10 @@ def test_a_verification_link_answered_by_a_bot_check_parks_for_the_person(
     ("/hopdown", "answered HTTP 503 (the page says 'Service unavailable')")])
 def test_a_bot_check_after_the_links_own_address_answered_says_the_link_may_have_been_used(
         browser_page, tmp_path, monkeypatch, redirecting_site, path, said):
-    # R4-I2 (SP7 review): the link's own address answered with a redirect,
-    # so the site may have taken the link's token before the check; the
-    # park says so and asks for a Re-queue first. A status that is no check
-    # on that hop says the same (R4-M1)
+    # the link's own address answered with a redirect, so the site may have
+    # taken the link's token before the check; the park says so and asks
+    # for a Re-queue first. A status that is no check on that hop says the
+    # same
     run, _ = _link_run(tmp_path, browser_page, monkeypatch)
     with pytest.raises(apply_run._Parked) as parked:
         run._open_link(f"http://127.0.0.1:{redirecting_site.port}{path}")
@@ -626,7 +625,7 @@ def test_a_bot_check_after_the_links_own_address_answered_says_the_link_may_have
                                          ("/verified_box", "Email verified")])
 def test_a_verified_page_whose_sign_in_carries_a_captcha_is_read(
         browser_page, tmp_path, monkeypatch, redirecting_site, path, shown):
-    # R4-I2 (SP7 review): the link verified the address, and the page's
+    # the link verified the address, and the page's
     # sign-in carries its own CAPTCHA (a widget in a frame, a "Verify you
     # are human" box). A check's words are read from the main frame of a
     # page with no box to fill, so this page is read and the run goes on
@@ -642,7 +641,7 @@ def test_a_verified_page_whose_sign_in_carries_a_captcha_is_read(
     ("/denied", "HTTP 403"), ("/empty403", "HTTP 403")])
 def test_a_verification_link_answered_by_a_bare_status_parks_naming_it(
         browser_page, tmp_path, monkeypatch, redirecting_site, path, said):
-    # R4-M1 (SP7 review): a 403, 429 or 503 is a bot check only with a
+    # a 403, 429 or 503 is a bot check only with a
     # check's header or words; any other is named by its status and the
     # page's words when it says the site is down or busy. Its page never
     # runs, and the person opens the link again
@@ -657,7 +656,7 @@ def test_a_verification_link_answered_by_a_bare_status_parks_naming_it(
 
 def test_a_verification_link_answered_by_a_403_that_says_the_address_is_verified_is_read(
         browser_page, tmp_path, monkeypatch, redirecting_site):
-    # R4-M1: the page's own words first. A 403 that says the address is
+    # the page's own words first. A 403 that says the address is
     # verified already is the link's work done: it is read as the link's
     # page and the run goes on to the job's page
     run, read = _link_run(tmp_path, browser_page, monkeypatch)
@@ -679,7 +678,7 @@ def test_a_verification_link_the_site_answers_with_a_403_that_names_the_link_is_
 
 def test_a_verification_link_behind_a_bot_check_is_not_recorded_as_opened(
         browser_page, tmp_path, monkeypatch, redirecting_site):
-    # R3-M2: no decision says the link was opened, and the site is not one
+    # no decision says the link was opened, and the site is not one
     # whose link was followed
     from types import SimpleNamespace
     run, _ = _link_run(tmp_path, browser_page, monkeypatch)
@@ -704,7 +703,7 @@ def test_a_verification_link_behind_a_bot_check_is_not_recorded_as_opened(
     ("/loop", "the emailed link did not open (TooManyRedirects)", "CHECK_SENT_NOTE")])
 def test_a_link_that_parks_after_the_answers_asks_the_person_to_check_and_never_to_requeue(
         browser_page, tmp_path, monkeypatch, redirecting_site, path, why, note):
-    # final review A R2-M3: in submit mode, once the application's answers
+    # in submit mode, once the application's answers
     # are on the site the emailed link may be the step that sends it. A park
     # of the link's tab then carries the check-sent reason and no Re-queue:
     # a link held on its own address is the person's to open, then Mark
@@ -754,7 +753,7 @@ def test_a_page_that_says_a_link_was_emailed_reads_as_the_account_check(fields, 
 
 
 
-# === an account that exists, password rules, re-typing, a slow sign-up (ACC-03, 04, 09, 12) ===========
+# === an account that exists, password rules, re-typing, a slow sign-up ================================
 
 def _run(f, tmp_path, _browser, flow_server, judge=None):
     return h.run_flow(f, judge or jev.FakeJev(), "fake", browser=_browser, server=flow_server,
@@ -836,7 +835,7 @@ def _refusing_signup(name: str, refuse: str, **kw) -> h.Flow:
 
 def test_a_sign_up_shown_again_with_its_boxes_emptied_takes_the_password_once_more(
         _browser, flow_server, tmp_path):
-    # ACC-12: the first Create account is refused for another reason (the
+    # the first Create account is refused for another reason (the
     # boxes emptied, a note shown); the second goes through
     r = _run(_refusing_signup("signup_retype", _REFUSE_ONCE), tmp_path, _browser, flow_server)
     assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
@@ -863,7 +862,7 @@ def test_a_slow_sign_up_is_waited_for_and_clicked_once(_browser, flow_server, tm
     assert len(settles) == 1 and settles[0]["changed"], settles
 
 
-# === a sign-in only with another site (ACC-11) ================================================================
+# === a sign-in only with another site =========================================================================
 
 def test_a_portal_that_signs_in_only_with_another_site_parks_and_clicks_none(
         _browser, flow_server, tmp_path):
@@ -885,7 +884,7 @@ _SSO_CHROME = (h.FIXTURES_DIR / "forms" / "sso_buttons.html").read_text(encoding
 
 def test_a_portal_with_page_chrome_beside_its_sso_buttons_parks_as_sso(
         _browser, flow_server, tmp_path):
-    # N2 (SP7 review): "Learn more", a language, "Contact us" and a cookie
+    # "Learn more", a language, "Contact us" and a cookie
     # banner's "Accept all" are no way on; the park is the SSO one (in the
     # policy), never a login wall
     import dataclasses
@@ -921,10 +920,10 @@ class _SignInAsLoginWall(jev.FakeJev):
 
 def test_a_portal_whose_other_control_leads_nowhere_ends_with_the_sso_park(
         _browser, flow_server, tmp_path):
-    # R3-I1 (SP7 review): "Skip for now" is a control the run does not know,
-    # so the screen is not read as SSO-only at once; the account step finds
-    # no box to sign in with, and its login-wall park falls back to the SSO
-    # reason, its own words kept (R4-I1). No sign-in with another site is
+    # "Skip for now" is a control the run does not know, so the screen is
+    # not read as SSO-only at once; the account step finds no box to sign
+    # in with, and its login-wall park falls back to the SSO reason, its
+    # own words kept. No sign-in with another site is
     # clicked and nothing is sent
     import dataclasses
     f = dataclasses.replace(h.flow("sso_buttons"), name="sso_buttons_skip",
@@ -974,7 +973,7 @@ _DEAD_ENDS = {
     "create_one": (_sso_with("Create one"),
                    r"^the advance button \(Create one\) did nothing \(judged advance [\d.]+, "
                    r"clicked twice\)$"),
-    # R4-I1 (SP7 review): the review's four screens with a way on of their own
+    # four screens with a way on of their own
     "review_next": (_careers("Review - Fabrikam Careers", _REVIEW_STEP),
                     r"^the advance button \(Next\) did nothing \(judged advance [\d.]+, clicked "
                     r"twice\)$"),
@@ -1003,7 +1002,7 @@ _DEAD_ENDS = {
 @pytest.mark.parametrize("name", list(_DEAD_ENDS))
 def test_a_dead_end_beside_sign_ins_with_other_sites_keeps_its_own_park(
         _browser, flow_server, tmp_path, name):
-    # R4-I1 (SP7 review): a dead end (the page did not advance, no way
+    # a dead end (the page did not advance, no way
     # forward, a way on that did nothing, a step save whose request left)
     # keeps its own park and reason, and so does an account park on a screen
     # with a way on of its own ("Apply now"): the words of a dead control
@@ -1027,9 +1026,9 @@ def test_a_dead_end_beside_sign_ins_with_other_sites_keeps_its_own_park(
 _G = "Sign in with Google"
 _WALL = "login wall (read as login_wall 0.90; master password stored: no; boxes: none)"
 _SIGNUP = "account signup needed (read as signup 0.90; the create-account link led nowhere)"
-# R4-I1: the account parks and dead ends `_account_park` is handed, over the
-# screens of the review's probes: the SSO park only where the screen's only
-# way on is a sign-in with another site
+# the account parks and dead ends `_account_park` is handed, over screens
+# with and without a way on of their own: the SSO park only where the
+# screen's only way on is a sign-in with another site
 _ACCOUNT_PARKS = [
     # beside the sign-ins, the site's own sign-in or sign-up, chrome, or a
     # control the run does not know: the SSO park
@@ -1090,10 +1089,10 @@ def test_an_account_park_falls_back_to_sso_only_where_the_screen_has_no_way_on_o
 @pytest.mark.parametrize("guard", ["submit_clicked", "_code_sent", "linkedin", "captcha"])
 def test_an_account_park_after_a_send_may_have_gone_or_on_linkedin_keeps_its_own_words(
         tmp_path, monkeypatch, guard):
-    # R4-I1: the main SSO check's guards. After the submit or a code step
-    # was clicked a send may have gone, so no park invites a Re-queue there;
-    # LinkedIn's own pages are never an ATS sign-in. R4-M2: a CAPTCHA box
-    # or challenge waiting for the person may be what held the screen
+    # the main SSO check's guards. After the submit or a code step was
+    # clicked a send may have gone, so no park invites a Re-queue there;
+    # LinkedIn's own pages are never an ATS sign-in. A CAPTCHA box or
+    # challenge waiting for the person may be what held the screen
     form = apply_run.apply_form
     digest = form.FormDigest("127.0.0.1", "Sign in", "", buttons=[
         form.Button(0, (0, "#b0"), "Sign in"), form.Button(1, (0, "#b1"), _G)])
@@ -1109,34 +1108,33 @@ def test_an_account_park_after_a_send_may_have_gone_or_on_linkedin_keeps_its_own
     assert (parked.reason, parked.tab_note) == (_WALL, apply_run.LOGIN_NOTE)
 
 
-# ACC-11: the controls beside two sign-ins with other sites, over every list
-# the SP7 reviews probed (M4, N2, R3-I1, R3-M4). Known page chrome leaves the
-# screen SSO-only; any other control may be a way on, and a screen read so
-# goes on to its account step (R3-I1: a false SSO park loses a job)
+# the controls beside two sign-ins with other sites. Known page chrome leaves
+# the screen SSO-only; any other control may be a way on, and a screen read
+# so goes on to its account step (a false SSO park loses a job)
 _SSO_CHROME_CONTROLS = [
-    # round 1 (M4): help, a way back, a cancel, a close, a notice
+    # help, a way back, a cancel, a close, a notice
     "Help", "Back", "Cancel", "Close", "Privacy policy", "Cookie settings",
-    # round 2 (N2): page chrome
+    # page chrome
     "Learn more", "Accept all", "English", "Contact us", "Accept all cookies", "Reject all",
     "Fran\u00e7ais", "FAQ", "Terms of use", "Accessibility",
-    # round 3 (R3-M4): a way to reach the site, an account's recovery
+    # a way to reach the site, an account's recovery
     "Email us", "Email support", "Phone support", "Forgot password?", "Code of conduct",
     "English (US)", "Language: Deutsch", "Can't sign in?", "Reset your password", "Learn more \u203a",
 ]
 _SSO_WAY_ON_CONTROLS = [
-    # round 1 (M4): a control that may show the screen's own way on
+    # a control that may show the screen's own way on
     "More options", "Use another method", "Show more", "Other ways to sign in",
-    # round 2 (N2): another way to sign in or apply
+    # another way to sign in or apply
     "Use email", "Continue with email", "Create account", "Sign up", "Use a password instead",
     "Email me a sign-in link", "More sign-in options", "Next", "I agree", "Sign in with email",
     "Apply",
-    # round 3 (R3-I1): a control the run does not know
+    # a control the run does not know
     "Skip", "Skip for now", "Skip this step", "Not now", "Maybe later", "Proceed", "Get started",
     "Start", "Go", "Upload resume", "Upload your resume", "Enter details manually",
     "Fill out the form", "Use my resume", "I don't have an account", "Create one",
     "First time here?", "New here? Get started", "Continue without signing in",
     "Apply manually", "Candidate login", "Register",
-    # round 3 (R3-M4): left as ways on, the safe side
+    # left as ways on, the safe side
     "Show all", "Join our talent community",
     # an aside's word beside a way on's
     "Go back and use email", "Help me apply",
@@ -1165,7 +1163,7 @@ def test_sso_only_reads_a_screen_whose_one_way_on_is_another_sites_sign_in(butto
     assert apply_run.sso_only(digest) == sites
 
 
-# --- the same two rules where the application's own form makes the account (ACC-04, ACC-12) -------
+# --- the same two rules where the application's own form makes the account ------------------------
 
 _FORM_ACCOUNT = """<!doctype html><html><head><title>Apply - Fabrikam Careers</title></head><body>
 <h1>Apply for Analytics Engineer</h1>
@@ -1277,8 +1275,8 @@ def test_password_rules_read_a_sign_ups_stated_rules(text, help_, rules):
     assert got == rules, said
 
 
-# I2 (SP7 review): the phrasings the review's probe read as rules the site
-# never set; each is read as the site means it
+# phrasings that read as rules the site never set; each is read as the
+# site means it
 _OVER_READ = [
     # a count of the classes: any three of the four
     ("Password\nMust contain at least 3 of the following: an uppercase letter, a lowercase "
@@ -1344,7 +1342,7 @@ def test_a_count_of_classes_the_password_misses_still_parks(tmp_path, monkeypatc
         run._check_password_rules(digest, "127.0.0.1")
 
 
-# N1 (SP7 review round 2): a prohibition, a choice and another field's hint,
+# a prohibition, a choice and another field's hint,
 # each read as the site means it; a rule left unclear is no rule
 _READ_AS_MEANT = [
     # a prohibition names no class the password needs
@@ -1416,11 +1414,11 @@ def test_a_choice_of_classes_the_password_holds_none_of_still_parks(tmp_path, mo
         run._check_password_rules(digest, "127.0.0.1")
 
 
-# R3-M3 (SP7 review round 3): the pre-check blocks only on a rule it reads
+# the pre-check blocks only on a rule it reads
 # with certainty. A rule's phrase with a choice or advice word ("or",
 # "and/or", "a mix of", "any", "avoid", "recommended", "should", "(0-9) or")
 # adds no class the password needs; the certain rules beside it still hold.
-# Every phrasing of the round-3 probe, in both directions
+# Each phrasing below, in both directions
 _READ_WITH_CERTAINTY = [
     # a choice the reader does not read whole, advice: no class needed
     ("Password\nMust contain an uppercase letter and/or a number", {}),
@@ -1492,7 +1490,7 @@ def test_a_certain_rule_beside_advice_or_a_count_still_parks(tmp_path, monkeypat
         run._check_password_rules(_rules_digest(text), "127.0.0.1")
 
 
-# === the password invariants (SP7) ===========================================================================
+# === the password invariants =================================================================================
 
 def _recorder(tmp_path):
     rec = h.Recorder(h.flow("signup_park"), park_mode=True, password=h.PASSWORD)
@@ -1603,7 +1601,7 @@ _SIGN_IN_WITH_BUTTONS = """<body><h1>Sign In</h1>
 
 
 def test_the_create_account_button_is_the_one_that_makes_an_account(browser_page, tmp_path):
-    # ACC-01: of a sign-in screen's sign-up words, never a job-alert sign-up
+    # of a sign-in screen's sign-up words, never a job-alert sign-up
     import apply_form
     browser_page.route("http://127.0.0.1/signin", lambda route: route.fulfill(
         body=_SIGN_IN_WITH_BUTTONS, content_type="text/html"))
@@ -1627,9 +1625,9 @@ _SIGN_IN_ALERTS_LINK = """<body><header><a href="/alerts">Sign up for job alerts
 
 def test_a_header_job_alerts_link_never_shadows_the_create_account_button(
         browser_page, tmp_path, monkeypatch, ledger):
-    # I3 (SP7 review): the header's "Sign up for job alerts" link was taken
-    # for the sign-in's create-account link; the run went to the alerts page
-    # and parked as a login wall, the Create Account button never clicked
+    # the header's "Sign up for job alerts" link is no create-account link:
+    # taken for one, the run goes to the alerts page and parks as a login
+    # wall, the Create Account button never clicked
     import apply_form
     monkeypatch.setattr(ats_accounts, "has_password", lambda: True)
     for path, body in (("signin", _SIGN_IN_ALERTS_LINK), ("alerts", "<h1>Job alerts</h1>")):
@@ -1656,7 +1654,7 @@ def test_a_sign_in_whose_header_carries_a_job_alerts_link_makes_the_account(
 def test_a_job_alerts_link_leaves_the_one_sign_in_to_a_screen_with_no_sign_up(
         _browser, flow_server, tmp_path):
     # no Create Account button: the alerts link is no sign-up, and the one
-    # sign-in without a ledger entry (ACC-02) is tried
+    # sign-in without a ledger entry is tried
     import json
     body = (h.FIXTURES_DIR / "forms" / "signin_alerts_link.html").read_text(encoding="utf-8")
     body = body.replace('<p><button type="button" id="btn-create-account">Create Account</button>'
@@ -1692,7 +1690,7 @@ def test_the_account_steps_own_buttons_are_never_a_job_alerts_sign_up():
 
 
 def test_the_way_to_the_sign_in_is_never_a_job_alerts_sign_in(browser_page, tmp_path):
-    # ACC-03's way from a sign-up that says the account exists to the sign-in
+    # the way from a sign-up that says the account exists to the sign-in
     import apply_form
     browser_page.route("http://127.0.0.1/signup", lambda route: route.fulfill(
         content_type="text/html", body="""<body><h1>Create Account</h1>
@@ -1710,7 +1708,7 @@ alerts</button>
 
 
 def test_a_sign_ins_box_that_came_back_is_never_typed_again(tmp_path):
-    # ACC-12 re-types a sign-up's emptied boxes only: a sign-in's box that came
+    # the run re-types a sign-up's emptied boxes only: a sign-in's box that came
     # back is a rejected password, and a second typing moves toward a lockout
     class _Emptied:
         """A password box the site emptied."""

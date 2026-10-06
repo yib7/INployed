@@ -1,6 +1,6 @@
 """Tests for local/resume_tailor/apply_answers.py, the master answer store.
 
-Version 2 (cycle 18, spec ST-1 to ST-7): every answer has a type (yes_no,
+Version 2: every answer has a type (yes_no,
 number, choice, text) and a confirmed flag the run obeys; `fact_value` is the
 one reader; a damaged file raises `AnswerStoreError` and never falls back to
 defaults; a version 1 file migrates in memory with a review list; `validate`
@@ -72,7 +72,7 @@ def test_all_exports_the_documented_constants():
         assert hasattr(aa, name), name
 
 
-# --- ST-1 / ST-2: the built-ins, their options and the seed -------------------------------
+# --- the built-ins, their options and the seed --------------------------------------------
 
 def test_builtins_are_ordered_and_typed_as_the_spec_lists_them():
     assert list(aa.BUILTINS) == [
@@ -178,7 +178,7 @@ def test_defaults_include_structured_address():
     assert apply_config.DEFAULTS["address_street"] == ""
 
 
-# --- ST-3: fact_value, the one reader -----------------------------------------------------
+# --- fact_value, the one reader -----------------------------------------------------------
 
 def test_fact_value_reads_a_confirmed_set_answer():
     assert aa.fact_value(_v2("work_authorized", "Yes")) == "Yes"
@@ -200,7 +200,7 @@ def test_match_option_strips_and_matches_case_aside():
 
 
 def test_fact_value_reads_a_spaced_or_cased_option_the_way_the_editor_shows_it():
-    # final review UI I2: one normalizer, so the run and the editor agree
+    # one normalizer, so the run and the editor agree
     assert aa.fact_value(_v2("work_authorized", "Yes ")) == "Yes"
     assert aa.fact_value(_v2("work_authorized", "yes")) == "Yes"
     assert aa.fact_value(_v2("gender", "Female ")) == "Female"
@@ -225,7 +225,7 @@ def test_fact_value_gives_nothing_for_an_answer_that_does_not_fit_its_type():
     assert aa.fact_value(_v2("work_authorized", "Yes", type_="text")) == ""
 
 
-# --- ST-4: load, load_store, load_with_defaults, save -------------------------------------
+# --- load, load_store, load_with_defaults, save -------------------------------------------
 
 def test_answer_store_error_names_the_path_and_reason(tmp_path):
     path = tmp_path / "apply_answers.json"
@@ -354,8 +354,8 @@ def test_save_refuses_to_write_over_a_damaged_file(tmp_path):
 
 
 def test_restore_bytes_keeps_a_good_bak_when_the_current_file_is_damaged(tmp_path):
-    # SP1 fix round 1, item 1: reverting a damaged store used to copy the
-    # damaged bytes over the one good backup, destroying it.
+    # reverting a damaged store never copies the damaged bytes over the one
+    # good backup, which would destroy it.
     path = tmp_path / "apply_answers.json"
     bak = path.with_name(path.name + ".bak")
     bak.write_text("the good copy", encoding="utf-8")
@@ -407,7 +407,7 @@ def test_load_with_defaults_brings_a_missing_builtin_back_unset_and_unconfirmed(
     assert aa.validate(list(by.values())) == []
 
 
-# --- ST-5: validate and warnings ----------------------------------------------------------
+# --- validate and warnings ----------------------------------------------------------------
 
 @pytest.mark.parametrize("eid, answer, extra, fragment", [
     ("work_authorized", "yes", {}, "Yes, No or not set"),
@@ -558,11 +558,11 @@ def test_warnings_list_unset_builtins_and_count_unconfirmed_ones():
                                                       if e["id"] != "address_country"]))
 
 
-# --- ST-6: migrating a version 1 store ----------------------------------------------------
+# --- migrating a version 1 store ----------------------------------------------------------
 
 def test_yes_no_reads_the_answers_first_word():
-    # a worded answer is read by its first word, never turned to "No" (the
-    # 2026-09-26 Contoso run: "Yes, I am a US citizen" went on the form as "No")
+    # a worded answer is read by its first word, never turned to "No" ("Yes,
+    # I am a US citizen" is a Yes and goes on the form as one)
     for text in ("true", "Yes", "yes.", "Yes, I am a US citizen",
                  "Yes willing to relocate and open to on-site", "1"):
         assert aa.yes_no(text) == "Yes", text
@@ -611,7 +611,7 @@ def test_migrate_leaves_a_seed_answer_unconfirmed_and_off_the_review():
      "No, I do not have a disability and have not had one in the past"),
 ])
 def test_migrate_leaves_a_guessed_meaning_unconfirmed_and_on_the_review(eid, text, answer):
-    # final review C1: the rest of the sentence can reverse the word the
+    # the rest of the sentence can reverse the word the
     # migration read, and a Yes or No names no veteran or disability option
     out, review = aa.migrate_v1([_v1(eid, text)])
     assert (out[0]["answer"], out[0]["confirmed"]) == (answer, False)
@@ -658,7 +658,7 @@ def test_migrate_keeps_an_unreadable_yes_no_as_a_note_for_review():
     ("100", "", "100"),
     ("75", "", "75"),
     ("3 1/2 years", "", "3 1/2 years"),          # a fraction after a space is unreadable
-    # SP1 fix round 2: a years answer starting with 0 and naming a range stays unreadable
+    # a years answer starting with 0 and naming a range stays unreadable
     ("0 to 5 years", "", "0 to 5 years"),
     ("0-1 years", "", "0-1 years"),
     ("0 or 1 years", "", "0 or 1 years"),
@@ -690,7 +690,7 @@ def test_migrate_reads_a_leading_number(text, answer, note):
     ("address_country", "U.S.", "United States"),
     ("address_state", "MA", "Massachusetts"),
     ("address_state", "new york", "New York"),
-    # SP1 fix round 1, item 3: short EEO answer aliases, applied per id
+    # short EEO answer aliases, applied per id
     ("gender", "Man", "Male"),
     ("gender", "M", "Male"),
     ("gender", "Woman", "Female"),
@@ -725,7 +725,7 @@ def test_migrate_reads_a_leading_number(text, answer, note):
      "Yes, I have a disability, or have had one in the past"),
 ])
 def test_migrate_matches_a_choice_by_case_and_the_alias_table(eid, text, want):
-    # final review C1: a case match, a state or country spelling and a decline
+    # a case match, a state or country spelling and a decline
     # form confirm; every other alias is a reading the user confirms by hand
     out, _ = aa.migrate_v1([_v1(eid, text)])
     confirmed = (eid, text) in _SPELLING_ALIASES
@@ -752,7 +752,7 @@ def test_a_trailing_period_or_extra_spaces_never_blocks_an_exact_match():
 
 
 def test_a_state_code_alias_applies_only_to_address_state():
-    # SP1 fix round 1, item 6: "Georgia" is both a US state and a country, so a
+    # "Georgia" is both a US state and a country, so a
     # v1 country answer of "GA" must not become the country Georgia.
     out, review = aa.migrate_v1([_v1("address_country", "GA")])
     assert out[0]["answer"] == ""
@@ -818,7 +818,7 @@ def test_a_migrated_test_bank_validates():
     assert by["address_country"]["answer"] == "United States"
 
 
-# --- ST-7: collisions ---------------------------------------------------------------------
+# --- collisions ---------------------------------------------------------------------------
 
 _Q = {k: v for k, v in _OLD_QUESTIONS.items()}
 _Q["onsite_ok"] = "Are you willing to work on-site (in the office)?"
@@ -831,7 +831,7 @@ _Q["onsite_ok"] = "Are you willing to work on-site (in the office)?"
     ("How many years of relevant experience do you have?", "years_experience"),
     ("Country.", "address_country"),
     ("State / province", "address_state"),
-    # final review UI C1: a question the run hands to a custom answer saves;
+    # a question the run hands to a custom answer saves;
     # the own-question check lives in the Add answer dialog (local/qt)
     ("Are you authorized to work in Canada?", None),
     ("Will you require H-1B visa sponsorship?", None),

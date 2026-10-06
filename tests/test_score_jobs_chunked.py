@@ -225,7 +225,7 @@ def test_multichunk_no_leftover_tmp_file_in_master_dir(tmp_path, monkeypatch):
     assert leftovers == []
 
 
-# --- Task 4: usecols two-pass rescore_master_failures --------------------
+# --- usecols two-pass rescore_master_failures ----------------------------
 #
 # rescore_master_failures's tail calls Gemini scoring (run_scoring). None of
 # these tests may let that happen for real: test_rescore_candidates_match_full_load
@@ -351,7 +351,7 @@ def test_load_rows_by_id_returns_only_requested(tmp_path, monkeypatch):
 
 
 def test_master_rewrite_is_byte_stable_for_untouched_rows(tmp_path, monkeypatch):
-    """Audit P2-26: with dtype=str + keep_default_na=False, a rewrite must not
+    """With dtype=str + keep_default_na=False, a rewrite must not
     reformat untouched values ("True " keeps its space, "1" never becomes
     "1.0", leading-zero ids survive)."""
     m = tmp_path / "master.csv"

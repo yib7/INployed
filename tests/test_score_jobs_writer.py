@@ -1,4 +1,4 @@
-"""SP2 (cycle 20): the writer. For a job Jev scored in stage 2, one cheap LLM
+"""The writer. For a job Jev scored in stage 2, one cheap LLM
 call turns Jev's findings into that job's reason/strengths/gaps, behind the
 JEV_WRITER switch. Hermetic: every pool below is a fake, no network, no key.
 """
@@ -103,8 +103,8 @@ def test_writer_findings_uses_jev_score_labels(score, label):
 
 
 def test_writer_findings_omits_the_parenthetical_for_a_score_with_no_label():
-    """M2: SCORE_LABELS[score] raised KeyError for a score outside 1-5. .get()
-    leaves the parenthetical out instead of crashing."""
+    """A score outside 1-5 has no SCORE_LABELS entry: the block leaves the
+    parenthetical out and never crashes."""
     row = {"deep_score": 8, "recommendation": "apply", "findings": _findings()}
     block = sj.writer_findings(7, row)
     assert block.startswith("Fit score: 7 of 5\n")
@@ -198,7 +198,7 @@ def test_write_notes_returns_none_on_no_strengths():
     assert out2 is None
 
 
-# --- M9: one failure report per reason, no message or job text ----------------
+# --- one failure report per reason, no message or job text --------------------
 
 def test_write_notes_reports_the_exception_class_once_per_class(monkeypatch, capsys):
     monkeypatch.setattr(sj, "_WRITER_WARNED", set())
@@ -344,11 +344,10 @@ def test_a_job_whose_stage_two_falls_back_to_the_llm_gets_no_writer_call():
 
 
 def test_a_job_with_no_matching_stage_one_row_gets_no_writer_call():
-    """A code-review guard: `s1_row["score"].iloc[0]` used to have no guard for
-    an empty `s1_row`. A blank job_posting_id reproduces it -- `merge` and
-    `isin` line NaN keys up with each other, but `==` never does, so the
-    writer hook's own `s1_df["job_posting_id"] == job_id` lookup comes back
-    empty even though the job's stage 1 row is right there. The writer is
+    """`s1_row["score"].iloc[0]` is guarded for an empty `s1_row`. A blank
+    job_posting_id produces one -- `merge` and `isin` line NaN keys up with
+    each other, but `==` never does, so the writer hook's own
+    `s1_df["job_posting_id"] == job_id` lookup comes back empty even though the job's stage 1 row is right there. The writer is
     skipped, Jev's own composed reason stays, and it counts as kept code text."""
     pool = WriterPool()
     run = sj.JevRun(ScriptedJudge())
@@ -390,7 +389,7 @@ def test_summary_line_omits_the_writer_suffix_when_nothing_happened(monkeypatch)
     assert "Jev writer" not in run.summary_line()
 
 
-# --- M2: a stage 1 score with no label never crashes the gather ----------------
+# --- a stage 1 score with no label never crashes the gather --------------------
 
 class RefusesStage1(ScriptedJudge):
     """Raises for a stage 1 request (no `deep_fit` among the questions), so
@@ -427,7 +426,7 @@ def test_a_stage_one_score_with_no_label_does_not_crash_run_scoring():
     assert run.writer == {"written": 1, "kept": 0}
 
 
-# --- I2: the writer stops after WRITER_FAIL_LIMIT failures in a row -----------
+# --- the writer stops after WRITER_FAIL_LIMIT failures in a row ---------------
 
 def test_three_writer_failures_in_a_row_stop_it_for_the_rest_of_the_run(monkeypatch, capsys):
     monkeypatch.setattr(sj, "JEV_CONCURRENCY", 1)   # deterministic order, see test_jev_score.py
@@ -476,7 +475,7 @@ def test_a_success_between_failures_resets_the_streak(monkeypatch, capsys):
                      "Jev's code text.") == 1
 
 
-# --- M8: each job in a multi-job run keeps its own writer outcome -------------
+# --- each job in a multi-job run keeps its own writer outcome -----------------
 
 def test_run_scoring_writer_gives_each_job_its_own_notes_and_keeps_a_failed_jobs_code_text():
     pool = PerJobOutcomePool({"JOB-A": "ok", "JOB-B": RuntimeError("boom")})

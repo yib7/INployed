@@ -6,12 +6,12 @@ is a 37 MB personal dataset. A test that reads one of them takes a different bra
 on the author's machine than it does on CI or a fresh clone, which is the
 "passes only on your machine" failure the whole conftest sandbox exists to prevent.
 
-It was not hypothetical. Measured over the full suite on 2026-08-27 with a
-`Path.read_text` probe: 316 tests read one of those four config files straight out
-of the working tree. The author's `search_config.json` carries
+The risk is measured: a `Path.read_text` probe over the full suite, run with no
+sandbox, found 316 tests reading one of those four config files straight out of
+the working tree. The author's `search_config.json` carries
 `limit_per_input=150` and `exclude_window_days=14` while `scraper.py`'s built-in
-defaults are 100 and 90, so every scraper test reaching `load_search_config()` was
-asserting against numbers a fresh clone does not have.
+defaults are 100 and 90, so every scraper test reaching `load_search_config()`
+asserts against numbers a fresh clone does not have unless the sandbox holds.
 
 conftest's `_hermetic_repo_data` fixture redirects every one of those paths into a
 throwaway dir. These tests fail loudly if that redirect is ever removed.

@@ -90,7 +90,7 @@ def test_jobs_1_and_jobs_3_agree_on_three_small_flows(_browser, tmp_path):
         [(r["flow"], r["judge"]) for r in parallel_rows]
 
 
-# --- the real judge's column (SP8b), proved on the fake ----------------------------------------
+# --- the real judge's column, proved on the fake -----------------------------------------------
 
 _TWO_FLOWS = ("post_form", "lever_single_park")
 
@@ -167,7 +167,7 @@ class _FakeProc:
 
 def test_isolate_turns_off_every_dotenv_load(tmp_path, monkeypatch):
     # resume_tailor.config loads the repo's .env when it is imported, and the
-    # runner imports it for the sheet refresh (cycle 18, FL-2): the matrix
+    # runner imports it for the sheet refresh: the matrix
     # process never reads the developer's .env
     import dotenv
     import dotenv.main
@@ -209,7 +209,7 @@ def test_a_flow_missing_from_the_registry_is_a_failure_row_not_a_hang(tmp_path):
     # into one row, never drop it and never hang waiting on it
     bogus = dataclasses.replace(h.flow("post_form"), name="__apply_matrix_test_boom__")
     results = apply_matrix._run_parallel((bogus,), (1,), True, 1, 10.0, tmp_path, verbose=False)
-    assert len(results) == 2        # a row per judge it owed: fake and seed 1 (R2-M3)
+    assert len(results) == 2        # a row per judge it owed: fake and seed 1
     r = results[0]
     assert r.flow == "__apply_matrix_test_boom__"
     assert r.status == "failed"
@@ -219,7 +219,7 @@ def test_a_flow_missing_from_the_registry_is_a_failure_row_not_a_hang(tmp_path):
 
 def test_a_crashed_worker_counts_every_run_it_owed_as_a_miss_and_fails_the_exit(
         tmp_path, monkeypatch, capsys):
-    # SP6 review R2-M3: one row per judge, each naming the cause, and the
+    # one row per judge, each naming the cause, and the
     # script exits nonzero even with no invariant broken
     bogus = dataclasses.replace(h.flow("post_form"), name="__apply_matrix_test_boom__")
     results = apply_matrix._run_parallel((bogus,), (1, 2), True, 1, 10.0, tmp_path,
@@ -255,7 +255,7 @@ def _row(judge: str, ok: bool, status: str = "submitted", policy=None) -> h.RunR
      ["--flows", "post_form"], "")])
 def test_the_script_fails_on_an_off_policy_park_and_on_the_floors(
         monkeypatch, capsys, rows, flows, fails):
-    # final review C-I2: the floors and the off-policy count gate the exit
+    # the floors and the off-policy count gate the exit
     monkeypatch.setattr(apply_matrix, "_run_parallel", lambda *a, **k: list(rows))
     monkeypatch.setattr(apply_matrix, "_isolate", lambda *a, **k: None)    # no run, no store
     code = apply_matrix.main([*flows, "--seeds", "1", "--jobs", "2"])
@@ -265,7 +265,7 @@ def test_the_script_fails_on_an_off_policy_park_and_on_the_floors(
 
 
 def test_a_replay_miss_in_the_real_column_fails_the_script(monkeypatch, capsys):
-    # final review C N4: a `--real replay` request missing from the cache
+    # a `--real replay` request missing from the cache
     # fails the exit, and the replay line names the flows left out for
     # their recorded=False flags
     real = dataclasses.replace(_row("real", True), replay_misses=2)
@@ -291,7 +291,7 @@ def test_a_replay_miss_in_the_real_column_fails_the_script(monkeypatch, capsys):
                               "--real", "replay"]) == 0
 
 
-# --- --real-prune (SP8): pruning the matrix cache to what a replay used ------------------------
+# --- --real-prune: pruning the matrix cache to what a replay used ------------------------------
 
 def test_real_prune_only_applies_with_real_replay(capsys):
     assert apply_matrix.main(["--real-prune"]) == 2
@@ -307,7 +307,7 @@ def test_flows_narrowed_is_false_only_for_the_whole_registry():
 
 def test_real_prune_refuses_a_flows_narrowed_run_and_leaves_the_cache_as_it_was(
         tmp_path, monkeypatch, capsys):
-    # SP8 review: a --flows run's used_keys only ever covers the flows it
+    # a --flows run's used_keys only ever covers the flows it
     # ran, so a stale key belonging to a left-out flow would look unused and
     # get dropped even though a full run still needs it; --real-prune must
     # refuse a narrowed run outright, before it runs anything
@@ -343,10 +343,9 @@ def test_apart_and_unrecorded_flows_are_computed_from_the_registry_alone():
 
 def test_real_prune_refuses_when_a_recorded_false_flow_was_left_out(tmp_path, monkeypatch,
                                                                      capsys):
-    # a real-world unsafe prune (SP8 fix round 2): a74890d recorded 11 pause
-    # flows, but their recorded=False flags never flipped, and a
-    # --real-prune run right after kept only the keys the replay had
-    # touched, deleting the fresh recordings. --real-prune must refuse
+    # a recording can leave flows whose recorded=False flags never flipped;
+    # a --real-prune run right after would keep only the keys the replay
+    # touched and delete the fresh recordings. --real-prune must refuse
     # outright whenever the registry still leaves a flow out this way,
     # before it runs anything.
     cache = tmp_path / "matrix_cache.json"
@@ -472,7 +471,7 @@ def test_real_prune_refuses_after_a_crashed_worker_row(tmp_path, monkeypatch, ca
 
 def test_real_prune_refuses_after_a_real_row_that_missed_its_end(tmp_path, monkeypatch,
                                                                  capsys):
-    # final review D I1: a real-judge flow that ended early (a timeout under
+    # a real-judge flow that ended early (a timeout under
     # --jobs, a flaky load) has no miss, break or crash, and it never asked
     # the requests after where it stopped; the prune refuses and leaves the
     # cache as it was
@@ -500,7 +499,7 @@ def test_real_prune_refuses_after_a_real_row_that_missed_its_end(tmp_path, monke
 
 
 def test_a_recording_names_the_flows_it_recorded_that_are_still_flagged_unrecorded():
-    # final review C N4: the flags to flip after a recording
+    # the flags to flip after a recording
     fresh = dataclasses.replace(h.flow("post_form"), name="__fresh__", recorded=False)
     old = h.flow("lever_single_park")
     import unittest.mock
@@ -518,7 +517,7 @@ def test_default_flow_timeout_scales_with_the_judge_count():
     half = apply_matrix._default_flow_timeout(3)
     assert half < base
     assert half >= apply_matrix._MIN_FLOW_TIMEOUT_S
-    # final review C N5: a run of few judges (a `--real replay --seeds 0`
+    # a run of few judges (a `--real replay --seeds 0`
     # has two) gets at least 120s a flow
     assert apply_matrix._MIN_FLOW_TIMEOUT_S == 120.0
     assert apply_matrix._default_flow_timeout(2) == 120.0

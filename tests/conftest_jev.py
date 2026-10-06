@@ -1,4 +1,4 @@
-"""The `jev_judge` fixture and its hooks (the SP8 record / replay harness).
+"""The `jev_judge` fixture and its hooks (the record / replay harness).
 
 A runner test module opts in with
 
@@ -29,17 +29,17 @@ Hooks, active in `record` and `replay` mode only:
   mode sends none and says so; `jev_doubles.DryRun` requests are listed apart as
   simulated, never billed), the outcomes path, and the cap stop if it happened.
 - session finish: when `AUTO_APPLY_JEV_PRUNE` is set, the shared replay's used
-  keys are written to `jev_harness.used_keys_path` (SP8, gitignored), and the
+  keys are written to `jev_harness.used_keys_path` (gitignored), and the
   cache is pruned to them, or refused with a reason
   (`jev_harness.prune_if_asked`, `jev.prune_cache`). It refuses
   when this run was not the whole `RUNNER_TESTS` set (`_narrowed_reason`,
   below: a `-k`/`-m` filter, a deselected test, a missing file or a node id
   narrower than a file), or when some `jev_judge` test skipped for a reason
-  this harness does not already account for (`_jev_skip_reason`, below, SP8
-  fix round 2: a platform `skipif`, an `importorskip`, a `pytest.skip()` in
+  this harness does not already account for (`_jev_skip_reason`, below:
+  a platform `skipif`, an `importorskip`, a `pytest.skip()` in
   the test body; its keys were never asked for either), or when some test
   diverged from the fake (its failed assertion became an xfail above, and the
-  requests after it were never asked for, final review D I1).
+  requests after it were never asked for).
 - deselected: `pytest_deselected` counts every item a `-k`, `-m` or
   `--deselect` filter drops, on the config's own stash: the count
   `_narrowed_reason` reads at session finish.
@@ -69,8 +69,8 @@ def _xdist_active(config) -> bool:
     on the whole WORKER PROCESS, so a `pytester.runpytest_inprocess(...)` call
     nested inside a real worker (as `test_jev_harness.py`'s fixture/hook tests
     do) inherits it even though that nested, single-process pytest run is
-    never itself distributed; an env-var check raised a false UsageError
-    there, caught by running this file under `-n 2` (SP3.5 fix round 1).
+    never itself distributed; an env-var check would raise a false UsageError
+    there.
     `config.workerinput` is per-`Config`, not per-process, so the inner run's
     own fresh `Config` never carries it."""
     if hasattr(config, "workerinput"):
@@ -93,7 +93,7 @@ def pytest_configure(config):
         raise pytest.UsageError(str(e)) from None
     config.stash[SESSION_KEY] = session
     if session.soft:
-        # SP3.5 review finding 1: record/replay read-modify-write a shared
+        # record/replay read-modify-write a shared
         # repo-tree cache (jev.ReplayJev) and truncate/append a shared
         # outcomes.jsonl with no cross-process lock, so every xdist worker
         # races every other one. Refuse before any worker starts (this fires
@@ -177,7 +177,7 @@ def pytest_runtest_makereport(item, call):
         # a `jev_judge` test skipped for its own reason, before this
         # function's own capped/unrecorded overrides below ever run (those
         # start from a "failed" report): tallied for
-        # `_jev_skip_reason` at session finish (SP8 fix round 2)
+        # `_jev_skip_reason` at session finish
         skipped = item.config.stash.get(JEV_SKIPPED_KEY, [])
         skipped.append((item.nodeid, str(rep.longrepr)))
         item.config.stash[JEV_SKIPPED_KEY] = skipped
@@ -229,8 +229,8 @@ def pytest_deselected(items):
     """Pytest's own hookspec (no `config` parameter): every `-k`, `-m` or
     `--deselect` filter that drops items calls this, possibly more than once,
     with the items it dropped. Tallied on the config's own stash so
-    `pytest_sessionfinish` can refuse a prune over a narrowed run (SP8
-    review): a filtered run's `used_keys` only ever covers what it kept, and
+    `pytest_sessionfinish` can refuse a prune over a narrowed run: a
+    filtered run's `used_keys` only ever covers what it kept, and
     pruning on it could drop a key one of the dropped items still needed."""
     if not items:
         return
@@ -261,7 +261,7 @@ def _jev_skip_reason(config) -> str:
 
 
 def pytest_sessionfinish(session, exitstatus):
-    """SP8: in `replay` mode with `AUTO_APPLY_JEV_PRUNE` set, write the shared
+    """In `replay` mode with `AUTO_APPLY_JEV_PRUNE` set, write the shared
     replay's used keys beside `outcomes.jsonl` (`jev_harness.write_used_keys`),
     then prune the cache to them or print the refusal
     (`jev_harness.prune_if_asked`), which also refuses a run that was not the

@@ -92,7 +92,7 @@ def test_parse_standard_answers_keep_question_text():
     assert sa["Gender (EEO self-identification)."] == "Male"
 
 
-# The sheet's escapes (cycle 18, FL-3): a `*` in a question or an answer is
+# The sheet's escapes: a `*` in a question or an answer is
 # written `\*`, and a note sits under its answer as a sub-bullet.
 _ESCAPED = r"""## Standard answers
 - **Rate your SQL skill from 1 to 5 \*** 4 \* strong

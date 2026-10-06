@@ -1,23 +1,21 @@
-"""The tailor's Jev steps (TL-1 to TL-6) as `run.tailor()` meets them.
+"""The tailor's Jev steps as `run.tailor()` meets them.
 
-With Jev off the tailor must make exactly the LLM calls it made before cycle 19,
-with byte-identical prompts. `test_jev_off_prompts_match_the_recording` pins that:
-the prompts of the stages the Jev steps sit beside and the order and tier of every
-call a golden run makes were recorded from the engine before the Jev wiring landed,
-into `tests/fixtures/tailor_jev_off_prompts.json`. Part 4a recorded `select`, the
-`lead_with_overview` ordering call (since retired: the lead is now a rule) and
-`compress_skills`' fallback call; part 4b
-added the stages its checks gate (both `reverb` calls, every AI-writing sweep call
-and a `reground` re-ask), recorded at its base before the engine changed, and part
-4c added the rephrase call that best-of-N (TL-7) gates, recorded the same way.
+With Jev off the tailor must make exactly the LLM calls of an engine with no Jev
+wiring, with byte-identical prompts. `test_jev_off_prompts_match_the_recording` pins
+that: the prompts of the stages the Jev steps sit beside and the order and tier of
+every call a golden run makes are recorded from an engine with no Jev wiring, in
+`tests/fixtures/tailor_jev_off_prompts.json`. The recording holds `select`,
+`compress_skills`' fallback call, the stages the Jev checks gate (both `reverb`
+calls, every AI-writing sweep call and a `reground` re-ask) and the rephrase call
+that best-of-N gates.
 A prompt change made on purpose re-records the file (set TAILOR_JEV_OFF_PROMPTS_RECORD=1
 for one run) and shows the diff in review; a change nobody meant fails here.
 
 The rest covers each Jev step where its answer lands (the shortlist and the skills
 in `select`, the new verb for a repeated opener in
 `dedupe_leading_verbs`) and whole runs with Jev on, with Jev
-down from the start and with an outage mid-run. The faithfulness check (TL-4) has its
-own module, `test_tailor_faithfulness.py`, and so does the sweep gate (TL-5),
+down from the start and with an outage mid-run. The faithfulness check has its
+own module, `test_tailor_faithfulness.py`, and so does the sweep gate,
 `test_sweep_gate.py`; the whole runs here count their requests.
 
 The runs reuse the golden module's pinned engine (`test_tailor_golden.pinned_engine`),
@@ -54,9 +52,9 @@ RECORD_ENV = "TAILOR_JEV_OFF_PROMPTS_RECORD"
 # The stages whose prompts are pinned word for word: the ones a Jev step replaces,
 # trims or gates when Jev is on. A stage the golden run calls more than once is
 # recorded once per call, in call order: its first call under the stage's name and
-# each later one as "<stage> #<n>", so the recording 4a made stays as it was.
+# each later one as "<stage> #<n>", so the first call's key stays the stage's name.
 PINNED_STAGES = ("select", "rephrase", "reverb", "aiwriting_sweep")
-# The tailor's three Jev options (TL-7 to TL-9). Each needs a judge, so with Jev off
+# The tailor's three Jev options. Each needs a judge, so with Jev off
 # the recording holds whichever way they are set.
 JEV_OPTION_ENVS = ("RESUME_TAILOR_BEST_OF_N", "RESUME_TAILOR_COVER_LETTER_JEV_CHECK",
                    "RESUME_TAILOR_ATS_MEANING")
@@ -233,7 +231,7 @@ def test_jev_off_prompts_match_the_recording(pinned_engine, stub_template_head,
 
 
 def test_the_recording_covers_every_gated_stage():
-    """Every stage 4a, 4b and 4c gate has its prompt in the recording: select and
+    """Every stage a Jev step gates has its prompt in the recording: select and
     the rephrase once, reverb twice, the sweep once per item, and the
     reground re-ask."""
     want = recorded_prompts()
@@ -400,7 +398,7 @@ def _catalog_ids(user):
             if line.startswith("   - ")]
 
 
-# ── TL-2: the shortlist select() sees ────────────────────────────────────────
+# ── the shortlist select() sees ──────────────────────────────────────────────
 def test_the_shortlist_keeps_each_blocks_most_probable_atoms(wide_master):
     got = selection._shortlist(_RELEVANCE)
     atoms = {b["name"]: b["atoms"] for sec in got.values() for b in sec}
@@ -446,7 +444,7 @@ def test_select_with_an_empty_rating_sends_the_whole_catalog(wide_master, monkey
     assert rated == plain
 
 
-# ── TL-1: the skills lines ───────────────────────────────────────────────────
+# ── the skills lines ─────────────────────────────────────────────────────────
 _SKILL_PICK = {
     "lines": {"Languages": ["SQL", "Python", "Go"], "Frameworks": ["Flask"],
               "Developer Tools": ["Docker", "Git"], "Libraries": ["pandas"]},
@@ -502,7 +500,7 @@ def test_a_line_keeps_its_count_and_width(wide_master, monkeypatch):
     assert lines["Languages"] == "SQL"
 
 
-# ── TL-6: the verb dedupe ────────────────────────────────────────────────────
+# ── the verb dedupe ──────────────────────────────────────────────────────────
 _PALETTE = {"Build": ["Built", "Designed", "Engineered"],
             "Analyze": ["Analyzed", "Modeled", "Quantified"],
             "Lead": ["Led", "Coordinated"]}
@@ -538,7 +536,7 @@ def _dedupe(bullets, judge, reserved=frozenset({"quantified"})):
 
 
 class _Staged:
-    """Answers TL-6's category question with `category` and its verb question with
+    """Answers the verb dedupe's category question with `category` and its verb question with
     `verb`, each (choice, confidence)."""
 
     def __init__(self, category, verb):
@@ -605,10 +603,10 @@ def test_each_repeated_opener_is_its_own_pair_of_choices(monkeypatch):
 
 
 def test_the_real_palette_sends_two_choices_jev_takes(monkeypatch):
-    """VL-3: over the repo's active_words.md (368 verbs), TL-6 asked one choice over
-    every unused verb, past the 255 options Jev takes, and got a 400. It now asks the
-    category, then a verb in it: for every category, both requests fit, and the
-    second holds exactly that category's unused verbs."""
+    """Over the repo's active_words.md (368 verbs), one choice over every unused verb
+    is past the 255 options Jev takes, and Jev answers it with a 400. The verb
+    dedupe asks the category, then a verb in it: for every category, both requests
+    fit, and the second holds exactly that category's unused verbs."""
     monkeypatch.setattr(compose, "reverb", lambda *a, **k: _REVERBED)
     monkeypatch.setattr(config, "ACTIVE_WORDS_MD", REPO / "resume_tailor_files" / "active_words.md")
     assets.active_verbs.cache_clear()
@@ -672,15 +670,15 @@ def test_a_golden_run_with_jev_on_makes_fewer_llm_calls(pinned_engine, stub_temp
     kept before the stub answers, and none is the fallback call's.
 
     Jev also picks the new verb for both Trailhead bullets that repeat the verbatim
-    block's "Built" (TL-6), so both `reverb` calls go. FakeJev finds no option's words
+    block's "Built", so both `reverb` calls go. FakeJev finds no option's words
     in either bullet and takes the first option, the repeated verb's category first:
     "Designed", then "Engineered", the verbs the golden's two dedupe arms reach.
 
-    The sweep gate (TL-5) asks once per sweep item (4 requests). FakeJev reads no tell
+    The sweep gate asks once per sweep item (4 requests). FakeJev reads no tell
     in any golden bullet and no detector fires on them, so all four sweep calls go too:
     the golden stub only echoed them.
 
-    The faithfulness check (TL-4) passes every golden bullet. It asks once per entry
+    The faithfulness check passes every golden bullet. It asks once per entry
     after the rephrase (4 requests) and once per entry a later pass rewrote: Trailhead
     after the verb dedupe and after the fill, Globex Analytics after the style gate
     (rc_workshop's change there is the em-dash strip alone). The sweep makes no call,
@@ -709,7 +707,7 @@ def test_a_golden_run_with_jev_on_makes_fewer_llm_calls(pinned_engine, stub_temp
     assert gate == [True, False, False, False, False]
     assert captured["skill_lines"] == _JEV_SKILL_LINES
     assert areas == ["tailor"], "one judge per run, handed to every step"
-    # skills, shortlist; two per repeated opener (TL-6); sweep; faithfulness
+    # skills, shortlist; two per repeated opener; sweep; faithfulness
     assert len(rec.requests) == 2 + 2 * 2 + 4 + 7
     verbs = [state["bullet"] for state, questions in rec.requests if "verb" in questions]
     assert verbs == [
@@ -755,7 +753,7 @@ class _ReadsHype:
 
 def test_a_bullet_jev_flags_sends_its_item_to_the_sweep(pinned_engine, stub_template_head,
                                                         tmp_path, monkeypatch):
-    """TL-5 in a whole run: Jev reads hype words in rc_lead, so Robotics Club alone
+    """The sweep gate in a whole run: Jev reads hype words in rc_lead, so Robotics Club alone
     makes its sweep call, with the flag in its payload and the flag rule in its system
     prompt. The stub echoes, so the page is the golden's."""
     stages: list = []
@@ -835,9 +833,9 @@ def test_jev_off_leaves_the_report_and_the_status_log_as_they_were(
 
 def test_jev_off_calls_the_gated_stages_as_they_were_called(
         pinned_engine, stub_template_head, tmp_path, monkeypatch):
-    """With Jev off the verb dedupe and the sweep are called with the signatures they
-    had before cycle 19 (no `judge=`), so a caller or a test double written against
-    those signatures keeps working."""
+    """With Jev off the verb dedupe and the sweep are called with no `judge=`, so a
+    caller or a test double written against their signatures without a judge keeps
+    working."""
     _jev_off(monkeypatch)
     real_dedupe, real_sweep = compose.dedupe_leading_verbs, sweep.sweep_items
     seen = []

@@ -155,7 +155,7 @@ def test_run_cmd_invokes_subprocess(monkeypatch):
 
 
 def test_run_cmd_decodes_gcloud_output_as_utf8(monkeypatch):
-    """3.4: text=True without an explicit encoding decodes with the OS default,
+    """text=True without an explicit encoding decodes with the OS default,
     so a gcloud error body carrying non-ASCII would raise UnicodeDecodeError and
     surface as a failed sync with no message."""
     seen = {}
@@ -657,8 +657,8 @@ def test_a_second_install_rolls_back_to_THIS_run_not_the_first_ever(tmp_path):
 def test_no_rollback_temp_file_survives_the_run(tmp_path):
     """The per-run rollback copy is a temp file next to run_scraper.sh, so the
     EXIT trap has to remove it on success AND on every failure path -- otherwise
-    the feature leaves a mode-600 copy of the cron script per click, which is the
-    pile P1-5 removed in the first place."""
+    the feature leaves a mode-600 copy of the cron script per click, a pile of
+    plaintext copies on the VM."""
     home = _fake_home(tmp_path, "#!/bin/bash\nexport KEEP=me\nset -e\n")
     ok, _ = _install(tmp_path, home, "value-777")
     assert ok.returncode == 0, ok.stdout + ok.stderr

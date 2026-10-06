@@ -1,4 +1,4 @@
-"""P2-7: the Projects section's repo link must not double the scheme.
+"""The Projects section's repo link must not double the scheme.
 
 render._projects builds an inline "Name | Link" href from the block's `repo`
 field. If master_experience.yaml stores a full URL (https://github.com/x/y)
@@ -50,7 +50,7 @@ def test_http_url_repo_normalizes_to_https(monkeypatch):
     assert "https://http://" not in tex
 
 
-# P2-2: an href target is not body text. escape_latex would backslash '_' and '~',
+# An href target is not body text. escape_latex would backslash '_' and '~',
 # which is right in a printed line and wrong in an address.
 
 
@@ -144,7 +144,7 @@ def test_escape_url_never_emits_a_bare_brace():
     assert out == r"https://x.dev/a\%7Bb\%7Dc"
 
 
-# 3A: a master entry with no `title:` / `location:` must not print "None".
+# A master entry with no `title:` / `location:` must not print "None".
 
 
 _EXP_SEL = {"experience": [{"name": "Globex", "groups": [["a1"]]}]}

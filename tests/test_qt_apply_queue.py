@@ -1,6 +1,6 @@
-"""SP3 (cycle 33): the dashboard's auto-apply queueing UI.
+"""The dashboard's auto-apply queueing UI.
 
-Covers the three pieces this phase adds on top of SP2's queue backend:
+Covers the three pieces on top of the queue backend (`apply_queue`):
 
   * JobsTab — the injected "Queue for auto-apply (N)" context-menu item;
   * MainWindow — `_queue_for_auto_apply` (applied-skip, batch cap, the
@@ -207,7 +207,7 @@ def test_main_window_has_queue_button_tab_and_wiring(qtbot, monkeypatch, tmp_pat
     texts = [bar.itemAt(i).widget().text() for i in range(bar.count())
              if isinstance(bar.itemAt(i).widget(), QtWidgets.QPushButton)]
     assert "Queue auto-apply" in texts
-    # Apply moved onto the job detail card (restyle 3c); Queue auto-apply sits
+    # Apply sits on the job detail card; Queue auto-apply sits
     # immediately before the bar's primary (Find new jobs).
     assert "Apply" not in texts
     assert texts.index("Queue auto-apply") == texts.index("Find new jobs") - 1
@@ -247,7 +247,7 @@ def test_queue_ready_job_enqueues_with_artifact_paths(qtbot, monkeypatch, tmp_pa
 def test_queue_tracker_only_ready_job_falls_back_for_entry_data(qtbot, monkeypatch, tmp_path):
     """A tracker-only id (in registry.status_rows(), absent from self.df) must
     enqueue with a REAL apply_url/company/title via the master-CSV fallback —
-    not an empty entry the SP4 agent can't navigate (burns an attempt)."""
+    not an empty entry the auto-apply run can't navigate (burns an attempt)."""
     w = _win(qtbot, monkeypatch, tmp_path, df=_jobs_df())      # df carries 1-3 only
     jid = "T9"
     w.registry.status_rows.return_value = [
@@ -330,7 +330,7 @@ def test_queue_not_ready_yes_tailors_then_flips_to_queued(qtbot, monkeypatch, tm
 
 def test_queue_tailor_of_a_hand_added_job_reads_the_full_description_in_the_worker(
         qtbot, monkeypatch, tmp_path):
-    # final review C I-1: a hand-added job's dashboard row holds only the
+    # a hand-added job's dashboard row holds only the
     # 1000-character summary; the tailor the queue starts reads the full
     # description from the master CSV inside the worker, never on the UI thread
     full = "Requirements: 3+ years of SQL, dbt and Airflow. " * 60
@@ -478,7 +478,7 @@ def test_queue_tailor_launch_failure_resets_guard_and_parks_entries(
 
     monkeypatch.setattr(mw.workers, "run_async", boom)
 
-    w._queue_for_auto_apply(["1"])   # P2-11: surfaces in the status bar, no re-raise
+    w._queue_for_auto_apply(["1"])   # surfaces in the status bar, no re-raise
     assert "thread spawn failed" in w.statusBar().currentMessage()
 
     assert w._tailoring is False                 # guard cleared -> not dead-locked
@@ -491,7 +491,7 @@ def test_queue_tailor_launch_failure_resets_guard_and_parks_entries(
 
 def test_plain_tailor_launch_failure_resets_guard(qtbot, monkeypatch, tmp_path):
     """The no-queue path through _start_tailor gets the same hardening: a
-    launch failure surfaces in the status bar (P2-11: no re-raise into the Qt
+    launch failure surfaces in the status bar (no re-raise into the Qt
     event loop) and leaves the Tailor button usable."""
     w = _win(qtbot, monkeypatch, tmp_path, df=_jobs_df())
     monkeypatch.setattr(w, "_apply_auth_env", lambda: None)
@@ -502,7 +502,7 @@ def test_plain_tailor_launch_failure_resets_guard(qtbot, monkeypatch, tmp_path):
     monkeypatch.setattr(mw.workers, "run_async", boom)
 
     job = {"job_posting_id": "1", "job_title": "T", "company_name": "C"}
-    assert w._start_tailor([job], {}) is False   # P2-11: reported, not re-raised
+    assert w._start_tailor([job], {}) is False   # reported, not re-raised
     assert "thread spawn failed" in w.statusBar().currentMessage()
 
     assert w._tailoring is False
@@ -701,7 +701,7 @@ def test_set_ats_password_mismatch_blank_and_cancel_abort(qtbot, monkeypatch, tm
 
 
 def _panel(qtbot, qfile, **kw):
-    # The Jev gate (JS-5) would read the sandbox, where no key is set: a panel
+    # The Jev gate would read the sandbox, where no key is set: a panel
     # test gets a run that can start, and a gate test passes its own
     # `jev_blocked` (None for the real one).
     kw.setdefault("jev_blocked", lambda: "")
@@ -861,11 +861,11 @@ def test_console_command_keeps_a_hostile_checkout_path_literal():
     assert _decoded(aqp._console_argv(cmd)) == cmd
 
 
-# --- ApplyQueuePanel: "Start auto-apply run" (SP8) ---------------------------------
+# --- ApplyQueuePanel: "Start auto-apply run" ---------------------------------------
 
 
 def _actions_row(p):
-    # item 0 is the "Waiting for you" card (cycle 19, SP7), then the two header rows
+    # item 0 is the "Waiting for you" card, then the two header rows
     return p.body.layout().itemAt(2).layout()
 
 
@@ -993,7 +993,7 @@ def test_confirm_text_states_the_submit_gate(qtbot, tmp_path):
     assert "auto_apply_submit" in text     # names the setting that turns the gate off
 
 
-# --- ApplyQueuePanel: Start follows the Jev switch (JS-5) ---------------------------
+# --- ApplyQueuePanel: Start follows the Jev switch ----------------------------------
 
 _JEV_OFF = "Auto-apply runs on Jev. Turn Jev on in Settings > Jev."
 
@@ -1044,7 +1044,7 @@ def test_the_default_gate_is_jev_switch_with_a_saved_key_counted(monkeypatch):
 
 
 def test_a_gate_that_raises_leaves_start_on_for_the_drain_to_check(qtbot, tmp_path):
-    """SP1 review F: the panel never breaks on the gate. A probe that raises
+    """The panel never breaks on the gate. A probe that raises
     reads as "can start", since the drain asks again before a judge, a claim
     or a browser."""
     def broken():
@@ -1057,7 +1057,7 @@ def test_a_gate_that_raises_leaves_start_on_for_the_drain_to_check(qtbot, tmp_pa
 
 
 def test_the_default_gate_reads_a_broken_settings_backend_as_no_saved_key(monkeypatch):
-    """SP1 review F: an unreadable settings file counts as no saved key
+    """An unreadable settings file counts as no saved key
     (`jev_switch.key_saved`), so Start names the key and the panel keeps
     working."""
     import settings
@@ -1071,9 +1071,9 @@ def test_the_default_gate_reads_a_broken_settings_backend_as_no_saved_key(monkey
 
 
 def test_a_test_judge_leaves_start_off_with_the_drains_refusal(qtbot, tmp_path, monkeypatch):
-    """SP1 fix round 2: the drain Start launches refuses the fake and replay
-    judges (the Auto-apply judge setting) as fixture-only before its Jev gate
-    (cycle 16), so Start is off with that sentence, with no key or SDK and the
+    """The drain Start launches refuses the fake and replay
+    judges (the Auto-apply judge setting) as fixture-only before its Jev gate,
+    so Start is off with that sentence, with no key or SDK and the
     master switch on or off, and a click launches nothing."""
     monkeypatch.setattr(jev_switch, "sdk_installed", lambda: False)
     qfile = _qfile(tmp_path)
@@ -1100,10 +1100,10 @@ def test_a_test_judge_leaves_start_off_with_the_drains_refusal(qtbot, tmp_path, 
 
 def test_an_unknown_judge_leaves_start_off_with_the_drains_refusal(qtbot, tmp_path,
                                                                    monkeypatch):
-    """SP1 follow-up 2 (Minor 2): a hand-edited `"auto_apply_jev_mode":
-    "typesaf"` left Start on with a key and the SDK in place, and the drain it
-    launched then stopped at `jev.get`. Start is off with the drain's refusal,
-    with the master switch on or off, and a click launches nothing."""
+    """A hand-edited `"auto_apply_jev_mode": "typesaf"` with a key and the SDK
+    in place would launch a drain that stops at `jev.get`. Start is off with
+    the drain's refusal, with the master switch on or off, and a click
+    launches nothing."""
     refusal = ("Unknown Auto-apply judge 'typesaf'; tick \"Show advanced settings\" "
                "and pick typesafe in Settings > Auto-apply.")
     monkeypatch.setattr(jev_switch, "sdk_installed", lambda: True)
@@ -1128,7 +1128,7 @@ def test_an_unknown_judge_leaves_start_off_with_the_drains_refusal(qtbot, tmp_pa
 
 
 def test_an_exported_test_mode_leaves_start_off(qtbot, tmp_path, monkeypatch):
-    """SP1 review B: the drain Start launches has no --jev flag and never reads
+    """The drain Start launches has no --jev flag and never reads
     AUTO_APPLY_JEV_MODE, so the shell's fake judge does not open the gate for a
     keyless live setting."""
     monkeypatch.setattr(jev_switch, "sdk_installed", lambda: True)
@@ -1140,9 +1140,9 @@ def test_an_exported_test_mode_leaves_start_off(qtbot, tmp_path, monkeypatch):
 
 
 def test_showing_the_tab_checks_the_jev_gate_again(qtbot, tmp_path, monkeypatch):
-    """SP1 review D: Start read the gate on a queue change, a Settings save and
-    a Start click (off, so out of reach), so it stayed off after the user fixed
-    the named problem outside the dashboard. Showing the tab reads the gate
+    """Start reads the gate on a queue change, a Settings save and a Start
+    click (off, so out of reach), and a problem the user fixes outside the
+    dashboard reaches none of them. Showing the tab reads the gate
     again, and so does the window coming back to the front while the tab
     shows, which is how a fix made in a terminal gets back here."""
     monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key")
@@ -1314,7 +1314,7 @@ def test_settings_schema_has_auto_apply_fields():
     assert settings.validate({"auto_apply_batch_cap": 10}) == {}
 
 
-# --- header layout at other interface scales (Phase 7) -----------------------
+# --- header layout at other interface scales ---------------------------------
 
 
 def test_count_columns_stay_wider_than_their_own_headings(qtbot, tmp_path):
@@ -1361,7 +1361,7 @@ def test_status_chips_keep_their_labels_on_a_narrow_window(qtbot, tmp_path):
         p.hide()
 
 
-# --- SP6: the difficulty check (DF-4, DF-5, DF-6) -----------------------------------------
+# --- the difficulty check -----------------------------------------------------------------
 
 _NOW = _dt.datetime(2026, 9, 25, 12, 0, 0)
 
@@ -1589,7 +1589,7 @@ def test_the_default_hiding_follows_the_switches():
     assert aqp._default_difficulty_hidden() is False
 
 
-# --- SP6 fix round 1 ----------------------------------------------------------------------
+# --- the profile gate, the order of the gates, the check's tooltips ------------------------
 
 def test_start_is_off_with_the_sentence_while_a_browser_holds_the_profile(qtbot, tmp_path,
                                                                           monkeypatch):
@@ -1704,7 +1704,7 @@ def test_a_failed_check_shows_in_the_tooltip_over_the_earlier_result(qtbot, tmp_
 
 
 
-# --- SP6 fix round 2 ----------------------------------------------------------------------
+# --- the poll re-reads the profile gate ---------------------------------------------------
 
 def test_the_poll_reads_the_profile_gate_again_when_a_browser_closes(qtbot, tmp_path,
                                                                      monkeypatch):
@@ -1731,7 +1731,7 @@ def test_the_poll_reads_the_profile_gate_again_when_a_browser_closes(qtbot, tmp_
     assert not p.start_run_btn.isEnabled() and not p.check_difficulty_btn.isEnabled()
 
 
-# --- cycle 19 SP7: the "Waiting for you" card and Answer now ---------------------------------
+# --- the "Waiting for you" card and Answer now -----------------------------------------------
 
 import apply_pause  # noqa: E402
 from qt import apply_pause_card as apc  # noqa: E402
@@ -2079,7 +2079,7 @@ _CHECK_SENT = "check whether the application went through"
 @pytest.mark.parametrize("status, notes, tab_note, offered", [
     ("needs_human", "required field without an answer: Preferred team", "", True),
     ("failed", "TimeoutError at fill", "", True),
-    # SP7 review I4: a job that may have been sent, or was, is never re-queued here
+    # a job that may have been sent, or was, is never re-queued here
     ("needs_human", f"{_CHECK_SENT}: the page moved on during the pause (it shows 'thank "
                     "you for applying')", f"{_CHECK_SENT}, then Mark applied or Re-queue", False),
     ("needs_human", "the submit click found no confirmation",
@@ -2147,7 +2147,7 @@ def test_answer_now_in_the_window_saves_the_prefilled_answer(qtbot, monkeypatch,
     assert w._answer_now(None) is False
 
 
-# --- cycle 22 SP3: a multi-row selection, the parallel check, Remove on several ---------
+# --- a multi-row selection, the parallel check, Remove on several -----------------------
 
 
 def _multi(p, *jids):
@@ -2347,7 +2347,7 @@ def test_the_default_checks_at_once_survives_a_broken_settings_backend(monkeypat
     assert aqp._default_check_parallel() == 10
 
 
-# --- cycle 22 final review: a large selection, a spawn that fails ---------------------------
+# --- a large selection, a spawn that fails, an id outside the safe set ----------------------
 
 
 def test_a_selection_of_every_queued_job_runs_as_all(qtbot, tmp_path):

@@ -40,7 +40,7 @@ def test_fetch_code_keeps_application_tab_and_ignores_the_decoys(
 
 def test_a_poll_that_times_out_leaves_the_next_poll_to_run(
         browser_page, fixtures_server, monkeypatch):
-    """SP5 round 2, Minor 7: a timeout on one poll (a busy machine's 5 s cap
+    """A timeout on one poll (a busy machine's 5 s cap
     on the list read) is that poll's error; the next poll reads the inbox."""
     inbox = _inbox()
     real = inbox.list_messages
@@ -65,7 +65,7 @@ def test_a_poll_that_times_out_leaves_the_next_poll_to_run(
 
 
 def test_the_polls_end_when_the_same_error_comes_back(browser_page, fixtures_server, monkeypatch):
-    """Review round 3, M3: a failure that repeats (a provider outage) ends
+    """A failure that repeats (a provider outage) ends
     the polls at its second time, never spending every poll and its waits."""
     inbox = _inbox()
     calls: list = []
@@ -87,7 +87,7 @@ def test_the_polls_end_when_the_same_error_comes_back(browser_page, fixtures_ser
 
 def test_the_polls_end_on_a_navigation_the_host_guard_stopped(browser_page, fixtures_server,
                                                                monkeypatch):
-    """Review round 3, M3: a signed-out inbox redirects to its provider's
+    """A signed-out inbox redirects to its provider's
     sign-in, off the inbox host: the guard stops it, and no poll follows."""
     inbox = _inbox()
     calls: list = []
@@ -111,7 +111,7 @@ def test_the_polls_end_on_a_navigation_the_host_guard_stopped(browser_page, fixt
 
 def test_a_frame_the_guard_stops_leaves_the_polls_running(browser_page, fixtures_server,
                                                           monkeypatch):
-    """Review round 4, M3: a webmail loads frames on other hosts (a token
+    """A webmail loads frames on other hosts (a token
     renewal, a cookie rotation), which the guard stops; that is no sign-in
     redirect of the inbox itself, and a later failed poll still leaves the
     next poll to run."""
@@ -262,7 +262,7 @@ def test_fetch_code_hands_the_ats_and_company_to_the_from_site_question(browser_
 
 def test_no_code_polls_are_bounded(browser_page, fixtures_server, monkeypatch):
     inbox = _inbox()
-    # an inbox with no row at all: each poll's wait for rows (ACC-08) is cut
+    # an inbox with no row at all: each poll's wait for rows is cut
     # short here, the polls and their waits are what this test counts
     monkeypatch.setattr(inbox, "ROWS_WAIT_MS", 200)
     class Clock:
@@ -357,10 +357,10 @@ def test_provider_for_reads_the_inbox_host(url, expected):
     assert _inbox().provider_for(url) == expected
 
 
-# === SP7: a slow inbox, stale and used codes, verification links (ACC-05, 07, 08) ==========
+# === a slow inbox, stale and used codes, verification links ================================
 
 def test_a_slow_inbox_is_read_once_its_rows_render(browser_page, fixtures_server):
-    """ACC-08: the list renders 1.5 s after the page loads; the one poll
+    """The list renders 1.5 s after the page loads; the one poll
     waits for its rows instead of reading an empty list."""
     inbox = _inbox()
     code = inbox.fetch_code(browser_page, "127.0.0.1", fixtures_server + "/inbox/slow_list.html",
@@ -369,7 +369,7 @@ def test_a_slow_inbox_is_read_once_its_rows_render(browser_page, fixtures_server
 
 
 def test_a_code_older_than_the_job_is_never_used(browser_page, fixtures_server):
-    """ACC-07: an earlier Greenhouse code sits above the fresh one; the rows
+    """An earlier Greenhouse code sits above the fresh one; the rows
     whose time is before the job's start are never offered."""
     from datetime import datetime, timedelta
     inbox = _inbox()
@@ -391,7 +391,7 @@ def test_a_code_older_than_the_job_is_never_used(browser_page, fixtures_server):
 
 
 def test_a_code_used_once_in_the_job_is_never_offered_again(browser_page, fixtures_server):
-    """ACC-07: a code the run typed (by its hash) is never picked again: a
+    """A code the run typed (by its hash) is never picked again: a
     gate that comes back wants a new code."""
     inbox = _inbox()
     used = {inbox.code_hash("MKPZ3QRA")}
@@ -431,9 +431,9 @@ def test_a_rows_age_is_read_against_the_clock_it_is_given():
 
 
 def test_a_rows_time_with_a_zone_is_read_in_local_time():
-    """M1 (SP7 review): a `<time datetime>` in UTC ("...Z") or with an
+    """A `<time datetime>` in UTC ("...Z") or with an
     offset is turned to local time; read as local, a code from before the
-    job's start looked newer than the start (ACC-07)."""
+    job's start would look newer than the start."""
     from datetime import datetime, timedelta, timezone
     inbox = _inbox()
     since = datetime.now().replace(second=0, microsecond=0)
@@ -457,7 +457,7 @@ def test_a_rows_time_with_a_zone_is_read_in_local_time():
 
 def test_fetch_link_takes_the_verification_link_on_the_application_site(
         browser_page, fixtures_server):
-    """ACC-05: the account check's message among decoys; of its links only
+    """The account check's message among decoys; of its links only
     the one that verifies, on the application's own host, is handed back
     (never the careers link, the privacy page or the unsubscribe)."""
     inbox = _inbox()
@@ -472,7 +472,7 @@ def test_fetch_link_takes_the_verification_link_on_the_application_site(
 
 
 def test_fetch_link_never_opens_a_link_outside_the_allowed_hosts(browser_page, fixtures_server):
-    """ACC-05: a verification link through a mail tracker's host is named
+    """A verification link through a mail tracker's host is named
     and never requested."""
     inbox = _inbox()
     asked: list = []
@@ -516,7 +516,7 @@ def test_verification_links_keep_the_allowed_verify_links_and_name_the_rest():
     ("Verify", "/email_preferences/confirm"),
 ])
 def test_verification_links_never_take_an_unsubscribe_a_reset_or_a_not_you(text, path):
-    """M2 (SP7 review): a link beside the check that carries a verify word
+    """A link beside the check that carries a verify word
     in its text or its path is never it, and one alone is never opened."""
     inbox = _inbox()
     host = "https://acme.wd5.myworkdayjobs.com"

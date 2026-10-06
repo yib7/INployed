@@ -1,4 +1,4 @@
-"""Tests for the apply launcher (cycle 12: apply.md, not apply_data.json).
+"""Tests for the apply launcher, which reads the apply.md sheet.
 
 resolve_generated_dir() locates the tailored-resume folder for a job (by
 company+title, or by scanning ~/Downloads/Generated_Resumes/**/apply.md for a

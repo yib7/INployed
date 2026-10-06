@@ -1,4 +1,4 @@
-"""`apply_pause` (SP7, park and resume): the request and answer files, the
+"""`apply_pause` (park and resume): the request and answer files, the
 wait, the card's questions, the person's values into plan fields, and the
 save to the answer store. Every store is a `tmp_path` file and LOCALAPPDATA
 points at `tmp_path`; no page, browser or judge here (the runner's pauses
@@ -260,7 +260,7 @@ def test_user_text_is_checked_in_code_unless_its_shape_is():
     assert apply_pause.user_drafts(plan, {1: ("phone", "teal")}) == {}
 
 
-# -- the save (PR-6) -----------------------------------------------------------------------------
+# -- the save ------------------------------------------------------------------------------------
 
 def _question(**kw):
     q = apply_pause.question_for(_field(**kw))
@@ -361,7 +361,7 @@ def test_the_builtin_check_is_shared_with_the_answers_tab():
     assert answers_tab.builtin_answering is apply_pause.builtin_answering
 
 
-# -- one job's pauses (SP7 fix round 1) ----------------------------------------------------------
+# -- one job's pauses ----------------------------------------------------------------------------
 
 import os  # noqa: E402
 import subprocess  # noqa: E402
@@ -466,7 +466,7 @@ def _digest(*fields):
 
 
 def test_an_answer_to_one_of_two_same_labelled_fields_goes_in_its_own_field(pauses_on, boxes):
-    # review I2: the answer for the second "Please explain" lands in the second
+    # the answer for the second "Please explain" lands in the second
     a, b = _explain_fields()
     digest = _digest(a, b)
     jr = _Jr(_Page(_Clock(), on_wait=_answers_with("fill", {"2": "answer for B"})),
@@ -495,7 +495,7 @@ def test_same_labelled_fields_with_no_id_are_told_apart_by_their_place(pauses_on
 
 
 def test_the_answers_kept_for_a_replan_apply_to_the_next_plan_only(pauses_on, boxes):
-    # review M7: a single-page app keeps its path; the fields asked on one
+    # a single-page app keeps its path; the fields asked on one
     # step are never read back as the person's on a later one
     f = _field(1, "Please explain", id_or_name="explain")
     digest = _digest(f)
@@ -518,8 +518,8 @@ def _typed(f, value):
 
 
 def test_a_value_the_person_changed_in_the_browser_is_kept_on_the_replan(pauses_on, boxes):
-    # review I3: the run typed the phone, the person rewrote it in the site's
-    # format during the pause; the page read again keeps theirs
+    # the run types the phone, the person rewrites it in the site's format
+    # during the pause; the page read again keeps theirs
     phone, email, referral = (_field(1, "Phone", "tel", id_or_name="phone"),
                               _field(2, "Email", "email", id_or_name="email"),
                               _field(3, "Referral code", required=False, id_or_name="referral"))
@@ -546,7 +546,7 @@ def test_a_value_the_person_changed_in_the_browser_is_kept_on_the_replan(pauses_
 
 def test_a_page_that_moved_on_during_the_wait_ends_the_pause_with_the_runs_park(pauses_on,
                                                                                boxes):
-    # review I1: the run's own check (`_pause_moved`) reads the page after
+    # the run's own check (`_pause_moved`) reads the page after
     # every wait; a page that moved on raises its park, whatever the answer
     f = _field(1, "Referral code", required=False, id_or_name="referral")
     digest = _digest(f)
@@ -564,7 +564,7 @@ def test_a_page_that_moved_on_during_the_wait_ends_the_pause_with_the_runs_park(
 
 
 def test_a_headless_pause_with_only_browser_questions_parks_at_once(pauses_on, boxes):
-    # review M4: nobody can type into a headless browser
+    # nobody can type into a headless browser
     dob = _field(1, "Date of birth")
     digest = _digest(dob)
     page = _Page(_Clock())
@@ -584,7 +584,7 @@ def test_a_headless_pause_with_only_browser_questions_parks_at_once(pauses_on, b
 
 
 def test_a_choice_that_names_no_live_option_is_never_saved(pauses_on, boxes):
-    # review M5: the value is checked against the live options before the save
+    # the value is checked against the live options before the save
     apply_answers.save(apply_answers.seed_defaults())
     team = _field(1, "Preferred team", "select", options=["Data", "Platform"],
                   id_or_name="team")
@@ -604,7 +604,7 @@ def test_a_choice_that_names_no_live_option_is_never_saved(pauses_on, boxes):
 
 
 def test_every_resume_reads_the_answer_store_again(pauses_on, boxes):
-    # review M2: an answer added in the Apply Answers tab during the pause
+    # an answer added in the Apply Answers tab during the pause
     # counts from the next page, a save or none
     f = _field(1, "Referral code", required=False, id_or_name="referral")
     digest = _digest(f)
@@ -615,7 +615,7 @@ def test_every_resume_reads_the_answer_store_again(pauses_on, boxes):
     assert jr.reloads == 1
 
 
-# -- a page that moved on during the wait (final review A I-1) ---------------------------------
+# -- a page that moved on during the wait ------------------------------------------------------
 
 def _moves_on(jr, step_two):
     """What the person does in the browser during the wait: goes on to the
@@ -666,7 +666,7 @@ def test_a_card_answer_is_dropped_when_the_page_moved_on_at_a_required_field(pau
 
 def test_a_card_answer_is_dropped_on_a_same_address_app_whose_next_step_repeats_the_field(
         pauses_on, boxes):
-    # final fix review Important 1: a single-page app never changes its
+    # a single-page app never changes its
     # address. Step 1 has "Full name" and "Please explain" (id explain); the
     # person answers in the card and clicks Next; step 2 shows its own
     # "Please explain" (id explain). Step 1's "Full name" is gone, so the page
@@ -750,7 +750,7 @@ def _closing_hook(jr) -> list:
 
 
 def test_a_close_during_the_wait_raises_the_runs_own_park(pauses_on, boxes):
-    # final review A I-2, final fix review Minor 2: the run reads the buttons
+    # the run reads the buttons
     # the pause saw (`_JobRun._pause_closed`) and its park, already the
     # check-whether end, is the one raised
     f = _field(1, "Please explain", id_or_name="explain")
@@ -768,7 +768,7 @@ def test_a_close_during_the_wait_raises_the_runs_own_park(pauses_on, boxes):
 
 
 def test_a_close_after_the_waits_last_poll_raises_the_runs_own_park(pauses_on, boxes):
-    # final fix review Minor 2: the answer lands, then the tab closes before
+    # the answer lands, then the tab closes before
     # the run reads the page again; the close is still the pause's
     class _ClosesOnThirdLook(_Page):
         looks = 0
@@ -799,7 +799,7 @@ def test_a_close_with_no_run_hook_parks_with_the_pauses_reason(pauses_on, boxes)
 
 
 def test_a_save_keeps_the_review_list_of_a_version_1_store(tmp_path):
-    # final review A I-3: a store still version 1 on disk migrates in memory
+    # a store still version 1 on disk migrates in memory
     # with its review list; the pause's save keeps that list
     path = tmp_path / "apply_answers.json"
     path.write_text(json.dumps({"answers": [
@@ -822,7 +822,7 @@ def test_a_request_names_the_runs_process_and_its_minutes():
 
 
 def test_a_request_whose_run_is_gone_is_cleaned_up(monkeypatch):
-    # review M3: a killed drain leaves its request behind
+    # a killed drain leaves its request behind
     apply_pause.write_request(_JOB, _URL, "r", [], minutes=10)
     apply_pause.write_request({**_JOB, "job_posting_id": "7"}, _URL, "r", [], minutes=10)
     dead = json.loads(apply_pause.request_path("7").read_text(encoding="utf-8"))
@@ -844,7 +844,7 @@ def test_a_request_older_than_its_wait_is_cleaned_up():
 
 
 def test_a_request_is_aged_by_epoch_seconds_so_a_clock_change_keeps_it(monkeypatch):
-    # review N3: the local asked_at is for display; a DST change or a clock
+    # the local asked_at is for display; a DST change or a clock
     # jump that makes it read hours old never clears a live request
     before = time.time()
     apply_pause.write_request(_JOB, _URL, "r", [], minutes=10)

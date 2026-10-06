@@ -1,9 +1,9 @@
 """A letter pass returns the letter and nothing else.
 
-On 2026-09-28 a letter opened with the model's note about its own task
+A letter can open with the model's note about its own task
 ("Using avoid-ai-writing's own review output already provided, I'll finalize the
-repaired body as-is since the audit confirms it's clean."). The transport fix
-(claude_cli: no tools, skills or MCP servers) removed the cause; this pins the
+repaired body as-is since the audit confirms it's clean."). The transport
+(claude_cli: no tools, skills or MCP servers) removes the cause; this pins the
 backstop, `coverletter.drop_task_notes`, which every letter reply passes through
 before the letter uses it.
 

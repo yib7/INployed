@@ -1,4 +1,4 @@
-"""TL-5: Jev gates the AI-writing sweep's calls (`sweep.sweep_items(judge=)`).
+"""Jev gates the AI-writing sweep's calls (`sweep.sweep_items(judge=)`).
 
 With Jev on, `jev_assist.sweep_flags` reads every bullet the sweep may rewrite, one
 request per item, for the tells of the user's banned patterns. An item makes its
@@ -6,8 +6,8 @@ model call only when one of its bullets carries a tell at `jev_assist.SWEEP_FLAG
 more, or when a detector finding forces it: an `itemcheck` finding of a repaired
 tier or an `aiwriting` phrasing hit. The tells ride in the payload as each bullet's
 `judge_flags`, with a rule in the system prompt and a line in the closing that name
-them. With Jev off, or when its request fails, every item is swept with the prompts
-it had before cycle 19.
+them. With Jev off, or when its request fails, every item is swept with its
+Jev-free prompts.
 
 Nothing here reaches a model or Jev: `sweep.call` is the recorder from
 `test_item_sweep.py`, and every judge is a fake.

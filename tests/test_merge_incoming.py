@@ -233,7 +233,7 @@ def test_merge_rows_matches_full_load_reference():
 
 
 def test_chunked_merge_via_main_matches_full_load(tmp_path, monkeypatch):
-    # The brief's required equivalence test: the chunked master-wins merge
+    # The equivalence test: the chunked master-wins merge
     # (main()'s on-disk path, exercising the tempfile-streaming + os.replace
     # machinery, not just the in-memory merge_rows() helper) frame-equals the
     # current concat(existing, incoming).drop_duplicates(keep="first") result.
@@ -343,7 +343,7 @@ def test_incoming_vs_incoming_collision_first_file_wins(tmp_path, monkeypatch):
 
 
 def test_stats_unlink_oserror_does_not_fail_merge(tmp_path, monkeypatch):
-    # P2-2: merge runs BEFORE the scrape under `set -e`, so an unguarded OSError
+    # merge runs BEFORE the scrape under `set -e`, so an unguarded OSError
     # from the stats-file unlink would exit main() nonzero and kill the day's run
     # over a bookkeeping delete. The delete failure must be swallowed (the module's
     # "per-file problems never fail the cron" contract) and the merge still finish.
@@ -378,9 +378,9 @@ def test_unreadable_master_still_aborts_with_chunk_set(tmp_path, monkeypatch):
     assert master.read_bytes().startswith(b"a,b")          # master untouched
 
 
-# P2-7: the incoming reader used inferred dtypes while the master reader three
-# functions down uses dtype=str + keep_default_na=False. Rows appended straight
-# into the master therefore landed reformatted.
+# the incoming reader must read as the master reader three functions down does,
+# with dtype=str + keep_default_na=False; with inferred dtypes, rows appended
+# straight into the master land reformatted.
 def test_incoming_rows_keep_their_on_disk_spelling(tmp_path):
     inc, master, stats = _setup(tmp_path)
     pd.DataFrame([{"job_posting_id": "1", "score": "7", "filtered_out": "False"}]

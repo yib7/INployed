@@ -1,5 +1,5 @@
-"""SP6: the Qt VM panel — crontab preview + confirm/refuse on the gcloud actions (mocked).
-SP7 adds the local-watcher-task sync wiring (local_task.register monkeypatched)."""
+"""The Qt VM panel — crontab preview + confirm/refuse on the gcloud actions (mocked),
+and the local-watcher-task sync wiring (local_task.register monkeypatched)."""
 import types
 
 import pytest
@@ -14,7 +14,7 @@ import vm_sync
 def _cfg(monkeypatch):
     """Hermetic config for EVERY test here: the panel reads/writes an in-memory
     dict, never the user's real local/config.json (apply_schedule persists the
-    pushed times since SP7, so an unmocked run would pollute the real file)."""
+    pushed times, so an unmocked run would pollute the real file)."""
     store = {}
     monkeypatch.setattr(jobsdata, "_load_cfg", lambda: dict(store))
     monkeypatch.setattr(jobsdata, "_save_cfg", lambda updates: store.update(updates))
@@ -106,7 +106,7 @@ def test_push_config_runs_scp_per_file(qtbot):
 
 
 def test_push_config_skip_confirm_runs_scp_without_confirming(qtbot):
-    # SP3: a save-time auto-push bypasses the confirm but still scp's every file.
+    # a save-time auto-push bypasses the confirm but still scp's every file.
     confirms, cmds = [], []
     panel = VMPanel(
         runner=lambda cmd: cmds.append(cmd) or types.SimpleNamespace(returncode=0, stdout="", stderr=""),
@@ -135,7 +135,7 @@ def test_push_config_default_still_confirms(qtbot):
     assert confirms                                       # default path confirmed
 
 
-# --- SP7: local watcher task sync -------------------------------------------------
+# --- local watcher task sync ------------------------------------------------------
 
 WATCHER_SIX = ["12:30", "12:50", "13:10", "20:30", "20:50", "21:10"]
 
@@ -215,9 +215,9 @@ def test_panel_seeds_defaults_when_nothing_saved(qtbot):
 
 
 # --- credentials section --------------------------------------------------
-# Setting the VM's API keys used to mean an ssh session and a hand-written sed.
-# These guard the two things that make the GUI version safe: the value never
-# reaches the argv or a popup, and it does not linger in the widget afterwards.
+# The panel sets the VM's API keys. These guard the two things that make that
+# safe: the value never reaches the argv or a popup, and it does not linger in
+# the widget afterwards.
 
 def _secret_panel(qtbot, target=None, confirm=True, result=None, boom=None):
     calls, notes = [], []
@@ -335,8 +335,8 @@ def test_the_connected_target_label_is_plain_text(qtbot):
     """QLabel defaults to AutoText, which sniffs the START of the string for
     markup. This is the only label in the panel whose text starts with
     interpolated values (VM_USER / VM_INSTANCE / VM_ZONE from the .env), so it is
-    the only one AutoText could misread. Cycle 7 found five labels rendering
-    scraped job titles as HTML this way; this pins the new one shut."""
+    the only one AutoText could misread. AutoText renders a scraped job title as
+    HTML this way; this pins the label shut."""
     from PySide6 import QtCore
     panel = _panel(qtbot, _FakeTarget())
     assert panel.status_label.textFormat() == QtCore.Qt.TextFormat.PlainText
@@ -416,7 +416,7 @@ def test_a_leftover_staging_dir_is_named_in_the_dialog(qtbot, monkeypatch):
     assert "Delete by hand" in msg
 
 
-# --- layout at other interface scales (Phase 7) -----------------------------
+# --- layout at other interface scales ---------------------------------------
 
 
 def test_crontab_preview_fits_four_lines_at_every_scale(qtbot):

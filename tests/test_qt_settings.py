@@ -1,4 +1,4 @@
-"""SP6: the Qt settings form — widget-by-type, secret masking, save/revert, VM toggle."""
+"""The Qt settings form — widget-by-type, secret masking, save/revert, VM toggle."""
 import json
 import re
 from datetime import datetime
@@ -24,7 +24,7 @@ def _targets(tmp_path):
 def test_renders_widgets_by_type(qtbot, tmp_path):
     form = SettingsForm(targets=_targets(tmp_path))
     qtbot.addWidget(form)
-    # secret -> masked line by default (restyle 3f, locked user decision) with
+    # secret -> masked line by default, with
     # a Hide toggle that starts CHECKED; unticking it reveals the saved value.
     assert "GEMINI_API_KEYS" in form._secret_edits
     assert form._secret_edits["GEMINI_API_KEYS"].echoMode() == QtWidgets.QLineEdit.EchoMode.Password
@@ -38,9 +38,9 @@ def test_renders_widgets_by_type(qtbot, tmp_path):
 
 
 def test_every_list_field_shows_the_line_rule_while_empty(qtbot, tmp_path):
-    """c14 Phase 7: the fallback-chain and rate-limit lists default to empty,
-    so their 150px boxes rendered as bare dark rectangles with nothing to say
-    what goes in them. The placeholder carries the one rule they all share."""
+    """The fallback-chain and rate-limit lists default to empty, so without a
+    placeholder their 150px boxes render as bare dark rectangles with nothing to
+    say what goes in them. The placeholder carries the one rule they all share."""
     form = SettingsForm(targets=_targets(tmp_path))
     qtbot.addWidget(form)
     list_keys = {f.key for f in settings.SETTINGS_SCHEMA if f.type == "list"}
@@ -74,7 +74,7 @@ def test_editable_combo_opens_popup_on_click(qtbot, monkeypatch):
 def _form(tmp_path, **kw):
     """A SettingsForm that touches nothing outside tmp_path.
 
-    Without `collapsed_sections`/`save_collapsed` — and, since P4, without
+    Without `collapsed_sections`/`save_collapsed` — and without
     `show_advanced`/`save_show_advanced` — the constructor falls through to
     `jobsdata.load_collapsed_sections()` / `load_show_advanced()`, which read the
     DEVELOPER's real local/config.json. A test's widget visibility would then
@@ -104,7 +104,7 @@ def test_editable_choice_field_has_popup_filter(qtbot, tmp_path):
     assert combo.findChild(st._PopupOnClick) is not None
 
 
-# --- cycle 18 P0: widget / form-row registries -----------------------------------
+# --- widget / form-row registries ------------------------------------------------
 
 def test_widget_registry_covers_every_schema_key(qtbot, tmp_path):
     """Every Field must be addressable by key. This is the guard that stops a
@@ -156,7 +156,7 @@ def test_row_registry_holds_both_rows_for_every_field(qtbot, tmp_path):
     _, help_row = form._rows["min_score"][1]
     assert help_row == label_row + 1
     label_cell = form_layout.itemAt(label_row, QtWidgets.QFormLayout.ItemRole.LabelRole).widget()
-    # findChildren, not findChild: the label cell holds three QLabels since P6 —
+    # findChildren, not findChild: the label cell holds three QLabels —
     # the (initially empty) unsaved-change dot, the label, the storage chip — and
     # the dot is the first one.
     assert any("Min score" in lab.text()
@@ -255,7 +255,7 @@ def test_secret_collect_writes_box_as_is(qtbot, tmp_path):
 
 
 def test_secret_hide_toggle_reveals_and_remasks_box(qtbot, tmp_path):
-    # Masked by default (restyle 3f): Password echo until Hide is unticked.
+    # Masked by default: Password echo until Hide is unticked.
     form = SettingsForm(targets=_targets(tmp_path))
     qtbot.addWidget(form)
     edit = form._secret_edits["GEMINI_API_KEYS"]
@@ -328,7 +328,7 @@ def test_revert_resets_vm_panel(qtbot, tmp_path):
     assert form._vm_panel._times() == ["10:00", "19:00"]  # back to its initial schedule
 
 
-# --- SP3: prompt to push config to the VM after a VM-read setting changes -------
+# --- prompt to push config to the VM after a VM-read setting changes ------------
 
 class _StubVMPanel:
     """Records push_config calls so a test can assert the save-time auto-push."""
@@ -421,7 +421,7 @@ def test_vm_push_prompt_yes_without_panel_shows_info(qtbot, tmp_path, monkeypatc
     assert any("Push config to VM" in title for title, _ in infos)
 
 
-# --- collapsible sections (cycle 16 SP4) ----------------------------------------
+# --- collapsible sections -------------------------------------------------------
 
 def test_collapsible_section_toggles_body(qtbot):
     from qt.widgets import CollapsibleSection
@@ -437,7 +437,7 @@ def test_collapsible_section_toggles_body(qtbot):
 
 
 def test_collapsible_section_subtitle_stays_visible_when_collapsed(qtbot):
-    # Cycle 17 SP3: a tagline next to the header tells you what a collapsed section is for.
+    # A tagline next to the header tells you what a collapsed section is for.
     from qt.widgets import CollapsibleSection
     sec = CollapsibleSection("Demo", subtitle="short hint", collapsed=True)
     qtbot.addWidget(sec)
@@ -578,9 +578,9 @@ def test_a_legacy_archive_config_opens_reading_keep_newest_20(qtbot, tmp_path):
 
 def test_an_unrecognised_stored_archive_mode_stays_on_screen_and_save_flags_it(
         qtbot, tmp_path, monkeypatch):
-    """Cycle 19's ST-7: a hand-edited mode matching no choice stays in the
+    """A hand-edited mode matching no choice stays in the
     dropdown as typed, so the form shows what the file holds and Save names it.
-    Reading it as choices[0] let the next Save rewrite the file with nothing
+    Reading it as choices[0] would let the next Save rewrite the file with nothing
     said (the pruner reads "Keep newest 7" as keep seven)."""
     targets = _targets(tmp_path)
     targets["config"].write_text(json.dumps({"archive_mode": "Keep newest 7"}),
@@ -635,7 +635,7 @@ def test_restore_loads_values_and_shows_secret(qtbot, tmp_path, monkeypatch):
     assert settings.load(targets)["min_score"] == 5
 
 
-# --- cycle 18 P3: show_if conditional visibility --------------------------------
+# --- show_if conditional visibility ---------------------------------------------
 
 def _rows_visible(form, key):
     """Is EVERY form row this field occupies on screen? (label row + help row)"""
@@ -674,8 +674,7 @@ def test_gate_signals_are_wired_when_the_gate_renders_after_its_dependent(qtbot,
     `tailor_fallback_*` rows in the Engine section, and `gemini_auth` lives in
     Engine while it gates `RESUME_TAILOR_GEMINI_API_KEY` in Credentials, which
     SECTION_ORDER renders earlier. Connect at dependent-build time and neither of
-    these flips anything. (Cycle 19 moved `provider` to the top of Scoring, which
-    retired the pair this test used to name.) The layout premise is asserted too,
+    these flips anything. The layout premise is asserted too,
     so a reorder that makes it false fails here before this test goes vacuous.
     """
     keys = [f.key for f in settings.SETTINGS_SCHEMA]
@@ -810,7 +809,7 @@ def test_hidden_field_still_collects_its_stored_value(qtbot, tmp_path):
 
 
 def test_provider_round_trip_does_not_wipe_hidden_model_choices(qtbot, tmp_path, monkeypatch):
-    """The test this whole phase has to pass.
+    """The provider round trip keeps every hidden model choice.
 
     Type a custom Gemini model id, save, switch the scorer to Claude, save,
     switch back, save — and the custom id must still be on disk.
@@ -821,7 +820,7 @@ def test_provider_round_trip_does_not_wipe_hidden_model_choices(qtbot, tmp_path,
     assertions alone do not catch a `collect()` "optimised" to iterate visible
     fields. What they do catch is a hidden field whose value is REPLACED (e.g. a
     visibility pass that "tidies" hidden widgets back to their defaults), and
-    what save 3 adds over save 2 is the end state the checkpoint asks for: BOTH
+    what save 3 adds over save 2 is the end state this test asks for: BOTH
     provider's model choices coexisting in one scoring_config.json. The omission
     mutant is caught by the `collect()` assertion below, and independently by
     test_hidden_field_still_collects_its_stored_value.
@@ -931,7 +930,7 @@ def test_hidden_rows_survive_a_vm_gate_cycle(qtbot, tmp_path):
     assert not _rows_visible(form, "stage1_model")
 
 
-# --- cycle 18 P4: the advanced flag + progressive disclosure --------------------
+# --- the advanced flag + progressive disclosure ---------------------------------
 
 def _visible_field_keys(form):
     """Every schema key whose form ROWS are all flipped on right now.
@@ -948,15 +947,15 @@ def _on_screen_field_keys(form):
 
     `QFormLayout.isRowVisible` reports the row's own flag and knows nothing about
     a hidden container, so a row inside the switched-off VM section reads True
-    while showing nothing. That gap is how the disclosure count first shipped
-    over-claiming by three."""
+    while showing nothing. That gap lets the disclosure count over-claim by
+    three."""
     return {f.key for f in settings.SETTINGS_SCHEMA
             if form._rows[f.key] and _rows_visible(form, f.key)
             and form._widgets[f.key].isVisibleTo(form)}
 
 
 def test_advanced_fields_are_hidden_until_the_box_is_ticked(qtbot, tmp_path):
-    """The phase in one assertion: a fresh profile hides every advanced field,
+    """The advanced flag in one assertion: a fresh profile hides every advanced field,
     ticking the box reveals exactly the ones a gate is not also holding shut."""
     form = _form(tmp_path)
     qtbot.addWidget(form)
@@ -1030,10 +1029,10 @@ def test_a_failing_advanced_save_never_breaks_the_toggle(qtbot, tmp_path):
 
 
 def test_an_advanced_field_behind_a_closed_gate_stays_hidden(qtbot, tmp_path):
-    """Composition with P3, the AND direction: `stage1_model_claude` is advanced
+    """Composition with `show_if`, the AND direction: `stage1_model_claude` is advanced
     AND gated on provider=claude. Ticking 'show advanced' must not put it on
     screen while the scorer runs on Gemini — that is the machinery-that-cannot-run
-    row P3 removed."""
+    row a `show_if` gate removes."""
     form = _form(tmp_path)
     qtbot.addWidget(form)
     form._advanced_check.setChecked(True)
@@ -1066,11 +1065,11 @@ def test_the_checkbox_label_counts_what_ticking_would_reveal(qtbot, tmp_path):
     to this configuration and are being withheld" — not "how many advanced fields
     exist". Of the eighteen, five belong to whichever provider is not selected
     and three to a VM the user may not run, so the raw total would promise rows a
-    tick cannot deliver. Until search ships this label is the only signal the
+    tick cannot deliver. Beside search, this label is the main signal the
     hidden settings exist, so it must not lie in either direction.
 
-    Measured against what REACHES THE SCREEN, not against row flags — the count's
-    first cut passed a row-flag assertion while over-claiming by three.
+    Measured against what REACHES THE SCREEN, not against row flags — a count
+    can pass a row-flag assertion while over-claiming by three.
     """
     form = _form(tmp_path)
     qtbot.addWidget(form)
@@ -1093,9 +1092,8 @@ def test_the_count_excludes_advanced_fields_in_a_switched_off_section(qtbot, tmp
     """The VM section's master switch is a CONFIGURATION gate, not a view fold:
     with `vm_enabled` off its three advanced fields cannot reach the screen
     whatever this checkbox says, because their whole container is hidden. Counting
-    them over-claims by three on every fresh install — which is what shipped in
-    the first cut of this phase. Turning the VM on must add them back, label and
-    all, without going through a `show_if` gate."""
+    them over-claims by three on every fresh install. Turning the VM on must add
+    them back, label and all, without going through a `show_if` gate."""
     form = _form(tmp_path, vm_panel_factory=lambda parent: QtWidgets.QLabel("vm", parent))
     qtbot.addWidget(form)
     off = form._advanced_hidden_count()
@@ -1119,7 +1117,7 @@ def test_a_collapsed_section_does_not_shrink_the_count(qtbot, tmp_path):
     with a header on screen naming what is inside, and the settings still apply —
     so it must NOT subtract. It also cannot: this repo's owner runs with 9 of the
     10 sections folded, so counting that way would report ~0 and destroy the only
-    signal (until search ships) that the hidden settings exist at all."""
+    signal beside search that the hidden settings exist at all."""
     expanded = _form(tmp_path)
     qtbot.addWidget(expanded)
     folded = _form(tmp_path, collapsed_sections=list(st.SECTION_ORDER))
@@ -1176,7 +1174,7 @@ def test_load_save_show_advanced_roundtrip(tmp_path, monkeypatch):
     assert jobsdata.load_show_advanced() is False
 
 
-# --- cycle 18 P5: spin boxes ----------------------------------------------------
+# --- spin boxes -----------------------------------------------------------------
 
 SPIN_KEYS = ("min_score", "repost_window_days", "stale_after_hours", "limit_per_input",
              "max_scored_per_run", "rescore_cap", "auto_apply_batch_cap",
@@ -1228,7 +1226,7 @@ def test_spin_box_round_trips_through_collect_and_save(qtbot, tmp_path, monkeypa
 
 
 def test_a_spin_box_cannot_be_driven_out_of_range(qtbot, tmp_path):
-    """Why this phase swapped the widget: the box now enforces the bound the
+    """The spin box enforces the bound the
     schema declares, so `_coerce`'s 'must be a whole number' arm and
     `settings.validate`'s range arm are unreachable from these six rows."""
     form = _form(tmp_path)
@@ -1241,7 +1239,7 @@ def test_a_spin_box_cannot_be_driven_out_of_range(qtbot, tmp_path):
     assert settings.validate(values) == {}
 
 
-# --- cycle 18 P5: the clamp gotcha ----------------------------------------------
+# --- the clamp gotcha -----------------------------------------------------------
 
 def _note(form, key):
     lab = form._notes[key]
@@ -1319,7 +1317,7 @@ def test_an_unreadable_stored_int_is_flagged_too(qtbot, tmp_path):
 def test_the_clamp_flag_covers_slider_ints_too(qtbot, tmp_path):
     """`QSlider.setValue` clamps exactly like `QSpinBox`, so the flag is keyed off
     `Field.type == "int"` rather than off which widget got built. Otherwise the
-    five slider ints keep the silent rewrite this phase exists to remove."""
+    five slider ints keep a silent rewrite."""
     targets = _targets(tmp_path)
     targets["config"].write_text(json.dumps({"followup_days": 900}), encoding="utf-8")
     form = _form(tmp_path)
@@ -1393,7 +1391,7 @@ def test_a_leading_zero_is_not_reported_as_unreadable(qtbot, tmp_path):
 
 def test_every_field_got_a_change_signal_or_is_the_documented_exception(qtbot, tmp_path):
     """A structural version of the test above, so a NEW composite type cannot ship
-    unwired. `multichoice` has no single inner control (P0's documented
+    unwired. `multichoice` has no single inner control (the documented
     exception); `vm_enabled` is the section master switch, not a form row."""
     form = _form(tmp_path, show_advanced=True)
     qtbot.addWidget(form)
@@ -1405,11 +1403,11 @@ def test_every_field_got_a_change_signal_or_is_the_documented_exception(qtbot, t
         assert any(getattr(w, s, None) is not None for s in signals), f.key
 
 
-# --- cycle 18 P5: inline validation, replacing the modal dump -------------------
+# --- inline validation on the form, no modal dump -------------------------------
 
 def _no_modals(monkeypatch):
-    """Record every modal this save would have popped. The point of the phase is
-    that the validation path pops none."""
+    """Record every modal this save would have popped. The validation path
+    pops none."""
     seen = []
     for name in ("critical", "information", "warning"):
         monkeypatch.setattr(QtWidgets.QMessageBox, name,
@@ -1419,7 +1417,7 @@ def _no_modals(monkeypatch):
 
 def test_junk_in_local_task_offsets_is_a_red_field_and_a_status_line(qtbot, tmp_path,
                                                                      monkeypatch):
-    """The phase checkpoint. No modal, a red box, and a status line that counts."""
+    """No modal, a red box, and a status line that counts."""
     modals = _no_modals(monkeypatch)
     form = _form(tmp_path, show_advanced=True)
     qtbot.addWidget(form)
@@ -1444,7 +1442,7 @@ def test_the_error_styling_uses_a_selector_the_widget_actually_matches(qtbot, tm
     The candidate set is derived from the SCHEMA, not from the field that happens
     to carry a rule today: `settings.TEXT_TYPES` is the schema's own statement of
     where a `pattern` may be declared, and it includes `editable_choice`, which
-    renders as a QComboBox — a class the first cut of the QSS left out, i.e. the
+    renders as a QComboBox — a class a QSS can leave out, i.e. the
     exact defect this test exists for, one field type over.
     """
     from qt import theme
@@ -1503,7 +1501,7 @@ def test_a_fixed_field_clears_its_error_as_you_type(qtbot, tmp_path, monkeypatch
 
 
 def test_typing_validates_without_waiting_for_focus_out_or_save(qtbot, tmp_path):
-    """SP5 (ED-11): a problem shows the moment it is TYPED, not only at
+    """A problem shows the moment it is TYPED, not only at
     focus-out or Save time -- finding out ten minutes (or a whole Save) later
     that a box has been wrong the entire time is the modal's other failure."""
     form = _form(tmp_path, show_advanced=True)
@@ -1532,9 +1530,9 @@ def test_typing_validates_without_waiting_for_focus_out_or_save(qtbot, tmp_path)
 
 
 def test_save_disables_while_a_field_has_a_problem(qtbot, tmp_path):
-    """SP5 (ED-11): Save has to stop being pressable the moment a field is
+    """Save has to stop being pressable the moment a field is
     wrong, not just get harder to read. A status line someone never looks
-    down at is exactly the silent-corruption path this phase closes; a
+    down at is exactly the silent-corruption path; a
     disabled button is the one signal that reaches a user who is not
     reading prose."""
     form = _form(tmp_path, show_advanced=True)
@@ -1581,7 +1579,7 @@ def test_a_successful_save_clears_a_previous_error(qtbot, tmp_path, monkeypatch)
     assert _note(form, "local_task_offsets") == ""
 
 
-# --- cycle 18 P5: an error in a field the user cannot see -----------------------
+# --- an error in a field the user cannot see ------------------------------------
 
 def test_an_error_behind_a_view_fold_reveals_itself(qtbot, tmp_path, monkeypatch):
     """A status line claiming a problem the user cannot find is worse than the
@@ -1612,7 +1610,7 @@ def test_an_error_behind_a_view_fold_reveals_itself(qtbot, tmp_path, monkeypatch
 
 def test_an_error_behind_a_configuration_gate_is_named_not_flipped(qtbot, tmp_path,
                                                                    monkeypatch):
-    """The other half of the line P4 drew. `vm_enabled` off does not mean "folded
+    """The other half of the view-fold / gate line. `vm_enabled` off does not mean "folded
     away", it means "this user does not run a VM" — flipping it would edit their
     configuration to make a message true. So the status line names the field and
     the switch that brings it into view, and the field stays flagged for when they
@@ -1685,12 +1683,10 @@ def test_the_gate_hint_survives_fixing_the_reachable_offender(qtbot, tmp_path, m
     """The reachable half is the half the user fixes FIRST, so the count they are
     left staring at is the one that most needs its "and here is where it lives".
 
-    The first cut rebuilt the sentence without hints on every clear-as-you-type,
-    so fixing the visible field dropped a fully-explained "2 settings need fixing
-    (Stage-1 model — set ...)" to a bare "1 setting needs fixing" naming a row that
-    is nowhere on the form — a status line counting something the user cannot see
-    or even identify, which is precisely what this phase replaced the modal to
-    avoid.
+    A sentence rebuilt without hints on every clear-as-you-type would drop a
+    fully-explained "2 settings need fixing (Stage-1 model — set ...)" to a bare
+    "1 setting needs fixing" naming a row that is nowhere on the form: a status
+    line counting something the user cannot see or even identify.
     """
     _no_modals(monkeypatch)
     form = _form(tmp_path)
@@ -1730,8 +1726,8 @@ def test_repopulate_reflags_a_value_it_had_to_clamp(qtbot, tmp_path):
     """The silent rewrite, restored by the back door. `_repopulate` (Discard
     changes / Restore defaults / Load snapshot) drives the same setters the
     constructor does, and `QSpinBox.setValue` clamps just as silently there — so a
-    snapshot holding `max_scored_per_run: 99999` loaded as 5000 with nothing said,
-    which is the exact behaviour this phase exists to remove."""
+    snapshot holding `max_scored_per_run: 99999` would load as 5000 with nothing
+    said."""
     form = _form(tmp_path)
     qtbot.addWidget(form)
     assert _note(form, "max_scored_per_run") == ""
@@ -1774,7 +1770,7 @@ def test_repopulate_drops_a_note_about_the_values_it_replaced(qtbot, tmp_path, m
     assert form.status.text().startswith("Reverted")              # not a leftover count
 
 
-# --- cycle 18 P6: dirty markers, Save count, per-field reset --------------------
+# --- dirty markers, Save count, per-field reset ---------------------------------
 
 def _dot(form, key):
     """The field's unsaved-change dot as (text, dirty-property)."""
@@ -1783,12 +1779,12 @@ def _dot(form, key):
 
 
 def test_a_change_in_a_collapsed_section_shows_up_in_its_header(qtbot, tmp_path):
-    """The phase checkpoint, and the piece that earns it for THIS repo.
+    """The dirty marker that matters most for THIS repo.
 
     The owner runs with 9 of the 10 sections folded, so the body a dirty dot lives
-    in is usually not on screen at all — the header is the only surface left, and
-    before this a collapsed section gave zero signal that it was holding unsaved
-    edits. The section must STAY collapsed: a badge that pops its own section open
+    in is usually not on screen at all — the header is the only surface left to
+    signal that a collapsed section holds unsaved edits. The section must STAY
+    collapsed: a badge that pops its own section open
     to be read has solved nothing.
     """
     form = _form(tmp_path, collapsed_sections=list(st.SECTION_ORDER))
@@ -1878,7 +1874,7 @@ def test_the_save_button_counts_the_changes_and_stays_pressable(qtbot, tmp_path)
 
 
 def test_the_reset_button_restores_the_default_and_clears_both_markers(qtbot, tmp_path):
-    """The second half of the checkpoint: ↺ clears the field dot AND the header
+    """The reset button: ↺ clears the field dot AND the header
     count, because it puts the value back where it started."""
     form = _form(tmp_path, collapsed_sections=list(st.SECTION_ORDER))
     qtbot.addWidget(form)
@@ -1990,13 +1986,13 @@ def test_the_default_label_handles_the_shapes_a_tooltip_cannot_render(default, e
 
 
 def test_a_dirty_field_a_configuration_gate_hides_still_counts(qtbot, tmp_path):
-    """The line this phase draws, and it is the OPPOSITE of P4's advanced count.
+    """The dirty count is the OPPOSITE of the advanced count.
 
     That count promises "ticking this box reveals N rows", so a field a gate holds
     shut has to be subtracted or the promise is false. This one promises "Save
     writes N changes" — and `collect()` walks the SCHEMA, so a gated-off field's
     edit is written exactly like any other. Leaving it out would understate the
-    number in the direction that loses an edit quietly. P5's reachability answer
+    number in the direction that loses an edit quietly. The error reachability rule
     does not apply either: it names an unreachable ERROR because the user must
     reach it to act, while a dirty field asks nothing of them.
     """
@@ -2025,8 +2021,8 @@ def test_a_dirty_field_a_configuration_gate_hides_still_counts(qtbot, tmp_path):
 
 
 def test_an_advanced_field_folded_away_still_counts(qtbot, tmp_path):
-    """Same rule for a VIEW fold, arrived at from the other direction: P4 does not
-    subtract a collapsed section, and nothing here subtracts the disclosure — the
+    """Same rule for a VIEW fold, arrived at from the other direction: the advanced
+    count does not subtract a collapsed section, and nothing here subtracts the disclosure — the
     edit is written either way."""
     form = _form(tmp_path, show_advanced=True)
     qtbot.addWidget(form)
@@ -2116,7 +2112,7 @@ def test_a_setter_that_raises_mid_fill_still_leaves_honest_markers(qtbot, tmp_pa
 
 
 def test_a_clamped_int_opens_dirty(qtbot, tmp_path):
-    """P5's clamp note and P6's dirty dot are the same fact said twice, so they
+    """The clamp note and the dirty dot are the same fact said twice, so they
     must agree: the form is holding 5000 where the file says 99999 and the next
     Save writes it, which is exactly what "changed, unsaved" means."""
     targets = _targets(tmp_path)
@@ -2157,7 +2153,7 @@ def test_a_flagged_field_keeps_its_dot_and_a_reset_clears_the_flag(qtbot, tmp_pa
                                                                    monkeypatch):
     """The two markers are independent claims — "this is wrong" and "this is
     unsaved" — so an error must not swallow the dot. And ↺ goes through the same
-    `_on_field_edited` hook every other edit does, so it clears P5's error state
+    `_on_field_edited` hook every other edit does, so it clears the error state
     exactly as typing a fix would."""
     _no_modals(monkeypatch)
     form = _form(tmp_path, show_advanced=True)
@@ -2177,7 +2173,7 @@ def test_a_flagged_field_keeps_its_dot_and_a_reset_clears_the_flag(qtbot, tmp_pa
     assert form._save_btn.text() == "Save 1 change"             # vm_enabled, still on
 
 
-# --- cycle 18 P7: the search / filter box ---------------------------------------
+# --- the search / filter box ----------------------------------------------------
 
 # This repo owner's real `settings_collapsed` (local/config.json): 9 of the 10
 # sections folded shut. Every collapse-restoration claim below is measured against
@@ -2192,7 +2188,7 @@ def _sections_on_screen(form):
 
 
 def test_search_filters_fields_and_sections(qtbot, tmp_path):
-    """The phase checkpoint, top half: a term narrows the tab to the rows that
+    """Search, top half: a term narrows the tab to the rows that
     mention it and drops every section left with nothing."""
     form = _form(tmp_path)
     qtbot.addWidget(form)
@@ -2319,10 +2315,10 @@ def test_search_leaves_a_gated_field_out_and_names_its_gate(qtbot, tmp_path):
 
 
 def test_the_gate_footer_reads_the_widgets_not_the_stored_file(qtbot, tmp_path):
-    """Routed here from the P3 review, and P7 is where it stops being latent.
+    """The gate footer reads the widgets, never the stored file.
 
     `settings.is_visible` compares gate values EXACTLY while `_set_combo` reads a
-    stored value in another case as its match (cycle 19's ST-7), so a hand-edited
+    stored value in another case as its match, so a hand-edited
     `"provider": "Claude"` makes `visible_keys(load())` hide the two Claude
     pickers the form renders. A footer built from the FILE would then announce
     that the pickers on screen in front of the user are missing.
@@ -2350,7 +2346,7 @@ def test_the_gate_footer_reads_the_widgets_not_the_stored_file(qtbot, tmp_path):
 
 def test_an_unknown_stored_choice_stays_on_screen_and_both_readings_agree(
         qtbot, tmp_path, monkeypatch):
-    """ST-7's other arm: a value matching no choice in any case is kept as typed,
+    """The other arm of case matching: a value matching no choice in any case is kept as typed,
     so the form, the file and `settings.is_visible` all read the same thing
     (neither model pair applies to "openai"), and Save flags the row by name
     and writes nothing."""
@@ -2377,7 +2373,7 @@ def test_clearing_search_restores_collapse_state(qtbot, tmp_path):
     worse than no search at all.
 
     Force-expanding a matching section is a VIEW change the user did not ask for,
-    so it must never reach `save_collapsed` — the same line P5's `_reveal_view_folds`
+    so it must never reach `save_collapsed` — the same line `_reveal_view_folds`
     draws. Measured on this repo owner's real 9-of-10-folded layout, where the
     damage would be nine sections wide.
     """
@@ -2416,7 +2412,7 @@ def test_a_toggle_the_user_makes_during_a_search_is_still_theirs(qtbot, tmp_path
 
 
 def test_the_dirty_count_ignores_the_search(qtbot, tmp_path):
-    """P6's rule, composed with the third view fold: the count promises what Save
+    """The dirty-count rule, composed with the third view fold: the count promises what Save
     WRITES, and `collect()` walks the schema — so filtering a row off screen
     subtracts nothing."""
     form = _form(tmp_path)
@@ -2431,7 +2427,7 @@ def test_the_dirty_count_ignores_the_search(qtbot, tmp_path):
 
 
 def test_a_rejected_field_the_search_hid_clears_the_search(qtbot, tmp_path, monkeypatch):
-    """Search is the THIRD view fold, so P5's guarantee has to hold through it:
+    """Search is the THIRD view fold, so the reachability guarantee holds through it:
     the user must be able to reach every problem the status line claims exists.
     A collapsed section and the advanced disclosure are already opened on their
     behalf; a filter that hides the red box is the same failure."""
@@ -2467,19 +2463,19 @@ def test_typing_is_debounced_not_refiltered_per_keystroke(qtbot, tmp_path):
     assert len(_on_screen_field_keys(form)) < len(before)
 
 
-# --- cycle 18 P8 (Task A: the deferred P7 review) --------------------------------
+# --- a master switch is never its own blocking gate ------------------------------
 
 def test_a_master_switch_is_never_its_own_blocking_gate(qtbot, tmp_path):
-    """`vm_enabled` reported ITSELF as the configuration gate hiding it.
+    """`vm_enabled` never reports ITSELF as the configuration gate hiding it.
 
-    `_blocking_gate_field` opened with "does this field's section have a master
-    switch, and is it off?" — which is true of the switch too, so every sentence
-    built from it came out circular and false about a control the user is looking
-    straight at. Two shipped features said it out loud: P7's search footer ("1 more
-    setting applies when Enable VM features is on", printed under a form showing
-    that very checkbox) and P6's section-badge tooltip, which told someone who had
-    just UNTICKED the box that their unsaved change was "not shown on this form"
-    and that the fix was to turn on the thing they had just turned off.
+    `_blocking_gate_field` asks "does this field's section have a master
+    switch, and is it off?", which is true of the switch too, so a sentence
+    built from it would come out circular and false about a control the user is
+    looking straight at. Two features would say it out loud: the search footer
+    ("1 more setting applies when Enable VM features is on", printed under a form
+    showing that very checkbox) and the section-badge tooltip, which would tell
+    someone who just UNTICKED the box that their unsaved change is "not shown on
+    this form" and that the fix is to turn on the thing they just turned off.
     """
     form = _form(tmp_path)
     qtbot.addWidget(form)
@@ -2493,7 +2489,7 @@ def test_a_master_switch_is_never_its_own_blocking_gate(qtbot, tmp_path):
     gcloud = next(f for f in settings.SETTINGS_SCHEMA if f.key == "VM_GCLOUD_PATH")
     assert form._gate_condition(gcloud) == "Enable VM features is on"
 
-    # P7's manifestation: a search that matches the switch says nothing about it.
+    # The search footer: a search that matches the switch says nothing about it.
     form.set_search("enable vm")
     assert form._field_matches(vm)
     assert form._search_footer.text() == ""
@@ -2501,7 +2497,7 @@ def test_a_master_switch_is_never_its_own_blocking_gate(qtbot, tmp_path):
 
 
 def test_unticking_the_vm_switch_does_not_claim_it_is_off_screen(qtbot, tmp_path):
-    """P6's half of the same defect, measured through the header the user reads."""
+    """The section badge's half of the same defect, measured through the header the user reads."""
     targets = _targets(tmp_path)
     targets["config"].write_text(json.dumps({"vm_enabled": True}), encoding="utf-8")
     form = SettingsForm(targets=targets, collapsed_sections=[], save_collapsed=lambda s: None,
@@ -2585,7 +2581,7 @@ def test_archive_dialog_lists_snapshots_without_leaking_secrets(qtbot, tmp_path)
     assert "topsecret" not in dlg.preview.toPlainText()    # secret values never previewed
 
 
-# --- cycle 18 P8: the restart badge ---------------------------------------------
+# --- the restart badge ----------------------------------------------------------
 
 def _restart_chip(form, key):
     cell = form._rows[key][0][0].itemAt(form._rows[key][0][1],
@@ -2659,12 +2655,12 @@ def test_the_restart_line_survives_a_secret_without_echoing_it(qtbot, tmp_path, 
 
 
 def test_no_section_tagline_calls_its_own_section_advanced(qtbot, tmp_path):
-    """From the P4 review. "advanced" acquired a specific meaning in this tab — the
-    disclosure checkbox — and Scoring's tagline read "Models & spend guards
-    (advanced)" while four of its rows are on screen at shipped defaults and the
-    model names are not. A header describing a screen the reader is not looking at
-    reads as a bug in the form. If a blurb mentions the word at all it must be
-    pointing AT the checkbox, as Scoring's now does.
+    """The word "advanced" has a specific meaning in this tab — the
+    disclosure checkbox — so a tagline such as "Models & spend guards (advanced)"
+    on Scoring, whose four rows are on screen at shipped defaults, describes a
+    screen the reader is not looking at and reads as a bug in the form. If a
+    blurb mentions the word at all it must be pointing AT the checkbox, as
+    Scoring's does.
     """
     for section, tagline in st.SECTION_TAGLINE.items():
         assert "advanced" not in tagline.lower(), section
@@ -2688,7 +2684,7 @@ def test_a_fresh_profile_sees_the_scoring_rows_its_blurb_describes(qtbot, tmp_pa
 
 
 def test_the_restart_chip_has_a_selector_the_widget_matches(qtbot, tmp_path):
-    """Same defect class P5 hit with `QSpinBox[error="true"]`: a dynamic property
+    """Same defect class as `QSpinBox[error="true"]`: a dynamic property
     with no QSS rule is set, counted, and invisible.
 
     Here it would not be invisible so much as indistinguishable — the chip
@@ -2708,10 +2704,10 @@ def test_the_restart_chip_has_a_selector_the_widget_matches(qtbot, tmp_path):
 
 
 def test_search_finds_the_words_printed_on_a_rows_own_chips(qtbot, tmp_path):
-    """P8 deleted "Restart the dashboard after changing" from three help strings
-    and "Advanced:" from two more, because a chip now says both — and the new
-    lint ENFORCES the deletion. That handed the tab a row chipped `restart` whose
-    own search box, one inch above it, returned nothing for "restart".
+    """No help string says "Restart the dashboard after changing" or
+    "Advanced:", because a chip says both, and a lint ENFORCES that. A row
+    chipped `restart` must then be found by its own search box, one inch above
+    it, when the user types "restart".
 
     Chip text is therefore part of the haystack, alongside the config key and for
     the same reason: search has to find a setting by every string the user can
@@ -2755,7 +2751,7 @@ def test_secret_boxes_carry_an_accessible_name(qtbot, tmp_path):
         assert form._secret_hides[f.key].accessibleName() == f"Hide {f.label}"
 
 
-# --- cycle 19: the Jev section, providers first, Opus 5.5, the combo case fix ----
+# --- the Jev section, providers first, Opus 5.5, combo case matching -------------
 
 _JEV_AREA_SWITCHES = ("jev_scoring", "jev_tailor", "jev_difficulty")
 _JEV_TAILOR_OPTIONS = ("tailor_best_of_n", "cover_letter_jev_check", "tailor_ats_meaning")
@@ -2765,7 +2761,7 @@ _CLAUDE_DROPDOWNS = ("stage1_model_claude", "stage2_model_claude",
 
 
 def test_the_jev_section_renders_first_and_engine_shows_as_resume_tailor(qtbot, tmp_path):
-    """ST-1, ST-3: the switch that changes what every other section does comes
+    """The switch that changes what every other section does comes
     first, and the section that picks the writing provider is named for what it
     configures."""
     assert st.SECTION_ORDER[0] == "Jev"
@@ -2783,7 +2779,7 @@ def test_the_jev_section_renders_first_and_engine_shows_as_resume_tailor(qtbot, 
 
 
 def test_each_provider_is_the_first_row_of_its_section(qtbot, tmp_path):
-    """ST-2, ST-3 through the real form: row 0 of each section's form layout."""
+    """Each provider is row 0 of its section's form layout, read through the real form."""
     form = _form(tmp_path)
     qtbot.addWidget(form)
     for key in ("jev_enabled", "provider", "tailor_provider"):
@@ -2792,7 +2788,7 @@ def test_each_provider_is_the_first_row_of_its_section(qtbot, tmp_path):
 
 
 def test_the_jev_switches_hide_and_show_what_they_gate(qtbot, tmp_path):
-    """ST-1, ST-6 through the existing gate wiring: the master switch takes the
+    """Through the existing gate wiring: the master switch takes the
     three area switches and the tailor's Jev options with it (transitively for
     the options), and the tailor's switch takes its options alone."""
     form = _form(tmp_path, show_advanced=True)          # the area switches are advanced
@@ -2813,7 +2809,7 @@ def test_the_jev_switches_hide_and_show_what_they_gate(qtbot, tmp_path):
 
 
 def test_difficulty_checks_at_once_follows_the_checks_own_switch(qtbot, tmp_path):
-    """Cycle 22: "Difficulty checks at once" sits in Auto-apply in plain sight
+    """The "Difficulty checks at once" setting sits in Auto-apply in plain sight
     and hides with the check it sizes, through either Jev switch."""
     form = _form(tmp_path, show_advanced=True)          # jev_difficulty is advanced
     qtbot.addWidget(form)
@@ -2840,7 +2836,7 @@ def test_a_bool_gate_is_phrased_as_a_switch_to_turn_on(qtbot, tmp_path):
 
 
 def test_a_checkbox_gate_is_phrased_as_on_and_any_other_value_by_its_value():
-    """SP1 review F: every bool `show_if` gate in the schema opens on ("True",),
+    """Every bool `show_if` gate in the schema opens on ("True",),
     so "turn on" is the one checkbox state a hint names. A gate on another
     value (none exists) would read as that value, the way a dropdown's does."""
     by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
@@ -2855,7 +2851,7 @@ def test_a_checkbox_gate_is_phrased_as_on_and_any_other_value_by_its_value():
 
 
 def test_the_six_claude_dropdowns_offer_opus_5_5(qtbot, tmp_path):
-    """ST-4 through the real widgets: every Claude dropdown lists Opus 5.5 beside
+    """Through the real widgets: every Claude dropdown lists Opus 5.5 beside
     Opus 5, and the deep tier opens on Opus 5.5."""
     form = _form(tmp_path, show_advanced=True)
     qtbot.addWidget(form)
@@ -2867,7 +2863,7 @@ def test_the_six_claude_dropdowns_offer_opus_5_5(qtbot, tmp_path):
 
 
 def test_the_six_claude_dropdowns_offer_sonnet_5_5_and_open_on_their_old_defaults(qtbot, tmp_path):
-    """Cycle 21 Task 10 through the real widgets: Sonnet 5.5 sits between Sonnet 5
+    """Through the real widgets: Sonnet 5.5 sits between Sonnet 5
     and Opus 5 in every Claude dropdown, and no dropdown opens on it."""
     form = _form(tmp_path, show_advanced=True)
     qtbot.addWidget(form)
@@ -2887,9 +2883,9 @@ def test_the_six_claude_dropdowns_offer_sonnet_5_5_and_open_on_their_old_default
 
 
 def test_set_combo_matches_another_case_and_keeps_one_unknown_value(qtbot):
-    """ST-7 at the unit: c18's U1 read a hand-edited "Api_Key" as index 0 (vertex
-    billing); it now reads as api_key, and a value matching nothing in any case
-    is added and shown as typed. SP1 review C: a blank reads as the field's
+    """At the unit: a hand-edited "Api_Key" reads as api_key, never as index 0
+    (vertex billing), and a value matching nothing in any case
+    is added and shown as typed. A blank reads as the field's
     default, the dropdown holds one such extra entry at most, and a listed value
     takes it away again."""
     choices = ("vertex", "api_key", "pool")
@@ -2914,9 +2910,9 @@ def test_set_combo_matches_another_case_and_keeps_one_unknown_value(qtbot):
 
 
 def test_a_blank_choice_opens_on_its_default_and_saves(qtbot, tmp_path, monkeypatch):
-    """SP1 review C: a hand-written `RESUME_TAILOR_MODEL_MODE=` line (or a blank
-    `"gemini_auth": ""`) opened as a blank extra entry that
-    `settings.field_problem` refuses, so every Save failed until the user picked
+    """A hand-written `RESUME_TAILOR_MODEL_MODE=` line (or a blank
+    `"gemini_auth": ""`) must not open as a blank extra entry that
+    `settings.field_problem` refuses, or every Save fails until the user picks
     an option. A blank reads as the field's default, the way the tailor reads a
     blank model mode, and a Save writes that default."""
     by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
@@ -2939,7 +2935,7 @@ def test_a_blank_choice_opens_on_its_default_and_saves(qtbot, tmp_path, monkeypa
 
 
 def test_revert_takes_back_the_unknown_choice_a_snapshot_added(qtbot, tmp_path):
-    """SP1 review C: an unknown value joins the dropdown as an extra entry, so
+    """An unknown value joins the dropdown as an extra entry, so
     the form shows what the file says. Revert to a listed value takes the entry
     away again, so the list offers only what the setting accepts; Revert to a
     file that holds the unknown value brings it back."""
@@ -2967,10 +2963,10 @@ def test_revert_takes_back_the_unknown_choice_a_snapshot_added(qtbot, tmp_path):
 
 
 def test_a_choice_stored_in_another_case_reads_as_its_match(qtbot, tmp_path, monkeypatch):
-    """ST-7 end to end, on the setting c18's U1 named: a hand-edited
+    """End to end, on `gemini_auth`: a hand-edited
     `"gemini_auth": "Api_Key"` opens as api_key (clean, with its key row on
     screen), and a Save writes the canonical spelling. Reading it as vertex
-    would have moved the tailor's billing to the cloud project on that Save."""
+    would move the tailor's billing to the cloud project on that Save."""
     targets = _targets(tmp_path)
     targets["config"].write_text(json.dumps({"gemini_auth": "Api_Key"}), encoding="utf-8")
     form = _form(tmp_path)
@@ -2991,11 +2987,11 @@ def _field(key):
 
 
 def test_a_blank_location_survives_a_save_of_another_change(qtbot, tmp_path, monkeypatch):
-    """SP1 follow-up 2 (Minor 1). Left blank, the tailor runs in 'global' and
-    the scorer in 'us-central1' (the field's help), and review C's read of a
-    blank as the default wrote 'global' over it on the next Save with no word
-    in the summary. The blank opens on its labelled entry, and a Save of an
-    unrelated change leaves .env byte for byte as it was."""
+    """Left blank, the tailor runs in 'global' and the scorer in
+    'us-central1' (the field's help), so reading a blank as the default would
+    write 'global' over it on the next Save with no word in the summary. The
+    blank opens on its labelled entry, and a Save of an unrelated change leaves
+    .env byte for byte as it was."""
     modals = _no_modals(monkeypatch)
     env = _targets(tmp_path)["env"]
     first = _form(tmp_path)
@@ -3064,7 +3060,7 @@ def test_the_review_c_blanks_still_open_on_their_defaults_beside_a_blank_locatio
         qtbot, tmp_path, monkeypatch):
     """Only a field with a blank entry keeps a blank. A blank
     `RESUME_TAILOR_MODEL_MODE=` line and a blank `"gemini_auth": ""` still
-    open on their defaults and a Save writes the defaults (review C), while
+    open on their defaults and a Save writes the defaults, while
     the location in the same .env stays blank."""
     by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
     targets = _targets(tmp_path)
@@ -3088,7 +3084,7 @@ def test_the_review_c_blanks_still_open_on_their_defaults_beside_a_blank_locatio
         by_key["gemini_auth"].default
 
 
-# The fields whose help gives a blank a meaning of its own (the follow-up 2 scan).
+# The fields whose help gives a blank a meaning of its own.
 # The location is the one fixed choice among them; the rest are free text.
 _BLANK_MEANS_SOMETHING = (
     "GEMINI_API_KEYS", "RESUME_TAILOR_GEMINI_API_KEY", "GOOGLE_CLOUD_PROJECT",
@@ -3104,7 +3100,7 @@ def test_every_field_whose_help_gives_a_blank_a_meaning_keeps_it_through_a_save(
     to mention a blank joins the list here (auto_apply_generate's "stays blank"
     is about the answers it drafts).
 
-    Cycle 21 Task 4: graduation_month is also exempt. It is an .env-free
+    graduation_month is also exempt. It is an .env-free
     scoring_config.json row, and its blank round trip (saved as "", read by the
     scorer as no date) is pinned in tests/test_candidate_settings.py."""
     mentions = {f.key for f in settings.SETTINGS_SCHEMA
@@ -3163,7 +3159,7 @@ def test_set_combo_keeps_a_blank_on_its_labelled_entry(qtbot):
     assert (combo.currentText(), combo.count()) == ("us-central1", 3)
 
 
-# --- SP1 follow-up 3 -----------------------------------------------------------------
+# --- the judge row, the Jev switch values, a damaged settings file -------------------
 
 def test_the_unknown_judge_sentence_names_the_disclosure_its_row_sits_under(qtbot, tmp_path):
     """The drain, Start, Check setup, the doctor, Test my answers and probe

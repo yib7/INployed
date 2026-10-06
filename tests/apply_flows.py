@@ -196,7 +196,7 @@ class PauseLeftBlank:
 
 class VerifiedReadAsConfirmation:
     """A judge that reads an email-verified page as a confirmation at 0.90,
-    its received Noul yes (the I5 shape: "Your email is verified, thank
+    its received Noul yes (a page such as "Your email is verified, thank
     you")."""
 
     def __init__(self, inner: Any):

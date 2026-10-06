@@ -1,6 +1,6 @@
-"""SP1: the per-job trace (`apply_trace`), the record that keeps its earlier
+"""The per-job trace (`apply_trace`), the record that keeps its earlier
 attempts, the per-job log, the park reasons that name their evidence, the
-read-only `probe` verb, and a closed browser stopping the drain (RES-01).
+read-only `probe` verb, and a closed browser stopping the drain.
 
 Headless Chromium through the module-scoped test browser; the flows, the
 synthetic sheet and bank, and the hermetic stores come from `apply_harness`;
@@ -86,7 +86,7 @@ def _pages(trace_dir: Path) -> list[dict]:
                             key=lambda p: int(p.stem.split("-")[1]))]
 
 
-# --- DIAG-01: the trace --------------------------------------------------------------------
+# --- the trace -----------------------------------------------------------------------------
 
 def test_every_judged_page_leaves_its_json_and_screenshot_and_no_value(
         _browser, flow_server, tmp_path):
@@ -109,7 +109,7 @@ def test_every_judged_page_leaves_its_json_and_screenshot_and_no_value(
     assert first["answers"]["button_0_role"]["choice"] == "advance"
     assert first["answers"]["button_0_role"]["confidence"] == 1.0
     assert "noul" in first["answers"]["has_captcha"]
-    # the first load's settle is the page's first decision (SP2), then the
+    # the first load's settle is the page's first decision, then the
     # plan without the values it types, then what the page's step did
     assert first["events"][0]["kind"] == "decision" and first["events"][0]["what"] == "settled"
     steps = [e for e in first["events"] if e["kind"] != "decision"]
@@ -215,7 +215,7 @@ def test_a_trace_that_cannot_write_never_ends_the_job(context, flow_server, tmp_
     assert out.status == "needs_human" and out.reason.startswith("captcha or bot check")
 
 
-# --- DIAG-02: the job log --------------------------------------------------------------------
+# --- the job log -----------------------------------------------------------------------------
 
 def test_the_job_log_holds_the_jobs_lines_and_only_them(context, flow_server, tmp_path,
                                                          caplog):
@@ -231,7 +231,7 @@ def test_the_job_log_holds_the_jobs_lines_and_only_them(context, flow_server, tm
                    for hd in logging.getLogger("apply_run").handlers)
 
 
-# --- DIAG-04: the record keeps earlier attempts ---------------------------------------------------
+# --- the record keeps earlier attempts ------------------------------------------------------------
 
 def test_the_record_links_its_trace_and_keeps_every_earlier_attempt(
         context, flow_server, tmp_path):
@@ -282,7 +282,7 @@ def test_a_traced_record_whose_attempt_copy_was_never_written_is_kept(tmp_path):
     assert len(kept) == 1 and "- Reason: first" in kept[0].read_text(encoding="utf-8")
     assert not list(tmp_path.glob("*.tmp"))
 
-# --- DIAG-03: park reasons that carry their evidence --------------------------------------------
+# --- park reasons that carry their evidence -----------------------------------------------------
 
 class _ReadAs(jev.FakeJev):
     """The fake, with every page read as `STATE` at `CONF` (the rest spread),
@@ -300,7 +300,7 @@ class _ReadAs(jev.FakeJev):
 
 
 # A page whose structure places it nowhere (no box, no Apply, no Next): the
-# judge's read alone decides it (SP4: the structure reads a posting or a form
+# judge's read alone decides it (the structure reads a posting or a form
 # itself, and an unsure read of one goes on as that)
 _NOWHERE = ("<!doctype html><html><head><title>Life at Fabrikam</title></head><body>"
             "<h1>Life at Fabrikam</h1><p>" + "Our teams build analytics for retail partners "
@@ -360,7 +360,7 @@ def test_no_way_forward_names_the_buttons_it_saw(context, tmp_path):
     assert out.reason == "no way forward on this page (buttons: Help other 1.00)", out
 
 
-# --- DIAG-05: swallowed errors become trace events ----------------------------------------------
+# --- swallowed errors become trace events -------------------------------------------------------
 
 def test_a_fill_that_raises_leaves_its_error_type_in_the_trace(context, tmp_path):
     folder = h.write_job_folder(tmp_path / "job")
@@ -404,8 +404,8 @@ _TIED_DEPARTMENT = """<body><form>
 @pytest.mark.parametrize("required", [True, False])
 def test_a_box_whose_options_tie_parks_when_required_and_stays_blank_when_optional(
         context, tmp_path, required):
-    # final review B R2 M2: the options that hold "Engineering" differ in what
-    # it leaves out; the site's order picked the first, and now none is chosen
+    # the options that hold "Engineering" differ in what it leaves out, so
+    # none is chosen by the site's order
     folder = h.write_job_folder(tmp_path / "job")
     _enqueue(folder, "https://careers.fabrikam.example/jobs/42")
     run = apply_run._JobRun(_runner(context, tmp_path), context, _entry())
@@ -454,8 +454,8 @@ _TIED_SIGNUP = """<body><h1>Create Account</h1><form>
 @pytest.mark.parametrize("required", [True, False])
 def test_an_account_screens_box_whose_options_tie_parks_when_required(
         context, tmp_path, monkeypatch, required):
-    # fix round 3: the account screen's fill kept no errors, so a tie there
-    # left the box blank with no trace and the step went on to the password
+    # the account screen's fill keeps a tie as an error: a required box parks
+    # before the password and the click, and the tie is in the trace
     folder = h.write_job_folder(tmp_path / "job")
     _enqueue(folder, "https://careers.fabrikam.example/jobs/42")
     run = apply_run._JobRun(_runner(context, tmp_path), context, _entry())
@@ -622,7 +622,7 @@ def test_main_probe_wires_its_flags(monkeypatch):
     assert seen["judge"] is None and seen["follow_apply"] is False
 
 
-# --- RES-01: a closed browser stops the drain ------------------------------------------------------
+# --- a closed browser stops the drain --------------------------------------------------------------
 
 class _ClosingJudge(jev.FakeJev):
     """The fake, closing `TARGET` (the context or the browser) on its first
@@ -694,9 +694,7 @@ def test_a_window_closed_between_jobs_claims_nothing_more(_browser, flow_server,
         assert (_entry(jid)["status"], _entry(jid)["attempts"]) == ("queued", 0)
 
 
-# === review round 1 ===============================================================================
-
-# --- I1: a closed tab ends that job only ------------------------------------------------------------
+# --- a closed tab ends that job only ----------------------------------------------------------------
 
 _POPUP_POSTING = (REPO / "tests" / "fixtures" / "forms" / "job_posting.html").read_text(
     encoding="utf-8").replace('href="ashby_steps.html"',
@@ -753,7 +751,7 @@ def test_a_closed_tab_with_the_window_open_ends_that_job_only(context, flow_serv
     assert all(o.reason.startswith("captcha or bot check") for o in outcomes[1:]), outcomes
 
 
-# --- I2: a typed code is masked in every screenshot --------------------------------------------------
+# --- a typed code is masked in every screenshot ------------------------------------------------------
 
 _CODE_BOX = ('<label for="verification-input">Verification code</label>'
              '<input id="verification-input" name="verification" '
@@ -927,7 +925,7 @@ def test_probe_follows_only_a_plain_apply(context, no_typing, label):
     assert "page 2:" not in out.getvalue()
 
 
-# --- M3: a failed fill never logs its value ---------------------------------------------------------
+# --- a failed fill never logs its value -------------------------------------------------------------
 
 def test_a_failed_fill_logs_its_error_type_and_never_its_value(context, monkeypatch, caplog):
     import apply_fill
@@ -949,7 +947,7 @@ def test_a_failed_fill_logs_its_error_type_and_never_its_value(context, monkeypa
     assert errors == [{"n": 0, "label": "Nickname", "action": "fill", "error": "RuntimeError"}]
 
 
-# --- M4: the record's links work where each copy sits ----------------------------------------------
+# --- the record's links work where each copy sits --------------------------------------------------
 
 _LINK = re.compile(r"\]\(([^)]+)\)")
 
@@ -972,7 +970,7 @@ def test_every_link_in_the_record_and_its_copies_resolves(context, flow_server, 
             assert (record.parent / link).exists(), (record, link)
 
 
-# --- M8: an odd value in an event never turns the trace off -----------------------------------------
+# --- an odd value in an event never turns the trace off ---------------------------------------------
 
 def test_an_odd_value_in_an_event_is_written_as_text(tmp_path):
     trace = apply_trace.Trace(tmp_path, attempt=1, job_id="42")
@@ -989,7 +987,7 @@ def test_an_odd_value_in_an_event_is_written_as_text(tmp_path):
         trace.close()
 
 
-# --- final review C-M1: a page's address is kept without its query ---------------------------------
+# --- a page's address is kept without its query ----------------------------------------------------
 
 def test_the_trace_the_log_and_the_record_keep_an_address_without_its_query(tmp_path, caplog):
     # a page a method=get form reached carries the answers in its query
@@ -1046,7 +1044,7 @@ def test_a_park_on_a_page_a_get_form_reached_keeps_its_query_out_of_the_queue(
     assert secret not in tab_note
 
 
-# --- M9: the sign-up page the login hook reads is a traced page ------------------------------------
+# --- the sign-up page the login hook reads is a traced page ----------------------------------------
 
 def test_the_sign_up_page_the_login_hook_follows_is_traced(context, flow_server, tmp_path,
                                                           monkeypatch):

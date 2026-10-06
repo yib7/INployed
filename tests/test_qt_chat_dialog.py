@@ -1,4 +1,4 @@
-"""SP4: the per-job "Ask AI" chat dialog and its two entry points.
+"""The per-job "Ask AI" chat dialog and its two entry points.
 
 Headless (QT_QPA_PLATFORM=offscreen, set in conftest) and thread-free: every test
 that sends a turn swaps `workers.run_async` for the synchronous stand-in the rest
@@ -117,7 +117,7 @@ def test_dialog_title_names_the_job(qtbot):
 
 
 def test_hint_names_the_experience_file_as_a_source(qtbot):
-    """SP4: the chat carries the full master digest on every turn, sheet or
+    """The chat carries the full master digest on every turn, sheet or
     no sheet, so the hint must say so."""
     _host, dlg = _dialog(qtbot)
     hint = next(w for w in dlg.findChildren(QtWidgets.QLabel)
@@ -486,7 +486,7 @@ def test_4_9_an_error_shows_no_absolute_path(qtbot, monkeypatch):
 
 
 def test_c4_html_in_an_answer_shows_as_text(qtbot, monkeypatch):
-    """4-C4: the answer is model text over a scraped posting; raw HTML in it
+    """The answer is model text over a scraped posting; raw HTML in it
     must not render (an <img> would load a local file)."""
     _sync_workers(monkeypatch)
     _stub_chat(monkeypatch, answer='Lead with <img src="C:/x.png"> and <b>this</b>.')

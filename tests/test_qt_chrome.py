@@ -1,4 +1,4 @@
-"""Cycle 40 Phase 3a: the chrome widgets — Pill / Chip / ChipBar / IdentityStrip."""
+"""The chrome widgets: Pill, Chip, ChipBar and IdentityStrip."""
 from qt.chrome import Chip, ChipBar, IdentityStrip, Pill
 
 

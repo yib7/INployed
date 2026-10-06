@@ -1,4 +1,4 @@
-"""Tests for the optional local Claude scoring provider (SP4).
+"""Tests for the optional local Claude scoring provider.
 
 Covers: the three new scoring_config.json keys, the pure `_active_scoring`
 truth table (junk values must resolve "gemini" -- this pins the VM's
@@ -261,7 +261,7 @@ def test_make_pool_gemini_provider_unaffected(monkeypatch, tmp_path):
 
 
 # --------------------------------------------------------------------------
-# SC-6: a claude provider that falls back to Gemini sends the Gemini models
+# a claude provider that falls back to Gemini sends the Gemini models
 # --------------------------------------------------------------------------
 
 class _ModelRecordingPool:
@@ -410,16 +410,15 @@ def test_score_stage1_claude_pool_raises_yields_error_row(monkeypatch):
 # these exist.
 #
 # _FROZEN_STAGE2_TEMPLATE is the ORIGINAL pre-split STAGE2_TEMPLATE, copied
-# VERBATIM from `git show 2304ee2:score_jobs.py` (the commit before the
-# resume/job split landed). Cycle 21 made the candidate text data-driven, so
-# the real template now carries placeholders; the test renders it at the
-# default profile and that render must equal this literal.
+# VERBATIM from score_jobs.py as it stood before the resume/job split. The
+# real template carries the candidate text as placeholders; the test renders
+# it at the default profile and that render must equal this literal.
 #
-# _FROZEN_STAGE1_TEMPLATE pins the DEFAULT render of STAGE1_TEMPLATE after
-# cycle 21: the candidate variables are rendered in (Finished school, May
-# 2026, no clearance) and {resume}, {job} and {today} stay as placeholders.
-# Stage 1 changed in that cycle (a new eligibility line, a shorter candidate
-# paragraph), so it no longer equals the pre-split original.
+# _FROZEN_STAGE1_TEMPLATE pins the DEFAULT render of STAGE1_TEMPLATE: the
+# candidate variables are rendered in (Finished school, May 2026, no
+# clearance) and {resume}, {job} and {today} stay as placeholders. Stage 1
+# carries an eligibility line and a shorter candidate paragraph, so it
+# differs from the pre-split original.
 _FROZEN_STAGE1_TEMPLATE = """\
 Rate how well this job matches the resume below, on a 1-5 scale.
 

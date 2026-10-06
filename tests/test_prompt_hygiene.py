@@ -12,12 +12,9 @@ that can damage it. ``aiwriting.RULES_PROMPT`` already carried the fix
 ("Deliberately free of em dashes, since it is telling the model to avoid them");
 this test carries it across the whole package.
 
-Cycle 11 widened it from characters to the whole of ``_STYLE_BANS``. The same
+The test covers the whole of ``_STYLE_BANS`` as well as em dashes. The same
 argument covers both: a prompt that says "never write 'X, not Y'" while itself
-saying "IGNORED, not followed" is teaching the construction it forbids. Six prose
-sites were rewritten to close that (``common._PRINCIPLE``, ``common.fence_jd``,
-``chat``'s no-JD note, two lines of ``compose.rephrase``'s system prompt, and
-``coverletter``'s refine prompt).
+saying "IGNORED, not followed" is teaching the construction it forbids.
 
 **Scope: string literals that reach a model.** Comments and docstrings keep their
 em dashes -- that is this repo's prose style and no model ever sees it. Comments

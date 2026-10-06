@@ -1,4 +1,4 @@
-"""The page read over the real-page captures under a recorded judge (SP8b).
+"""The page read over the real-page captures under a recorded judge.
 
 The captures (`tests/fixtures/local_captures/`, git-excluded) are real
 third-party pages and stay on this machine; so do this module's cache and

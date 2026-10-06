@@ -1,4 +1,4 @@
-"""SP4: the chat's post-answer AI-writing gate, `chat._prose_gate`.
+"""The chat's post-answer AI-writing gate, `chat._prose_gate`.
 
 `chat.ask` strips em dashes unconditionally and, on an answer of
 `PROSE_WORD_FLOOR` words or more, checks it against the same two deterministic

@@ -1,9 +1,9 @@
 """A config file that exists and cannot be read or parsed is never merged onto {}.
 
-Finding 4-C1: `update_json_locked` moved a damaged config.json aside and wrote
-only the keys being saved, so the next column toggle or the watcher's
-gdrive_root write dropped `auto_apply_submit`, and the runner then read the
-default (True). A transient read error did the same with no copy kept. These
+Were `update_json_locked` to move a damaged config.json aside and write only
+the keys being saved, the next column toggle or the watcher's gdrive_root
+write would drop `auto_apply_submit`, and the runner would then read the
+default (True). A transient read error would do the same with no copy kept. These
 tests pin the fail-closed behaviour: the write is refused, the file stays as it
 was, every caller reports it without crashing, and a damaged or rebuilt config
 reads the submit switch (and the Jev switches) as off.
@@ -65,7 +65,7 @@ def test_c1_update_json_locked_refuses_a_damaged_file(tmp_path, damaged):
 
 
 def test_c1_update_json_locked_refuses_a_file_it_cannot_read(tmp_path, monkeypatch):
-    """probe_config_oserror: a transient read error used to write only the new key."""
+    """probe_config_oserror: a transient read error never writes only the new key."""
     p = tmp_path / "config.json"
     good = {"auto_apply_submit": True, "jev_enabled": True, "candidate_name": "Jane Doe"}
     p.write_text(json.dumps(good), encoding="utf-8")

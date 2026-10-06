@@ -148,7 +148,7 @@ def test_chrome_install_paths_cover_the_windows_locations(monkeypatch):
     assert any(p.startswith(r"C:\Users\x\AppData\Local") for p in paths)
 
 
-# --- SP6 fix round 1: one browser on the profile --------------------------------------------
+# --- one browser on the profile -------------------------------------------------------------
 
 class _EventCtx(_Ctx):
     """A context double with the close event Playwright's has."""
@@ -252,7 +252,7 @@ def test_login_refuses_in_a_sentence_while_another_browser_holds_the_profile(tmp
     assert capsys.readouterr().err.strip() == profile_lock.RUN_BUSY
 
 
-# --- cycle 22 final review: every browser on the real profile sweeps the check's copies -----
+# --- every browser on the real profile sweeps the check's copies ----------------------------
 
 def _leftover(name="slot-3"):
     import assess_pool

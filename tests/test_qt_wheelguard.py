@@ -44,9 +44,9 @@ def test_guard_swallows_wheel_via_editable_combo_lineedit(qtbot):
 
 
 def test_guard_swallows_wheel_even_when_focused(qtbot, monkeypatch):
-    # Cycle 16: focus must NOT re-enable scroll-editing. The editable model dropdowns
-    # keep focus after a click, and a page-scroll over a focused one used to silently
-    # change the Gemini model — so the guard now swallows regardless of focus.
+    # Focus must NOT re-enable scroll-editing. The editable model dropdowns keep
+    # focus after a click, and a page-scroll over a focused one would silently
+    # change the Gemini model, so the guard swallows regardless of focus.
     combo = QtWidgets.QComboBox()
     combo.addItems(["a", "b"])
     qtbot.addWidget(combo)

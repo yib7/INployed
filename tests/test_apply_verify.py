@@ -83,9 +83,9 @@ def test_extract_after_code_keyword_beats_unrelated_digit_token():
 
 
 def test_extract_reads_the_token_after_a_repeated_code_label():
-    # c16 backlog: the near-code match consumed "code / Your code" as one
-    # match (its filler words), so the second label never started a match of
-    # its own and the token after it was never read
+    # the near-code match never takes "code / Your code" as one match (its
+    # filler words), so the second label starts a match of its own and the
+    # token after it is read
     assert apply_verify.extract_code("Your code / Your code is MKPZ3QRA") == "MKPZ3QRA"
     assert apply_verify.extract_code("Security code: code is 483920", length=6) == "483920"
 

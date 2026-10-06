@@ -1,4 +1,4 @@
-"""SP1: the noisy judge, the invariant checks, and the flow matrix.
+"""The noisy judge, the invariant checks, and the flow matrix.
 
 - `NoisyJev`: deterministic per (seed, request), fresh noise for a changed
   request, misreads only toward plausible neighbours, never moves a submit
@@ -11,7 +11,7 @@
   three noisy seeds (the script runs twenty), zero invariant breaks, the
   fake judge reaching every flow's end but a known one's; then the success
   rates at or above the pinned floors (`apply_pages.SUCCESS_FLOOR`,
-  `FAKE_SUCCESS_FLOOR`), which later phases raise.
+  `FAKE_SUCCESS_FLOOR`).
 
 Headless Chromium through the module-scoped test browser; the judge is the
 fake or the noisy one; no network but the local server and routed hosts."""
@@ -130,7 +130,7 @@ def test_a_swapped_page_state_is_a_neighbour_read_between_0_30_and_0_60(truth):
 
 def test_confidences_are_scaled_within_the_floor_and_nouls_are_left_alone():
     # a Noul outside the page read (a verification, a flag of the mapping) is
-    # left alone; the page read's own Nouls are misread (SP4, test_apply_read)
+    # left alone; the page read's own Nouls are misread (see test_apply_read)
     judge = jev_doubles.NoisyJev(_Scripted(), 2, swap_p=0.0, conf_scale=0.75, drop_p=0.0)
     seen = []
     for i in range(30):
@@ -210,7 +210,7 @@ def test_a_clean_run_breaks_nothing():
                     h.Action("fill", "http://127.0.0.1/forms/a.html", tag="input"),
                     h.Action("click", "https://www.linkedin.com/jobs/view/1/", text="Apply"),
                     h.Action("gate", "http://127.0.0.1/forms/a.html", in_gate=True)]
-    # confirmed answers typed and picked (cycle 18, FL-1)
+    # confirmed answers typed and picked
     rec._add("fill", "Locator.fill", {"url": "http://127.0.0.1/forms/a.html", "tag": "input"},
              value="Jane")
     rec._add("pick", "Locator.select_option", {"url": "http://127.0.0.1/forms/a.html",
@@ -240,15 +240,15 @@ def test_a_clean_run_breaks_nothing():
     ("not_sent_after_send", "NOT-SENT-AFTER-SEND"),
     ("unsent_after_send", "NOT-SENT-AFTER-SEND"),
     ("guard_unsent_after_send", "NOT-SENT-AFTER-SEND"),
-    # final review C-M3: the unconfirmed prefix is the runner's own, and a
+    # the unconfirmed prefix is the runner's own, and a
     # submitted end needs a send
     ("unconfirmed_word_quoted", "FALSE-SUBMITTED"),
     ("submitted_no_send", "SUBMITTED-WITHOUT-SEND"),
     ("unconfirmed_no_send", "SUBMITTED-WITHOUT-SEND"),
-    # final review C-M2: a park the person may re-queue after an accepted send
+    # a park the person may re-queue after an accepted send
     ("needs_human_after_send", "REQUEUABLE-AFTER-SEND"),
     ("failed_after_send", "REQUEUABLE-AFTER-SEND"),
-    # cycle 18 (FL-1): an answer the user has not confirmed is never filled
+    # an answer the user has not confirmed is never filled
     ("unconfirmed_fill", "UNCONFIRMED-ANSWER"),
     ("unconfirmed_pick", "UNCONFIRMED-ANSWER"),
     ("unconfirmed_option_click", "UNCONFIRMED-ANSWER")])
@@ -295,7 +295,7 @@ def test_each_invariant_check_fails_on_its_planted_breach(tmp_path, plant, code)
         sends.events.append(h.Send("post", "/submit/ajax_reset", True))
         out = _Out("needs_human", apply_run.NOT_SENT_REASON + ": validation errors (x)")
     elif plant == "unsent_after_send":
-        # SP8a review R2-M2: the error page's "no connection was made" after
+        # the error page's "no connection was made" after
         # a send the site took
         sends.events.append(h.Send("post", "/submit/post_redirect", True))
         out = _Out("needs_human", "error or dead page: POST http://127.0.0.1/submit failed on "
@@ -340,7 +340,7 @@ def test_each_invariant_check_fails_on_its_planted_breach(tmp_path, plant, code)
 
 
 def test_a_send_that_never_made_its_connection_is_one_the_site_did_not_accept():
-    # SP8a review R2-M2: a send whose request failed before any connection
+    # a send whose request failed before any connection
     # (refused, unreachable, a name that did not resolve, blocked in the
     # browser) never reached the site; one reset after it left may have
     import types
@@ -363,9 +363,9 @@ def test_a_send_that_never_made_its_connection_is_one_the_site_did_not_accept():
 
 
 def test_a_submit_in_a_tab_window_open_made_is_one_send(_browser, flow_server):
-    # final review C-M3's SUBMITTED-WITHOUT-SEND found popup_step's submit
-    # unseen: the tab keeps its first blank window, and the init script's
-    # watch was on that blank document
+    # popup_step's submit is seen (no SUBMITTED-WITHOUT-SEND): the tab keeps
+    # its first blank window, so the init script's watch must reach past that
+    # blank document
     ctx = _browser.new_context()
     try:
         sends = h.Sends()
@@ -395,7 +395,7 @@ def test_a_submitted_unconfirmed_with_a_send_is_within_the_invariants():
 
 
 @pytest.mark.parametrize("status, reason, accepted", [
-    # final review C-M2: a check-whether park is never re-queued as it is
+    # a check-whether park is never re-queued as it is
     ("needs_human", apply_run.CHECK_SENT_REASON + ": a request left after the submit click "
                     "(POST x)", True),
     # a send the site refused (or that never made its connection) sent nothing
@@ -412,7 +412,7 @@ _CSR = apply_run.CHECK_SENT_REASON
 
 
 @pytest.mark.parametrize("reason, note, flagged", [
-    # final review C N1: the parks `_send_evidence` gives the check-sent note
+    # the parks `_send_evidence` gives the check-sent note
     # carry its words as a clause of their own after other words
     (f"the emailed code was not accepted (the code screen came back, 0.90); {_CSR}", "", False),
     (f"an error page after the submit click (0.90; Oops); {_CSR}; a request left after the "
@@ -438,7 +438,7 @@ def test_a_check_whether_park_after_a_send_is_known_by_its_clause_or_its_note(
      "SUBMITTED-WITHOUT-SEND"),
     ("confirmation page", True, "SUBMITTED-WITHOUT-SEND")])
 def test_a_submitted_end_after_only_a_send_the_site_refused_breaks(reason, confirmed, code):
-    # final review C N2: a post the site refused (or one that never made its
+    # a post the site refused (or one that never made its
     # connection) sent nothing, so a submitted end after it alone is lost
     rec, sends = _clean(park=False, confirmed=confirmed)
     sends.events.append(h.Send("post", "/submit/server_validation", True, False))
@@ -478,7 +478,7 @@ class _FormAsConfirmation(jev.FakeJev):
 
 def test_a_confident_confirmation_misread_before_any_submit_is_caught(
         _browser, flow_server, tmp_path, monkeypatch):
-    # SP3: the loop reads a confirmation before any submit as the form it
+    # the loop reads a confirmation before any submit as the form it
     # contradicts (tests/test_apply_submit.py); a loop that took it for the
     # end again would be caught
     monkeypatch.setattr(apply_route, "confirmation_step",
@@ -487,11 +487,11 @@ def test_a_confident_confirmation_misread_before_any_submit_is_caught(
     r = h.run_flow(h.flow("ashby_wizard"), _FormAsConfirmation(), "misread", browser=_browser,
                    server=flow_server, workdir=tmp_path)
     assert (r.status, r.reason) == ("submitted", "confirmation page"), r
-    # no send went either (final review C-M3)
+    # no send went either
     assert _codes(r.breaks) == ["FALSE-SUBMITTED", "SUBMITTED-WITHOUT-SEND"], r.breaks
 
 
-# --- the matrix, one test per flow (M6) --------------------------------------------------------------
+# --- the matrix, one test per flow -------------------------------------------------------------------
 
 _RESULTS: dict[str, list] = {}
 
@@ -515,11 +515,11 @@ def test_each_flow_holds_every_invariant_under_the_fake_and_the_noisy_seeds(
     _RESULTS[flow_name] = results
     table = h.summary(results)
     assert all(not r.breaks for r in results), table
-    # final review C-I2: a park outside the user's policy that missed the
+    # a park outside the user's policy that missed the
     # flow's end fails its flow, under xdist too (the floors' test below runs
     # only when one process ran every flow)
     assert not [r for r in results if r.policy is False and not r.ok], table
-    # SP4's checkpoint, per flow so it runs under xdist too (review M4): a
+    # per flow so it runs under xdist too: a
     # page is never left unread ("unsure what this page is") and a moving
     # page never reads as stuck ("page did not advance") but where the flow
     # is built to end so
@@ -538,7 +538,7 @@ def test_each_flow_holds_every_invariant_under_the_fake_and_the_noisy_seeds(
 @pytest.mark.parametrize("flow_name", [f.name for f in h.FLOWS if f.pause is None])
 def test_each_flow_ends_as_before_with_pauses_on_and_parked_at_once(
         _browser, flow_server, tmp_path, flow_name):
-    # SP7 review M8: every flow that has no pause of its own, run with pauses
+    # every flow that has no pause of its own, run with pauses
     # on and a person who answers each one with Park it, ends as it does with
     # pauses off, and holds every invariant
     f = h.flow(flow_name)
@@ -560,12 +560,10 @@ def test_the_success_floors_over_the_whole_registry():
     assert rates["noisy"] >= h.SUCCESS_FLOOR, table
 
 
-# === review round 1 ===============================================================================
-
-# --- M5: a known failing flow is reported, and kept out of the floors ------------------------------
+# --- a known failing flow is reported, and kept out of the floors ----------------------------------
 
 def test_a_known_flow_is_reported_and_left_out_of_the_floors(monkeypatch):
-    # SP3 fixed the last known flow (greenhouse_embed); the registry has none
+    # the registry holds no known failing flow
     assert [f.name for f in h.FLOWS if f.known] == []
     flows = tuple(dataclasses.replace(f, known="SP3: planted") if f.name == "greenhouse_embed"
                   else f for f in h.FLOWS)
@@ -597,7 +595,7 @@ def test_a_flow_with_a_real_end_is_read_by_the_judge_that_ran_it():
     assert [g.name for g in h.FLOWS if g.real_end] == ["ashby_relocation_place"]
 
 
-# --- M10: the noisy distribution keeps its winner on top ---------------------------------------------
+# --- the noisy distribution keeps its winner on top --------------------------------------------------
 
 def test_a_scaled_two_option_answer_keeps_its_winner_most_probable():
     class _Half:
@@ -611,7 +609,7 @@ def test_a_scaled_two_option_answer_keeps_its_winner_most_probable():
         assert abs(sum(a.probabilities.values()) - 1.0) < 1e-3, a
 
 
-# --- M1: the harness reads submit and final words with the loop's own vocabulary --------------------
+# --- the harness reads submit and final words with the loop's own vocabulary ------------------------
 
 def test_the_harness_uses_the_loops_submit_and_final_words():
     assert h.SUBMIT_WORDS is apply_send_words.SUBMIT_WORDS
@@ -690,12 +688,12 @@ def test_enter_and_escape_that_send_nothing_break_nothing():
     ("ready_to_submit", "submit did not register", False),
     ("submitted", "confirmation page", None),
     ("failed", "TimeoutError: x", False),
-    # review M3: the captcha words count only as the park's own reason
+    # the captcha words count only as the park's own reason
     ("needs_human", "a CAPTCHA challenge appeared after the submit click", True),
     ("needs_human", "a CAPTCHA check is on the form before the submit; not solved in time", True),
     ("needs_human", "the advance button (Next) did nothing (judged advance 1.00, clicked twice); "
                     "a CAPTCHA checkbox on the page is unticked: tick it, then Re-queue", True),
-    # final review C-M4: the sentence quoted inside another park's evidence
+    # the sentence quoted inside another park's evidence
     ("needs_human", "no submit button (the page says 'x; a CAPTCHA checkbox on the page is "
                     "unticked: tick it')", False),
     ("needs_human", "no way forward; a CAPTCHA checkbox on the page is unticked: tick it, then "
@@ -705,11 +703,11 @@ def test_enter_and_escape_that_send_nothing_break_nothing():
                     "(captcha_or_bot_check 0.17)", False),
     ("needs_human", "unsure what this page is (other, 0.30); reads: other 0.30, "
                     "captcha_or_bot_check 0.20", False),
-    # SP6 review I4: a way on still disabled with every field answered is a dead end
+    # a way on still disabled with every field answered is a dead end
     ("needs_human", "the Submit application button stays disabled after the fill", True),
     ("needs_human", "required field without an answer: Referral code (the Submit application "
                     "button stays disabled after the fill)", True),
-    # final review A R2-M4: the window or the tab closed, or the judge down,
+    # the window or the tab closed, or the judge down,
     # after any step that may have sent (`_stopped_after_send`'s shapes)
     ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the run stopped after the submit click "
                     "(judge unavailable: APIError 500 at verify); no request was seen leaving",
@@ -723,22 +721,22 @@ def test_enter_and_escape_that_send_nothing_break_nothing():
     ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the run stopped after the link step "
                     "(the browser window was closed); the run was not watching requests at "
                     "this step", True),
-    # SP7 review I1: the page moved on while the run waited for the person
+    # the page moved on while the run waited for the person
     ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the page moved on during the pause (it "
                     "shows 'thank you for applying'); the run had reached: the Submit "
                     "application button stays disabled after the fill", True),
-    # SP7 review N2: the paused page's send button gone, or its address changed
+    # the paused page's send button gone, or its address changed
     ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the page moved on during the pause (its "
                     "'Submit application' button is gone); the run had reached: x", True),
     ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the page moved on during the pause (its "
                     "address changed); the run had reached: x", True),
-    # SP7 review N5: the judge down after the person went on to another step
+    # the judge down after the person went on to another step
     ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the run stopped after the pause "
                     f"({apply_run.JUDGE_DOWN_REASON}: _Busy529 529 at read); you went on to "
                     "another step in the browser during the pause", True),
     ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the run stopped after the pause (the "
                     "browser window was closed); the run had reached: x", True),
-    # final fix review round 2: any close during a pause (`_pause_closed`)
+    # any close during a pause (`_pause_closed`)
     ("needs_human", f"{apply_run.CHECK_SENT_REASON}: the run stopped after the pause "
                     f"({apply_run.TAB_CLOSED_REASON}); you had the browser and may have gone "
                     "on in it; the run had reached: x", True),
@@ -771,7 +769,7 @@ def test_the_summary_counts_the_parks_outside_the_policy():
 
 
 def test_a_flows_designed_end_off_the_policy_list_is_counted_apart_from_the_misses():
-    # SP3 checkpoint: six flows end off the policy list by design (the server's
+    # six flows end off the policy list by design (the server's
     # validation answer, the "check whether" ends); only the misses count as
     # parks outside the policy
     check = apply_run.CHECK_SENT_REASON + ": a request left"
@@ -790,7 +788,7 @@ def test_a_flows_designed_end_off_the_policy_list_is_counted_apart_from_the_miss
     assert "designed ends off the policy list: 2" in text, text
 
 
-# --- M2: the recorder sees keys, page and element-handle clicks, dispatched events -------------------
+# --- the recorder sees keys, page and element-handle clicks, dispatched events -----------------------
 
 def test_the_recorder_sees_every_way_a_page_can_be_acted_on(_browser):
     ctx = _browser.new_context()
@@ -837,7 +835,7 @@ def test_a_refused_post_then_not_sent_is_within_the_invariants():
 
 
 def test_the_fixture_server_takes_a_burst_of_connects_while_it_is_busy():
-    # SP8a: Chromium opens a connection per request (the handler speaks
+    # Chromium opens a connection per request (the handler speaks
     # HTTP/1.0), and under the matrix's --jobs 8 load the accept loop falls
     # behind. A listen backlog of 5 (the socketserver default) turns the
     # sixth pending connect into a refusal, and the tab lands on Chrome's
@@ -863,7 +861,7 @@ def test_the_fixture_server_takes_a_burst_of_connects_while_it_is_busy():
 def test_a_matrix_run_prints_no_drain_table_and_writes_no_drain_report(
         _browser, flow_server, tmp_path, capsys):
     # the matrix drains one job per run, thousands of times, and prints its
-    # own summary: a per-drain table would flood it with temp paths (SP8a)
+    # own summary: a per-drain table would flood it with temp paths
     r = h.run_flow(h.flow("lever_single_park"), jev.FakeJev(), "fake", browser=_browser,
                    server=flow_server, workdir=tmp_path)
     assert r.ok, r
@@ -889,8 +887,7 @@ def _clock_reads(monkeypatch, day):
 def test_the_real_columns_replay_on_a_later_day_still_hits_the_committed_cache(
         _browser, flow_server, tmp_path, monkeypatch):
     # post_form's placeholder check lists the facts, today's date among them:
-    # a replay on the day after the recording missed it (the controller's
-    # checkpoint, 2026-09-26: 94 misses over 106 flows)
+    # a replay on a day after the recording must still hit the cache
     import datetime
 
     import jev_harness
@@ -901,7 +898,7 @@ def test_the_real_columns_replay_on_a_later_day_still_hits_the_committed_cache(
 
 
 def test_the_matrix_bank_holds_an_unconfirmed_answer_the_catalog_leaves_empty(tmp_path):
-    # cycle 18 (FL-1): the synthetic store holds one answer set and not
+    # the synthetic store holds one answer set and not
     # confirmed; the runner's catalog has no value for it, and the sheet does
     # not show it
     from resume_tailor import apply_answers
@@ -918,7 +915,7 @@ def test_the_matrix_bank_holds_an_unconfirmed_answer_the_catalog_leaves_empty(tm
 
 
 def test_the_harness_sheet_is_what_the_store_renders(tmp_path):
-    # FL-2: the runner refreshes the sheet's answers before each job; the
+    # the runner refreshes the sheet's answers before each job; the
     # harness sheet already shows them, so the refresh leaves it as it is
     from resume_tailor import apply_data
     folder = h.write_job_folder(tmp_path / "job")
@@ -941,7 +938,7 @@ def test_only_the_real_column_reads_the_recording_day(tmp_path, monkeypatch):
         assert apply_run.apply_facts.build(folder).value("today") == "2026-09-25"
 
 
-# --- cycle 19 SP7: a person's answer to a pause, and a sensitive field --------------------------
+# --- a person's answer to a pause, and a sensitive field ----------------------------------------
 
 _PAUSED_ON = "http://127.0.0.1/forms/pause_form.html"
 

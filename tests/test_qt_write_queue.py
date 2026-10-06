@@ -1,7 +1,7 @@
-"""SP6: UI snappiness — delete / mark-seen / set-status must not freeze the UI.
+"""UI snappiness — delete / mark-seen / set-status must not freeze the UI.
 
 The slow part of those actions is rewriting the ~27MB gzipped master CSV (plus
-per-run files). That now happens on a background `SerialTaskQueue` (FIFO,
+per-run files). That happens on a background `SerialTaskQueue` (FIFO,
 single-flight, so a mark-seen write can never race a delete rewrite), while the
 UI updates optimistically from the in-memory `self.df` via `_apply_df_views()`
 — zero disk I/O on the click path. Registry (SQLite) writes stay on the UI

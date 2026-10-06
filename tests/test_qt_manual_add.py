@@ -1,4 +1,4 @@
-"""SP10: the Qt manual-add form + its wiring through MainWindow (headless, LLM mocked).
+"""The Qt manual-add form + its wiring through MainWindow (headless, LLM mocked).
 
 Runs under QT_QPA_PLATFORM=offscreen (set in conftest). The dialog is a thin shell;
 the pipeline is exercised via the mocked manual_add module so no real Gemini/network
@@ -54,7 +54,7 @@ def test_dialog_collects_values(qtbot):
 
 
 def test_dialog_intro_requires_description_no_url_only_promise(qtbot):
-    """MA-5: the intro text must say a description is required, and must not
+    """The intro text must say a description is required, and must not
     promise that a URL alone is enough to add the job."""
     dlg = ManualAddDialog()
     qtbot.addWidget(dlg)
@@ -190,7 +190,7 @@ def test_add_manual_job_dialog_cancel_is_noop(qtbot, monkeypatch):
     assert ran == [] and not getattr(w, "_manual_adding", False)
 
 
-# ── MA-2: a duplicate offers "Tailor again" instead of a silent re-add ────────
+# ── a duplicate offers "Tailor again", never a silent re-add ──────────────────
 
 def test_add_manual_job_dialog_offers_retailor_on_duplicate(qtbot, monkeypatch):
     w = _win(qtbot)
@@ -258,7 +258,7 @@ def test_finish_manual_add_records_resume_and_reloads(qtbot, monkeypatch):
 
 
 def test_finish_manual_add_failed_tailor_tells_user_how_to_retry(qtbot, monkeypatch):
-    """MA-4: a saved-but-not-tailored job must say how to retry, naming the
+    """A saved-but-not-tailored job must say how to retry, naming the
     actual row action (detail_card.py's "Tailor résumé" button)."""
     w = _win(qtbot)
     monkeypatch.setattr(mw.jobsdata, "local_run_files", lambda *a, **k: [])
@@ -319,7 +319,7 @@ def test_add_and_tailor_shows_cover_letter_prompt(qtbot, monkeypatch):
 # ── delete + edit job handlers ────────────────────────────────────────────────
 
 def _sync_run_async(owner, fn, on_done=None, on_error=None):
-    """Inline run_async stand-in so the SP6 background write queue runs the CSV
+    """Inline run_async stand-in so the background write queue runs the CSV
     delete synchronously and the tests stay deterministic."""
     try:
         result = fn()
@@ -344,7 +344,7 @@ def test_delete_jobs_confirms_clears_and_refreshes(qtbot, monkeypatch):
     w._delete_jobs(["manual-1", "123"])
     assert deleted["ids"] == ["manual-1", "123"]
     w.registry.clear_status.assert_any_call("manual-1")
-    # SP6: the views refresh from the in-memory frame; the CSV rewrite ran on the
+    # the views refresh from the in-memory frame; the CSV rewrite runs on the
     # background write queue — no blocking full reload.
     assert reloaded == []
     assert "Deleted 2 job(s)." in w.statusBar().currentMessage()
@@ -413,7 +413,7 @@ def test_delete_jobs_survives_recycle_error(qtbot, monkeypatch):
     assert deleted["ids"] == ["x"]                    # delete went through
     w.registry.clear_status.assert_any_call("x")      # cleanup still ran
     w.registry.clear_resume_path.assert_any_call("x")
-    assert reloaded == []                             # SP6: no blocking full reload
+    assert reloaded == []                             # no blocking full reload
     assert "Recycle Bin" in w.statusBar().currentMessage()  # failure surfaced
 
 
@@ -427,7 +427,7 @@ def test_delete_jobs_cancel_is_noop(qtbot, monkeypatch):
     assert called == []
 
 
-# ── Tailor résumé on a hand-added job (final review C I-1) ────────────────────
+# ── Tailor résumé on a hand-added job ─────────────────────────────────────────
 
 _FULL_JD = _JD + "Requirements: 3+ years of SQL, dbt and Airflow.\n" * 40
 
@@ -485,7 +485,7 @@ def test_tailor_keeps_a_payload_that_carries_its_description(qtbot, monkeypatch,
     assert threads == []
 
 
-# ── the sibling workers on a hand-added job (final fix review Minor 3) ────────
+# ── the sibling workers on a hand-added job ───────────────────────────────────
 
 def _on_worker(fn):
     """`fn` on a thread of its own, as `workers.run_async` runs a worker body."""
@@ -600,7 +600,7 @@ def test_edit_manual_job_prefills_and_updates_keeping_id(qtbot, monkeypatch):
     assert updated["kw"].get("old_id") == "manual-abc"
 
 
-# ── scrape and manual-add are mutually exclusive (audit P2-27) ────────────────
+# ── scrape and manual-add are mutually exclusive ──────────────────────────────
 
 def test_manual_add_refused_while_scraping(qtbot, monkeypatch):
     """Both actions write the shared scrape.log and push the same outbox, so a

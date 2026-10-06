@@ -1,4 +1,4 @@
-"""SP5: Stats tab (summary/calibration/export) + Tracker extras (status/follow-up/remove/prep)."""
+"""Stats tab (summary/calibration/export) + Tracker extras (status/follow-up/remove/prep)."""
 import os
 from datetime import date, timedelta
 from unittest.mock import MagicMock
@@ -141,7 +141,7 @@ def test_due_only_filters_tracker(qtbot, frozen_today):
 
 
 def test_tracker_chip_filters_by_status_and_counts(qtbot, frozen_today):
-    # Cycle 40 3d: the pipeline ChipBar filters the recs list (not the proxy)
+    # the pipeline ChipBar filters the recs list (not the proxy)
     # and each chip shows its FULL bucket count regardless of the selection.
     old = (frozen_today - timedelta(days=99)).isoformat()
     rows = [

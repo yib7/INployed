@@ -1,13 +1,12 @@
 """Width-aware line measurement (resume_tailor/measure.py) + its use in the trim.
 
-The old flat char-count line estimate (len(text)/<chars per line>) couldn't tell a wide
-word ('cross-encoder') from a narrow one, so a bullet at the 2-line boundary could wrap
+A flat char-count line estimate (len(text)/<chars per line>) can't tell a wide
+word ('cross-encoder') from a narrow one, so a bullet at the 2-line boundary can wrap
 to 3 lines unnoticed. measure.line_count models the real render (per-char advance widths
 + greedy word wrap against the calibrated body-column capacity). The two REAL bullets
 below are ground truth: in the actual compiled PDF the first renders on 2 lines and the
 second (shorter in chars, but with wide words) on 3 — calibrated/validated against it.
-Both were re-verified against a compile of the current template (the 2026-09-22 layout
-pass narrowed the bullet column by 0.1in).
+Both are verified against a compile of the current template.
 """
 import importlib
 import re
@@ -23,9 +22,8 @@ sys.path.insert(0, str(REPO / "local"))
 from resume_tailor import assets, compose, config, measure  # noqa: E402
 from resume_tailor import run as rt_run  # noqa: E402
 
-# From a real compiled resume (Reducto tailor), each trimmed by a word or two when the
-# 2026-09-22 layout pass narrowed the bullet column ("from leaking" -> "spilling";
-# "utilizing" -> "using"); the printed line counts were re-read off a compile of the
+# From a real compiled resume (Reducto tailor), each trimmed by a word or two to fit the
+# current bullet column; the printed line counts are read off a compile of the
 # current template. Width alone does not decide it: THREE_LINE is also the narrower
 # of the two in total glyph width, and wraps to 3 because "cross-encoder" is pushed down.
 TWO_LINE = ("Systematized a resumable pipeline to ingest and index 34,060 wiki articles into "
@@ -87,9 +85,9 @@ def test_fit_to_lines_leaves_a_fitting_bullet_untouched():
 
 
 # A real over-length Work bullet whose trailing quantity the model spelled out as a word
-# range ("took 1 to 2 weeks per cycle"). Trimming to 2 lines used to chop it to
-# "...that previously took 1." — a dangling bare number — because _strip_dangling removed
-# only the innermost connective ("to 2" -> "took 1") and stopped.
+# range ("took 1 to 2 weeks per cycle"). Trimming it to 2 lines can leave
+# "...that previously took 1." — a dangling bare number — when _strip_dangling removes
+# only the innermost connective ("to 2" -> "took 1") and stops.
 DANGLING_NUM_BULLET = (
     "Validated the new extraction model by backtesting against production data to achieve "
     ">=95% accuracy, implementing post-processing statistical checks and historical "
@@ -138,7 +136,7 @@ def test_fill_floor_width_monotonic_in_target():
 
 
 def test_fill_floor_width_single_line_is_half():
-    # The underfull-fill TRIGGER only rescues a line below 50% full (was 90%).
+    # The underfull-fill TRIGGER only rescues a line below 50% full.
     from math import ceil
     assert measure.fill_floor_width(1) == ceil(0.50 * measure.BODY_LINE_CAPACITY)
 
@@ -150,7 +148,7 @@ def test_fill_floor_width_multiline_reaches_into_last_line():
 
 
 def test_is_underfull_false_for_sixty_percent_line():
-    # A single-line bullet filling ~55-60% of its line is NO LONGER rescued (was, under 0.90):
+    # A single-line bullet filling ~55-60% of its line is NOT rescued:
     # some white space is fine to keep it readable; only sub-50% lines trigger the fill.
     from math import ceil
     cap = measure.BODY_LINE_CAPACITY
@@ -257,7 +255,7 @@ def test_split_skill_tokens_plain_line_unchanged():
 def test_complete_to_count_counts_parenthesized_token_as_one():
     # The "(Gemini, OpenAI, Claude)" token counts as ONE item, so the line completes to
     # the full target from the pool instead of stopping early on its shattered commas.
-    # (Pool carries the token's members so it ANCHORS -- SP7 requires every named member
+    # (Pool carries the token's members so it ANCHORS: the anchor gate requires every named member
     # to be pool-backed; this test pins the not-shattered COUNTING, not the anchor gate.)
     pool = ["AWS", "S3", "Lambda", "EC2", "RDS", "Gemini", "OpenAI", "Claude"]
     picked = compose._complete_to_count(
@@ -286,12 +284,12 @@ def test_master_skill_pools_have_no_comma_shattered_tokens():
             assert it.count("(") == it.count(")"), f"{pool}: unbalanced parens in {it!r}"
 
 
-# --- SP3: the character ceiling the PROMPT states vs. real measured capacity ----
+# --- the character ceiling the PROMPT states vs. real measured capacity ---------
 #
-# compose._length_hint used to build its ceiling as `target_lines * config.MAX_LINE_CHARS`
-# (a flat 130). Greedy word wrap makes real capacity SUBLINEAR in the line count, so that
-# overshot what fits at every n > 1 — the model was invited past the line, the bullet wrapped,
-# and the deterministic trim had to cut it back. measure.char_budget replaces it. These tests
+# Greedy word wrap makes real capacity SUBLINEAR in the line count, so a flat ceiling of
+# `target_lines * <chars per line>` overshoots what fits at every n > 1: the model is invited
+# past the line, the bullet wraps, and the deterministic trim has to cut it back.
+# compose._length_hint takes its ceiling from measure.char_budget. These tests
 # are built from real measure.line_count calls rather than from a table of numbers, so they
 # pin the PROPERTY (the stated cap fits) and not the values it happened to have when written.
 
@@ -397,7 +395,7 @@ def test_length_hint_ceiling_is_the_measured_budget():
         assert 0 < floor < cap
 
 
-# --- SP3: the prompt's fill percentages come from the constants -----------------
+# --- the prompt's fill percentages come from the constants ----------------------
 def _rephrase_system_prompt(monkeypatch) -> str:
     """Render rephrase's system prompt against a stubbed `call` (nothing leaves the
     process). Returns the system prompt the model would have been sent."""
@@ -432,7 +430,7 @@ def test_prompt_space_percentages_track_the_fill_constants(monkeypatch):
     assert "~90%" not in system and "~75%" not in system
 
 
-# --- SP3: env overrides for the three fill fractions ----------------------------
+# --- env overrides for the three fill fractions ---------------------------------
 _FILL_ENV = ("RESUME_TAILOR_FULL_LINE_FILL", "RESUME_TAILOR_LAST_LINE_FILL",
              "RESUME_TAILOR_UNDERFULL_FILL",
              "RESUME_TAILOR_BODY_LINE_CAPACITY", "RESUME_TAILOR_SKILL_LINE_CAPACITY")
@@ -499,9 +497,9 @@ def test_underfull_env_override_reaches_the_trigger(reload_measure):
     assert m.fill_floor_width(2) == ceil(1.30 * m.BODY_LINE_CAPACITY)
 
 
-# ── the capacity overrides parse defensively (3A) ─────────────────────────────
+# ── the capacity overrides parse defensively ──────────────────────────────────
 # BODY_LINE_CAPACITY / SKILL_LINE_CAPACITY are read at IMPORT scope, so a bare
-# int(os.getenv(...)) turned a typo in a .env into a ValueError raised while
+# int(os.getenv(...)) would turn a typo in a .env into a ValueError raised while
 # importing measure -- which takes the whole tailor path down with a raw
 # traceback, in a module whose own _env_fraction documents the opposite rule
 # ("a typo in a .env should degrade to the documented default, never crash").

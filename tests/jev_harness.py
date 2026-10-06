@@ -1,4 +1,4 @@
-"""The judge selector for the runner tests (SP8: record and replay).
+"""The judge selector for the runner tests: fake, record and replay.
 
 `AUTO_APPLY_TEST_JEV` picks the judge every `Runner(...)` in
 `tests/test_apply_run.py`, `tests/test_apply_run_boundaries.py` and the
@@ -31,7 +31,7 @@ In `record` and `replay` mode every test writes its answers and outcomes to
 fails becomes an xfail carrying the divergence, so one run reports every place
 the real model judges the fixtures differently from the fake.
 
-`replay` mode with `AUTO_APPLY_JEV_PRUNE=1` (SP8, `-Prune` on
+`replay` mode with `AUTO_APPLY_JEV_PRUNE=1` (`-Prune` on
 `scripts/jev_record.ps1`): at session finish, every key the run's shared
 `ReplayJev` served (`used_keys`) is written to `used_keys.json` beside
 `outcomes.jsonl` (`write_used_keys`), and the cache is rewritten to keep only
@@ -73,7 +73,7 @@ MODE_ENV = "AUTO_APPLY_TEST_JEV"
 CAP_ENV = jev.RECORD_CAP_ENV
 DRY_ENV = "AUTO_APPLY_RECORD_DRY"
 DRY_CAP_USD = jev.DRY_RECORD_CAP_USD
-# SP8: prune the cache to the keys this run served, once it is clean (see
+# prune the cache to the keys this run served, once it is clean (see
 # `write_used_keys` and `prune_if_asked`). Valid with `replay` only: a
 # `record` run only adds keys to the cache.
 PRUNE_ENV = "AUTO_APPLY_JEV_PRUNE"
@@ -184,7 +184,7 @@ def write_used_keys(session: Session) -> Path:
 def runner_narrowed_reason(*, collected_files: set[str], keyword: str, markexpr: str,
                            deselected: int, args: Sequence[str]) -> str:
     """Why this pytest run is not the whole `RUNNER_TESTS` set, or "" when it
-    is (SP8 review: a partial run's `used_keys` only ever covers what it
+    is (a partial run's `used_keys` only ever covers what it
     touched, so pruning on one could drop a key some left-out test still
     needs).
 
@@ -214,9 +214,10 @@ def runner_narrowed_reason(*, collected_files: set[str], keyword: str, markexpr:
 
 def jev_skip_reason(skipped: Sequence[tuple[str, str]]) -> str:
     """Why a `jev_judge` test's own skip should refuse pruning, or "" when
-    `skipped` is empty (SP8 fix round 2: a `--real-prune` run over the flow
-    matrix was fooled the same way by flows its own registry left out; this
-    is the runner-side analog).
+    `skipped` is empty (a skipped test served none of its keys, so pruning
+    after it could drop one it needs; this is the runner-side analog of the
+    `--real-prune` guard against flows the flow matrix's own registry leaves
+    out).
 
     `skipped` is every `(nodeid, reason)` pair `conftest_jev` tallied for a
     test that requests the `jev_judge` fixture and finished any phase
@@ -252,7 +253,7 @@ def prune_if_asked(session: Session, testsfailed: int, *, narrowed_reason: str =
     a reason this harness does not already account for. A test that diverged
     from the fake (an assertion `conftest_jev` turned into an xfail, which
     `testsfailed` never counts) refuses too: it stopped at the assertion, so
-    the requests after it were never asked for (final review D I1). Returns
+    the requests after it were never asked for. Returns
     the refusal's reason, or a line naming what was kept; "" when pruning was
     not asked for."""
     if not session.prune:

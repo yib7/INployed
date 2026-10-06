@@ -1,4 +1,4 @@
-"""SP2: cover-letter tense/date context + template critique fixes.
+"""Cover-letter tense/date context + template critique fixes.
 
 The user graduated May 2026; without graduation/current-date context the model
 writes "I am completing my studies" in July 2026. These tests pin:

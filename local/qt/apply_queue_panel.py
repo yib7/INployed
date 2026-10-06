@@ -554,16 +554,6 @@ class _DetailsPanel(QtWidgets.QFrame):
         return self._plain
 
 
-class _MinimumLayout(QtWidgets.QVBoxLayout):
-    """The tab's column. A scroll area gives a height-for-width column its
-    preferred height, so a long pause would push the queue table below the
-    fold of a window with room for both at their minimum. Without it the column
-    gets the window's height or its own minimum, whichever is taller."""
-
-    def hasHeightForWidth(self) -> bool:  # noqa: N802 (Qt naming)
-        return False
-
-
 class ApplyQueuePanel(QtWidgets.QWidget):
     """Header (counts / password state / Start auto-apply run) + queue table +
     details pane + the Re-queue / Remove / Clear finished / Open buttons."""
@@ -636,14 +626,16 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         # The tab scrolls once it outgrows the window. With a pause waiting, the
         # Jev notice and a parked job's details, it asked for 704px at 100% and
         # 889px at 150%, and a 1100x700 window squeezed its buttons to a few
-        # pixels.
+        # pixels. Scrolling, each part keeps the height it asks for (every
+        # question, a few queue rows, the whole Missing answers note); a window
+        # with room to spare gives the spare to the queue table.
         self.scroll = QtWidgets.QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
         outer.addWidget(self.scroll)
         self.body = QtWidgets.QWidget()
         self.scroll.setWidget(self.body)
-        v = _MinimumLayout(self.body)
+        v = QtWidgets.QVBoxLayout(self.body)
         v.setContentsMargins(8, 8, 8, 8)
 
         # A paused run's questions, above everything else on the tab.

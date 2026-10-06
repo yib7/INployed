@@ -1914,36 +1914,6 @@ _LONG_PAUSE = _PAUSE_QUESTIONS + [
     for i in range(8)]
 
 
-def test_a_long_pause_scrolls_its_questions_and_never_crushes_a_row(qtbot, pause_home):
-    """Fourteen questions asked for 650px at minimum, and the tab gave the card
-    what it had: every row was squeezed to a few pixels. The questions scroll;
-    the card's minimum holds one whole question."""
-    _ask(questions=_LONG_PAUSE)
-    card = _card(qtbot)
-    card.show()
-    area = card.questions_area
-    content = area.widget().sizeHint().height()
-    first = card.rows[0]["frame"].sizeHint().height()
-    assert card.minimumSizeHint().height() < content
-    assert area.minimumSizeHint().height() >= first
-    card.resize(640, card.minimumSizeHint().height())
-    QtWidgets.QApplication.processEvents()
-    assert area.viewport().height() >= first
-    for r in card.rows:
-        assert r["frame"].height() >= r["frame"].minimumSizeHint().height(), \
-            r["question"]["label"]
-    assert area.verticalScrollBar().maximum() > 0          # the rest scrolls
-
-
-def test_a_short_pause_shows_every_question_without_scrolling(qtbot, pause_home):
-    _ask()
-    card = _card(qtbot)
-    card.show()
-    card.resize(640, card.sizeHint().height())
-    QtWidgets.QApplication.processEvents()
-    assert card.questions_area.verticalScrollBar().maximum() == 0
-
-
 def test_a_tall_page_leaves_the_other_tabs_minimum_alone(qtbot, monkeypatch, tmp_path):
     """A QTabWidget is as tall at minimum as its tallest page, and under High
     Score that height came out of the job detail card."""
@@ -1960,11 +1930,13 @@ def test_a_tall_page_leaves_the_other_tabs_minimum_alone(qtbot, monkeypatch, tmp
     assert w.tabs.minimumSizeHint().height() >= page_min
 
 
-def test_a_waiting_pause_scrolls_the_tab_and_never_crushes_a_button(
+def test_a_waiting_pause_scrolls_the_tab_and_never_crushes_a_row(
         qtbot, tmp_path, pause_home):
     """With a pause waiting, the Jev notice and a parked job selected, the tab
     asked for more height than a 1100x700 window has (704px at 100%, 889px at
-    150%), and the buttons came out a few pixels tall. The tab scrolls."""
+    150%), and the buttons came out a few pixels tall. The tab scrolls, and
+    every part of it keeps its own height: each question, a few queue rows,
+    and the whole Missing answers note."""
     qfile = _qfile(tmp_path)
     _parked(qfile, ("Preferred team", {}), ("Desired salary", {}))
     _ask(questions=_LONG_PAUSE)
@@ -1981,10 +1953,30 @@ def test_a_waiting_pause_scrolls_the_tab_and_never_crushes_a_button(
     for b in p.findChildren(QtWidgets.QPushButton):
         if b.isVisibleTo(p):
             assert b.height() >= b.minimumSizeHint().height(), b.text()
+    assert len(p.pause_card.rows) == len(_LONG_PAUSE)
+    for r in p.pause_card.rows:
+        frame = r["frame"]
+        assert frame.height() >= frame.minimumSizeHint().height(), r["question"]["label"]
+    rows = p.table.verticalHeader().defaultSectionSize()
+    assert p.table.viewport().height() >= 3 * rows
+    note = p.details.callout_label
+    assert note.height() >= note.heightForWidth(note.width())
     assert p.scroll.verticalScrollBar().maximum() > 0
-    host.setFixedSize(1600, 1400)
+
+
+def test_the_queue_table_takes_the_room_a_tall_window_has(qtbot, tmp_path, pause_home):
+    qfile = _qfile(tmp_path)
+    _parked(qfile, ("Preferred team", {}))
+    _ask()
+    p = _dpanel(qtbot, qfile, alert=lambda w: None)
+    host = QtWidgets.QWidget()
+    qtbot.addWidget(host)
+    QtWidgets.QVBoxLayout(host).addWidget(p)
+    host.setFixedSize(1600, 1600)
+    host.show()
     QtWidgets.QApplication.processEvents()
-    assert p.scroll.verticalScrollBar().maximum() == 0     # room for all of it
+    assert p.scroll.verticalScrollBar().maximum() == 0
+    assert p.table.height() > p.table.sizeHint().height()
 
 
 def test_the_default_flash_alerts_the_window(monkeypatch, qtbot):

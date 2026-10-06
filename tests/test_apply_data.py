@@ -1,4 +1,4 @@
-"""Tests for the self-contained apply.md sheet (cycle 13: résumé-rich).
+"""Tests for the self-contained apply.md sheet, which carries the résumé.
 
 apply_data.write() renders one apply.md per tailored folder: the no-submit
 fill-it-out playbook at the top, the candidate basics + structured address, the
@@ -137,7 +137,7 @@ def test_write_includes_structured_address(tmp_path, monkeypatch):
     monkeypatch.setattr(apply_answers, "STORE_PATH", store)
     # a version 2 store holds a US state by its full name (the abbreviation is
     # read once, when a version 1 store migrates); the sheet shows confirmed
-    # answers only (cycle 18)
+    # answers only
     ans = confirmed_bank(address_street="1 Main St", address_city="Boston",
                          address_state="Massachusetts", address_zip="02100")
     apply_answers.save(ans, store)
@@ -155,9 +155,9 @@ def test_write_standard_answers_render_bools_and_exclude_address(tmp_path):
 
 
 def test_write_leaves_a_worded_yes_no_answer_off_until_confirmed(tmp_path, monkeypatch):
-    # A version 1 store with worded yes/no answers migrates on load (cycle 18):
+    # A version 1 store with worded yes/no answers migrates on load:
     # "Yes, I am a US citizen" is Yes plus a note, left unconfirmed until the
-    # user ticks it (final review C1), and an answer with no yes or no in front
+    # user ticks it, and an answer with no yes or no in front
     # ("Open to NYC") is not set, so the sheet leaves both out. A bare "Yes"
     # the user changed from the seed reads the same and goes on the sheet.
     store = tmp_path / "apply_answers.json"
@@ -278,7 +278,7 @@ def test_full_url_empty_values_stay_blank():
     assert assets.full_url("   ") == ""
 
 
-# --- item 3: contact block carries full https:// links -------------------------
+# --- contact block carries full https:// links ---------------------------------
 
 def test_write_contact_links_are_full_https_urls(tmp_path):
     text = apply_data.write(_JOB, tmp_path).read_text(encoding="utf-8")
@@ -286,7 +286,7 @@ def test_write_contact_links_are_full_https_urls(tmp_path):
     assert "- **GitHub / Portfolio:** https://gh\n" in text
 
 
-# --- item 6: project entry headers carry no dates ------------------------------
+# --- project entry headers carry no dates --------------------------------------
 
 def test_write_project_headers_carry_no_dates(tmp_path):
     text = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
@@ -299,7 +299,7 @@ def test_write_project_headers_carry_no_dates(tmp_path):
     assert "2020-2024" in text                # education
 
 
-# --- item 7: honors/awards sub-bullet under education ---------------------------
+# --- honors/awards sub-bullet under education -----------------------------------
 
 def _master_with_honors(honors):
     m = json.loads(json.dumps(_MASTER))
@@ -444,7 +444,7 @@ def _address_span(raw: bytes):
 
 
 def test_refresh_answer_sections_rewrites_only_the_answers_and_the_address(tmp_path):
-    # FL-2: the per-job refresh splices the two sections the store renders;
+    # the per-job refresh splices the two sections the store renders;
     # every other byte of the sheet stays as it was
     _seed_store(tmp_path, how_did_you_hear="LinkedIn", address_city="Anytown")
     out = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS, skill_lines=_SKILLS,
@@ -494,7 +494,7 @@ def test_refresh_answer_sections_drops_an_answer_the_store_no_longer_confirms(tm
 
 
 def test_a_damaged_store_still_writes_the_sheet_and_a_later_refresh_fills_it(tmp_path):
-    # final review store I1: the tailor's resume and cover sections are paid
+    # the tailor's resume and cover sections are paid
     # output, so a damaged answer file leaves out only the answers
     store = tmp_path / "apply_answers.json"
     store.write_text("{not json", encoding="utf-8")
@@ -585,7 +585,7 @@ def _rewrite_eol(path, eol: bytes):
 def test_refresh_answer_sections_preserves_lf_endings(tmp_path):
     # A hand-curated apply.md saved with LF endings must come back LF: the
     # splice contract says every byte outside the span is identical, and
-    # write_text's os.linesep translation used to CRLF-ify the whole file.
+    # write_text's os.linesep translation would CRLF-ify the whole file.
     _seed_store(tmp_path, how_did_you_hear="LinkedIn")
     out = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
                            skill_lines=_SKILLS)
@@ -652,7 +652,7 @@ def test_refresh_answer_sections_missing_headings_returns_false(tmp_path):
 
 def test_refresh_answer_sections_atomic_preserves_file_on_write_failure(tmp_path,
                                                                         monkeypatch):
-    # P2-28: apply.md must be rewritten atomically (tmp + retrying replace) so a
+    # apply.md must be rewritten atomically (tmp + retrying replace) so a
     # crash at the rename leaves the previous apply.md fully intact, never a
     # truncated file. Fail the shared replace and assert the original survives.
     import jsonutil
@@ -680,7 +680,7 @@ def test_refresh_answer_sections_atomic_preserves_file_on_write_failure(tmp_path
     assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp")] == []
 
 
-# --- the Standard answers and Address blocks render the store (cycle 18, FL-3) ----------
+# --- the Standard answers and Address blocks render the store ---------------------------
 
 def test_standard_answers_render_from_fact_value():
     bank = standard_bank(how_did_you_hear="")
@@ -743,9 +743,8 @@ def test_address_renders_from_fact_value_only(tmp_path, monkeypatch):
 
 
 def test_address_duplicate_id_the_first_entry_wins(tmp_path, monkeypatch):
-    # fix round 1, item 5: a duplicate id used to let a later, confirmed
-    # entry win over an earlier, unconfirmed one; now the first entry with
-    # that id is read, confirmed or not
+    # with a duplicate id, the first entry with that id is read, confirmed or
+    # not; a later, confirmed entry never wins over an earlier, unconfirmed one
     monkeypatch.setattr(apply_config, "APPLY_CONFIG", tmp_path / "missing.json")
     bank = standard_bank()
     by_id = {e["id"]: e for e in bank}
@@ -943,9 +942,9 @@ def _heading_lines(text, name):
 def test_cover_letter_body_cannot_forge_a_second_candidate_section(tmp_path):
     """The letter body is model-written from an employer-controlled posting.
 
-    parse_apply_md switches sections on any `##` line and used to take the LAST
-    value for each key, so a `## Candidate` block reproduced inside the letter
-    replaced the real email address -- and that forged value is what a live
+    parse_apply_md switches sections on any `##` line. Were it to take the LAST
+    value for each key, a `## Candidate` block reproduced inside the letter
+    would replace the real email address, and that forged value is what a live
     application form gets typed from (apply_facts.py's fact catalog reads
     this same apply.md). Asserted end to end: the writer must not emit the
     heading, and the parser must not honour it if it somehow appears.

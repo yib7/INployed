@@ -1,11 +1,10 @@
 """A heading-shaped line inside model-written text never steers the apply run.
 
-Audit finding 4-C3 (cycle 23): a bullet or skill line kept its embedded
-newlines, so a model output carrying `\\n## Cover letter\\n...` or a forged
-`## Electronic signature` block landed in apply.md as real structure. The
-fact catalog took the FIRST `## Cover letter` heading and the runner typed
-that text; `refresh_answer_sections` spliced from a forged `## Standard
-answers` heading and deleted the rest of the file.
+A bullet or skill line that keeps its embedded newlines lets a model output
+carrying `\\n## Cover letter\\n...` or a forged `## Electronic signature`
+block land in apply.md as real structure. A fact catalog that takes the FIRST
+`## Cover letter` heading has the runner type that text, and a splice from a
+forged `## Standard answers` heading deletes the rest of the file.
 
 Both ends are pinned here: the writer keeps every model-derived single-line
 field on one line, and the readers locate the sections the writer emits after
@@ -67,8 +66,9 @@ def _sheet(tmp_path, bullet, cover=_REAL_LETTER, skill_lines=None):
     return folder, md
 
 
-# The pre-fix writer's output for the probe payload: what a sheet written before
-# the writing-side fix holds on disk. The readers must cope with it on their own.
+# An older writer's output for the probe payload: what a sheet written before the
+# writer kept each field on one line holds on disk. The readers must cope with it on
+# their own.
 def _poisoned_sheet(bullet, cover="Dear team, real letter.\nJane Doe"):
     return NL.join([
         "# Apply sheet: SWE @ Co", "Generated 2026-10-01.", "",

@@ -32,6 +32,11 @@ This project stands on a lot of other people's work.
 - Both arms are re-shaped to match this pipeline's existing style gate. The
   tiered vocabulary table they draw the ban list from is in turn credited
   upstream to the vocabulary research in https://github.com/brandonwise/humanizer.
+- `scripts/atom_audit.py` (its `slop` command) checks the atoms in `master_experience.yaml`
+  against the rest of the same skill's ruleset: the rules the two arms above leave out,
+  restated for an atom's register and reported under the skill's own P0 / P1 / P2 tiers. It
+  reads the résumé arm's ban list from `aiwriting.py` and carries the same attribution in its
+  module docstring.
 
 ## Word lists
 - `resume_tailor_files/active_words.md` (the composer's verb palette) was compiled

@@ -4,7 +4,21 @@ All notable changes to INployed are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims for
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.0.0] - 2026-10-05
+
+Auto-apply now sends applications itself, from one submit gate in code: TypeSafe's Jev judges
+every form, and a question your answers cannot settle pauses the run for you or parks the job.
+Jev also scores jobs, checks résumé bullets and rates how hard each queued application is, and
+a new **About you** section tells the scorer your school status and clearance. This is the first
+published release since v1.13.0, so it also carries the 1.14.0, 1.15.0 and 1.16.0 entries below,
+which were never tagged.
+
+It is a major release because things a v1.13.0 setup relied on are gone or work differently:
+the Claude-in-Chrome auto-apply and the `apply_queue.py` and `ats_accounts.py` verbs it used
+were removed in 1.15.0; **Start auto-apply run** launches a drain that can submit (1.14.0);
+**Check again with my answers**, **Pre-answer** and `apply_assess.py --recheck` are removed
+below; and the auto-apply runner and the dashboard window are split into new modules, so code
+that imported their internals has to follow them.
 
 ### Added
 
@@ -40,6 +54,26 @@ All notable changes to INployed are recorded here. The format follows
   one confirmation. **Re-queue**, **Mark applied**, **Don't apply** and the details pane's
   **Open folder**, **Open record** and **Answer now** are greyed out with "Select one job" while
   more than one row is selected.
+- **About you** (Settings, between Dashboard and Job discovery): your school status
+  (*Finished school*, *In school: undergraduate* or *In school: graduate*), graduation month,
+  the security clearance you hold, and whether you are open to getting one through the
+  employer, saved to `scoring_config.json`. Every scoring run prints the profile first. With
+  *Finished school*, internship and co-op titles are dropped before any scoring call; a posting
+  for the other degree level, or for a graduation window your month falls outside, scores 1;
+  and a clearance filter drops a posting that asks for a clearance you cannot cover, by level
+  and by whether the employer sponsors it. The LLM prompts and Jev's candidate text state the
+  same profile. An in-school status whose graduation month has passed counts as finished, and
+  Save says so. On the VM the rows take effect once the new `pipeline/score_jobs.py` is
+  uploaded (User Guide, *About you: school status and clearance*).
+- **Claude Sonnet 5.5** (`claude-sonnet-5-5`) is in all six Claude model lists. No default
+  changes; a CLI that refuses it falls back to `claude-sonnet-5` once per process, as Opus 5.5
+  does.
+- **A reused repost score fills in its blanks.** A reposted row that reused an earlier score
+  takes that row's reason, deep score, strengths, gaps and recommendation when it was written
+  with them blank. The scorer heals the master after every run, and
+  `score_jobs.py --heal-reused [--dry-run]` heals the local run files and the master on demand.
+  A cell that has content is never replaced, and repost reuse reads all six score columns from
+  the master.
 
 ### Changed
 
@@ -52,6 +86,29 @@ All notable changes to INployed are recorded here. The format follows
 - **Playwright is held at 1.61.0.** On 1.62.0 and 1.63.0, closing a page that a second failed
   load left on Chrome's error page never returns, so an auto-apply run could hang.
   `scripts\setup.ps1 -AutoApply` installs that version, and CI tests the same one.
+- **The résumé layout is easier to scan.** Entry headers sit 0.1in in from the margin and
+  their bullets 0.15in further, both set once in the template (`\resumeEntryIndent`,
+  `\resumeBulletIndent`, `\resumeHeaderGap`); section titles are a size larger; the header
+  tables use `\linewidth` so an indent never pushes the dates past the margin; and the
+  pull-up after Projects is gone, so every section break is the same height. The narrower
+  bullet column moved the width model: `BODY_LINE_CAPACITY` 53464 -> 52741 and
+  `SKILL_LINE_CAPACITY` 53464 -> 53650 (the skills block sits at the entry indent, so it
+  got wider), both recalibrated against about 3,500 bullets and 300 skills rows compiled with
+  the new template.
+- **Every résumé entry leads with its overview bullet.** The first atom under each job,
+  project and leadership entry in `master_experience.yaml` now always prints first, and the
+  rest follow ranked by relevance. When selection leaves the overview out for a job, it takes
+  the place of the entry's least relevant bullet, so the count holds. Before, only projects
+  were reordered, and only among the bullets selection picked, so a Business Analyst run
+  opened an experience entry and a project with a detail bullet. The rule is
+  deterministic: the model ordering call and Jev's lead pick are gone.
+- **The auto-apply runner and the dashboard window are split into modules.**
+  `local/apply_run.py` keeps the command line, the drain and the browser launch and re-exports
+  the rest; the job's page, form and submit steps, the submit gate (`apply_gate.py`), the page
+  readers, the guarded click, the routes and the run record each have a module of their own,
+  and `local/qt/main_window.py`'s actions moved into four `mw_*` base classes. The moves keep
+  behaviour the same; the module table in `docs/ARCHITECTURE.md` lists every new module.
+  `CHANGELOG.md` moved to `docs/CHANGELOG.md`.
 
 ### Fixed
 
@@ -82,6 +139,39 @@ All notable changes to INployed are recorded here. The format follows
 - **`score_jobs.py --heal-reused` fixes a chain in one run.** A reposted row whose reused score
   came from another reused row now takes the first real score up the chain (cycles stop safely);
   before, a second run was needed.
+- **The tailor's Claude calls finish in time.** Every `claude -p` call from the tailor sends
+  `RESUME_TAILOR_CLAUDE_EFFORT` (low by default), each effort level has its own timeout
+  schedule, and the CLI runs with no built-in tools, skills or MCP servers, so an installed
+  skill can no longer write its own audit text into the cover letter.
+- **The cover letter keeps to the letter.** Every letter pass drops a model's note about the
+  task at the start or end of its reply, and a real closing line such as "feel free to reach out
+  if you need anything else from me" keeps its paragraph.
+- **`atom_audit.py gate` checks every atom key the bullet writer reads**, plus the entry prose,
+  so a figure added to a sibling key fails the gate.
+- **Saved answers survive the Apply Answers tab.** **Drop unsaved edits** reads the file again,
+  so it no longer erases answers a paused run saved after the tab opened, or deletes the store
+  when there was no file at launch. **Answer now** saves only the new answer, and it and **Save
+  changes** write under the store's lock, so an answer a paused run saves meanwhile is kept.
+- **Auto-apply reads forms more carefully.** A required question labelled like a newsletter or
+  job-alert box, or inside a box that looks like a cookie banner, stays in the form; ticked
+  boxes are verified option by option, so an option with a comma in it holds; a moved box is
+  found again by its exact label or the click is refused, as is a click on a control whose live
+  text cannot be read; a lone tick box is ticked only for a saved yes; "Phone extension",
+  "Country code" and "City of birth" go to the judge; a sign-up form follows **Draft free-text
+  answers**; and the run opens the message the judge chose after new mail shifts the inbox.
+- **Jev's spend cap** counts an answer that reported no input tokens at its estimate, and a dry
+  run's simulated requests no longer count as live spend.
+- **The dashboard fits its window.** The Auto-apply tab scrolls once it outgrows the window, a
+  pause with many questions scrolls inside its card, the Jev notice no longer squeezes the job
+  detail card, the Apply panel's labels and buttons size to the current text size, check boxes
+  and radio buttons show on the amber callout, and pill text on a selected row keeps 4.5:1
+  contrast.
+- **Smaller dashboard fixes.** A failed tailor's status line shows no file paths; a hand-added
+  job already in the master says so and is not sent to the VM again; **Sign in to sites** and
+  **Start auto-apply run** say why when they cannot open a console; and the window closes
+  `seen.db` when it closes.
+- **`seen.db` keeps merged rows.** An import now checkpoints the database and backs it up, so
+  rows it merged survive a lost `-wal` file.
 
 ### Removed
 
@@ -125,12 +215,18 @@ All notable changes to INployed are recorded here. The format follows
   job ids made of letters, digits, `-` and `_`.
 - The User Guide's *What leaves your machine* lists everything auto-apply sends: the inbox rows
   and message read for a code, the free-text drafts, and what the employer's site receives.
+- **Page and posting text reach the models as data.** A form question in the free-text draft
+  prompt and the posting's requirement lines in the Jev writer's prompt are fenced as untrusted
+  data, as the job description already was.
+- **Sends are read more strictly.** A sign-in button whose words also send counts as a send and
+  goes through the gate, and two tenants under a shared suffix such as `gc.ca` or
+  `s3.amazonaws.com` count as different sites.
 
 ## [1.16.0] - 2026-09-28
 
 Jev's job scorer now mirrors the LLM scorer: the same two stages, the same rubric, on Jev's
-own 1-5 and 1-10 scales. Jobs it scores 4 or more now get a short written explanation instead
-of a fragment reason.
+own 1-5 and 1-10 scales. Jobs it scores 4 or more now get a short written explanation, where
+they used to get a fragment reason.
 
 ### Changed
 
@@ -350,22 +446,6 @@ Claude skill becomes the manual fallback.
   and the batch-cap help now say when the run submits; the older "never submitted" promise
   described the Claude path and is gone.
 - **`auto_apply_batch_cap`** also caps how many jobs one drain works through.
-- **The résumé layout is easier to scan.** Entry headers sit 0.1in in from the margin and
-  their bullets 0.15in further, both set once in the template (`\resumeEntryIndent`,
-  `\resumeBulletIndent`, `\resumeHeaderGap`); section titles are a size larger; the header
-  tables use `\linewidth` so an indent never pushes the dates past the margin; and the
-  pull-up after Projects is gone, so every section break is the same height. The narrower
-  bullet column moved the width model: `BODY_LINE_CAPACITY` 53464 -> 52741 and
-  `SKILL_LINE_CAPACITY` 53464 -> 53650 (the skills block sits at the entry indent, so it
-  got wider), both recalibrated against about 3,500 bullets and 300 skills rows compiled with
-  the new template.
-- **Every résumé entry leads with its overview bullet.** The first atom under each job,
-  project and leadership entry in `master_experience.yaml` now always prints first, and the
-  rest follow ranked by relevance. When selection leaves the overview out for a job, it takes
-  the place of the entry's least relevant bullet, so the count holds. Before, only projects
-  were reordered, and only among the bullets selection picked, so a Business Analyst run
-  opened an experience entry and a project with a detail bullet. The rule is
-  deterministic: the model ordering call and Jev's lead pick (TL-3) are gone.
 
 ## [1.13.0] - 2026-09-20
 
@@ -2144,6 +2224,7 @@ First public release: an end-to-end job-discovery and résumé-tailoring pipelin
 - Cross-platform dashboard + engine (Windows / macOS / Linux); the setup scripts and VM
   automation are Windows-first.
 
+[2.0.0]: https://github.com/yib7/INployed/compare/v1.13.0...v2.0.0
 [1.13.0]: https://github.com/yib7/INployed/compare/v1.12.1...v1.13.0
 [1.12.1]: https://github.com/yib7/INployed/compare/v1.12.0...v1.12.1
 [1.12.0]: https://github.com/yib7/INployed/compare/v1.11.0...v1.12.0

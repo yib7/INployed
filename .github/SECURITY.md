@@ -28,16 +28,22 @@ most relevant to it:
   copies a single key to the user's own GCP VM, over `scp`, into a mode-600 file that
   `run_scraper.sh` sources. A way to make it stage the value somewhere else, leave it readable,
   put it on a command line, or write it to a log is in scope.
-- A credential reaching a process that has no use for it. The tailor, the scorer and the
-  auto-apply runner are given a scrubbed environment on purpose, and a gap in that scrub is in
-  scope.
+- A credential reaching a process that has no use for it. The `claude` CLI (the Claude
+  provider for the tailor and the scorer) and `gcloud` start with the other services' keys
+  removed from their environment on purpose, and a gap in that scrub is in scope.
 - The résumé/apply pipeline reading untrusted input (a pasted job description or URL, a scraped
   posting) in a way that escapes its sandbox, runs unintended code, or writes outside the
   intended output folder. LaTeX is compiled with `-no-shell-escape`; a bypass is in scope.
+- Auto-apply, which fills in and submits real job applications. Text on an employer's page or
+  in an emailed code (a question, a label, a button, a hidden field) that steers what the
+  runner types, clicks or sends is in scope. So is a send from anywhere other than the submit
+  gate (`local/apply_gate.py`), and the master password or an answer reaching a site other
+  than the job's own application platform, or a password box served over plain HTTP.
 - The dashboard or VM controls performing an action the user did not confirm.
 
 Out of scope: anything requiring a key the user themselves supplied to misbehave against its
-own intended service (Vertex AI, Bright Data), and the security of those third-party services.
+own intended service (Vertex AI, Bright Data, TypeSafe, Anthropic), and the security of those
+third-party services.
 
 ## Supported versions
 

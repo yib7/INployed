@@ -47,7 +47,7 @@ bolted on retold as a story. Two structural checks always run, whatever the **"S
 writing patterns"** toggle says: a seven-word run copied straight from a résumé bullet
 ("bullet echo"), and sentences or paragraphs that all sit within a narrow band of the
 average length ("uniform rhythm"). Settings → Resume's **"Strip AI writing patterns from
-the cover letter"** toggle now defaults **on**; see [what it
+the cover letter"** toggle is on by default; see [what it
 catches](#what-strip-ai-writing-patterns-from-the-cover-letter-catches) below.
 
 ### Fine-tune the résumé layout
@@ -104,7 +104,7 @@ green offer · red rejected), and **All Jobs** stays an untinted plain list. A s
 The actions, the interface-size control, and a **Restart** button all share **one bottom
 bar**. You can size the whole interface to your display from the **Interface size** control:
 a slider with `-` / `+` buttons (10% steps, 75-150%), or **Ctrl +** / **Ctrl -** (and
-**Ctrl 0** to reset to 100%); the change applies **immediately** and your choice is
+**Ctrl 0** to reset to 100%); the change applies immediately and your choice is
 remembered. **Restart** closes and reopens the dashboard.
 
 Selecting a job opens a **detail card** at the bottom: the job's title and meta line,
@@ -136,7 +136,7 @@ next refresh); in the **Tracker**, an *applied* job is **blue** and a *rejected*
 one you already marked seen or applied, for **Hide reposts for (days)** in Settings
 (Dashboard section, default 30, 0 turns it off), and an unseen duplicate of the same
 posting collapses to its newest copy the same way. Nothing is marked by this: the older
-posting keeps its own status, and the repost simply stays out of the list until the
+posting keeps its own status, and the repost stays out of the list until the
 window passes. When the filter hides anything, the status bar says so ("N reposts hidden").
 
 **When Google Drive is not running.** Your main job list lives in your Google Drive folder.
@@ -313,7 +313,7 @@ status line counts them ("2 settings need fixing"). There is no modal listing ev
 pointing at none of them. Fields are re-checked the moment you edit them, and Save stays
 disabled while any problem remains. If a
 number you hand-edited into a config file is outside the allowed range, the spin box shows
-the clamped value **and tells you** what the file actually holds; nothing is rewritten
+the clamped value and tells you what the file actually holds; nothing is rewritten
 quietly on the next Save.
 
 Edits are written atomically (with a `.bak`) to your git-ignored `.env`,
@@ -402,7 +402,7 @@ all of them have run dry for the day, or Google is refusing every one of them fo
 keys from [Google AI Studio](https://aistudio.google.com/apikey), one per Google account,
 and every extra account is another day's allowance. With no **Google Cloud project ID** set
 there is nothing to spill onto, so a keys-only setup never bills; the tailor stops with a
-rate-limit message once every key and fallback model is spent for the day. Google counts that free allowance per key **and per model**, so a second model is a
+rate-limit message once every key and fallback model is spent for the day. Google counts that free allowance per key and per model, so a second model is a
 second daily allowance: the **fallback models** boxes (under *Show advanced settings*, one
 model id per line, best first) name the models the tailor may move on to when its own runs
 out. With the tailor on **tiers** there is one box per step, because the lite models allow
@@ -435,7 +435,7 @@ paragraphs all run the same length. The grounding gate still runs last either wa
 restyled sentence that introduces an unsupported fact is still rejected.
 
 #### What "Strip AI writing patterns from the résumé bullets" catches
-Settings → Resume. This is the sweep, the last of the bullet passes: **on by default**, and it
+Settings → Resume. This is the sweep, the last of the bullet passes: on by default, and it
 **costs one model call per résumé entry on every tailor run** (a second call for an entry
 whose rewrite came back too long). Turn it off to stop paying for it; the free per-bullet
 style gate keeps running either way.
@@ -608,7 +608,7 @@ decisions, and Gemini or Claude writes the text.
 
 Jev works in four places:
 
-- **Scoring.** Jev scores each collected job against your résumé on the scorer's own
+- **Scoring:** Jev scores each collected job against your résumé on the scorer's own
   scales, in both stages: the stage 1 score (1-5), then the stage 2 deep score (1-10)
   and recommendation. The stage 1 reason names what decided the score, such as the
   candidate's skills and field, the years the job asks for, or a hard requirement like
@@ -618,7 +618,7 @@ Jev works in four places:
   writes that job's reason, strengths and gaps from Jev's findings. On the Claude
   provider each call takes about 30 to 100 seconds and costs about $0.04 at Haiku list
   prices. Turn this off at Settings → Scoring → **Jev writer for high scores**.
-- **The résumé tailor.** Jev picks skills and experience items and checks each bullet,
+- **The résumé tailor:** Jev picks skills and experience items and checks each bullet,
   and your **Resume tailor provider** writes every bullet and the cover letter (see *What
   Jev does in the tailor* below).
 - **The difficulty check** on the Auto-apply tab (see *How hard is each application?*
@@ -632,8 +632,8 @@ settings* the same section has one switch per area: **Jev for scoring**, **Jev f
 résumé tailor** and **Jev difficulty check**, all on. A change takes effect on the next run.
 
 **When Jev is off or down, nothing stops.** Scoring falls back to your **Scoring
-provider** and the tailor to your **Resume tailor provider**, the same Gemini or Claude
-setup the app used before Jev. That happens by itself when the switch is off, when there
+provider** and the tailor to your **Resume tailor provider**.
+That happens by itself when the switch is off, when there
 is no key, when the package is missing, and when Jev stops answering in the middle of a
 run: it retries briefly, then the rest of that run carries on without it. The one
 exception is auto-apply, which has no fallback: while Jev cannot run, **Start auto-apply
@@ -645,7 +645,7 @@ it cost, how many fell back to the scoring provider, and how many the writer rew
 versus left as Jev's own text.
 
 #### What Jev does in the tailor
-Six steps use Jev while it is on for the tailor. Four run on every tailor; the verb step
+Five steps use Jev while it is on for the tailor. Three run on every tailor; the verb step
 runs only when two bullets open with the same verb, and the sweep gate only while **Strip
 AI writing patterns from the résumé bullets** is on. Each one keeps the tailor's own way
 of doing that step as its fallback:
@@ -653,7 +653,6 @@ of doing that step as its fallback:
 - **Skills:** Jev picks which of your skills lead each skills line for this job.
 - **Shortlist:** Jev rates how well each item in your experience file fits the job, and
   the tailor chooses from the best-fitting ones.
-- **Lead:** for each project, Jev picks which bullet opens it.
 - **Faithfulness:** Jev checks every rewritten bullet against the items it came from. A
   bullet that claims more than you wrote, or something you never wrote, gets one retry
   from the same items; if the retry still fails, the tailor goes back to the earlier
@@ -717,7 +716,7 @@ else. Per-site passwords are planned.
 
 ### Manage the VM from the dashboard
 If you run discovery + scoring on a GCP VM, the dashboard drives it without
-SSH-by-hand; there's **no separate VM tab**. In
+SSH-by-hand; there's no separate VM tab. In
 **Settings**, turn on **Enable VM features** (off by default) and fill the VM
 section (instance, zone, project, Linux user); these non-secret identifiers are
 saved to your git-ignored `.env`. Authentication is your existing
@@ -726,14 +725,14 @@ then appear at the bottom of Settings, letting you:
 
 - **Schedule:** pick the run times from the **Run 1-6** hour dropdowns (up to 6/day, at
   least 2 h apart) and a frequency (daily / weekly / biweekly). Each picked time becomes
-  its **own** `crontab` line in a live preview, and on **Apply schedule to VM** it's
+  its own `crontab` line in a live preview, and on **Apply schedule to VM** it's
   installed over `gcloud compute ssh`.
   Each run is labelled by time of day: **morning / afternoon / evening / night**.
 - **Pause:** set an *until* date (optionally a time) and **Pause VM**: discovery
   skips every run until then, then resumes on its own (no API spend while paused).
   **Resume now** clears it.
 - **Push config to VM:** copy your current `search_config.json` / `scoring_config.json`
-  up with one click. And whenever you save a setting that **actually changes** a file
+  up with one click. And whenever you save a setting that actually changes a file
   the VM reads, the dashboard asks if you'd like to push the changed file(s) right
   then; re-saving the same values (or any non-VM setting) never prompts.
 - **Credentials:** rotate the VM's own API keys without an ssh session. Pick **Bright
@@ -771,7 +770,7 @@ click, each after a confirm.)*
 Every tailored résumé folder gets a self-contained **`apply.md`** apply sheet. It's a
 **fallback for application portals that don't auto-fill the form from your uploaded
 résumé**: when a portal parses your résumé upload into its own fields you don't need it;
-use it to fill the fields **by hand** when that doesn't work.
+use it to fill the fields by hand when that doesn't work.
 
 The sheet opens with a "when to use this sheet" note and the fill-it-out instructions,
 then your candidate basics + structured address, education, **this job's tailored résumé
@@ -788,8 +787,8 @@ exactly with no extra AI call. To apply:
    both its résumé PDF and `apply.md`**. Clicking it opens the posting in Chrome and
    swaps the bottom detail card for a right-side **Apply panel**: copyable **LinkedIn** and
    **GitHub** links from your master file's basics (each row shown only when you filled
-   that field in) above the résumé / cover-letter paths, and the apply sheet **rendered as
-   formatted markdown** (the **Copy apply sheet** button still copies the raw markdown
+   that field in) above the résumé / cover-letter paths, and the apply sheet rendered as
+   formatted markdown (the **Copy apply sheet** button still copies the raw markdown
    source). An **Expand** button opens the sheet in a large, resizable window for easier
    reading. On the sheet each résumé bullet is its own `- bullet` line with a blank line
    before the next, and copying a selection from the panel or the **Expand** window keeps
@@ -817,7 +816,7 @@ CLI equivalent (from `local/`): `python -m resume_tailor.apply --job-id <id> --o
 ### Ask AI about a job
 Right-click any job (or click **Ask AI** on the Apply panel, next to **Open folder**) for
 a per-job chat window. It answers only from what it can see for that job: the posting, the
-apply sheet when one exists, and now the full master experience file on every turn, so a
+apply sheet when one exists, and the full master experience file on every turn, so a
 follow-up question can draw on work the tailor left out of that one résumé. An untailored
 job still gets a conversation scoped to its description alone. The same 13 AI-writing rules
 that guide the cover letter ride in the chat's own system prompt, and an answer of 60 words
@@ -833,7 +832,7 @@ match its question: a Yes/No picker, a number box, a dropdown of options, or a m
 box, so a saved answer can only be read one way. A yes/no or number row also takes a short,
 optional note, up to 300 characters; a longer one blocks Save until you shorten it. The line
 under each row reads "Forms will get: ..." (or says why it will not) so you always see what a
-run would actually type.
+run would type.
 
 A built-in question cannot be deleted, and **Add answer** refuses a new question only when the
 run already fills it from a built-in answer, and names that answer; a question about another
@@ -870,7 +869,7 @@ work in the office in New York?" or "Do you require visa sponsorship? This inclu
 sponsorship for CPT, OPT or other visa types", Jev reads your saved answers, with your work
 authorization statement, and fills the field only when it is sure (0.85 or more, far ahead of
 every other choice) that anyone with those answers would pick that option. Otherwise the field
-stops the job as before. The question itself says which answer Jev reads: "We work 5 days on-site
+stops the job. The question itself says which answer Jev reads: "We work 5 days on-site
 in NYC. If you're not local, are you willing to relocate?" asks about moving, so your relocation
 answer settles it even when the office sentence comes first. For a relocating or on-site question
 Jev also reads where you live now: the city and state of your confirmed mailing address, or the
@@ -908,9 +907,8 @@ through the queue in a new terminal window, one job at a time, in a browser prof
 its own. This is the power-user path; for one job at a time, the **Apply** flow above is
 the recommended way in.
 
-The older auto-apply that ran through Claude-in-Chrome (the `auto-apply` skill and its
-helper scripts) has been removed; auto-apply now runs on Jev alone. The **Apply** panel's
-by-hand flow with Claude-in-Chrome, above, is unchanged.
+Auto-apply runs on Jev alone. Claude-in-Chrome helps only with the by-hand flow in the
+**Apply** panel, above.
 
 **What Jev is and what it decides.** The run is ordinary code driving a Google
 Chrome window (Playwright; the bundled Chromium stands in when Chrome is not installed). Every judgment call inside it goes to Jev, TypeSafe's
@@ -1067,8 +1065,8 @@ when it says the application was received, and in park mode, once your answers a
 site, that button stops the job for you. A sign-up screen that also asks what
 only an application asks (a profile link, work authorization, a written answer) is the
 form: it is filled and checked, the password included, and its send-shaped button goes to
-the submit step. When submitting is on and the page after that click is a form or a
-sign-in instead of a confirmation, the job stops for you to check: the click may have
+the submit step. When submitting is on and the page after that click shows a form or a
+sign-in and no confirmation, the job stops for you to check: the click may have
 sent the application or only made the account, and the run cannot tell which. With a
 sign-up's own boxes alone (the
 address, the password, a name, a phone, the terms), such a button stops the job for you to
@@ -1084,7 +1082,7 @@ hand and **Mark applied** or **Re-queue** it. The settings under **Settings →
 Auto-apply** that shape a run:
 
 - **Submit when verified** (`auto_apply_submit`, on): off parks every job at its review
-  page instead. `--no-submit` on the command line does the same for one run.
+  page. `--no-submit` on the command line does the same for one run.
 - **Draft free-text answers** (`auto_apply_generate`, on): a required open-ended
   question ("why this role", "a project you are proud of") gets one flash-lite draft
   from your apply sheet, and Jev checks each sentence against the sheet; a draft with
@@ -1096,7 +1094,7 @@ Auto-apply** that shape a run:
   window. Leave it off to watch the run and step in when it parks.
 - **Wait for your answer (minutes)** (`auto_apply_pause_minutes`, 10, from 0 to 60): how
   long a run waits for you when it pauses on a question (see *When the run needs you*
-  below). 0 parks the job at once, as runs did before the pause existed.
+  below). 0 parks the job at once.
 - **Auto-apply judge** (`auto_apply_jev_mode`, `typesafe`, under *Show advanced
   settings*): `fake` is a test-only judge
   that answers from word overlap; the drain refuses it (so does `replay`, the test
@@ -1263,7 +1261,7 @@ box; code never types those. Then pick one of three buttons:
 - **I filled it in the browser, continue:** you typed the answers into the form yourself;
   the run reads the page again and goes on. This button is hidden when the browser window
   is hidden.
-- **Park it:** the job stops as it did before the pause existed, with its usual reason.
+- **Park it:** the job parks with its usual reason.
 
 **Save for future runs.** Beside each question sits a **Save for future runs** box, off by
 default. Tick it before **Fill and continue** and the answer is also saved on the **Apply
@@ -1361,7 +1359,7 @@ cannot start; the windows still open finish, and the terminal says why. A job wh
 fails on its own (its check crashed, or its copy was still in use) gets its "not checked"
 line with the reason and the warnings behind it, and the next job starts. Ctrl+C in the
 terminal closes the windows and deletes the copies. A stopped job keeps its earlier result.
-One job selected, or the setting at 1, checks one job at a time on the real profile as before.
+One job selected, or the setting at 1, checks one job at a time on the real profile.
 
 **Memory.** Each window is a full Chrome, so ten windows use several gigabytes. On a smaller
 machine, lower **Difficulty checks at once**.

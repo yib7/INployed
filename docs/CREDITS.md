@@ -4,7 +4,7 @@ This project stands on a lot of other people's work.
 
 ## Résumé template
 - The LaTeX résumé layout in `resume_tailor_files/resume_template.tex` is derived
-  from the widely-used **"Jake's Resume"** template by Jake Gutierrez
+  from the **"Jake's Resume"** template by Jake Gutierrez
   (https://github.com/jakegut/resume), MIT-licensed. The `\resumeItem`,
   `\resumeSubheading`, and section macros come from that template; the generation
   pipeline fills them from `master_experience.yaml`. The MIT permission notice
@@ -18,7 +18,7 @@ This project stands on a lot of other people's work.
   `~/.claude/skills/avoid-ai-writing/SKILL.md`. Two features use it, through one
   arm each, and the skill itself is not bundled.
 - The optional cover-letter style pass (Settings → Resume → "Strip AI writing
-  patterns from the cover letter", off by default) uses the letter arm: the
+  patterns from the cover letter", on by default) uses the letter arm: the
   prompt rules and the deterministic ban list, as a letter-relevant subset of
   that skill's pattern catalogue.
 - The résumé bullet sweep (Settings → Resume → "Strip AI writing patterns from

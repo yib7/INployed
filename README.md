@@ -21,9 +21,8 @@ Two rules keep it to what you wrote, and code enforces both:
 17,366 postings collected as of September 2026. 8% earn a second-stage recommendation
 and 5% come back *apply*, so that is all you read.
 
-Over 11,000 tests run on every push: the full suite on Windows, the pipeline and the
-auto-apply browser tests on Linux, and a clean-room job that installs from this README's
-own setup steps.
+Every push runs the full test suite on Windows, the pipeline and the auto-apply browser
+tests on Linux, and a clean-room job that installs from this README's own setup steps.
 
 Four pieces do the work:
 
@@ -32,7 +31,7 @@ Four pieces do the work:
 2. **Scoring** (`pipeline/score_jobs.py`) ranks each job in two stages on Gemini or
    Claude, with TypeSafe's Jev model making the calls first when it is on.
 3. **The dashboard** (`local/app.py`, PySide6/Qt) is where you triage and track. It runs
-   the **résumé engine** (`local/resume_tailor/`): a one-page LaTeX résumé, cover letter,
+   the résumé engine (`local/resume_tailor/`): a one-page LaTeX résumé, cover letter,
    ATS keyword report and `apply.md` apply sheet per job.
 4. **Auto-apply** (`local/apply_run.py`) works through your queue one job at a time in
    Chrome. Jev reads each page, code fills it from your apply sheet and saved answers,
@@ -97,7 +96,7 @@ app; Steps 5-7 connect it to your own data and accounts.
 > | | Status |
 > |---|---|
 > | **Windows 11** | Supported. Dashboard + full test suite run here, and CI runs the suite on `windows-latest` every push. |
-> | **Linux** | Supported for the **pipeline scripts only** (`pipeline/scraper.py`, `pipeline/score_jobs.py`): that is how they run on the GCP VM in production. The Qt dashboard is not tested on Linux. |
+> | **Linux** | Supported for the pipeline scripts only (`pipeline/scraper.py`, `pipeline/score_jobs.py`): that is how they run on the GCP VM in production. The Qt dashboard is not tested on Linux. |
 > | **macOS** | Untested. Not claimed. |
 >
 > The `Open INployed Dashboard.cmd` launcher, the `scripts/setup.ps1` config script, and the
@@ -183,7 +182,7 @@ features** in Settings.)*
 
 ### Step 6 (skip until you tailor): Enter your experience in the Resume Data tab
 Your experience lives in **`resume_tailor_files/master_experience.yaml`**, the single
-source of truth the pipeline **selects** from per job (it never fabricates). Use the
+source of truth the pipeline selects from per job (it never fabricates). Use the
 dashboard's **Resume Data** tab to add / edit / delete entries and achievements, with
 inline tips, a **Validate** button, and a **Revert to opening state** safety net. (The
 heavily-commented
@@ -196,7 +195,7 @@ shows the structure if you would rather edit the file.)
 - **Quantify** everything you can (%, $, counts, time saved). Numbers win.
 - Tag each atom with **angles** (e.g. `backend`, `llm`, `data-pipeline`) so it matches a
   posting's keywords.
-- Hold **more than fits on one page**: selection picks the best evidence per job.
+- Hold more than fits on one page: selection picks the best evidence per job.
 - Click **Check setup** any time to lint your résumé data + apply answers, so a malformed
   entry surfaces as a clear error before it can break the pipeline silently.
 
@@ -259,7 +258,7 @@ and the data every bullet comes from.
 
 ## Limitations
 
-- **Windows, one user, your own cloud.** The dashboard, launcher and setup script are
+- **Windows, one user, your own cloud:** the dashboard, launcher and setup script are
   tested on Windows only. Linux runs the pipeline scripts and the auto-apply browser
   tests; macOS is untested. There is no server: the cloud half is a VM you create and
   deploy yourself.
@@ -270,7 +269,7 @@ and the data every bullet comes from.
   CAPTCHA or payment page parks the job, and a required question your answers don't
   cover pauses the run, then parks. A portal that changes its pages can park jobs that
   used to go through.
-- **One master password for every job site.** The run signs up and signs in with it, so
+- **One master password for every job site:** the run signs up and signs in with it, so
   a fake posting's sign-up page would learn it. Use a password you keep for job
   applications only.
 - **The scorer's prompts describe one candidate:** early-career, data and engineering
@@ -318,10 +317,10 @@ first draft that fails gets one re-ask; after that a bullet goes back to its las
 grounded wording or is dropped, and the run report quotes what it dropped. A job
 description is untrusted text inside the prompt, which is why the check is code.
 
-With Jev on, Jev also picks the skills and each project's lead bullet, and checks every
-rewritten bullet against its atoms. Gemini or Claude still writes every word.
+With Jev on, Jev also picks the skills, rates how well each atom fits the job, and checks
+every rewritten bullet against its atoms. Gemini or Claude still writes every word.
 
-**Your own edits get the same check.** `python scripts/atom_audit.py gate --old ...
+Your own edits get the same check: `python scripts/atom_audit.py gate --old ...
 --new ...` names every number or proper noun a new version of your experience file
 states that the old one did not.
 

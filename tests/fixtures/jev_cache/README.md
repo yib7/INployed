@@ -11,11 +11,11 @@ request key, and the replay then names the miss.
 | `cache.json` | the runner tests (`tests/test_apply_run.py`, `tests/test_apply_run_boundaries.py`) and the screening set's real judge (`tests/test_screening.py`) | `scripts/jev_record.ps1 -Mode replay` |
 | `matrix_cache.json` | the flow matrix's real column (`scripts/apply_matrix.py --real`), one run per registered flow | `scripts/jev_record.ps1 -Target matrix -Mode replay` |
 
-`cache.json` was first recorded 2026-09-22 (SP8, jev-1.13.0, 38 requests),
-re-recorded 2026-09-25 (SP8b, 72 requests) and again 2026-09-26 (cycle 18 SP6,
-276 requests, the screening set's among them). `matrix_cache.json` was recorded
-2026-09-25 (SP8b, 322 requests over the 106 flows a replay runs) and again
-2026-09-26 (cycle 18 SP6, 350 requests over 115 flows). Both hold
+`cache.json` was first recorded 2026-09-22 (jev-1.13.0, 38 requests),
+re-recorded 2026-09-25 (72 requests) and again 2026-09-26 (276 requests, the
+screening set's among them). `matrix_cache.json` was recorded 2026-09-25 (322
+requests over the 106 flows a replay runs) and again 2026-09-26 (350 requests
+over 115 flows). Both hold
 only the requests today's replay reaches: an entry no replay asks for is
 dropped after a re-record. The third target, the page read over the local captures
 (`tests/test_capture_reads.py`), keeps its cache beside the captures in
@@ -65,9 +65,9 @@ and prints it as a flag to flip; after the next recording, set each one it
 names to `recorded=True`, so the replay covers it. A replay that misses a
 request exits 1.
 
-## Pruning to the replayed keys (SP8)
+## Pruning to the replayed keys
 
-Over the cycles a cache picks up keys no test replays any more: a fixture
+Over time a cache picks up keys no test replays any more: a fixture
 changed shape, a test was removed, a flow was renamed. `-Prune` on
 `scripts/jev_record.ps1` (`-Mode replay` only, `-Target runner` or `matrix`)
 rewrites the target's cache to keep only the keys that replay actually served.
@@ -109,9 +109,8 @@ rewrite refuse, naming the reason, and leave the cache exactly as it was:
   `tests/apply_flows.py` still marks it `recorded=False`
   (`apply_matrix._unrecorded_flows`). A `recorded=False` flag is bookkeeping,
   so a prior recording can have already cached fresh keys for the flow
-  under a flag that never flipped (the
-  SP8 fix round 2 incident: a74890d recorded 11 pause flows, but their
-  `recorded=False` flags stayed put, and a `--real-prune` run right after
+  under a flag that never flipped (once, a recording of
+  11 pause flows left their `recorded=False` flags in place, and a `--real-prune` run right after
   kept only the keys the replay had touched and deleted the fresh
   recordings); a `replayable=False` flow (`ticker_page`) does not block the
   prune, since `run_matrix`'s skip condition means no future replay could
@@ -164,8 +163,8 @@ Every live entry point honours `AUTO_APPLY_RECORD_USD_CAP` (`-Cap` sets it).
 A live recording names its cap, at most what the spend ledger has left under
 the limit: `jev_record.ps1` refuses a live run without `-Cap`, and the Python
 entry points refuse one without the variable. Only a dry run or a replay
-(neither spends anything) has a default, 0.88 USD, what the cycle's approval
-had left under its limit after SP8b. A cap that is no finite amount above 0
+(neither spends anything) has a default, 0.88 USD, what the approved budget
+had left under its limit after the 2026-09-25 recordings. A cap that is no finite amount above 0
 (NaN, inf, 0) is refused. `jev.SpendCap` checks each request before it
 leaves: when the spend so far plus the request's estimated cost (chars/3
 tokens at 0.042 USD per million input tokens) would pass the cap, the request
@@ -187,7 +186,7 @@ fake could not: the from-site inbox question now names the ATS and the
 company (`apply_judge.ATS_NAMES`), the page state sends each button as
 `{n, text}` without the extractor's `kind_hint`, the first request asks an
 option pick only where `quick_map` has the value, and a generated answer is
-verified against its draft in code. The SP8b recordings added five: the
+verified against its draft in code. The 2026-09-25 recordings added five: the
 "sends" criterion names a click that also creates the account, a pasted cover
 letter and a search box's match are compared in code, two name sources that
 type the same words pool their probability (`apply_judge.pooled_confidence`;
@@ -204,5 +203,5 @@ line: the test id, every answer (with the fake's answer beside it), every
 terminal outcome the runner reached (status, reason), and a failed assertion
 becomes an xfail carrying the divergence text, so one run reports every
 divergence at once. In `fake` mode nothing is written and assertions are hard.
-`outcomes.jsonl` and `used_keys.json` (SP8, the run's used-key set for
+`outcomes.jsonl` and `used_keys.json` (the run's used-key set for
 `-Prune`) are both ignored by git; the two caches are committed.

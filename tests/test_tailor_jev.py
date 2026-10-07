@@ -56,8 +56,9 @@ RECORD_ENV = "TAILOR_JEV_OFF_PROMPTS_RECORD"
 # trims or gates when Jev is on. A stage the golden run calls more than once is
 # recorded once per call, in call order: its first call under the stage's name and
 # each later one as "<stage> #<n>", so the first call's key stays the stage's name.
-# The sweep's prompts are recorded by a direct call (`_record_jev_off`), since the
-# golden run's scan sends no item to it.
+# The résumé scan is off by default, so `_record_jev_off` turns it on for its golden
+# run to pin the scan's prompt too. The sweep's prompts are recorded by a direct call,
+# since that run's scan sends no item to it.
 PINNED_STAGES = ("select", "rephrase", "reverb", "aiwriting_scan")
 # The tailor's three Jev options. Each needs a judge, so with Jev off
 # the recording holds whichever way they are set.
@@ -138,6 +139,7 @@ def _record_jev_off(monkeypatch, tmp_path):
     stages: list = []
     calls: list = []
     golden._install_stub(monkeypatch, _recording(stages, calls))
+    monkeypatch.setenv("RESUME_TAILOR_SWEEP_SCAN", "1")
     captured = _run_tailor(monkeypatch, tmp_path)
 
     reground: dict = {}
@@ -729,9 +731,8 @@ def test_a_golden_run_with_jev_on_makes_fewer_llm_calls(pinned_engine, stub_temp
     assert not any("OPENS WITH A DIFFERENT action verb" in s for s in systems), "reverb ran"
     assert not any("You clean AI-writing tells" in s for s in systems), "the sweep ran"
     assert sweep._SCAN_SYSTEM not in systems, "the résumé scan ran"
-    assert pinned_engine == [s for s in golden._GOLDEN_STAGES
-                             if s not in ("reverb", "aiwriting_scan")]
-    assert len(pinned_engine) == len(golden._GOLDEN_STAGES) - 3
+    assert pinned_engine == [s for s in golden._GOLDEN_STAGES if s != "reverb"]
+    assert len(pinned_engine) == len(golden._GOLDEN_STAGES) - 2
     assert captured["bullets"] == golden._GOLDEN_BULLETS
     assert gate == [True, False, False, False, False]
     assert captured["skill_lines"] == _JEV_SKILL_LINES

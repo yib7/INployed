@@ -34,33 +34,36 @@ the argument that the detectors find only what they were written to find. A live
 measurement on ten real tailored résumés settled it: with no read the sweep made 80
 repair calls and committed 0 rewrites, because those résumés carried no repaired
 finding and no phrasing hit, and the SCOPE rule returns such an item unchanged by
-construction. The judgment-level tells are what the reads below are for; a call
-with nothing named is not a substitute for one.
+construction. The judgment-level tells are what the reads below exist to find.
 
 **With Jev on, Jev reads.** ``jev_assist.sweep_flags`` reads every bullet for the
 tells of the user's banned patterns (contrast framing, stacked adjectives, filler
 or vague impact, hype words, a list padded out to three), one request per item,
 and a bullet is flagged at ``jev_assist.SWEEP_FLAG`` or more.
 
-**With Jev off, or when its read fails, the résumé scan reads.** ONE flash-tier
-call over every bullet, grouped by entry (``_SCAN_SYSTEM``). It carries the rules
-the repair call carries (``compose.BANNED_PHRASING``,
-``aiwriting.RESUME_RULES_PROMPT`` and the names of the patterns Jev asks about)
-plus the register carve-out of ``aiwriting.RESUME_PROFILE``, so correct résumé
-grammar (a subjectless fragment opening on a past-tense action verb) is never
-flagged. It names tells and never rewrites, and it leaves the atoms and the job out,
-since naming a tell needs neither. The saving is the point: a clean résumé costs one
-short answer: one scan call, then a repair call only for each flagged item. A
-résumé with one weak bullet costs the scan and that item's call. ``_SWEEP_FLAG_RULE`` was written for
-Jev's five names; the scan is asked to use them where one fits and may name a
-tell of the rules in its own words, which the rule's "treat each flag as part of
-that bullet's PHRASING list" covers the same way. The scan lists only the bullets
-it flags, so a bullet it leaves out reads as clean; a cut-off answer does not parse
-and counts as a failed scan, and so does an answer with any malformed flag
-(``_parse_scan`` fails closed). The prompt asks the model to flag when unsure: a
-flag costs one repair call whose rewrite the five checks below still judge, and a
-missed tell ships. ``config.sweep_scan_enabled()``
-(``RESUME_TAILOR_SWEEP_SCAN``) turns it off.
+**With Jev off, or when its read fails, the résumé scan can read.** It is an
+opt-in quality check, off by default (``config.sweep_scan_enabled()``,
+``RESUME_TAILOR_SWEEP_SCAN``). ONE flash-tier call over every bullet, grouped by
+entry (``_SCAN_SYSTEM``), names tells and never rewrites; the atoms and the job stay
+out, since naming a tell needs neither. It asks only for what the user bans outright
+and for the P0 and P1 rules of ``aiwriting.RESUME_RULES_PROMPT``, by a fixed list of
+names (``_SCAN_TELLS``: Jev's names less the padded list of three, then the rules'),
+and a tell outside that list comes back as ``other: ...`` (``_scan_tell_name``). It
+is told what NOT to flag: lists of three, rhythm and repeated sentence shape, which
+``itemcheck`` measures, and correct résumé grammar (``aiwriting.RESUME_PROFILE``'s
+register carve-out). A flag needs the words that carry the tell; the scan is never
+asked to flag when unsure. The scan lists only the bullets it flags, so a bullet it
+leaves out reads as clean; a cut-off answer does not parse and counts as a failed
+scan, and so does an answer with any malformed flag (``_parse_scan`` fails closed).
+
+Why it is off: on the same ten résumés the narrowed scan made 10 scan calls and
+bought 35 repair calls (45 in all, against 80 for the old sweep-everything gate and
+0 for the detectors alone). It caught the contrast framing the user bans ("selects
+and re-phrases without inventing" became "selects and re-phrases facts"), but it
+flagged 36 of the 150 bullets, 24%, and 28 of those flags fell on the same three
+bullets in nearly every résumé, whose rewrites were word swaps ("aided" for
+"assisted", "residence hall" for "dorm"). A read that flags a quarter of a clean
+résumé is churn, so it is the user's call to turn on.
 
 The scan's call is counted in ``SweepResult.calls``, so a run's call count is what
 it paid for.
@@ -138,6 +141,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 from . import aiwriting, compose, config, itemcheck, jev_assist, measure, verify
@@ -334,6 +338,13 @@ _SCAN_RULE_TELLS = (
 )
 _SCAN_TELLS = _SCAN_JEV_TELLS + _SCAN_RULE_TELLS
 _SCAN_OTHER = "other: "
+# The rules' own headings ("5. REAL AND ACTUAL INFLATION."), in order, each read as
+# the name its rule is listed under, so a model that copies a heading still gets
+# the listed name in the report.
+_SCAN_RULE_HEADINGS = dict(zip(
+    (h.lower() for h in re.findall(r"^\d+\. ([A-Z0-9 -]+)\.",
+                                   aiwriting.RESUME_RULES_PROMPT, re.MULTILINE)),
+    _SCAN_RULE_TELLS))
 
 # The résumé scan: detect only, over the whole résumé at once ("With Jev off, or
 # when its read fails, the résumé scan reads" above). It names a fixed set of tells,
@@ -659,18 +670,20 @@ def _judge_flags(sel: Dict[str, Any], bullets: Dict[str, str],
 
 def _scan_tell_name(tell: Any) -> str:
     """One tell as the repair payload and the run report carry it: a name of
-    `_SCAN_TELLS` (case aside), or anything else as "other: ...", so a label the
-    model invented reads as one in the report. "" for a blank tell."""
+    `_SCAN_TELLS` or a rule's heading (case aside, with or without "other: ") as
+    that name, or anything else as "other: ...", so a label the model invented reads
+    as one in the report. "" for a blank tell."""
     text = one_line(tell).strip()
-    low = text.lower()
-    for name in _SCAN_TELLS:
-        if low == name:
-            return name
     prefix = _SCAN_OTHER.strip()
-    if low.startswith(prefix):
+    if text.lower().startswith(prefix):
         text = text[len(prefix):].strip()
     if not text:
         return ""
+    low = text.lower()
+    if low in _SCAN_TELLS:
+        return low
+    if low in _SCAN_RULE_HEADINGS:
+        return _SCAN_RULE_HEADINGS[low]
     return (_SCAN_OTHER + text)[:_SCAN_TELL_MAX].strip()
 
 

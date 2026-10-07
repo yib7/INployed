@@ -13,16 +13,26 @@ All notable changes to INployed are recorded here. The format follows
   (`tailor_parallel_jobs`, `RESUME_TAILOR_PARALLEL_JOBS`) sets it from 1 to 10, default 4,
   and applies to the next batch without a restart. Higher is faster but can hit the
   model's rate limit.
-- **The résumé's AI-writing sweep reads first and repairs second.** With Jev off for the
-  tailor, one model call now scans every bullet for AI-writing patterns, and only an entry
-  with a flagged bullet (or one the built-in checks flag) gets its repair call: one scan
-  call, then a repair call only for flagged entries. **Scan the résumé first, then repair
-  only what it flags** in Settings → Resume (`RESUME_TAILOR_SWEEP_SCAN`) turns it off; a
-  failed scan sweeps every entry as before. With Jev on, Jev's own read still gates the
-  sweep and no scan runs.
+- **The résumé's AI-writing sweep calls the model only for an entry something flags.** An
+  entry gets its repair call when the free checks find something in it, when Jev flags one
+  of its bullets while Jev runs for the tailor, or when the optional résumé scan does. A
+  résumé none of them flags costs nothing; sending every entry anyway cost 80 calls on ten
+  real résumés and changed no text.
+- **Scan the résumé first, then repair only what it flags** (Settings → Resume,
+  `RESUME_TAILOR_SWEEP_SCAN`) is a new opt-in quality check, off by default. One model call
+  reads every bullet for the patterns you ban outright and the worst AI-writing tells, by a
+  fixed list of names, and each entry it flags gets its repair call. On ten real résumés it
+  flagged about a quarter of the bullets and caught real contrast framing, but most of its
+  rewrites were small word swaps. With Jev on, Jev's own read still gates the sweep and no
+  scan runs.
 
 ### Fixed
 
+- **A model that corrects its own answer no longer costs a retry.** On the Claude CLI
+  backend a repair reply often held a first answer, a note such as "Wait, correcting the
+  format", and a corrected answer. The tailor could not read that reply and asked again,
+  and an entry that failed twice lost its repair. The tailor now reads the corrected
+  answer: a live run of 45 calls needed no retry, where 11 of its replies had that shape.
 - **The Apply panel opens right away again.** It no longer reads the full job master
   before showing a job's apply sheet, which took a few seconds per click for most
   scraped jobs.

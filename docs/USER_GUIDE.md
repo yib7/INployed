@@ -442,18 +442,21 @@ paragraphs all run the same length. The grounding gate still runs last either wa
 restyled sentence that introduces an unsupported fact is still rejected.
 
 #### What "Strip AI writing patterns from the résumé bullets" catches
-Settings → Resume. This is the sweep, the last of the bullet passes: on by default, and it
-**costs one model call per résumé entry on every tailor run** (a second call for an entry
-whose rewrite came back too long), or fewer with the scan described next. Turn it off to stop
-paying for it; the free per-bullet style gate keeps running either way.
+Settings → Resume. This is the sweep, the last of the bullet passes, on by default. **An
+entry costs one model call only when something flags it** (a second call for an entry whose
+rewrite came back too long): the free checks below, Jev's read while Jev runs for the tailor,
+or the optional scan described next. A résumé none of them flags costs nothing. Turn it off
+to stop the pass; the free per-bullet style gate keeps running either way.
 
-**Scan the résumé first, then repair only what it flags** (Settings → Resume, on by default,
-shown while the sweep is on) puts one cheap read in front of those calls: a single model call
-reads every bullet for the same AI-writing patterns and names the ones it finds, and only an
-entry with a flagged bullet, or one the free checks flag, gets its repair call. A clean résumé
-then costs that one call. The scan is skipped while Jev reads the bullets (the sweep gate
-below does the same job), and if it fails, every entry is swept as if it were off.
-`RESUME_TAILOR_SWEEP_SCAN=0` turns it off from `.env`.
+**Scan the résumé first, then repair only what it flags** (Settings → Resume, shown while
+the sweep is on) is an opt-in quality check, **off by default**. Turned on, one model call
+reads every bullet for the patterns you ban outright (contrast framing, stacked adjectives,
+filler, hype) and the worst AI-writing tells, and each entry it flags gets a repair call too. On
+ten real résumés it flagged about a quarter of the bullets and caught real contrast framing,
+but most of the rewrites it bought were small word swaps, so it stays off unless you want
+that extra pass. It is skipped while Jev reads the bullets (the sweep gate below does the
+same job), and if it fails, only the free checks decide. `RESUME_TAILOR_SWEEP_SCAN=1` turns
+it on from `.env`.
 
 The always-on style gate reads one bullet at a time, so the tells it cannot see are the ones
 that live across a whole entry:

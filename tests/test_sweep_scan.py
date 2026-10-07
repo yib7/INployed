@@ -48,9 +48,10 @@ SCAN_ENV = "RESUME_TAILOR_SWEEP_SCAN"
 
 @pytest.fixture(autouse=True)
 def _scan_on(engine, monkeypatch):
-    """`engine` pins the scan off for the sweep's own tests; this file turns it back
-    on by clearing the env after `engine` has run, so the default (on) decides."""
-    monkeypatch.delenv(SCAN_ENV, raising=False)
+    """`engine` pins the scan off for the sweep's own tests, and it is off by default
+    too; this file turns it on after `engine` has run. The toggle tests below clear
+    the env themselves to read the default."""
+    monkeypatch.setenv(SCAN_ENV, "1")
     jev_assist.reset_usage()
     yield
     jev_assist.reset_usage()
@@ -103,50 +104,62 @@ def _sweep(monkeypatch, bullets, sel=None, scan=None, first=None, **kw):
 
 
 # ── the toggle ───────────────────────────────────────────────────────────────
-def test_the_scan_is_on_by_default(engine):
+def test_the_scan_is_off_by_default(engine, monkeypatch):
+    monkeypatch.delenv(SCAN_ENV, raising=False)
+    assert config.sweep_scan_enabled() is False
+
+
+@pytest.mark.parametrize("value", ["1", "true", "yes", "on"])
+def test_the_env_turns_the_scan_on(engine, monkeypatch, value):
+    monkeypatch.setenv(SCAN_ENV, value)
     assert config.sweep_scan_enabled() is True
 
 
 @pytest.mark.parametrize("value", ["0", "false", "no", "off"])
 def test_the_env_turns_the_scan_off(engine, monkeypatch, value):
+    monkeypatch.setattr(config, "_config_json", lambda: {"resume_sweep_scan": True})
     monkeypatch.setenv(SCAN_ENV, value)
     assert config.sweep_scan_enabled() is False
 
 
-def test_config_json_turns_the_scan_off(engine, monkeypatch):
-    monkeypatch.setattr(config, "_config_json", lambda: {"resume_sweep_scan": False})
-    assert config.sweep_scan_enabled() is False
+def test_config_json_turns_the_scan_on(engine, monkeypatch):
+    monkeypatch.delenv(SCAN_ENV, raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {"resume_sweep_scan": True})
+    assert config.sweep_scan_enabled() is True
 
 
 def test_the_env_beats_config_json(engine, monkeypatch):
-    monkeypatch.setattr(config, "_config_json", lambda: {"resume_sweep_scan": False})
-    monkeypatch.setenv(SCAN_ENV, "1")
-    assert config.sweep_scan_enabled() is True
+    monkeypatch.setattr(config, "_config_json", lambda: {"resume_sweep_scan": True})
+    monkeypatch.setenv(SCAN_ENV, "0")
+    assert config.sweep_scan_enabled() is False
 
 
 def test_a_blank_env_falls_through_to_config_json(engine, monkeypatch):
     monkeypatch.setenv(SCAN_ENV, "  ")
-    monkeypatch.setattr(config, "_config_json", lambda: {"resume_sweep_scan": False})
-    assert config.sweep_scan_enabled() is False
-
-
-def test_a_stray_string_in_config_json_reads_as_on(engine, monkeypatch):
-    """The spelling every ON-by-default toggle in config.py uses."""
-    monkeypatch.setattr(config, "_config_json", lambda: {"resume_sweep_scan": "false"})
+    monkeypatch.setattr(config, "_config_json", lambda: {"resume_sweep_scan": True})
     assert config.sweep_scan_enabled() is True
 
 
-def test_the_settings_schema_exposes_the_toggle_defaulting_on():
+def test_a_stray_string_in_config_json_reads_as_off(engine, monkeypatch):
+    """The spelling every OFF-by-default toggle in config.py uses: only a real
+    true starts the paid call."""
+    monkeypatch.delenv(SCAN_ENV, raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {"resume_sweep_scan": "true"})
+    assert config.sweep_scan_enabled() is False
+
+
+def test_the_settings_schema_exposes_the_toggle_defaulting_off():
     import settings  # noqa: PLC0415 - imported here so the sys.path insert applies
 
     field = next(f for f in settings.SETTINGS_SCHEMA if f.key == "resume_sweep_scan")
     assert (field.type, field.default, field.section, field.target) == (
-        "bool", True, "Resume", "config")
+        "bool", False, "Resume", "config")
+    assert "opt-in" in field.help
 
 
 def test_the_env_example_documents_the_toggle():
     text = (REPO / ".env.example").read_text(encoding="utf-8")
-    assert any(ln.startswith(f"# {SCAN_ENV}=1") for ln in text.splitlines())
+    assert any(ln.startswith(f"# {SCAN_ENV}=0") for ln in text.splitlines())
 
 
 # ── the gate ────────────────────────────────────────────────────────────────
@@ -240,7 +253,7 @@ def test_a_detector_hit_forces_the_call_despite_a_clean_scan(engine, monkeypatch
     off, byte for byte."""
     monkeypatch.setenv(SCAN_ENV, "0")
     off, _r = _sweep(monkeypatch, dict(bullets), first=_answer())
-    monkeypatch.delenv(SCAN_ENV)
+    monkeypatch.setenv(SCAN_ENV, "1")
     rec, result = _sweep(monkeypatch, dict(bullets), scan=_CLEAN_SCAN, first=_answer())
     assert rec.kinds == ["scan", "sweep"]
     sent = {b["gkey"]: b for b in rec.payload(1)["bullets"]}
@@ -368,7 +381,7 @@ def test_a_failed_scan_leaves_the_detectors_to_decide(engine, detector_gate, mon
     bullets["a1"] = item_sweep._FORMULAIC
     monkeypatch.setenv(SCAN_ENV, "0")
     off, _r = _sweep(monkeypatch, dict(bullets), sel=sel, first=_answer())
-    monkeypatch.delenv(SCAN_ENV)
+    monkeypatch.setenv(SCAN_ENV, "1")
     rec, result = _sweep(monkeypatch, dict(bullets), sel=sel, scan=scan, first=_answer())
     assert off.kinds == ["sweep"]
     assert rec.kinds == ["scan", "sweep"]
@@ -424,6 +437,19 @@ def test_with_the_toggle_off_a_failed_jev_read_leaves_the_detectors(engine, dete
     assert result.skipped == (ITEM,)
 
 
+def test_by_default_a_clean_resume_makes_no_call_at_all(engine, detector_gate,
+                                                       monkeypatch):
+    """The shipped default: no scan, and with nothing for a detector to name the
+    sweep costs nothing."""
+    monkeypatch.delenv(SCAN_ENV, raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    rec, result = _sweep(monkeypatch, dict(CLEAN), scan=None)
+    assert rec.calls == []
+    assert (result.calls, result.items) == (0, 0)
+    assert result.gate == sweep.GATE_DETECTORS
+    assert result.skipped == (ITEM,)
+
+
 # ── the prompt ──────────────────────────────────────────────────────────────
 def test_the_scan_prompt_carries_the_p0_and_p1_rules_and_names_every_tell():
     system = sweep._SCAN_SYSTEM
@@ -460,10 +486,22 @@ def test_the_scan_never_asks_for_a_flag_when_unsure():
     ("filler", "other: filler"),
     ("other:", ""),
     ("", ""),
+    ("other: hedging", "hedging"),
+    ("FORMULAIC OPENINGS", "formulaic opening"),
+    ("Real and actual inflation", "real or actual inflation"),
 ], ids=["case", "spaces", "other", "other-case", "jev-only-name", "invented",
-        "other-blank", "blank"])
+        "other-blank", "blank", "other-of-a-name", "heading", "heading-case"])
 def test_a_tell_is_a_fixed_name_or_an_other(tell, name):
     assert sweep._scan_tell_name(tell) == name
+
+
+def test_every_rule_name_is_paired_with_its_own_rule_heading():
+    """The names follow the rules' order, so each heading reads as its own name: the
+    pairs share their first word."""
+    pairs = list(sweep._SCAN_RULE_HEADINGS.items())
+    assert [name for _h, name in pairs] == list(sweep._SCAN_RULE_TELLS)
+    for heading, name in pairs:
+        assert heading.split()[0].rstrip("-") == name.split()[0].rstrip("-"), (heading, name)
 
 
 def test_an_invented_label_still_buys_the_call_and_reads_as_other(engine, monkeypatch):

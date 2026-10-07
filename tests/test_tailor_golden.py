@@ -560,12 +560,11 @@ _GOLDEN_STAGES = [
     "reverb",
     "fill_underfull",
     "enforce_style",
-    # One résumé scan over every non-verbatim ITEM (Globex Analytics, Trailhead, Ledgerly,
-    # Robotics Club; Side Gig is verbatim, so it is not an item here at all). The stub's
-    # scan reads them all as clean and no detector fires on any of them, so no item makes
-    # its sweep call. tests/test_sweep_layout_invariant.py still drives the sweep call
-    # over every item of this résumé, with the scan off.
-    "aiwriting_scan",
+    # No AI-writing sweep call: the résumé scan is off by default, and no detector fires
+    # on any item (Globex Analytics, Trailhead, Ledgerly, Robotics Club; Side Gig is
+    # verbatim, so it is not an item here at all), so the sweep makes none.
+    # tests/test_sweep_layout_invariant.py still drives the sweep call over every item of
+    # this résumé, and tests/test_tailor_jev.py records the scan's prompt with it on.
 ]
 
 _GOLDEN_BULLETS = {

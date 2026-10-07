@@ -633,11 +633,12 @@ SETTINGS_SCHEMA: list[Field] = [
                "résumé scan finds something in it. Turn it off to skip the pass; the "
                "per-bullet style gate always runs."),
     Field("resume_sweep_scan", "Scan the résumé first, then repair only what it flags",
-          "bool", True, "Resume", "config", show_if=("resume_aiwriting_sweep", ("True",)),
-          help="Before the résumé sweep, one model call reads every bullet for AI "
-               "writing patterns, and only an entry it flags (or one the built-in checks "
-               "flag) gets its repair call. Skipped while Jev reads the bullets. Off, "
-               "only an entry the built-in checks flag gets a call."),
+          "bool", False, "Resume", "config", show_if=("resume_aiwriting_sweep", ("True",)),
+          help="An opt-in quality check, off by default. Before the résumé sweep, one "
+               "model call reads every bullet for AI writing patterns, and each entry "
+               "it flags gets a repair call too. It flags about a quarter of the "
+               "bullets, often for small word swaps. Skipped while Jev reads the "
+               "bullets. Off, only an entry the built-in checks flag gets a call."),
     # The tailor's three Jev options, each off by default
     # and on screen only while Jev runs for the tailor: they gate on jev_tailor,
     # which gates on jev_enabled. Read through resume_tailor/config.py's

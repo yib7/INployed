@@ -370,13 +370,19 @@ def sweep_scan_enabled() -> bool:
     bullets or a detector forces it (sweep.py, "the résumé scan"). With Jev reading the
     bullets for the tailor the scan never runs, since Jev's read already gates the
     calls; it stands in when Jev is off or its read fails. Off, or when the scan fails,
-    only a detector finding sends an entry. Defaults ON. Precedence:
-    RESUME_TAILOR_SWEEP_SCAN env > config.json 'resume_sweep_scan' > True."""
+    only a detector finding sends an entry.
+
+    Defaults OFF, an opt-in quality check. Measured on ten real tailored résumés, it
+    flagged 24% of the bullets (36 of 150, three bullets in nearly every résumé), and
+    most of the rewrites it bought were word swaps; the detectors alone made no call
+    on the same résumés. Precedence:
+    RESUME_TAILOR_SWEEP_SCAN env > config.json 'resume_sweep_scan' > False."""
     env = os.getenv("RESUME_TAILOR_SWEEP_SCAN")
     if env is not None and str(env).strip():
         return str(env).strip().lower() not in ("0", "false", "no", "off")
-    # `is not False`, the spelling every ON-by-default toggle in this module uses.
-    return _config_json().get("resume_sweep_scan", True) is not False
+    # `is True`, the spelling of the OFF-by-default toggles: a stray string in
+    # config.json reads as off, so it never starts a paid call.
+    return _config_json().get("resume_sweep_scan", False) is True
 
 
 def sweep_p2_enabled() -> bool:

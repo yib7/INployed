@@ -971,10 +971,10 @@ def _report_sweep(ctx: PassCtx, result: sweep.SweepResult, *, stage: str) -> Non
              f"[{stage}] swept {result.items} item(s) in {result.calls} call(s){scanned} "
              f"and rewrote {len(result.changed)} bullet(s){reask}")
     # The sweep gate: Jev's read (`jev_assist.sweep_flags`) with Jev on, the résumé
-    # scan with Jev off or failed. Notes: a skipped call is the gate doing its job, a
-    # flag only says why a call was made, and a failed scan sent every item, which is
-    # how the sweep ran before it had a gate. Each line names the read that decided,
-    # so a scan's verdict is never credited to Jev.
+    # scan with Jev off or failed, and the detectors alone with no read. Notes: a
+    # skipped call is the gate doing its job, and a flag only says why a call was
+    # made. Each line names what decided, so a scan's verdict is never credited to
+    # Jev, and a skip with no read is never credited to a read.
     if result.scan == sweep.SCAN_RAN:
         rep.note(KIND_AIWRITING,
                  f"[{stage}] the résumé scan read "
@@ -982,11 +982,19 @@ def _report_sweep(ctx: PassCtx, result: sweep.SweepResult, *, stage: str) -> Non
                  f"{result.items} to repair")
     elif result.scan == sweep.SCAN_FAILED:
         rep.note(KIND_AIWRITING,
-                 f"[{stage}] the résumé scan failed, so every item was swept")
+                 f"[{stage}] the résumé scan failed, so the detectors alone chose "
+                 f"which items to repair")
     by_scan = result.scan == sweep.SCAN_RAN
     reader = "the résumé scan" if by_scan else "Jev"
     gate = "the résumé scan" if by_scan else "Jev's sweep gate"
-    if result.skipped:
+    if result.skipped and result.gate == sweep.GATE_DETECTORS:
+        # No read ran, so a skip means no detector found anything in the item, and the
+        # repair call would have handed its bullets back unchanged.
+        rep.note(KIND_AIWRITING,
+                 f"[{stage}] no detector found anything to repair in "
+                 f"{len(result.skipped)} item(s), so they made no call (with no read, "
+                 f"a call returns such bullets unchanged): " + ", ".join(result.skipped))
+    elif result.skipped:
         rep.note(KIND_AIWRITING,
                  f"[{stage}] {gate} skipped the call for "
                  f"{len(result.skipped)} item(s) with no tell and no detector finding: "
@@ -1022,7 +1030,7 @@ def _report_sweep(ctx: PassCtx, result: sweep.SweepResult, *, stage: str) -> Non
 
 def _pass_aiwriting_sweep(ctx: PassCtx) -> None:
     """Item-level AI-writing sweep: one model call per résumé entry that a read or a
-    detector flags (every entry when no read ran), reading the entry and all of its
+    detector flags (only a detector finding when no read ran), reading the entry and all of its
     bullets together so the tells that only exist ACROSS an item can be
     seen at all. `compose.enforce_style` reads one bullet at a time and is structurally
     blind to those. See `sweep.py` for the five acceptance conditions.
@@ -1047,7 +1055,8 @@ def _pass_aiwriting_sweep(ctx: PassCtx) -> None:
     only for a tell Jev reads or a detector finding (`jev_assist.sweep_flags`, the
     judge gate in `sweep.py`). The gate's usage line is recorded whichever way the
     pass ends. With Jev off, or when its read fails, one résumé scan call reads every
-    bullet and gates the calls the same way (`config.sweep_scan_enabled()`).
+    bullet and gates the calls the same way (`config.sweep_scan_enabled()`). With the
+    scan off or failed too, an item makes its call only for a detector finding.
     """
     ctx.log("sweeping each résumé item for AI-writing tells…")
     try:
@@ -1072,7 +1081,8 @@ def _pass_aiwriting_sweep(ctx: PassCtx) -> None:
         ctx.log(f"AI-writing sweep: the résumé scan ran and sent {result.items} of "
                 f"{result.items + len(result.skipped)} item(s) to repair.")
     elif result.scan == sweep.SCAN_FAILED:
-        ctx.log("AI-writing sweep: the résumé scan failed, so every item was swept.")
+        ctx.log("AI-writing sweep: the résumé scan failed, so the detectors alone "
+                "chose which items to repair.")
     if result.changed:
         ctx.log(f"AI-writing sweep: rewrote {len(result.changed)} bullet(s).")
     _report_sweep(ctx, result, stage=AIWRITING_SWEEP_STAGE)

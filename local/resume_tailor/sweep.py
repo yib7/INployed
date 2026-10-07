@@ -15,26 +15,27 @@ a second, differently-shaped one to find it.
 
 ── what runs, and when ──────────────────────────────────────────────────────
 
-**Every item is read; an item is repaired when the read or a detector finds
-something.** Before the first repair call, one read of every bullet the sweep may
-rewrite decides which items need one. An item makes its call only when one of its
-bullets carries a tell from that read, or when a detector finding forces it: an
-``itemcheck`` finding of a repaired tier, or an ``aiwriting`` phrasing hit. The
-tells ride in the payload (each bullet's ``judge_flags``, which
-``_SWEEP_FLAG_RULE`` tells the model to repair), and so do the findings, because
-they make the repair TARGETED. A free rewrite is how a grounded bullet drifts off
-its atoms, and every guard below exists to make that drift impossible to commit.
-An item the read finds clean and no detector flags has nothing for the call to
-repair: the SCOPE rule returns such bullets exactly as they arrived, so skipping
-the call changes no text. A P2 finding forces nothing while P2 is only reported,
-because it never reaches the model.
+**An item makes its repair call only when something gives the call work.** Three
+things can: an ``itemcheck`` finding of a repaired tier, an ``aiwriting`` phrasing
+hit, and a tell named by a read of the bullets (Jev's, or the résumé scan's). The
+findings and the tells ride in the payload (a tell as the bullet's ``judge_flags``,
+which ``_SWEEP_FLAG_RULE`` tells the model to repair) because they make the repair
+TARGETED. A free rewrite is how a grounded bullet drifts off its atoms, and every
+guard below exists to make that drift impossible to commit. The SCOPE rule in the
+repair prompt hands back unchanged every bullet with no finding, no phrasing hit and
+no tell, so a call for an item whose bullets carry none of the three can change no
+text, and the gate (``_gate_skips``) skips it. A P2 finding forces nothing while P2
+is only reported, because it never reaches the model.
 
-The read is always a judgment-level one. A gate on the detectors alone was
-considered and rejected, and it stays rejected: the detectors are deterministic
-and lexical, so they find what they were written to find, and gating the call on
-a deterministic hit would only ever send the model the cases the code had already
-named. Both reads below look for the judgment-level tells the repair call exists
-to catch, so gating on them still sends the model what the detectors cannot see.
+**With no read, the detectors decide.** Jev off or its read failed, and the scan
+off or failed: every bullet reads as clean (``_unread_flags``), so an item is sent
+only for a finding or a phrasing hit. The sweep used to send every item here, on
+the argument that the detectors find only what they were written to find. A live
+measurement on ten real tailored résumés settled it: with no read the sweep made 80
+repair calls and committed 0 rewrites, because those résumés carried no repaired
+finding and no phrasing hit, and the SCOPE rule returns such an item unchanged by
+construction. The judgment-level tells are what the reads below are for; a call
+with nothing named is not a substitute for one.
 
 **With Jev on, Jev reads.** ``jev_assist.sweep_flags`` reads every bullet for the
 tells of the user's banned patterns (contrast framing, stacked adjectives, filler
@@ -61,10 +62,8 @@ flag costs one repair call whose rewrite the five checks below still judge, and 
 missed tell ships. ``config.sweep_scan_enabled()``
 (``RESUME_TAILOR_SWEEP_SCAN``) turns it off.
 
-**With no read, every item is swept.** The scan off, or a scan that raises or
-answers in a shape that does not parse: every item makes its call with the payload
-and prompts it had before either read existed. The scan's call is counted in
-``SweepResult.calls``, so a run's call count is what it paid for.
+The scan's call is counted in ``SweepResult.calls``, so a run's call count is what
+it paid for.
 
 **P0 and P1 are repaired. P2 is reported by default.** Only the repaired tiers
 reach the prompt, because a finding the model can see is a finding the model will
@@ -160,6 +159,12 @@ REASON_FACTS = "facts"
 SCAN_RAN = "ran"
 SCAN_FAILED = "failed"
 
+# Which read decided the items' calls, in `SweepResult.gate` ("" when no item had a
+# bullet to read): Jev's, the résumé scan's, or none, which leaves the detectors.
+GATE_JEV = "jev"
+GATE_SCAN = "scan"
+GATE_DETECTORS = "detectors"
+
 # A tell the scan names is a short label that rides into a repair payload and the
 # run report, so a runaway answer is cut to this many characters, and a bullet
 # keeps at most this many tells.
@@ -219,11 +224,13 @@ class SweepResult(NamedTuple):
     clears a P2 tell on its way past.
 
     ``skipped`` and ``judge_flags`` come from the gate: the items whose call it
-    skipped, and the bullets whose tells sent theirs. Both stay empty when no read
-    ran. ``scan`` says which read that was: ``SCAN_RAN`` for the résumé scan,
-    ``SCAN_FAILED`` for a scan whose failure sent every item, "" for Jev's read or
-    none. ``items`` counts only the items that made a call; ``calls`` counts every
-    model call the sweep made, the scan's included.
+    skipped, and the bullets whose tells sent theirs. ``gate`` says what decided:
+    ``GATE_JEV``, ``GATE_SCAN``, or ``GATE_DETECTORS`` when no read ran and only a
+    detector finding could send an item (``judge_flags`` then stays empty). ``scan``
+    says what became of the résumé scan: ``SCAN_RAN``, ``SCAN_FAILED`` for a scan
+    whose failure left the detectors to decide, "" when it did not run. ``items``
+    counts only the items that made a call; ``calls`` counts every model call the
+    sweep made, the scan's included.
     """
     changed: Tuple[str, ...]
     rejected: Tuple[Rejection, ...]
@@ -236,6 +243,7 @@ class SweepResult(NamedTuple):
     skipped: Tuple[str, ...] = ()
     judge_flags: Tuple[JudgeFlag, ...] = ()
     scan: str = ""
+    gate: str = ""
 
 
 # ── the prompts ──────────────────────────────────────────────────────────────
@@ -614,7 +622,7 @@ def _parse_scan(out: Any, sent: Sequence[str]) -> Optional[Dict[str, Tuple[str, 
     flag, or None when the answer is not the {"flags": [...]} it was asked for.
 
     It fails closed. One malformed flag makes the whole answer None (the scan failed,
-    and every item is swept): a flag that is not an object, one naming a bullet that
+    and the detectors decide): a flag that is not an object, one naming a bullet that
     was not sent, or one whose "tells" is missing or not a list. Dropping such a flag
     and keeping the rest would read the bullet the model meant to flag as clean and
     skip its item's call, while the report said the scan ran. The one quiet drop is a
@@ -653,7 +661,7 @@ def _scan_flags(sel: Dict[str, Any], bullets: Dict[str, str]
     """The résumé scan: (flags, `SCAN_RAN`) from one call over every bullet the
     sweep may rewrite, (None, `SCAN_FAILED`) when that call raises or its answer does
     not parse, and (None, "") with nothing to read, which makes no call. With None
-    every item is swept, as with no read at all."""
+    the detectors alone decide, as with no read at all."""
     entries = [e for e in _gate_entries(sel, bullets) if e["bullets"]]
     if not entries:
         return None, ""
@@ -661,22 +669,31 @@ def _scan_flags(sel: Dict[str, Any], bullets: Dict[str, str]
     try:
         flags = _parse_scan(_ask_scan({"entries": entries}), sent)
     except Exception as exc:  # noqa: BLE001 - the scan is advisory, never fatal
-        log.warning("sweep: the résumé scan failed, sweeping every item: %s", exc)
+        log.warning("sweep: the résumé scan failed, so the detectors alone decide: %s",
+                    exc)
         return None, SCAN_FAILED
     if flags is None:
-        log.warning("sweep: the résumé scan answered in the wrong shape, sweeping "
-                    "every item")
+        log.warning("sweep: the résumé scan answered in the wrong shape, so the "
+                    "detectors alone decide")
         return None, SCAN_FAILED
     return flags, SCAN_RAN
 
 
+def _unread_flags(specs: Sequence[_Spec]) -> Dict[str, Tuple[str, ...]]:
+    """The gate's flags for an item when no read ran (Jev off or failed, and the
+    résumé scan off or failed): every bullet reads as clean, so only a detector can
+    send the item. The SCOPE rule would hand such an item back unchanged, so its
+    call would buy nothing ("what runs, and when" above)."""
+    return {s.gkey: () for s in specs}
+
+
 def _gate_skips(specs: Sequence[_Spec], repaired_findings: Sequence[itemcheck.Finding],
                 flags: Dict[str, Tuple[str, ...]]) -> bool:
-    """True when the item's call has nothing to repair: the read (Jev's or the
-    résumé scan's) covered every bullet and flagged none, and no detector forces the
-    call. A finding of a repaired tier or a
-    phrasing hit forces it, since both reach the model; a bullet missing from
-    `flags` keeps the call too."""
+    """True when the item's call has nothing to repair: the read (Jev's, the résumé
+    scan's, or `_unread_flags` with no read) covered every bullet and flagged none,
+    and no detector forces the call. A finding of a repaired tier or a phrasing hit
+    forces it, since both reach the model; a bullet missing from `flags` keeps the
+    call too."""
     if repaired_findings or any(s.phrasing for s in specs):
         return False
     return all(s.gkey in flags and not flags[s.gkey] for s in specs)
@@ -694,7 +711,8 @@ def sweep_items(jd: str, job_title: str, sel: Dict[str, Any],
     `judge` is the run's Jev judge, None with Jev off. With one, Jev reads every
     bullet first; with none, or when that read fails, the résumé scan does
     (`config.sweep_scan_enabled()`). After either read an item makes its call only
-    for a tell or a detector finding ("what runs, and when" above).
+    for a tell or a detector finding, and with no read only for a detector finding
+    ("what runs, and when" above).
     """
     targets = compose.bullet_line_targets(sel)
     gm = compose.group_map(sel)
@@ -710,11 +728,14 @@ def sweep_items(jd: str, job_title: str, sel: Dict[str, Any],
     repaired = ((itemcheck.P1, itemcheck.P2) if config.sweep_p2_enabled()
                 else (itemcheck.P1,))
     flags = _judge_flags(sel, bullets, judge)
+    gate = GATE_JEV if flags is not None else ""
     scan = ""
     if flags is None and config.sweep_scan_enabled():
         flags, scan = _scan_flags(sel, bullets)
         if scan:
             calls += 1
+        if flags is not None:
+            gate = GATE_SCAN
 
     for item, gkeys in compose._blocks_in_order(sel):
         pre = itemcheck.item_findings(item, [(gk, bullets[gk]) for gk in gkeys
@@ -727,11 +748,15 @@ def sweep_items(jd: str, job_title: str, sel: Dict[str, Any],
         specs = _specs(gkeys, bullets, targets, gm, p1)
         if not specs:
             continue
-        if flags is not None and _gate_skips(specs, p1, flags):
+        read = flags
+        if read is None:
+            read = _unread_flags(specs)
+            gate = GATE_DETECTORS
+        if _gate_skips(specs, p1, read):
             skipped.append(item)
             unfixed.extend(f for f in pre if f.tier not in repaired)
             continue
-        marks = {s.gkey: flags[s.gkey] for s in specs if flags and flags.get(s.gkey)}
+        marks = {s.gkey: read[s.gkey] for s in specs if read.get(s.gkey)}
         told.extend(JudgeFlag(gk, item, names) for gk, names in marks.items())
         items += 1
         by_gkey = {s.gkey: s for s in specs}
@@ -793,7 +818,8 @@ def sweep_items(jd: str, job_title: str, sel: Dict[str, Any],
                        reasked=tuple(reasked), unfixed_p2=tuple(unfixed),
                        unfixed_phrasing=tuple(lingering),
                        calls=calls, items=items, failures=tuple(failures),
-                       skipped=tuple(skipped), judge_flags=tuple(told), scan=scan)
+                       skipped=tuple(skipped), judge_flags=tuple(told), scan=scan,
+                       gate=gate)
 
 
 def _commit(spec: _Spec, text: Optional[str], bullets: Dict[str, str], item: str,

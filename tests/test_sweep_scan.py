@@ -6,8 +6,8 @@ bullets carry an AI-writing tell, and which tells. An entry then makes its repai
 call only when the scan flagged one of its bullets or a detector forces it (a
 repaired-tier `itemcheck` finding or an `aiwriting` phrasing hit), the same gate
 Jev's read drives. The scan's tells ride in the payload as `judge_flags` with the
-flag rule in the system prompt. A scan that fails sends every entry to the sweep
-exactly as the sweep ran before the scan existed, and the toggle off does the same.
+flag rule in the system prompt. A scan that fails leaves the detectors to decide,
+exactly as with the toggle off: only a detector finding sends an entry.
 
 Nothing here reaches a model or Jev: `sweep.call` is a recorder that answers the
 scan and the repair call from fixtures, and every judge is a fake.
@@ -38,6 +38,7 @@ _answer = item_sweep._answer
 _install = item_sweep._install
 _sel = item_sweep._sel
 _two_items = sweep_gate._two_items
+detector_gate = item_sweep.detector_gate
 Reads = sweep_gate.Reads
 Failing = sweep_gate.Failing
 _V1 = sweep_gate._V1
@@ -282,19 +283,17 @@ def test_a_flag_with_no_usable_tell_still_buys_the_repair(engine, monkeypatch, t
     {"flags": [{"gkey": "v1", "tells": ["hype words"]}, "a2"]},
 ], ids=["wrong-case-gkey", "unknown-gkey", "tells-null", "tells-object", "tells-missing",
         "bare-gkey"])
-def test_one_bad_flag_fails_the_whole_scan(engine, monkeypatch, scan):
+def test_one_bad_flag_fails_the_whole_scan(engine, detector_gate, monkeypatch, scan):
     """A good flag in one entry does not carry a bad flag in another: dropping the bad
-    one would read the bullet it meant as clean and skip that entry. The scan fails
-    closed and every entry is swept exactly as with the scan off."""
+    one would read the bullet it meant as clean while the report said the scan ran.
+    The scan fails closed and the detectors decide, exactly as with the scan off: the
+    flag it did name buys no call."""
     sel, bullets = _two_items()
-    monkeypatch.setenv(SCAN_ENV, "0")
-    off, _r = _sweep(monkeypatch, dict(bullets), sel=sel, first=_answer())
-    monkeypatch.delenv(SCAN_ENV)
     rec, result = _sweep(monkeypatch, dict(bullets), sel=sel, scan=scan, first=_answer())
-    assert rec.kinds == ["scan", "sweep", "sweep"]
-    assert rec.calls[1:] == off.calls
+    assert rec.kinds == ["scan"]
     assert result.scan == sweep.SCAN_FAILED
-    assert result.skipped == () and result.judge_flags == ()
+    assert result.gate == sweep.GATE_DETECTORS
+    assert result.skipped == (ITEM, "Trailhead") and result.judge_flags == ()
 
 
 def test_a_verbatim_gkey_in_the_answer_is_dropped_quietly():
@@ -361,17 +360,23 @@ def test_a_malformed_answer_parses_to_none(answer):
     {"flags": "hype"}, {"flags": ["a1"]},
 ], ids=["raises", "non-dict", "list", "no-flags-key", "flags-not-a-list",
         "no-usable-flag"])
-def test_a_failed_scan_sweeps_every_entry_as_before(engine, monkeypatch, scan):
+def test_a_failed_scan_leaves_the_detectors_to_decide(engine, detector_gate, monkeypatch,
+                                                      scan):
+    """A detector hit in one entry buys that entry the call it buys with the scan off,
+    byte for byte; the clean entry makes none."""
     sel, bullets = _two_items()
+    bullets["a1"] = item_sweep._FORMULAIC
     monkeypatch.setenv(SCAN_ENV, "0")
     off, _r = _sweep(monkeypatch, dict(bullets), sel=sel, first=_answer())
     monkeypatch.delenv(SCAN_ENV)
     rec, result = _sweep(monkeypatch, dict(bullets), sel=sel, scan=scan, first=_answer())
-    assert rec.kinds == ["scan", "sweep", "sweep"]
+    assert off.kinds == ["sweep"]
+    assert rec.kinds == ["scan", "sweep"]
     assert rec.calls[1:] == off.calls
     assert result.scan == sweep.SCAN_FAILED
-    assert result.skipped == () and result.judge_flags == ()
-    assert (result.calls, result.items) == (3, 2)
+    assert result.gate == sweep.GATE_DETECTORS
+    assert result.skipped == ("Trailhead",) and result.judge_flags == ()
+    assert (result.calls, result.items) == (2, 1)
 
 
 # ── with Jev ─────────────────────────────────────────────────────────────────
@@ -392,27 +397,31 @@ def test_a_failed_jev_read_falls_back_to_the_scan(engine, monkeypatch):
 
 
 # ── the toggle off ──────────────────────────────────────────────────────────
-def test_with_the_toggle_off_there_is_no_scan_and_the_calls_are_the_old_ones(
-        engine, monkeypatch):
-    """The sweep as it ran before the scan: every entry, the plain system prompt, no
-    `judge_flags` key anywhere."""
+def test_with_the_toggle_off_there_is_no_scan_and_a_detector_call_is_the_plain_one(
+        engine, detector_gate, monkeypatch):
+    """No scan, and the entry a detector names is sent with the plain system prompt
+    and no `judge_flags` key; the clean entry makes no call."""
     monkeypatch.setenv(SCAN_ENV, "0")
     sel, bullets = _two_items()
+    bullets["a1"] = item_sweep._FORMULAIC
     rec, result = _sweep(monkeypatch, bullets, sel=sel, scan=None, first=_answer())
-    assert rec.kinds == ["sweep", "sweep"]
+    assert rec.kinds == ["sweep"]
     assert all(system == sweep._SWEEP_SYSTEM for _k, system, _u in rec.calls)
     assert all("judge_flags" not in user for _k, _s, user in rec.calls)
     assert all(sweep._SWEEP_FLAG_CLOSING not in user for _k, _s, user in rec.calls)
     assert result.scan == ""
-    assert (result.calls, result.items) == (2, 2)
+    assert result.skipped == ("Trailhead",)
+    assert (result.calls, result.items) == (1, 1)
 
 
-def test_with_the_toggle_off_a_failed_jev_read_sweeps_every_entry(engine, monkeypatch):
+def test_with_the_toggle_off_a_failed_jev_read_leaves_the_detectors(engine, detector_gate,
+                                                                    monkeypatch):
     monkeypatch.setenv(SCAN_ENV, "0")
-    rec, result = _sweep(monkeypatch, dict(CLEAN), scan=None, first=_answer(),
-                         judge=Failing())
-    assert rec.kinds == ["sweep"]
+    rec, result = _sweep(monkeypatch, dict(CLEAN), scan=None, judge=Failing())
+    assert rec.calls == []
     assert result.scan == ""
+    assert result.gate == sweep.GATE_DETECTORS
+    assert result.skipped == (ITEM,)
 
 
 # ── the prompt ──────────────────────────────────────────────────────────────
@@ -483,8 +492,21 @@ def test_the_report_credits_the_scan_and_never_jev():
 
 
 def test_a_failed_scan_is_reported_as_a_note():
-    lines = _report(_result(scan=sweep.SCAN_FAILED, calls=2, items=1))
-    assert any("the résumé scan failed, so every item was swept" in ln for ln in lines)
+    lines = _report(_result(scan=sweep.SCAN_FAILED, gate=sweep.GATE_DETECTORS, calls=2,
+                            items=1, skipped=("Trailhead",)))
+    text = "\n".join(lines)
+    assert ("the résumé scan failed, so the detectors alone chose which items to "
+            "repair") in text
+    assert ("no detector found anything to repair in 1 item(s), so they made no call "
+            "(with no read, a call returns such bullets unchanged): Trailhead") in text
+    assert "the résumé scan skipped" not in text
+
+
+def test_a_skip_with_no_read_is_credited_to_no_read():
+    text = "\n".join(_report(_result(gate=sweep.GATE_DETECTORS, calls=0, items=0,
+                                     skipped=(ITEM, "Trailhead"))))
+    assert "no detector found anything to repair in 2 item(s)" in text
+    assert "Jev" not in text and "résumé scan" not in text
 
 
 def test_the_jev_lines_are_unchanged_without_a_scan():

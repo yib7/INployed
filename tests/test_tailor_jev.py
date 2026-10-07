@@ -151,9 +151,9 @@ def _record_jev_off(monkeypatch, tmp_path):
                      {gk: list(tokens) for gk, tokens in _REGROUND_DROPPED.items()})
 
     # The golden run's scan reads every item as clean, so no sweep call was made. One
-    # direct sweep with the scan off, over the bullets the run shipped (the golden's,
-    # which are the sweep's input: an echoed sweep changes nothing), records the repair
-    # prompt for every item.
+    # direct sweep with the scan off and the detector gate held open, over the bullets
+    # the run shipped (the golden's, which are the sweep's input: an echoed sweep
+    # changes nothing), records the repair prompt for every item.
     sweeps: list = []
 
     def _sweep_call(system, user, tier, **kw):
@@ -162,8 +162,11 @@ def _record_jev_off(monkeypatch, tmp_path):
 
     monkeypatch.setattr(sweep, "call", _sweep_call)
     monkeypatch.setenv("RESUME_TAILOR_SWEEP_SCAN", "0")
+    unread = sweep._unread_flags
+    monkeypatch.setattr(sweep, "_unread_flags", lambda specs: {})
     sweep.sweep_items(golden._JD, golden._JOB["job_title"], captured["sel"],
                       dict(captured["bullets"]))
+    monkeypatch.setattr(sweep, "_unread_flags", unread)
     monkeypatch.delenv("RESUME_TAILOR_SWEEP_SCAN")
 
     fallback: dict = {}

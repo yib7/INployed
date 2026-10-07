@@ -86,10 +86,12 @@ class Recorder:
 @pytest.fixture()
 def engine(monkeypatch):
     """Every input the sweep and the pass read, pinned. No user data, no config.json.
-    The résumé scan is pinned off, so the item makes its call whatever it reads like
-    (tests/test_sweep_scan.py covers the scan's wiring)."""
+    The résumé scan is pinned off and the detector gate held open, so the item makes
+    its call whatever it reads like (tests/test_sweep_scan.py covers the scan's
+    wiring, tests/test_sweep_gate.py the gate with no read)."""
     monkeypatch.delenv("RESUME_TAILOR_AIWRITING_SWEEP", raising=False)
     monkeypatch.setenv("RESUME_TAILOR_SWEEP_SCAN", "0")
+    monkeypatch.setattr(sweep, "_unread_flags", lambda specs: {})
     monkeypatch.setattr(assets, "atoms_by_id", lambda: {k: dict(v)
                                                         for k, v in _ATOMS.items()})
     monkeypatch.setattr(config, "_config_json", lambda: {})
@@ -194,15 +196,14 @@ def test_env_beats_a_config_that_turned_it_off(engine, monkeypatch):
 
 def test_the_settings_schema_exposes_the_toggle_defaulting_on():
     """The unified config GUI is where a user turns a billed stage off, so the row has
-    to exist and its help has to name the cost. The default is ON by decision, over
-    cheaper gating, which is exactly why the price is spelled out on the checkbox."""
+    to exist and its help has to name the cost: a call per entry something flags."""
     import settings  # noqa: PLC0415 - imported here so the sys.path insert applies
 
     field = next(f for f in settings.SETTINGS_SCHEMA
                  if f.key == "resume_aiwriting_sweep")
     assert (field.type, field.default, field.section, field.target) == (
         "bool", True, "Resume", "config")
-    assert "ONE MODEL CALL PER RÉSUMÉ ENTRY ON EVERY TAILOR RUN" in field.help
+    assert "costs one model call only when" in field.help
 
 
 def test_the_env_example_documents_the_cost_too():
@@ -214,7 +215,7 @@ def test_the_env_example_documents_the_cost_too():
     line = next(ln for ln in text.splitlines()
                 if "RESUME_TAILOR_AIWRITING_SWEEP" in ln)
     assert line.startswith("# RESUME_TAILOR_AIWRITING_SWEEP=1")
-    assert "ONE MODEL CALL PER RESUME ENTRY ON EVERY TAILOR RUN" in text
+    assert "ONE MODEL CALL PER FLAGGED RESUME ENTRY" in text
 
 
 def test_a_blank_env_falls_through_to_config(engine, monkeypatch):

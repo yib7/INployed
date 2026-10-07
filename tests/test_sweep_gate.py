@@ -8,7 +8,7 @@ tier or an `aiwriting` phrasing hit. The tells ride in the payload as each bulle
 `judge_flags`, with a rule in the system prompt and a line in the closing that name
 them. With Jev off, or when its request fails, the résumé scan reads the bullets
 instead (`tests/test_sweep_scan.py`); with the scan off too, as `engine` pins it
-here, every item is swept with its Jev-free prompts.
+here, no read runs and only a detector finding sends an item (`detector_gate`).
 
 Nothing here reaches a model or Jev: `sweep.call` is the recorder from
 `test_item_sweep.py`, and every judge is a fake.
@@ -220,17 +220,73 @@ def test_a_bullet_jev_did_not_read_keeps_the_call(engine, monkeypatch):
     assert result.skipped == ()
 
 
-# ── without Jev ─────────────────────────────────────────────────────────────
+# ── without Jev, and the scan off: the detectors decide ─────────────────────
+detector_gate = item_sweep.detector_gate
+
+
 @pytest.mark.parametrize("judge", [None, Failing()], ids=["off", "failing"])
-def test_without_jev_every_item_is_swept_with_the_prompts_it_had(engine, monkeypatch, judge):
+def test_with_no_read_a_clean_resume_makes_no_call(engine, detector_gate, monkeypatch,
+                                                   judge):
+    """Sent anyway, these items would come back unchanged (the SCOPE rule), so the
+    gate skips them. The recorder raises on any call."""
     sel, bullets = _two_items()
-    before, _result = _sweep(monkeypatch, dict(bullets), sel=sel, first=_answer())
-    rec, result = _sweep(monkeypatch, dict(bullets), sel=sel, first=_answer(), judge=judge)
-    assert rec.kinds == ["sweep", "sweep"]
-    assert rec.calls == before.calls
-    assert all(system == sweep._SWEEP_SYSTEM for _k, system, _u in rec.calls)
-    assert result.skipped == () and result.judge_flags == ()
-    assert (result.calls, result.items) == (2, 2)
+    before = dict(bullets)
+    rec, result = _sweep(monkeypatch, bullets, sel=sel, judge=judge)
+    assert rec.calls == []
+    assert bullets == before
+    assert result.skipped == (ITEM, "Trailhead")
+    assert result.judge_flags == ()
+    assert (result.calls, result.items) == (0, 0)
+    assert (result.gate, result.scan) == (sweep.GATE_DETECTORS, "")
+
+
+@pytest.mark.parametrize("bad,why", [
+    pytest.param(item_sweep._BARE, "bare_noun_bullet", id="p1-finding"),
+    pytest.param(item_sweep._FORMULAIC, "formulaic opening", id="phrasing"),
+])
+def test_with_no_read_a_detector_hit_buys_exactly_its_items_call(engine, detector_gate,
+                                                                 monkeypatch, bad, why):
+    """Only the entry the detector named is sent, with the prompts the sweep sends
+    with the gate held open: no `judge_flags` key and no flag rule."""
+    sel, bullets = _two_items()
+    bullets["a1"] = bad
+    rec, result = _sweep(monkeypatch, bullets, sel=sel, first=_answer())
+    assert rec.kinds == ["sweep"]
+    assert rec.payload(0)["item"] == ITEM
+    sent = {b["gkey"]: b for b in rec.payload(0)["bullets"]}
+    assert why in sent["a1"]["findings"] + sent["a1"]["phrasing"]
+    _kind, system, user = rec.calls[0]
+    assert system == sweep._SWEEP_SYSTEM
+    assert "judge_flags" not in user
+    assert result.skipped == ("Trailhead",)
+    assert (result.calls, result.items) == (1, 1)
+
+    monkeypatch.setattr(sweep, "_unread_flags", item_sweep._send_every_item)
+    open_gate, _r = _sweep(monkeypatch, dict(bullets), sel=sel, first=_answer())
+    assert rec.calls[0] == open_gate.calls[0]
+
+
+def test_with_no_read_a_p2_finding_alone_buys_no_call_and_is_still_reported(
+        engine, detector_gate, monkeypatch):
+    rec, result = _sweep(monkeypatch, dict(_THREE))
+    assert rec.calls == []
+    assert result.skipped == (ITEM,)
+    assert [f.detector for f in result.unfixed_p2] == ["rule_of_three"]
+
+
+def test_with_no_read_and_p2_repaired_a_p2_finding_forces_the_call(engine, detector_gate,
+                                                                   monkeypatch):
+    monkeypatch.setattr(config, "sweep_p2_enabled", lambda: True)
+    rec, result = _sweep(monkeypatch, dict(_THREE), first=_answer())
+    assert rec.kinds == ["sweep"]
+    assert "rule_of_three" in {f["detector"] for f in rec.payload(0)["findings"]}
+    assert result.skipped == ()
+
+
+def test_with_jev_reading_the_gate_is_jevs(engine, detector_gate, monkeypatch):
+    _rec, result = _sweep(monkeypatch, dict(CLEAN), judge=Reads())
+    assert result.gate == sweep.GATE_JEV
+    assert result.skipped == (ITEM,)
 
 
 def test_a_failed_read_names_its_fallback(engine, monkeypatch):

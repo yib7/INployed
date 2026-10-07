@@ -127,13 +127,30 @@ def _answer(**texts):
     return {"bullets": [{"gkey": gk, "text": t} for gk, t in texts.items()]}
 
 
+_REAL_UNREAD_FLAGS = sweep._unread_flags
+
+
+def _send_every_item(specs):
+    return {}
+
+
+@pytest.fixture()
+def detector_gate(engine, monkeypatch):
+    """The real gate with no read: an item is sent only for a detector finding."""
+    monkeypatch.setattr(sweep, "_unread_flags", _REAL_UNREAD_FLAGS)
+
+
 @pytest.fixture()
 def engine(monkeypatch):
     """Every input the sweep reads, pinned. No user data, no config.json, no model.
 
-    The résumé scan is pinned off, so every item makes its call and these tests read
-    the repair call alone; tests/test_sweep_scan.py turns it back on."""
+    The résumé scan is pinned off and the detector gate is held open (`_unread_flags`
+    answers {}, and a bullet missing from the gate's flags keeps its call), so every
+    item makes its call and these tests read the repair call alone.
+    tests/test_sweep_scan.py turns the scan back on, and `detector_gate` below puts
+    the real gate back."""
     monkeypatch.setenv("RESUME_TAILOR_SWEEP_SCAN", "0")
+    monkeypatch.setattr(sweep, "_unread_flags", _send_every_item)
     monkeypatch.setattr(assets, "atoms_by_id", lambda: {k: dict(v)
                                                         for k, v in _ATOMS.items()})
     monkeypatch.setattr(config, "_config_json", lambda: {})
@@ -160,11 +177,11 @@ def test_no_detector_fires_on_the_clean_item(engine):
     assert itemcheck.item_findings(ITEM, list(CLEAN.items())) == []
 
 
-# ── with no read in front of it, every item is sent ──────────────────────────
-def test_a_clean_item_still_makes_its_call_and_commits_nothing(engine, monkeypatch):
-    """With no read to gate it (Jev off and the résumé scan off), a clean item is
-    still sent, because the detectors are deterministic and the judgment arm is what
-    they cannot see. tests/test_sweep_scan.py covers the scan that gates it."""
+# ── with the gate held open, every item is sent ──────────────────────────────
+def test_a_clean_item_sent_anyway_commits_nothing(engine, monkeypatch):
+    """The SCOPE rule's promise, which is why the real gate skips such an item: sent
+    with nothing flagged, it comes back unchanged. tests/test_sweep_gate.py covers
+    the gate with no read, and tests/test_sweep_scan.py the scan."""
     rec = _install(monkeypatch, Recorder(first=_answer(**CLEAN)))
     bullets = dict(CLEAN)
     result = sweep.sweep_items("", "Data Engineer", _sel(), bullets)

@@ -207,9 +207,11 @@ def _run_sweep(monkeypatch, sel, bullets, adversary):
 
     monkeypatch.setattr(rt_run, "_trim_to_caps", _recording_trim)
     monkeypatch.setattr(sweep, "call", adversary)
-    # The résumé scan off: it would skip an item it reads as clean, and the invariant
-    # is measured with every item in front of the adversary.
+    # The résumé scan off and the detector gate held open: either would skip an item
+    # it reads as clean, and the invariant is measured with every item in front of the
+    # adversary.
     monkeypatch.setenv("RESUME_TAILOR_SWEEP_SCAN", "0")
+    monkeypatch.setattr(sweep, "_unread_flags", lambda specs: {})
     ctx = rt_run.PassCtx(jd=golden._JD, job_title=golden._JOB["job_title"], sel=sel,
                          bullets=bullets, verbatim={}, reserved=frozenset(),
                          log=lambda _m: None, report=rt_run.RunLog())

@@ -347,13 +347,13 @@ def aiwriting_sweep_enabled() -> bool:
     when it fits the same per-bullet line budget the trim enforces, so the pass can never
     push the résumé onto a second page.
 
-    Defaults ON, on the user's explicit instruction. A gate on the deterministic detectors
-    alone was rejected: gating on a deterministic hit would only ever send the model the
-    cases the code had already named. The calls are gated on a judgment-level read:
-    Jev's, or the résumé scan's (sweep_scan_enabled below). With no read, THE
-    COST IS ONE MODEL CALL PER RÉSUMÉ ITEM ON EVERY TAILOR RUN (a second call for an item
-    whose rewrite came back too long); with one, it is the read plus a call per item it
-    flags. Turning this off stops all of it. Precedence:
+    Defaults ON, on the user's explicit instruction. An item makes its call only for a
+    repaired-tier detector finding, a phrasing hit, or a tell a read names (Jev's, or the
+    résumé scan's: sweep_scan_enabled below); with nothing named, the repair prompt's
+    SCOPE rule hands its bullets back unchanged, so that call is skipped. THE COST IS
+    ONE MODEL CALL PER FLAGGED RÉSUMÉ ITEM (a second call for an item whose rewrite came
+    back too long), plus the read when one runs. Turning this off stops all of it.
+    Precedence:
     RESUME_TAILOR_AIWRITING_SWEEP env > config.json 'resume_aiwriting_sweep' > True."""
     env = os.getenv("RESUME_TAILOR_AIWRITING_SWEEP")
     if env is not None and str(env).strip():
@@ -369,8 +369,8 @@ def sweep_scan_enabled() -> bool:
     résumé and sends an entry to its repair call only when the scan flags one of its
     bullets or a detector forces it (sweep.py, "the résumé scan"). With Jev reading the
     bullets for the tailor the scan never runs, since Jev's read already gates the
-    calls; it stands in when Jev is off or its read fails. Off sends every entry to
-    the sweep, one call each, as before the scan existed. Defaults ON. Precedence:
+    calls; it stands in when Jev is off or its read fails. Off, or when the scan fails,
+    only a detector finding sends an entry. Defaults ON. Precedence:
     RESUME_TAILOR_SWEEP_SCAN env > config.json 'resume_sweep_scan' > True."""
     env = os.getenv("RESUME_TAILOR_SWEEP_SCAN")
     if env is not None and str(env).strip():

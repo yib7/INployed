@@ -111,14 +111,14 @@ def config_without_model_env(monkeypatch, tmp_path):
 
 def test_claude_model_defaults_are_correct(config_without_model_env):
     cfg = config_without_model_env
-    assert cfg.CLAUDE_MODEL_FLASH_LITE == "claude-haiku-4-5"
+    assert cfg.CLAUDE_MODEL_FLASH_LITE == "claude-haiku-5-5"
     assert cfg.CLAUDE_MODEL_FLASH == "claude-sonnet-5"
     assert cfg.CLAUDE_MODEL_PRO == "claude-opus-5-5"      # Opus 5.5 writes
 
 
 def test_claude_model_for_returns_tier_default(config_without_model_env):
     cfg = config_without_model_env
-    assert cfg.claude_model_for(cfg.TIER_FLASH_LITE) == "claude-haiku-4-5"
+    assert cfg.claude_model_for(cfg.TIER_FLASH_LITE) == "claude-haiku-5-5"
     assert cfg.claude_model_for(cfg.TIER_FLASH) == "claude-sonnet-5"
     assert cfg.claude_model_for(cfg.TIER_PRO) == "claude-opus-5-5"
 

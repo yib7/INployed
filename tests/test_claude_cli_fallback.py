@@ -100,8 +100,9 @@ def test_a_required_version_holding_429_still_maps_to_cli_too_old():
     assert claude_cli._error_kind(text) == "cli_too_old"
 
 
-def test_model_fallbacks_names_the_opus_and_sonnet_pairs():
-    assert claude_cli.MODEL_FALLBACKS == {NEW: OLD, SONNET_NEW: SONNET_OLD}
+def test_model_fallbacks_names_the_opus_sonnet_and_haiku_pairs():
+    assert claude_cli.MODEL_FALLBACKS == {NEW: OLD, SONNET_NEW: SONNET_OLD,
+                                          "claude-haiku-5-5": "claude-haiku-4-5"}
 
 
 def test_no_fallback_is_itself_swapped():

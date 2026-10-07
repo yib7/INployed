@@ -2864,21 +2864,22 @@ def test_the_six_claude_dropdowns_offer_opus_5_5(qtbot, tmp_path):
 
 def test_the_six_claude_dropdowns_offer_sonnet_5_5_and_open_on_their_old_defaults(qtbot, tmp_path):
     """Through the real widgets: Sonnet 5.5 sits between Sonnet 5
-    and Opus 5 in every Claude dropdown, and no dropdown opens on it."""
+    and Opus 5 in every Claude dropdown, and no dropdown opens on it. Haiku 5.5
+    sits after Haiku 4.5, and both fast dropdowns open on it."""
     form = _form(tmp_path, show_advanced=True)
     qtbot.addWidget(form)
-    opens_on = {"stage1_model_claude": "claude-haiku-4-5",
+    opens_on = {"stage1_model_claude": "claude-haiku-5-5",
                 "stage2_model_claude": "claude-sonnet-5",
                 "RESUME_TAILOR_CLAUDE_MODEL_ALL": "claude-sonnet-5",
-                "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE": "claude-haiku-4-5",
+                "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE": "claude-haiku-5-5",
                 "RESUME_TAILOR_CLAUDE_MODEL_FLASH": "claude-sonnet-5",
                 "RESUME_TAILOR_CLAUDE_MODEL_PRO": "claude-opus-5-5"}
     assert set(opens_on) == set(_CLAUDE_DROPDOWNS)
     for key in _CLAUDE_DROPDOWNS:
         combo = form._widgets[key]
         items = [combo.itemText(i) for i in range(combo.count())]
-        assert items == ["claude-haiku-4-5", "claude-sonnet-5", "claude-sonnet-5-5",
-                         "claude-opus-5", "claude-opus-5-5"], key
+        assert items == ["claude-haiku-4-5", "claude-haiku-5-5", "claude-sonnet-5",
+                         "claude-sonnet-5-5", "claude-opus-5", "claude-opus-5-5"], key
         assert combo.currentText() == opens_on[key], key
 
 

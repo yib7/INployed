@@ -144,6 +144,7 @@ REFUSAL_KINDS = frozenset({"cli_too_old", "unrecognized_model"})
 MODEL_FALLBACKS: dict[str, str] = {
     "claude-opus-5-5": "claude-opus-5",
     "claude-sonnet-5-5": "claude-sonnet-5",
+    "claude-haiku-5-5": "claude-haiku-4-5",
 }
 
 # The CLI version each model first ran on, for Check setup's warning. The CLI
@@ -153,6 +154,8 @@ MODEL_FALLBACKS: dict[str, str] = {
 # version to name), and a CLI too old for it still swaps to claude-sonnet-5 at
 # run time through MODEL_FALLBACKS. CLI 2.1.283 refuses it as unrecognized_model,
 # a refusal that names no version. Add the entry once a refusal names the version.
+# claude-haiku-5-5 has no entry for the same reason: 2.1.293 runs it, and the
+# first version that does is not known.
 MIN_CLI_VERSION: dict[str, tuple[int, int, int]] = {"claude-opus-5-5": (2, 1, 280)}
 
 # Models the installed CLI refused this process, mapped to the fallback in use.

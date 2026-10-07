@@ -332,11 +332,12 @@ the VM keeps running unchanged.
 > on your Claude Code CLI subscription. Set **Resume tailor provider** or
 > **Scoring provider** to `claude` (both default to `gemini`). The Claude path drives the
 > headless CLI with your subscription auth (no API key) and prompt caching; left on `tiers`
-> (the default), the tailor stages map fast → `claude-haiku-4-5`, standard →
+> (the default), the tailor stages map fast → `claude-haiku-5-5` (Haiku 5.5), standard →
 > `claude-sonnet-5`, deep → `claude-opus-5-5` (Opus 5.5). Sonnet 5.5
 > (`claude-sonnet-5-5`) is one pick away in every Claude model dropdown. On a CLI too old
 > for it, runs switch to `claude-sonnet-5` by themselves, and `claude update` brings it
-> back. The cloud VM always scores with Gemini, regardless of this setting.
+> back. Haiku 5.5 works the same way: on a CLI too old for it, runs switch to
+> `claude-haiku-4-5`. The cloud VM always scores with Gemini, regardless of this setting.
 >
 > Opus 5.5 needs Claude CLI version 2.1.280 or newer. On an older CLI the tailor switches
 > to `claude-opus-5` by itself and goes on. The first run that hits it carries a warning in
@@ -634,8 +635,8 @@ Jev works in four places:
   7 to 10, so it always reads apply or consider, never skip. For a job at or above the
   stage 2 threshold (4 by default), one call to your **Scoring provider**'s quick model
   writes that job's reason, strengths and gaps from Jev's findings. On the Claude
-  provider each call takes about 30 to 100 seconds and costs about $0.04 at Haiku list
-  prices. Turn this off at Settings → Scoring → **Jev writer for high scores**.
+  provider each call takes about 30 to 100 seconds and costs under a cent at Haiku 5.5
+  list prices. Turn this off at Settings → Scoring → **Jev writer for high scores**.
 - **The résumé tailor:** Jev picks skills and experience items and checks each bullet,
   and your **Resume tailor provider** writes every bullet and the cover letter (see *What
   Jev does in the tailor* below).

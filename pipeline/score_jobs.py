@@ -106,7 +106,7 @@ _SCORING_DEFAULTS: dict[str, tuple[str, object, str]] = {
     # behaviour exactly, which is what the VM (no scoring_config.json) gets.
     "stage1_models": ("SCORE_STAGE1_MODELS", [], "list"),
     "stage2_models": ("SCORE_STAGE2_MODELS", [], "list"),
-    "stage1_model_claude": ("SCORE_STAGE1_MODEL_CLAUDE", "claude-haiku-4-5", "str"),
+    "stage1_model_claude": ("SCORE_STAGE1_MODEL_CLAUDE", "claude-haiku-5-5", "str"),
     "stage2_model_claude": ("SCORE_STAGE2_MODEL_CLAUDE", "claude-sonnet-5", "str"),
     "stage1_concurrency": ("SCORE_STAGE1_CONCURRENCY", 6, "int"),
     "stage2_concurrency": ("SCORE_STAGE2_CONCURRENCY", 4, "int"),

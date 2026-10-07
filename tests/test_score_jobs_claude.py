@@ -52,7 +52,7 @@ def test_new_keys_use_builtin_defaults(monkeypatch, tmp_path):
     monkeypatch.setattr(sj, "OUTPUT_DIR", tmp_path)
     cfg = sj.load_scoring_config()
     assert cfg["provider"] == "gemini"
-    assert cfg["stage1_model_claude"] == "claude-haiku-4-5"
+    assert cfg["stage1_model_claude"] == "claude-haiku-5-5"
     assert cfg["stage2_model_claude"] == "claude-sonnet-5"
 
 

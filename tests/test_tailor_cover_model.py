@@ -195,8 +195,8 @@ def test_a_named_cover_effort_beats_a_general_default(monkeypatch):
 
 
 @pytest.mark.parametrize("cover, expected", [
-    ("", ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5-5"]),
-    ("claude-opus-5-5-x", ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5-5",
+    ("", ["claude-haiku-5-5", "claude-sonnet-5", "claude-opus-5-5"]),
+    ("claude-opus-5-5-x", ["claude-haiku-5-5", "claude-sonnet-5", "claude-opus-5-5",
                            "claude-opus-5-5-x"]),
 ])
 def test_check_setup_lists_a_named_cover_model_and_skips_a_blank_one(monkeypatch, cover,

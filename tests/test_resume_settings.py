@@ -116,7 +116,7 @@ def test_scoring_provider_field_key_is_literally_provider():
 def test_resume_tailor_claude_model_fields_exist():
     by_key = _by_key()
     for key, default in (
-        ("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "claude-haiku-4-5"),
+        ("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "claude-haiku-5-5"),
         ("RESUME_TAILOR_CLAUDE_MODEL_FLASH", "claude-sonnet-5"),
         ("RESUME_TAILOR_CLAUDE_MODEL_PRO", "claude-opus-5-5"),
     ):
@@ -244,7 +244,7 @@ def test_a_mode_outside_the_pair_is_rejected_by_validate():
 def test_scoring_claude_model_fields_exist():
     by_key = _by_key()
     for key, default in (
-        ("stage1_model_claude", "claude-haiku-4-5"),
+        ("stage1_model_claude", "claude-haiku-5-5"),
         ("stage2_model_claude", "claude-sonnet-5"),
     ):
         assert key in by_key, f"missing Claude scoring model field {key}"

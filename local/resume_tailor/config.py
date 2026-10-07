@@ -715,7 +715,7 @@ def tailor_provider() -> str:
     return "claude" if val == "claude" else "gemini"
 
 
-CLAUDE_MODEL_FLASH_LITE = os.getenv("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "claude-haiku-4-5")
+CLAUDE_MODEL_FLASH_LITE = os.getenv("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "claude-haiku-5-5")
 CLAUDE_MODEL_FLASH      = os.getenv("RESUME_TAILOR_CLAUDE_MODEL_FLASH", "claude-sonnet-5")
 # Opus 5.5 is the deep tier's default; claude-opus-5 stays selectable in
 # Settings. settings.py's RESUME_TAILOR_CLAUDE_MODEL_PRO default carries the same id

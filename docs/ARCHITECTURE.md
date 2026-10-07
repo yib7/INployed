@@ -185,7 +185,7 @@ the same rubric wording the LLM stage prompts use:
 
 **The writer** (`score_jobs.write_notes`). For a job Jev scored in stage 2 whose
 stage 1 score is at or above the stage 2 threshold (4 by default), one call to the Scoring
-provider's stage 1 model (`claude-haiku-4-5` by default, or Gemini's flash-lite model by
+provider's stage 1 model (`claude-haiku-5-5` by default, or Gemini's flash-lite model by
 default) turns Jev's findings, `writer_findings`
 (the stage 1 score and label, the deep score, the recommendation, and the met / unmet-must /
 unmet-nice lines), into that job's `reason`, `strengths` and `gaps`. It is given the scores and
@@ -245,8 +245,8 @@ samples, Gemini alone scored 52-57 jobs at 4 or more that Jev did not, and Jev a
 3-9 that Gemini did not.
 
 A live writer check (Claude provider, 8 high-scoring jobs) wrote all 8, with every gap traced
-to an unmet requirement line and no banned-topic gap; cost runs about $0.04 per call at Haiku
-list prices, 30 to 100 seconds per call.
+to an unmet requirement line and no banned-topic gap; cost ran about $0.04 per call at Haiku
+4.5 list prices, 30 to 100 seconds per call. Haiku 5.5 lists at a tenth of that price.
 
 The tunables are `DEEP_BASE`, `DEEP_SPAN`, `RECOMMEND_APPLY`, `MET_YES`,
 `MUST_YES`, `YEARS_CAPS`, `CLEARANCE_CAP`, `NOT_ELIGIBLE_CAP` and `ADVANCED_DEGREE_CAP` in

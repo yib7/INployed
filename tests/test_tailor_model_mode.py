@@ -35,7 +35,7 @@ _GEMINI_TIER_DEFAULTS = {
     config.TIER_PRO: "gemini-3.5-flash",
 }
 _CLAUDE_TIER_DEFAULTS = {
-    config.TIER_FLASH_LITE: "claude-haiku-4-5",
+    config.TIER_FLASH_LITE: "claude-haiku-5-5",
     config.TIER_FLASH: "claude-sonnet-5",
     config.TIER_PRO: "claude-opus-5-5",
 }

@@ -1656,16 +1656,16 @@ def test_opus_5_5_is_offered_in_all_six_claude_dropdowns_and_is_the_pro_default(
     for key in CLAUDE_DROPDOWNS:
         assert "claude-opus-5-5" in by_key[key].choices, key
     assert by_key["RESUME_TAILOR_CLAUDE_MODEL_PRO"].default == "claude-opus-5-5"
-    assert by_key["stage1_model_claude"].default == "claude-haiku-4-5"
+    assert by_key["stage1_model_claude"].default == "claude-haiku-5-5"
     assert by_key["stage2_model_claude"].default == "claude-sonnet-5"
 
 
-# Every Claude dropdown's default, as it stood before Sonnet 5.5 joined the list.
+# Every Claude dropdown's default. Sonnet 5.5 moved none of them; Haiku 5.5 took both fast ones.
 CLAUDE_DEFAULTS = {
-    "stage1_model_claude": "claude-haiku-4-5",
+    "stage1_model_claude": "claude-haiku-5-5",
     "stage2_model_claude": "claude-sonnet-5",
     "RESUME_TAILOR_CLAUDE_MODEL_ALL": "claude-sonnet-5",
-    "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE": "claude-haiku-4-5",
+    "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE": "claude-haiku-5-5",
     "RESUME_TAILOR_CLAUDE_MODEL_FLASH": "claude-sonnet-5",
     "RESUME_TAILOR_CLAUDE_MODEL_PRO": "claude-opus-5-5",
     "RESUME_TAILOR_CLAUDE_MODEL_COVER": "",   # blank: the usual deep/standard split
@@ -1678,7 +1678,7 @@ def test_sonnet_5_5_is_offered_in_all_six_claude_dropdowns_and_no_default_moves(
     older ids stay listed so a stored config naming one keeps resolving."""
     by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
     assert "claude-sonnet-5-5" in settings.CLAUDE_MODELS
-    assert settings.CLAUDE_MODELS == ("claude-haiku-4-5", "claude-sonnet-5",
+    assert settings.CLAUDE_MODELS == ("claude-haiku-4-5", "claude-haiku-5-5", "claude-sonnet-5",
                                       "claude-sonnet-5-5", "claude-opus-5", "claude-opus-5-5")
     offering = {f.key for f in settings.SETTINGS_SCHEMA if f.choices == settings.CLAUDE_MODELS}
     assert offering == CLAUDE_DROPDOWNS
@@ -1688,6 +1688,17 @@ def test_sonnet_5_5_is_offered_in_all_six_claude_dropdowns_and_no_default_moves(
     assert {key: by_key[key].default for key in CLAUDE_DROPDOWNS} == CLAUDE_DEFAULTS
     assert "claude-sonnet-5-5" not in CLAUDE_DEFAULTS.values()
 
+
+def test_haiku_5_5_is_the_fast_default_and_haiku_4_5_still_resolves():
+    """claude-haiku-5-5 is the default of both fast dropdowns (the scorer's stage 1
+    and the tailor's fast tier). claude-haiku-4-5 stays listed, so a stored config
+    naming it still validates."""
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    for key in ("stage1_model_claude", "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE"):
+        assert by_key[key].default == "claude-haiku-5-5", key
+        assert settings.validate({key: "claude-haiku-4-5"}) == {}, key
+    for key in CLAUDE_DROPDOWNS:
+        assert "claude-haiku-5-5" in by_key[key].choices, key
 
 def test_a_blank_choice_names_the_fix_in_plain_words():
     """A stored choice the form keeps on screen can be blank; the note

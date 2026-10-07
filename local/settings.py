@@ -214,8 +214,15 @@ GEMINI_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-f
 # Re-checked 2026-10-03 against the same table: all five ids are Active, none
 # deprecated. claude-haiku-4-5-20251001 still reads "Not sooner than October 15,
 # 2026" with no newer haiku listed, so it stays the fast tier's default.
-CLAUDE_MODELS = ("claude-haiku-4-5", "claude-sonnet-5", "claude-sonnet-5-5", "claude-opus-5",
-                 "claude-opus-5-5")
+#
+# claude-haiku-5-5 (released 2026-10-07, Active, retirement not sooner than
+# October 7, 2027; $0.10 / $0.50 per million input / output tokens, a tenth of
+# Haiku 4.5's list price) is the fast tier's default and the Claude scorer's
+# stage 1 default. claude-haiku-4-5 stays in the tuple so a stored config naming
+# it keeps resolving, and pipeline/claude_cli.MODEL_FALLBACKS swaps 5.5 back to
+# it on a CLI too old to run 5.5 (Claude Code 2.1.293 runs it).
+CLAUDE_MODELS = ("claude-haiku-4-5", "claude-haiku-5-5", "claude-sonnet-5", "claude-sonnet-5-5",
+                 "claude-opus-5", "claude-opus-5-5")
 
 # How the résumé tailor picks a model for each stage, per provider. The strings
 # are the ones `local/resume_tailor/config.py` compares against
@@ -535,7 +542,7 @@ SETTINGS_SCHEMA: list[Field] = [
                "full Flash models allow only 20 requests/day each, so listing three of "
                "them is 4x the deep scores before anything is billed."),
     Field("stage1_model_claude", "Stage-1 model (Claude)", "editable_choice",
-          "claude-haiku-4-5", "Scoring", "scoring", choices=CLAUDE_MODELS,
+          "claude-haiku-5-5", "Scoring", "scoring", choices=CLAUDE_MODELS,
           show_if=("provider", ("claude",)), advanced=True,
           help="Used only when Scoring provider is 'claude'."),
     Field("stage2_model_claude", "Stage-2 model (Claude)", "editable_choice",
@@ -570,7 +577,7 @@ SETTINGS_SCHEMA: list[Field] = [
           advanced=True, help="When Jev scores a job at/above the stage 2 threshold (4 by "
           "default), the Scoring provider's stage 1 model (Claude Haiku or Gemini Flash-Lite by "
           "default) writes its reason, strengths and gaps. On the Claude provider: 30-100 seconds "
-          "and about $0.04 at Haiku list prices per job. Off: those jobs keep Jev's "
+          "and under a cent at Haiku 5.5 list prices per job. Off: those jobs keep Jev's "
           "code-written notes, and the provider runs only when Jev cannot score a job."),
     # NOT advanced, deliberately: this is the only ceiling on an LLM bill, so it
     # stays where a user worried about spend can find it without first learning
@@ -957,7 +964,7 @@ SETTINGS_SCHEMA: list[Field] = [
                "per stage' is 'simple'. Pick a listed id or type your own. Left blank, "
                "tailoring quietly falls back to the three per-stage models."),
     Field("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "Claude model: fast (briefs)",
-          "editable_choice", "claude-haiku-4-5", "Engine", "env", choices=CLAUDE_MODELS,
+          "editable_choice", "claude-haiku-5-5", "Engine", "env", choices=CLAUDE_MODELS,
           show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
           help="Claude provider only: the small calls (per-entry briefs, verb "
                "swaps)."),

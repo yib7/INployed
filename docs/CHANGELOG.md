@@ -8,6 +8,15 @@ All notable changes to INployed are recorded here. The format follows
 
 ### Changed
 
+- **Claude Haiku 5.5 is the fast Claude model.** `claude-haiku-5-5` (released 2026-10-07)
+  is now the default for the résumé tailor's fast tier
+  (`RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE`) and the Claude scorer's stage 1
+  (`SCORE_STAGE1_MODEL_CLAUDE`), and it is listed in every Claude model dropdown. It lists at
+  $0.10 / $0.50 per million input / output tokens, a tenth of Haiku 4.5. `claude-haiku-4-5`
+  stays one pick away, and a run on a Claude CLI too old for 5.5 switches to it by itself;
+  `claude update` brings 5.5 back. Settings saves every field, so if you have saved it
+  before, your file still names Haiku 4.5: pick `claude-haiku-5-5` in **Claude model: fast
+  (briefs)** and **Stage-1 model (Claude)** (both under Show advanced settings) to switch.
 - **Choose how many résumés tailor at once.** A multi-job tailor ran 4 résumés at the
   same time with no way to change it. **Résumés tailored at once** in Settings → Resume
   (`tailor_parallel_jobs`, `RESUME_TAILOR_PARALLEL_JOBS`) sets it from 1 to 10, default 4,

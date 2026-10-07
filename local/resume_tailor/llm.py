@@ -121,32 +121,57 @@ def usage_summary() -> str:
 
 # A JSON object or array opening a line, unindented: where an answer starts.
 _LINE_OPENER = re.compile(r"^[\[{]", re.MULTILINE)
+_ANY_OPENER = re.compile(r"[\[{]")
 
 
-def _last_line_value(text: str) -> Any:
-    """The last complete JSON value in `text` that opens a line, or None.
+def _line_values(text: str) -> list[tuple[int, int, Any]]:
+    """Every complete JSON value in `text` that opens a line at column 0 and closes
+    its last line (nothing but whitespace after it there), as (start, end, value).
 
-    A model that checks its work in its own reply (the Claude CLI at low effort has
-    no hidden reasoning) writes an answer, a line of prose ("Wait, correcting..."),
-    and a corrected answer. The last one is the one it settled on, as long as it has
-    the first one's type: a stray "[1]" opening a line of prose after an object answer
-    is not a correction of it. A value must open at column 0, so an indented object
-    inside a broken pretty-printed answer is never taken for the answer; scanning
-    resumes after each value, so no nested value of a complete one is read either."""
+    A value must open at column 0, so an indented object inside a broken
+    pretty-printed answer is never taken for an answer; it must close its line, so
+    a "[1]" opening a line of prose is not one either. Scanning resumes after each
+    value, so no nested value of a complete one is read."""
     decoder = json.JSONDecoder()
-    found: Any = None
+    found: list[tuple[int, int, Any]] = []
     pos = 0
     while True:
         m = _LINE_OPENER.search(text, pos)
         if m is None:
             return found
         try:
-            value, pos = decoder.raw_decode(text, m.start())
+            value, end = decoder.raw_decode(text, m.start())
         except json.JSONDecodeError:
             pos = m.end()
             continue
-        if found is None or type(value) is type(found):
-            found = value
+        eol = text.find("\n", end)
+        if text[end:eol if eol >= 0 else len(text)].strip():
+            pos = m.end()
+            continue
+        found.append((m.start(), end, value))
+        pos = end
+
+
+def _settled_value(text: str) -> tuple[bool, Any]:
+    """(True, the answer) when `text` holds an answer the model corrected in its own
+    reply, else (False, None) for the older fallback to decide.
+
+    A model that checks its work in its reply (the Claude CLI at low effort has no
+    hidden reasoning) writes an answer, a line of prose ("Wait, correcting..."), and
+    a corrected answer. With two or more line values, the answer is the last one of
+    the longest one's type, so a short value of another type is never taken for a
+    correction. A single line value is the answer only when no JSON opens before it;
+    otherwise it may be the tail of a broken answer that the span fallback reads
+    whole."""
+    values = _line_values(text)
+    if len(values) >= 2:
+        kind = type(max(values, key=lambda v: v[1] - v[0])[2])
+        return True, [v[2] for v in values if type(v[2]) is kind][-1]
+    if len(values) == 1:
+        first = _ANY_OPENER.search(text)
+        if first is not None and first.start() == values[0][0]:
+            return True, values[0][2]
+    return False, None
 
 
 def _extract_json(text: str) -> Any:
@@ -158,9 +183,9 @@ def _extract_json(text: str) -> Any:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        settled = _last_line_value(text)
-        if settled is not None:
-            return settled
+        settled, value = _settled_value(text)
+        if settled:
+            return value
         # Fall back to the first balanced {...} or [...] block.
         for opener, closer in (("{", "}"), ("[", "]")):
             i, j = text.find(opener), text.rfind(closer)
@@ -169,6 +194,11 @@ def _extract_json(text: str) -> Any:
                     return json.loads(text[i : j + 1])
                 except json.JSONDecodeError:
                     continue
+        # A broken first draft and its correction: the span held both, and the
+        # correction is the one complete answer.
+        values = _line_values(text)
+        if values:
+            return values[-1][2]
         # `from None`: the message already carries the offending payload; the
         # internal JSONDecodeError chain is noise in the user-facing dialog/CLI.
         raise LLMError(f"Model did not return valid JSON. Got:\n{text[:500]}",

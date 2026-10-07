@@ -85,6 +85,31 @@ def test_a_nested_object_of_a_pretty_printed_answer_is_never_taken_alone():
     assert llm._extract_json(text) == [{"gkey": "a1", "text": "Built."}]
 
 
+def test_a_note_line_before_the_answer_leaves_the_answer():
+    text = '[1] lengths checked.\n{"bullets": [{"gkey": "a1", "text": "Built."}]}'
+    assert llm._extract_json(text) == {"bullets": [{"gkey": "a1", "text": "Built."}]}
+
+
+def test_a_numbered_note_after_an_array_answer_is_not_a_correction():
+    assert llm._extract_json('[{"gkey": "a"}]\n[2] done') == [{"gkey": "a"}]
+
+
+def test_an_unindented_broken_pretty_print_is_read_whole_as_before():
+    """Its last bullet object closes a line at column 0, but a JSON value opens
+    before it, so the span fallback reads the bullets together."""
+    text = ('{\n"bullets": [\n{"gkey": "a1", "text": "Built."},\n'
+            '{"gkey": "a2", "text": "Ran."}\n],\n')
+    assert llm._extract_json(text) == [{"gkey": "a1", "text": "Built."},
+                                       {"gkey": "a2", "text": "Ran."}]
+
+
+def test_a_short_value_of_another_type_never_stands_in_for_the_answer():
+    text = ('{"bullets": [{"gkey": "a1", "text": "Built a fetcher."}], "x": 1}\n'
+            'Check:\n[1]\n')
+    assert llm._extract_json(text) == {"bullets": [{"gkey": "a1",
+                                                    "text": "Built a fetcher."}], "x": 1}
+
+
 @pytest.mark.parametrize("text,want", [
     ('{"a": 1}', {"a": 1}),
     ('```json\n{"a": 1}\n```', {"a": 1}),

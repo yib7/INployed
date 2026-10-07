@@ -33,9 +33,13 @@ All notable changes to INployed are recorded here. The format follows
   format", and a corrected answer. The tailor could not read that reply and asked again,
   and an entry that failed twice lost its repair. The tailor now reads the corrected
   answer: a live run of 45 calls needed no retry, where 11 of its replies had that shape.
+  The scorer reads such a reply the same way.
 - **The Apply panel opens right away again.** It no longer reads the full job master
   before showing a job's apply sheet, which took a few seconds per click for most
   scraped jobs.
+- **Tailor, cover letter, interview prep and Ask AI start faster on scraped jobs.** A job
+  that already carries its description no longer waits a second or two while the dashboard
+  searches the full job master for it.
 
 ## [2.0.0] - 2026-10-05
 

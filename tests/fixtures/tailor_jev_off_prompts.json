@@ -525,7 +525,8 @@
     "",
     "Repair the bullets the FINDINGS name and return the rest as they arrived. Keep every fact and number, keep each opening verb, and stay within each bullet's 'max_chars'.",
     "",
-    "Return ONLY JSON: {\"bullets\": [{\"gkey\": \"<gkey>\", \"text\": \"<bullet>\"}, ...]}"
+    "Return ONLY JSON: {\"bullets\": [{\"gkey\": \"<gkey>\", \"text\": \"<bullet>\"}, ...]}",
+    "Each bullet object holds only \"gkey\" and \"text\". Check every text against its 'max_chars' first, then write the JSON once, with nothing after it."
    ]
   },
   "aiwriting_sweep #2": {
@@ -606,7 +607,8 @@
     "",
     "Repair the bullets the FINDINGS name and return the rest as they arrived. Keep every fact and number, keep each opening verb, and stay within each bullet's 'max_chars'.",
     "",
-    "Return ONLY JSON: {\"bullets\": [{\"gkey\": \"<gkey>\", \"text\": \"<bullet>\"}, ...]}"
+    "Return ONLY JSON: {\"bullets\": [{\"gkey\": \"<gkey>\", \"text\": \"<bullet>\"}, ...]}",
+    "Each bullet object holds only \"gkey\" and \"text\". Check every text against its 'max_chars' first, then write the JSON once, with nothing after it."
    ]
   },
   "aiwriting_sweep #3": {
@@ -680,7 +682,8 @@
     "",
     "Repair the bullets the FINDINGS name and return the rest as they arrived. Keep every fact and number, keep each opening verb, and stay within each bullet's 'max_chars'.",
     "",
-    "Return ONLY JSON: {\"bullets\": [{\"gkey\": \"<gkey>\", \"text\": \"<bullet>\"}, ...]}"
+    "Return ONLY JSON: {\"bullets\": [{\"gkey\": \"<gkey>\", \"text\": \"<bullet>\"}, ...]}",
+    "Each bullet object holds only \"gkey\" and \"text\". Check every text against its 'max_chars' first, then write the JSON once, with nothing after it."
    ]
   },
   "aiwriting_sweep #4": {
@@ -754,7 +757,8 @@
     "",
     "Repair the bullets the FINDINGS name and return the rest as they arrived. Keep every fact and number, keep each opening verb, and stay within each bullet's 'max_chars'.",
     "",
-    "Return ONLY JSON: {\"bullets\": [{\"gkey\": \"<gkey>\", \"text\": \"<bullet>\"}, ...]}"
+    "Return ONLY JSON: {\"bullets\": [{\"gkey\": \"<gkey>\", \"text\": \"<bullet>\"}, ...]}",
+    "Each bullet object holds only \"gkey\" and \"text\". Check every text against its 'max_chars' first, then write the JSON once, with nothing after it."
    ]
   },
   "reground": {

@@ -119,14 +119,48 @@ def usage_summary() -> str:
     )
 
 
+# A JSON object or array opening a line, unindented: where an answer starts.
+_LINE_OPENER = re.compile(r"^[\[{]", re.MULTILINE)
+
+
+def _last_line_value(text: str) -> Any:
+    """The last complete JSON value in `text` that opens a line, or None.
+
+    A model that checks its work in its own reply (the Claude CLI at low effort has
+    no hidden reasoning) writes an answer, a line of prose ("Wait, correcting..."),
+    and a corrected answer. The last one is the one it settled on, as long as it has
+    the first one's type: a stray "[1]" opening a line of prose after an object answer
+    is not a correction of it. A value must open at column 0, so an indented object
+    inside a broken pretty-printed answer is never taken for the answer; scanning
+    resumes after each value, so no nested value of a complete one is read either."""
+    decoder = json.JSONDecoder()
+    found: Any = None
+    pos = 0
+    while True:
+        m = _LINE_OPENER.search(text, pos)
+        if m is None:
+            return found
+        try:
+            value, pos = decoder.raw_decode(text, m.start())
+        except json.JSONDecodeError:
+            pos = m.end()
+            continue
+        if found is None or type(value) is type(found):
+            found = value
+
+
 def _extract_json(text: str) -> Any:
-    """Parse JSON, tolerating ```json fences or surrounding prose."""
+    """Parse JSON, tolerating ```json fences, surrounding prose, and an answer the
+    model corrected in its own reply (the last complete one wins)."""
     text = text.strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE).strip()
     try:
         return json.loads(text)
     except json.JSONDecodeError:
+        settled = _last_line_value(text)
+        if settled is not None:
+            return settled
         # Fall back to the first balanced {...} or [...] block.
         for opener, closer in (("{", "}"), ("[", "]")):
             i, j = text.find(opener), text.rfind(closer)

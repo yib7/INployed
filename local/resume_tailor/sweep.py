@@ -551,6 +551,16 @@ _REASK_CLOSING = (
 )
 
 
+# The reply shape. On the Claude lane at low effort the model checks its work in the
+# reply itself, and it used to write an answer echoing a payload key ("max_chars"),
+# then a note and a corrected answer; `llm._extract_json` now reads the last one, and
+# these two sentences ask for the check to come before the answer.
+_REPLY_SHAPE = (
+    "Each bullet object holds only \"gkey\" and \"text\". Check every text against "
+    "its 'max_chars' first, then write the JSON once, with nothing after it."
+)
+
+
 def _user_prompt(job_title: str, body: Dict[str, Any], closing: str) -> str:
     return f"""TARGET JOB: {job_title}
 
@@ -558,7 +568,8 @@ def _user_prompt(job_title: str, body: Dict[str, Any], closing: str) -> str:
 
 {closing}
 
-Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<bullet>"}}, ...]}}"""
+Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<bullet>"}}, ...]}}
+{_REPLY_SHAPE}"""
 
 
 # The two calls are written out separately rather than funnelled through one

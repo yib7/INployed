@@ -529,9 +529,9 @@ def test_interview_prep_reads_the_full_description_on_the_worker(qtbot, monkeypa
     assert threads and threading.main_thread() not in threads
 
 
-def test_apply_reads_the_full_description_on_the_worker(qtbot, monkeypatch, tmp_path):
-    import threading
-
+def test_apply_never_reads_the_master(qtbot, monkeypatch, tmp_path):
+    """The apply sheet the resolver backfills uses only the job's id, company,
+    title and URL, so opening it never pays for a scan of the master CSV."""
     import resume_tailor.apply as apply_mod
     w = _win(qtbot)
     threads = _master_on_threads(monkeypatch)
@@ -540,9 +540,8 @@ def test_apply_reads_the_full_description_on_the_worker(qtbot, monkeypatch, tmp_
                         lambda job_id=None, job=None: seen.append(dict(job)) or tmp_path)
     monkeypatch.setattr(apply_mod, "build_apply_context", lambda folder: {"apply_url": ""})
     _on_worker(lambda: w._apply_work("manual-abc", _summary_payload(), open_url=False))
-    (job,) = seen
-    assert job["job_description_formatted"] == _FULL_JD
-    assert threads and threading.main_thread() not in threads
+    assert threads == []
+    assert seen == [_summary_payload()]
 
 
 def test_ask_ai_reads_the_full_description_on_the_chat_worker(qtbot, monkeypatch):

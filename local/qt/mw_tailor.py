@@ -44,10 +44,12 @@ _JD_COLUMNS = ("job_description_formatted", "job_description")
 
 def _with_master_jd(job: dict) -> dict:
     """`job` with its full description from the master CSV when the payload
-    carries none. A hand-added job's dashboard row holds
-    only the 1000-character `job_summary`: the gz bridge leaves its
-    description out, and the master CSV keeps it. Worker threads only:
-    `jobsdata.master_row` reads the file."""
+    carries none. Any row without `job_description_formatted` or
+    `job_description` lacks it: a hand-added job holds only the 1000-character
+    `job_summary`, and a scraped job from a local run only
+    `job_description_md`. Worker threads only, and only for a caller that uses
+    the description: `jobsdata.master_row` scans the whole master file, which
+    takes seconds."""
     if any(str(job.get(col) or "").strip() for col in _JD_COLUMNS):
         return job
     jid = str(job.get("job_posting_id") or "").strip()
@@ -118,10 +120,6 @@ class _TailorActions:
         behaviour. With it off the sheet still carries the posting URL, so nothing is
         lost — the browser just doesn't take over the screen."""
         from resume_tailor import apply as apply_mod
-        if payload:
-            # a hand-added job's full description, for an apply sheet the
-            # resolver backfills (on the worker thread)
-            payload = _with_master_jd(payload)
         folder = apply_mod.resolve_generated_dir(job_id=jid, job=payload)
         ctx = apply_mod.build_apply_context(folder)
         url = ctx.get("apply_url", "")

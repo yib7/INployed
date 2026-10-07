@@ -21,6 +21,12 @@ All notable changes to INployed are recorded here. The format follows
   failed scan sweeps every entry as before. With Jev on, Jev's own read still gates the
   sweep and no scan runs.
 
+### Fixed
+
+- **The Apply panel opens right away again.** It no longer reads the full job master
+  before showing a job's apply sheet, which took a few seconds per click for most
+  scraped jobs.
+
 ## [2.0.0] - 2026-10-05
 
 Auto-apply now sends applications itself, from one submit gate in code: TypeSafe's Jev judges

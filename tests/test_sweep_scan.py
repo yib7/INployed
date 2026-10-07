@@ -320,8 +320,8 @@ def test_the_closing_names_the_clean_answer():
 
 
 def test_a_padded_gkey_still_names_its_bullet():
-    got = sweep._parse_scan({"flags": [{"gkey": " a2 ", "tells": ["filler"]}]}, ["a1", "a2"])
-    assert got == {"a1": (), "a2": ("filler",)}
+    got = sweep._parse_scan({"flags": [{"gkey": " a2 ", "tells": ["hedging"]}]}, ["a1", "a2"])
+    assert got == {"a1": (), "a2": ("hedging",)}
 
 
 @pytest.mark.parametrize("answer", [
@@ -425,12 +425,53 @@ def test_with_the_toggle_off_a_failed_jev_read_leaves_the_detectors(engine, dete
 
 
 # ── the prompt ──────────────────────────────────────────────────────────────
-def test_the_scan_prompt_carries_the_rules_the_repair_carries():
+def test_the_scan_prompt_carries_the_p0_and_p1_rules_and_names_every_tell():
     system = sweep._SCAN_SYSTEM
-    assert compose.BANNED_PHRASING in system
     assert aiwriting.RESUME_RULES_PROMPT in system
-    for name in jev_assist.SWEEP_QUESTIONS:
+    for name in sweep._SCAN_TELLS:
         assert name in system
+    for name in sweep._SCAN_JEV_TELLS:
+        assert f"- {name}: " in system      # Jev's names carry their own definition
+    assert set(sweep._SCAN_JEV_TELLS) <= set(jev_assist.SWEEP_QUESTIONS)
+
+
+def test_the_scan_leaves_lists_of_three_and_rhythm_to_the_detectors():
+    """Asked to judge them, the scan flagged most bullets of résumés the detectors
+    had passed, for cosmetic repairs. BANNED_PHRASING, which lists participial tails
+    and rule-of-three trains, is left out for the same reason."""
+    system = sweep._SCAN_SYSTEM
+    assert "padded list of three" not in sweep._SCAN_TELLS
+    assert compose.BANNED_PHRASING not in system
+    i = system.index("WHAT NOT TO FLAG")
+    for measured in ("series of three", "rhythm", "sentence shape", "trailing"):
+        assert measured in system[i:i + 400]
+
+
+def test_the_scan_never_asks_for_a_flag_when_unsure():
+    assert "unsure" not in sweep._SCAN_SYSTEM.lower()
+
+
+@pytest.mark.parametrize("tell,name", [
+    ("Contrast Framing", "contrast framing"),
+    ("  hedging ", "hedging"),
+    ("other: dangling modifier", "other: dangling modifier"),
+    ("OTHER:   dangling modifier", "other: dangling modifier"),
+    ("padded list of three", "other: padded list of three"),
+    ("filler", "other: filler"),
+    ("other:", ""),
+    ("", ""),
+], ids=["case", "spaces", "other", "other-case", "jev-only-name", "invented",
+        "other-blank", "blank"])
+def test_a_tell_is_a_fixed_name_or_an_other(tell, name):
+    assert sweep._scan_tell_name(tell) == name
+
+
+def test_an_invented_label_still_buys_the_call_and_reads_as_other(engine, monkeypatch):
+    rec, result = _sweep(monkeypatch, dict(CLEAN), scan=_flags(a2=["participial tail"]),
+                         first=_answer())
+    assert rec.kinds == ["scan", "sweep"]
+    assert result.judge_flags == (sweep.JudgeFlag("a2", ITEM,
+                                                  ("other: participial tail",)),)
 
 
 def test_the_scan_prompt_says_resume_grammar_is_no_tell():
@@ -453,10 +494,9 @@ def test_the_scan_prompt_is_free_of_the_characters_it_bans():
 def test_the_scan_prompt_is_free_of_the_phrasing_it_bans():
     """The ban enumerations it embeds are exempt (a list cannot forbid a phrase
     without quoting it), so only this module's own words are checked."""
-    own = sweep._SCAN_SYSTEM
-    for enumeration in (compose.BANNED_PHRASING, aiwriting.RESUME_RULES_PROMPT):
-        own = own.replace(enumeration, "")
+    own = sweep._SCAN_SYSTEM.replace(aiwriting.RESUME_RULES_PROMPT, "")
     assert compose.style_violations(own) == []
+    assert aiwriting.resume_violations(own) == []
     assert compose.style_violations(sweep._SCAN_CLOSING) == []
 
 

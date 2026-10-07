@@ -318,38 +318,67 @@ _REASK_SYSTEM = (
     + aiwriting.RESUME_RULES_PROMPT + "\n" + _PRINCIPLE
 )
 
+# The tells the résumé scan may name: Jev's names for the user's hard-banned patterns,
+# less the padded list of three, plus the P0 and P1 rules of
+# aiwriting.RESUME_RULES_PROMPT. Three-part lists, rhythm and repeated sentence shapes
+# are left to the detectors (itemcheck, compose.style_violations), which measure them
+# without a call: asked to judge them, the scan flagged most bullets of résumés the
+# detectors had already passed, and the repairs it bought were cosmetic. Any other
+# tell is named "other: ..." (`_SCAN_OTHER`), which `_parse_scan` enforces.
+_SCAN_JEV_TELLS = tuple(name for name in jev_assist.SWEEP_QUESTIONS
+                        if name != "padded list of three")
+_SCAN_RULE_TELLS = (
+    "tier-1 vocabulary", "template phrasing", "formulaic opening", "hedging",
+    "real or actual inflation", "bare-noun bullet", "chatbot artifact",
+    "vague attribution", "significance inflation",
+)
+_SCAN_TELLS = _SCAN_JEV_TELLS + _SCAN_RULE_TELLS
+_SCAN_OTHER = "other: "
+
 # The résumé scan: detect only, over the whole résumé at once ("With Jev off, or
-# when its read fails, the résumé scan reads" above). It carries the repair call's
-# rules, so it looks for what that call would fix, and the register carve-out from
+# when its read fails, the résumé scan reads" above). It names a fixed set of tells,
+# each defined here or in the P0 and P1 rules the repair call carries
+# (aiwriting.RESUME_RULES_PROMPT), plus the register carve-out from
 # aiwriting.RESUME_PROFILE, because a scan that flags correct résumé grammar buys a
-# repair call for every item and saves nothing. _PRINCIPLE is left out: it governs
-# what a rewrite may state, and the scan writes no bullet and sees no atom.
+# repair call for every item and saves nothing. compose.BANNED_PHRASING is left out:
+# its participial tails and rule-of-three trains are the detectors' to measure, and
+# its contrast framing and stacked adjectives are named below. _PRINCIPLE is left
+# out too: it governs what a rewrite may state, and the scan writes no bullet and
+# sees no atom.
 _SCAN_SYSTEM = (
     "You read the bullets of a resume, grouped by entry, and name the AI-writing "
-    "tells each bullet carries. Never rewrite a bullet. A later step repairs only the "
-    "bullets you flag, and a tell you miss ships on the page. A flag costs one repair "
-    "call, and a rewrite that fails the repair step's checks is thrown away with the "
-    "original kept. So when you are unsure, flag the bullet.\n"
-    "WHAT TO FLAG. A bullet that breaks one of the rules below, or that shows one of "
-    "these patterns: " + ", ".join(jev_assist.SWEEP_QUESTIONS) + ". Name each tell in "
-    "a few words, with one of those names when one fits. Read each entry's bullets "
-    "together: when a tell shows only across them (one sentence shape reused down the "
-    "list, one noun cycling through every line), flag each bullet that shares it. The "
-    "rules say how a writer repairs each pattern; for you they say what to look for.\n"
-    "WHAT NOT TO FLAG. A resume bullet is a subjectless fragment that opens with a "
-    "past-tense action verb ('Built a scraper that cut per-run cost 65%'). That shape "
-    "is correct resume grammar. A missing subject, a missing first person, an action "
-    "verb opener and a sentence fragment are never tells. A number, a tool name or a "
-    "plain technical term is never a tell by itself.\n"
-    "BANNED PHRASING (a bullet using any of these carries a tell): "
-    + compose.BANNED_PHRASING + "\n"
+    "tells a bullet carries. Never rewrite a bullet. A later step repairs only the "
+    "bullets you flag, and each flag costs that step one model call, so flag a bullet "
+    "only when you can point to the words that carry the tell.\n"
+    "WHAT TO FLAG, by these names only:\n"
+    "- contrast framing: the bullet defines the work by what it is not, what it "
+    "avoids, or what it does without.\n"
+    "- stacked adjectives: two or more adjectives piled in front of one noun.\n"
+    "- filler or vague impact: words that carry no fact, or a claim of impact with no "
+    "number and no named result behind it.\n"
+    "- hype words: self-praise or promotional words.\n"
+    "- " + ", ".join(_SCAN_RULE_TELLS) + ": each as the numbered rule of that name "
+    "below describes it.\n"
+    "A tell of the rules below that none of these names fits is written as "
+    "\"" + _SCAN_OTHER + "\" and a few words.\n"
+    "WHAT NOT TO FLAG. Code already measures a list or series of three, the rhythm or "
+    "length of a bullet, a sentence shape repeated across an entry, a noun repeated "
+    "across it, and a clause trailing after a comma, so none of those is yours to "
+    "flag. A resume bullet is a subjectless fragment that opens with a past-tense "
+    "action verb ('Built a scraper that cut per-run cost 65%'). That shape is correct "
+    "resume grammar. A missing subject, a missing first person, an action verb opener "
+    "and a sentence fragment are never tells. A number, a tool name or a plain "
+    "technical term is never a tell by itself. A bullet that states its facts plainly "
+    "is clean, even when you could word it another way.\n"
+    "THE RULES (they tell a writer how to repair each pattern; for you they say what "
+    "to look for):\n"
     + aiwriting.RESUME_RULES_PROMPT
 )
 
 _SCAN_CLOSING = (
-    "List only the bullets that carry a tell, each with the tells it carries. A bullet "
-    "you leave out is read as clean. When no bullet carries one, return "
-    "{\"flags\": []}."
+    "List only the bullets that carry a tell, each with the tells it carries, named "
+    "as above. A bullet you leave out is read as clean. When no bullet carries one, "
+    "return {\"flags\": []}."
 )
 
 
@@ -628,6 +657,23 @@ def _judge_flags(sel: Dict[str, Any], bullets: Dict[str, str],
     return jev_assist.sweep_flags(_gate_entries(sel, bullets), judge=judge)
 
 
+def _scan_tell_name(tell: Any) -> str:
+    """One tell as the repair payload and the run report carry it: a name of
+    `_SCAN_TELLS` (case aside), or anything else as "other: ...", so a label the
+    model invented reads as one in the report. "" for a blank tell."""
+    text = one_line(tell).strip()
+    low = text.lower()
+    for name in _SCAN_TELLS:
+        if low == name:
+            return name
+    prefix = _SCAN_OTHER.strip()
+    if low.startswith(prefix):
+        text = text[len(prefix):].strip()
+    if not text:
+        return ""
+    return (_SCAN_OTHER + text)[:_SCAN_TELL_MAX].strip()
+
+
 def _parse_scan(out: Any, sent: Sequence[str]) -> Optional[Dict[str, Tuple[str, ...]]]:
     """The scan's answer as {gkey: tells}, () for every bullet in `sent` it did not
     flag, or None when the answer is not the {"flags": [...]} it was asked for.
@@ -640,8 +686,9 @@ def _parse_scan(out: Any, sent: Sequence[str]) -> Optional[Dict[str, Tuple[str, 
     verbatim bullet's gkey: it was never sent, and the sweep never touches it anyway.
 
     A sent bullet listed with no usable tell (an empty list, blanks only) is still
-    FLAGGED, under `_SCAN_UNNAMED`: the model chose to list it. Each tell is collapsed
-    to one line and cut to `_SCAN_TELL_MAX` characters, blanks and repeats are dropped,
+    FLAGGED, under `_SCAN_UNNAMED`: the model chose to list it. Each tell is named by
+    `_scan_tell_name` (a fixed name, or "other: ..." cut to `_SCAN_TELL_MAX`
+    characters), blanks and repeats are dropped,
     and a bullet keeps at most `_SCAN_TELLS_MAX` of them: the names land in a repair
     payload and the run report, and an answer's length is the model's choice.
     """
@@ -660,7 +707,7 @@ def _parse_scan(out: Any, sent: Sequence[str]) -> Optional[Dict[str, Tuple[str, 
             return None
         names = list(flags[gk])
         for tell in tells:
-            name = one_line(tell)[:_SCAN_TELL_MAX].strip()
+            name = _scan_tell_name(tell)
             if name and name not in names:
                 names.append(name)
         flags[gk] = tuple(names[:_SCAN_TELLS_MAX]) or (_SCAN_UNNAMED,)

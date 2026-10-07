@@ -331,6 +331,18 @@ def _to_plain(text: str) -> str:
     return text
 
 
+# The shortest JD text worth tailoring against. The dashboard's worker threads
+# use it too (qt.mw_tailor._with_master_jd): markdown at this length is the text
+# this engine reads, so the master CSV is not scanned for another copy.
+JD_MIN_CHARS = 40
+
+
+def has_markdown_jd(job: Dict[str, str]) -> bool:
+    """True when `job_description_md` alone clears JD_MIN_CHARS, so
+    `_job_description_text` returns it and reads no other column."""
+    return len(_field(job, "job_description_md")) >= JD_MIN_CHARS
+
+
 def _job_description_text(job: Dict[str, str]) -> str:
     """The richest available JD text: markdown first, full description next,
     summary last.
@@ -338,19 +350,18 @@ def _job_description_text(job: Dict[str, str]) -> str:
     job_description_md (score_jobs.py's markdownify output) is returned
     UNCHANGED: the tailor already reasons over markdown directly, and
     flattening it here would throw away the structure the prompt uses. It
-    clears the same 40-character floor as the other three columns; this
+    clears the same JD_MIN_CHARS (40) floor as the other three columns; this
     function measures that floor against the raw markdown itself, while
     jobsdata.job_detail_fields measures the same floor against md_to_text's
     converted output. LinkedIn's job_summary is often truncated or empty, so
     tailoring against it alone wastes most of the JD signal (and hard-fails
     when it's blank).
     """
-    md = _field(job, "job_description_md")
-    if len(md) >= 40:
-        return md
+    if has_markdown_jd(job):
+        return _field(job, "job_description_md")
     for key in ("job_description_formatted", "job_description", "job_summary"):
         text = _to_plain(_field(job, key))
-        if len(text) >= 40:
+        if len(text) >= JD_MIN_CHARS:
             return text
     return ""
 
@@ -1488,7 +1499,7 @@ def tailor(
     jd = _job_description_text(job)
     if not pdflatex_available():
         raise RuntimeError(f"pdflatex not found at '{config.PDFLATEX_PATH}'. Install MiKTeX/TeX Live.")
-    if len(jd) < 40:
+    if len(jd) < JD_MIN_CHARS:
         raise RuntimeError("Job description is empty/too short to tailor against.")
 
     # The run's Jev judge, None when Jev is off for the tailor. Every Jev step gets
@@ -1727,7 +1738,7 @@ def generate_cover_letter(
     jd = _job_description_text(job)
     if not pdflatex_available():
         raise RuntimeError(f"pdflatex not found at '{config.PDFLATEX_PATH}'. Install MiKTeX/TeX Live.")
-    if len(jd) < 40:
+    if len(jd) < JD_MIN_CHARS:
         raise RuntimeError("Job description is empty/too short to tailor against.")
 
     out_dir = Path(out_dir)

@@ -39,12 +39,13 @@ def generate_prep_sheet(job: Dict[str, str], out_dir: Optional[Path] = None) -> 
     the dashboard passes to tailor()). out_dir defaults to the job's resume
     folder convention under Generated_Resumes/.
     """
-    from .run import _field, _job_description_text, _line_field  # local import — avoids a cycle
+    # a local import: run imports this module
+    from .run import JD_MIN_CHARS, _field, _job_description_text, _line_field
 
     company = _line_field(job, "company_name") or "Unknown Company"
     job_title = _line_field(job, "job_title") or "Role"
     jd = _job_description_text(job)
-    if len(jd) < 40:
+    if len(jd) < JD_MIN_CHARS:
         raise RuntimeError("Job description is empty/too short to build a prep sheet.")
 
     if out_dir is None:

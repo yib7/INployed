@@ -575,6 +575,91 @@ def test_the_sibling_workers_keep_a_payload_with_no_master_row(qtbot, monkeypatc
     assert seen == [_summary_payload()]
 
 
+# ── a scraped job from a local run carries its description as markdown ───────
+
+_MD_JD = "## Data Analyst\n\n- Build dashboards in SQL and Python\n- Own the dbt models\n"
+
+
+def _local_run_payload(md=_MD_JD, jid="4100000001"):
+    """The dashboard row's payload for a job a local run scraped: its
+    *_scored.csv.gz row holds only `job_description_md`."""
+    return {**_summary_payload(jid), "job_summary": "", "job_description_md": md}
+
+
+def test_job_payload_carries_the_markdown_description(qtbot):
+    import pandas as pd
+    w = _win(qtbot)
+    w.df = pd.DataFrame([{"job_posting_id": "4100000001", "job_title": "Data Analyst",
+                          "company_name": "Acme", "job_description_md": _MD_JD}])
+    w._row_by_id = {"4100000001": 0}
+    assert w._job_payload("4100000001")["job_description_md"] == _MD_JD
+
+
+def test_tailor_on_a_local_run_job_never_reads_the_master(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    threads = _master_on_threads(monkeypatch)
+    seen: list = []
+    monkeypatch.setattr("resume_tailor.tailor",
+                        lambda job, **k: seen.append(dict(job)) or tmp_path, raising=False)
+    w._tailor_work([_local_run_payload()], {"cover_letter": False, "ats_report": True,
+                                            "prep_sheet": False, "tone": "professional"})
+    assert threads == []
+    assert seen == [_local_run_payload()]
+
+
+def test_cover_letter_prep_and_ask_ai_on_a_local_run_job_never_read_the_master(
+        qtbot, monkeypatch, tmp_path):
+    import resume_tailor.prep as prep_mod
+    import resume_tailor.run as run_mod
+    from resume_tailor import chat
+    w = _win(qtbot)
+    threads = _master_on_threads(monkeypatch)
+    seen: list = []
+    monkeypatch.setattr(run_mod, "generate_cover_letter",
+                        lambda job, folder, **k: seen.append(dict(job)) or folder / "c.pdf")
+    monkeypatch.setattr(prep_mod, "generate_prep_sheet",
+                        lambda job, out_dir: seen.append(dict(job)) or tmp_path / "prep.md")
+    _on_worker(lambda: w._cover_work(_local_run_payload(), tmp_path, "professional"))
+    _on_worker(lambda: w._prep_work(_local_run_payload(), tmp_path))
+    monkeypatch.setattr(w, "_job_payload", lambda jid: _local_run_payload(jid=jid))
+    w._ask_ai_for("4100000001")
+    dlg = w._chat_dialogs["4100000001"]
+    monkeypatch.setattr(chat, "context_for_job", lambda job: seen.append(dict(job)) or "CTX")
+    monkeypatch.setattr(chat, "ask", lambda context, history, question: "answer")
+    _on_worker(lambda: dlg._work("why this role?", []))
+    assert threads == []
+    assert seen == [_local_run_payload()] * 3
+
+
+def test_a_local_run_job_with_markdown_below_the_floor_still_reads_the_master(
+        qtbot, monkeypatch, tmp_path):
+    from resume_tailor.run import JD_MIN_CHARS
+    w = _win(qtbot)
+    threads = _master_on_threads(monkeypatch)
+    seen: list = []
+    monkeypatch.setattr("resume_tailor.tailor",
+                        lambda job, **k: seen.append(dict(job)) or tmp_path, raising=False)
+    short = _local_run_payload(md="x" * (JD_MIN_CHARS - 1))
+    w._tailor_work([short], {"cover_letter": False, "ats_report": True,
+                             "prep_sheet": False, "tone": "professional"})
+    assert len(threads) == 1
+    assert seen[0]["job_description_formatted"] == _FULL_JD
+
+
+def test_the_markdown_floor_is_the_one_the_tailor_reads_against(qtbot, monkeypatch):
+    # markdown at the floor is the text the engine tailors against, so it skips
+    # the master; one character under, the engine falls back to the other columns
+    from resume_tailor.run import JD_MIN_CHARS, _job_description_text
+    from qt import mw_tailor
+    threads = _master_on_threads(monkeypatch)
+    at_floor = _local_run_payload(md="x" * JD_MIN_CHARS)
+    assert _job_description_text(at_floor) == "x" * JD_MIN_CHARS
+    assert mw_tailor._with_master_jd(at_floor) is at_floor
+    assert threads == []
+    under = _local_run_payload(md="x" * (JD_MIN_CHARS - 1))
+    assert _job_description_text(under) == ""
+
+
 def test_edit_manual_job_prefills_and_updates_keeping_id(qtbot, monkeypatch):
     w = _win(qtbot)
     monkeypatch.setattr(mw.jobsdata, "master_row",

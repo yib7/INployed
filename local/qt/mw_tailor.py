@@ -44,13 +44,15 @@ _JD_COLUMNS = ("job_description_formatted", "job_description")
 
 def _with_master_jd(job: dict) -> dict:
     """`job` with its full description from the master CSV when the payload
-    carries none. Any row without `job_description_formatted` or
-    `job_description` lacks it: a hand-added job holds only the 1000-character
-    `job_summary`, and a scraped job from a local run only
-    `job_description_md`. Worker threads only, and only for a caller that uses
-    the description: `jobsdata.master_row` scans the whole master file, which
-    takes seconds."""
-    if any(str(job.get(col) or "").strip() for col in _JD_COLUMNS):
+    carries none. A row with `job_description_md` at the engine's floor
+    already has it (Tailor, cover letter, Ask AI and interview prep all read
+    `run._job_description_text`, which returns that markdown first), as does a
+    row with `job_description_formatted` or `job_description`. A hand-added job
+    holds only the 1000-character `job_summary`, so it reads the master. Worker
+    threads only, and only for a caller that uses the description:
+    `jobsdata.master_row` scans the whole master file, which takes seconds."""
+    from resume_tailor.run import has_markdown_jd
+    if has_markdown_jd(job) or any(str(job.get(col) or "").strip() for col in _JD_COLUMNS):
         return job
     jid = str(job.get("job_posting_id") or "").strip()
     try:

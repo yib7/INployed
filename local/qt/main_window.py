@@ -1113,6 +1113,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
             "job_description_formatted": self._cell(row, "job_description_formatted"),
             "job_description": self._cell(row, "job_description"),
             "job_summary": self._cell(row, "job_summary"),
+            "job_description_md": self._cell(row, "job_description_md"),
             "url": self._cell(row, "url"),
         }
 

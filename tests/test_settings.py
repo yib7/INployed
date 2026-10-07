@@ -386,6 +386,23 @@ def test_tailor_open_folder_is_a_resume_bool_defaulting_off(tmp_path):
     assert settings.validate({"tailor_open_folder": True}) == {}
 
 
+def test_tailor_parallel_jobs_is_a_resume_int_from_1_to_10(tmp_path):
+    """How many résumés a dashboard batch tailors at the same time. On screen
+    whatever Jev is doing, and the help keeps the reason for the cap."""
+    f = {x.key: x for x in settings.SETTINGS_SCHEMA}["tailor_parallel_jobs"]
+    assert (f.type, f.default, f.section, f.target) == ("int", 4, "Resume", "config")
+    assert (f.min, f.max) == (1, 10)
+    assert f.show_if is None and f.advanced is False
+    assert "same time" in f.help and "rate limit" in f.help
+    keys = [x.key for x in settings.SETTINGS_SCHEMA]
+    assert keys.index("tailor_parallel_jobs") == keys.index("tailor_open_folder") + 1
+    assert settings.load(_targets(tmp_path))["tailor_parallel_jobs"] == 4
+    assert settings.validate({"tailor_parallel_jobs": 1}) == {}
+    assert settings.validate({"tailor_parallel_jobs": 10}) == {}
+    assert "tailor_parallel_jobs" in settings.validate({"tailor_parallel_jobs": 11})
+    assert "tailor_parallel_jobs" in settings.validate({"tailor_parallel_jobs": 0})
+
+
 def test_repost_window_days_is_a_dashboard_int_default_30(tmp_path):
     f = {x.key: x for x in settings.SETTINGS_SCHEMA}["repost_window_days"]
     assert f.type == "int" and f.target == "config"

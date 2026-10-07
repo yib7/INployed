@@ -8,6 +8,11 @@ All notable changes to INployed are recorded here. The format follows
 
 ### Changed
 
+- **Choose how many résumés tailor at once.** A multi-job tailor ran 4 résumés at the
+  same time with no way to change it. **Résumés tailored at once** in Settings → Resume
+  (`tailor_parallel_jobs`, `RESUME_TAILOR_PARALLEL_JOBS`) sets it from 1 to 10, default 4,
+  and applies to the next batch without a restart. Higher is faster but can hit the
+  model's rate limit.
 - **The résumé's AI-writing sweep reads first and repairs second.** With Jev off for the
   tailor, one model call now scans every bullet for AI-writing patterns, and only an entry
   with a flagged bullet (or one the built-in checks flag) gets its repair call: one scan

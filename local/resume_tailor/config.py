@@ -398,6 +398,46 @@ def sweep_p2_enabled() -> bool:
     return bool(_config_json().get("resume_sweep_p2", False))
 
 
+# ── How many résumés the dashboard tailors at once ───────────────────────────
+# Each tailor run makes several model calls of its own, so a batch with no cap
+# (14 jobs = 14 threads) stampedes the per-minute quota: every thread hits 429 at
+# once, retries at once, and the unlucky tail runs out of retries and fails. The
+# rest of a batch queues behind the cap. PARALLEL_JOBS_MAX is the ceiling the
+# Settings row offers.
+PARALLEL_JOBS_DEFAULT = 4
+PARALLEL_JOBS_MAX = 10
+
+
+def _whole_number(value: Any) -> int | None:
+    """`value` as an int, or None for anything that is not a whole number (a
+    bool is not one here, though Python counts True as 1; 2.0 is, 2.5 is not)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, float) and not value.is_integer():
+        return None
+    try:
+        return int(str(value).strip()) if isinstance(value, str) else int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def parallel_jobs() -> int:
+    """How many résumés a dashboard batch tailors at the same time (the size of
+    its thread pool). Read live, so a Settings change applies to the next batch
+    without a restart. Precedence: RESUME_TAILOR_PARALLEL_JOBS env > config.json
+    'tailor_parallel_jobs' > PARALLEL_JOBS_DEFAULT; a value that is not a whole
+    number falls through to the next source, and a number is clamped to
+    1..PARALLEL_JOBS_MAX."""
+    number = _whole_number(os.getenv("RESUME_TAILOR_PARALLEL_JOBS"))
+    if number is None:
+        stored = _config_json()
+        if isinstance(stored, dict):
+            number = _whole_number(stored.get("tailor_parallel_jobs"))
+    if number is None:
+        number = PARALLEL_JOBS_DEFAULT
+    return max(1, min(PARALLEL_JOBS_MAX, number))
+
+
 # ── Jev options for the tailor ───────────────────────────────────────────────
 # Three Settings > Resume toggles, on screen while Jev runs for the résumé tailor
 # (settings.py gates them on `jev_tailor`). Each defaults OFF and each spends more

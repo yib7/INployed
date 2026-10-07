@@ -332,7 +332,10 @@ such text through `literal()`, so Qt never reads it as HTML.
 Heavy operations (scrape, tailor, prep-sheet, resume.md) run on Qt worker threads
 (`local/qt/workers.py`) and marshal results back via signals, so the window never
 freezes. Tailoring a multi-job selection fans the jobs out concurrently on a
-`ThreadPoolExecutor` (the work is I/O- + `pdflatex`-bound, so threads overlap); per-job failures
+`ThreadPoolExecutor` (the work is I/O- + `pdflatex`-bound, so threads overlap) sized by
+`_tailor_pool_size`: the batch, capped by `resume_tailor/config.py`'s `parallel_jobs()`
+(`RESUME_TAILOR_PARALLEL_JOBS` env > config.json `tailor_parallel_jobs` > 4, clamped 1 to 10,
+read at each batch start) so the threads do not stampede the per-minute quota; per-job failures
 are captured and reported in one aggregate dialog, registry writes happen back on the UI thread (the
 SQLite connection is thread-affine), and a
 warning precedes very large batches. Tailoring streams live per-job progress to the status bar

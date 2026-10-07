@@ -22,22 +22,21 @@ from qt import workers
 from qt.chat_dialog import JobChatDialog
 from qt.plaintext import literal
 
-# Tailoring is parallel (all selected at once). Above this many, warn first — a big
-# fan-out means that many simultaneous Gemini calls + pdflatex processes (API limits /
-# local load). Below it, just go.
+# Tailoring runs the selection in parallel, up to the 'Résumés tailored at once'
+# setting. Above this many jobs, warn first: a big batch means many model calls and
+# pdflatex processes (API limits, local load) and a long wait. Below it, just go.
 PARALLEL_WARN_THRESHOLD = 5
-
-# Cap on concurrently-running tailor jobs. Uncapped (a 14-job batch = 14
-# threads, each making several Gemini calls at once) the batch stampedes the
-# per-minute quota: every thread 429s together, retries together, and the
-# unlucky tail exhausts its retries and fails. Four keeps the pipeline busy
-# while staying under free-tier RPM limits; the rest of the batch queues.
-MAX_PARALLEL_TAILORS = 4
 
 
 def _tailor_pool_size(n_jobs: int) -> int:
-    """Worker-thread count for a tailor batch of `n_jobs`."""
-    return max(1, min(n_jobs, MAX_PARALLEL_TAILORS))
+    """Worker-thread count for a tailor batch of `n_jobs`: the batch, capped by
+    the 'Résumés tailored at once' setting, with the rest of the batch queued.
+    Uncapped (a 14-job batch = 14 threads, each making several model calls at
+    once) the batch stampedes the per-minute quota: every thread 429s together,
+    retries together, and the unlucky tail exhausts its retries and fails.
+    Read on every call, so a Settings change applies to the next batch."""
+    from resume_tailor import config as tailor_config
+    return max(1, min(n_jobs, tailor_config.parallel_jobs()))
 
 
 _JD_COLUMNS = ("job_description_formatted", "job_description")
@@ -196,8 +195,8 @@ class _TailorActions:
         trivially testable). Returns True to proceed."""
         return QtWidgets.QMessageBox.question(
             self, "Tailor many resumes at once?",
-            literal(f"About to tailor {n} resumes ({MAX_PARALLEL_TAILORS} at a time), each "
-            f"making its own Gemini calls and launching pdflatex. If the API rate-limits, "
+            literal(f"About to tailor {n} resumes ({_tailor_pool_size(n)} at a time), each "
+            f"making its own model calls and launching pdflatex. If the API rate-limits, "
             f"jobs wait it out and retry; any job that still fails turns red in the "
             f"Unseen tab for a re-run. Continue?")
         ) == QtWidgets.QMessageBox.StandardButton.Yes
@@ -270,8 +269,8 @@ class _TailorActions:
         return True
 
     def _tailor_work(self, jobs: list[dict], opts: dict) -> list[dict]:
-        """Tailor every selected job CONCURRENTLY (all at once) on a thread pool, and
-        return a per-job outcome list. No registry/SQLite writes happen here — those
+        """Tailor the selected jobs concurrently on a thread pool, up to
+        `_tailor_pool_size` at a time, and return a per-job outcome list. No registry/SQLite writes happen here — those
         are done back on the UI thread in `_finish_tailor` (the registry connection is
         thread-affine and concurrent writes would contend). Per-job exceptions are
         captured so one failure never sinks the rest of the batch."""

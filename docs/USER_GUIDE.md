@@ -83,8 +83,10 @@ Launch it the way Step 4 describes: double-click `Open INployed Dashboard.cmd`.
 The window opens maximized and gives you high-score triage, an application tracker with
 follow-up nudges, and run stats. A few behaviors to know:
 - **Tailor résumé** runs in the background, so the UI stays responsive.
-- Select several jobs and it tailors them all at once, in parallel. A single failure is
-  reported without sinking the rest, and a quick warning appears before very large batches.
+- Select several jobs and it tailors them in parallel, 4 at a time by default (**Résumés
+  tailored at once** in Settings → Resume, 1 to 10); the rest of the batch waits its turn.
+  A single failure is reported without sinking the rest, and a quick warning appears before
+  very large batches.
 - Tailoring streams live progress in the status bar (`Tailoring (2/3 done): … rephrasing
   bullets`), so a multi-minute run is never a silent freeze.
 - The Step 4 get-started panel lists its three next actions (Open Settings · Find new jobs ·
@@ -269,7 +271,12 @@ The sections, in the order the tab shows them:
   graduation month and security clearance, which the scorer reads (see *About you: school
   status and clearance* below).
 - **Dashboard / Job discovery / Scoring / Resume:** scores, follow-up days, search
-  keywords, remote types, spend caps, artifact toggles, and more. **Drop Easy Apply jobs
+  keywords, remote types, spend caps, artifact toggles, and more. **Résumés tailored at
+  once** (Resume; default 4, 1 to 10) sets how many résumés a multi-job tailor runs at the
+  same time. Higher finishes a big batch sooner, but each résumé makes its own model calls,
+  so too many at once can hit the model's rate limit: the jobs then wait and retry, and one
+  that runs out of retries fails. The change applies to the next batch;
+  `RESUME_TAILOR_PARALLEL_JOBS` in `.env` overrides it. **Drop Easy Apply jobs
   before scoring** (off by default) discards LinkedIn Easy-Apply postings before they cost
   a scoring call, for anyone who only wants postings with a real application form.
   **Repost score reuse window (days)** (Scoring, under *Show advanced settings*; default

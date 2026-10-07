@@ -9,7 +9,7 @@ Three layers under test:
               the registry the moment it finishes (queued signal onto the UI
               thread), so an interrupted batch keeps everything already done;
               and the thread pool is bounded so a 14-job batch can't stampede
-              the Gemini quota.
+              the model's quota.
 """
 import sys
 from pathlib import Path
@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
+from PySide6 import QtWidgets
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
@@ -169,11 +170,72 @@ def test_tailor_work_emits_one_result_per_job_incrementally(qtbot, monkeypatch):
     assert all(r["dir"] == f"out/{r['id']}" for r in seen)
 
 
-def test_tailor_pool_is_bounded():
+def test_tailor_pool_is_bounded(monkeypatch):
+    from resume_tailor import config as rt_config
+    monkeypatch.delenv("RESUME_TAILOR_PARALLEL_JOBS", raising=False)
+    monkeypatch.setattr(rt_config, "_config_json", lambda: {})
     assert mw_tailor._tailor_pool_size(1) == 1
     assert mw_tailor._tailor_pool_size(3) == 3
-    assert mw_tailor._tailor_pool_size(14) == mw_tailor.MAX_PARALLEL_TAILORS
+    assert mw_tailor._tailor_pool_size(14) == rt_config.PARALLEL_JOBS_DEFAULT == 4
     assert mw_tailor._tailor_pool_size(0) == 1
+
+
+def test_tailor_pool_reads_the_setting_on_every_batch(monkeypatch):
+    """A Settings change applies to the next batch, no dashboard restart."""
+    from resume_tailor import config as rt_config
+    monkeypatch.delenv("RESUME_TAILOR_PARALLEL_JOBS", raising=False)
+    stored = {"tailor_parallel_jobs": 2}
+    monkeypatch.setattr(rt_config, "_config_json", lambda: dict(stored))
+    assert mw_tailor._tailor_pool_size(14) == 2
+    stored["tailor_parallel_jobs"] = 9
+    assert mw_tailor._tailor_pool_size(14) == 9
+    assert mw_tailor._tailor_pool_size(5) == 5
+    stored["tailor_parallel_jobs"] = "garbage"
+    assert mw_tailor._tailor_pool_size(14) == 4
+
+
+def test_tailor_batch_runs_on_a_pool_of_the_configured_size(qtbot, monkeypatch):
+    import resume_tailor
+    from resume_tailor import config as rt_config
+    monkeypatch.delenv("RESUME_TAILOR_PARALLEL_JOBS", raising=False)
+    monkeypatch.setattr(rt_config, "_config_json", lambda: {"tailor_parallel_jobs": 2})
+    sizes = []
+    real_pool = mw_tailor.ThreadPoolExecutor
+
+    def spy_pool(max_workers):
+        sizes.append(max_workers)
+        return real_pool(max_workers=max_workers)
+
+    monkeypatch.setattr(mw_tailor, "ThreadPoolExecutor", spy_pool)
+    monkeypatch.setattr(resume_tailor, "tailor",
+                        lambda job, **kw: f"out/{job['job_posting_id']}")
+    w = _win(qtbot)
+    jobs = [{"job_posting_id": f"J{i}", "job_title": "T", "company_name": "C"}
+            for i in range(6)]
+    opts = {"cover_letter": False, "ats_report": False, "prep_sheet": False,
+            "tone": "professional"}
+    assert len(w._tailor_work(jobs, opts)) == 6
+    assert sizes == [2]
+
+
+def test_large_batch_confirm_names_the_configured_count(qtbot, monkeypatch):
+    from resume_tailor import config as rt_config
+    monkeypatch.delenv("RESUME_TAILOR_PARALLEL_JOBS", raising=False)
+    monkeypatch.setattr(rt_config, "_config_json", lambda: {"tailor_parallel_jobs": 7})
+    asked = []
+
+    def question(*args, **kwargs):
+        asked.append(str(args[2]))
+        return QtWidgets.QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(question))
+    w = _win(qtbot)
+    assert w._confirm_large_tailor(12) is False
+    assert "About to tailor 12 resumes (7 at a time)" in asked[0]
+    # fewer jobs than the cap: the count shown is the pool that will run
+    asked.clear()
+    w._confirm_large_tailor(6)
+    assert "(6 at a time)" in asked[0]
 
 
 def test_apply_df_views_passes_failed_ids_to_tabs(qtbot):

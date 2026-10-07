@@ -1213,3 +1213,59 @@ def test_a_jev_option_key_is_a_settings_field(getter, env, key):
     import settings
     f = {f.key: f for f in settings.SETTINGS_SCHEMA}[key]
     assert (f.type, f.default, f.target) == ("bool", False, "config")
+
+
+# --- how many résumés the dashboard tailors at once ---------------------------------
+# Read env > config.json > 4 and clamped to 1..10, the projects_max() pattern: a typo
+# or an out-of-range value never crashes a batch and never uncaps the pool.
+
+def test_parallel_jobs_defaults_to_four(monkeypatch):
+    monkeypatch.delenv("RESUME_TAILOR_PARALLEL_JOBS", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    assert config.parallel_jobs() == 4 == config.PARALLEL_JOBS_DEFAULT
+
+
+def test_parallel_jobs_reads_the_settings_key(monkeypatch):
+    monkeypatch.delenv("RESUME_TAILOR_PARALLEL_JOBS", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {"tailor_parallel_jobs": 7})
+    assert config.parallel_jobs() == 7
+    monkeypatch.setattr(config, "_config_json", lambda: {"tailor_parallel_jobs": "2"})
+    assert config.parallel_jobs() == 2
+
+
+def test_parallel_jobs_env_beats_the_file(monkeypatch):
+    monkeypatch.setattr(config, "_config_json", lambda: {"tailor_parallel_jobs": 7})
+    monkeypatch.setenv("RESUME_TAILOR_PARALLEL_JOBS", "3")
+    assert config.parallel_jobs() == 3
+    monkeypatch.setenv("RESUME_TAILOR_PARALLEL_JOBS", "  ")    # blank reads as unset
+    assert config.parallel_jobs() == 7
+    monkeypatch.setenv("RESUME_TAILOR_PARALLEL_JOBS", "three")  # garbage falls to the file
+    assert config.parallel_jobs() == 7
+
+
+@pytest.mark.parametrize("stored,expected", [
+    (0, 1), (-5, 1), (11, 10), (500, 10),          # out of range clamps
+    ("lots", 4), (None, 4), (True, 4), ([3], 4),   # not a number: the default
+    (2.0, 2),                                      # a whole float from a hand edit
+    (2.5, 4), (float("nan"), 4), (float("inf"), 4),
+])
+def test_parallel_jobs_clamps_or_falls_back(monkeypatch, stored, expected):
+    monkeypatch.delenv("RESUME_TAILOR_PARALLEL_JOBS", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {"tailor_parallel_jobs": stored})
+    assert config.parallel_jobs() == expected
+
+
+def test_parallel_jobs_env_is_clamped_too(monkeypatch):
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    monkeypatch.setenv("RESUME_TAILOR_PARALLEL_JOBS", "40")
+    assert config.parallel_jobs() == 10
+    monkeypatch.setenv("RESUME_TAILOR_PARALLEL_JOBS", "0")
+    assert config.parallel_jobs() == 1
+
+
+def test_parallel_jobs_key_is_a_settings_field():
+    """The Settings row writes the key and carries the bounds the getter clamps to."""
+    import settings
+    f = {f.key: f for f in settings.SETTINGS_SCHEMA}["tailor_parallel_jobs"]
+    assert (f.type, f.default, f.target) == ("int", config.PARALLEL_JOBS_DEFAULT, "config")
+    assert (f.min, f.max) == (1, config.PARALLEL_JOBS_MAX)

@@ -599,6 +599,16 @@ SETTINGS_SCHEMA: list[Field] = [
           help="When on, the tailored résumé's folder opens in File Explorer after each run. "
                "Off (default) keeps the screen tidy when you tailor several jobs at once; reach "
                "the folder from the Apply panel's 'Open folder' button or the path in the status bar."),
+    # Read at the start of each batch through resume_tailor/config.py's
+    # parallel_jobs(), which clamps to the same 1..10 and carries the default.
+    Field("tailor_parallel_jobs", "Résumés tailored at once", "int", 4, "Resume", "config",
+          min=1, max=10, slider=True,
+          help="How many résumés tailor at the same time when you select several jobs; "
+               "the rest of the batch waits its turn. Higher finishes a big batch sooner, "
+               "but each résumé makes its own model calls, so too many at once can hit "
+               "the model's rate limit: the jobs then wait and retry, and one that runs "
+               "out of retries fails. 4 is a safe default. A change "
+               "applies to the next batch."),
     Field("tailor_ats_report", "Write ATS report", "bool", True, "Resume", "config",
           help="Write ats_report.txt (keyword coverage) for each tailored résumé."),
     Field("tailor_prep_sheet", "Generate interview-prep sheet", "bool", False, "Resume", "config",

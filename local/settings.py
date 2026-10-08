@@ -675,18 +675,6 @@ SETTINGS_SCHEMA: list[Field] = [
                "auto-apply' action, and the most one drain works through. ~10 keeps a "
                "batch reviewable in one sitting: the run submits when 'Submit when "
                "verified' passes and parks the rest at their review page for you."),
-    # The parallel difficulty check (local/assess_pool.py): on screen
-    # only while the check itself is, the same gate that hides its button.
-    # apply_run.DEFAULT_SETTINGS carries the same default, and apply_assess.py's
-    # --parallel overrides it for one run.
-    Field("auto_apply_check_parallel", "Difficulty checks at once", "int", 10,
-          "Auto-apply", "config", min=1, max=10,
-          show_if=("jev_difficulty", ("True",)),
-          help="How many jobs 'Check difficulty' reads at the same time. Each check "
-               "opens its own browser window on a temporary copy of the auto-apply "
-               "profile, and the copies are deleted when the check ends. A lower "
-               "number uses less memory. 1 checks one job at a time in the "
-               "auto-apply profile itself."),
     # No auto_apply_inbox_url row: the single fallback URL duplicated the map
     # below, firing only when the signup domain missed it — and the shipped
     # DEFAULT_INBOX_MAP already covers the common providers, so an unmapped domain

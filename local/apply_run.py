@@ -185,6 +185,9 @@ VIEWPORT = {"width": 1400, "height": 1000}
 # sign-ins and the typed password.
 LAUNCH_HARDENING = {"chromium_sandbox": True, "accept_downloads": False}
 BROWSER_CHANNEL = "chrome"         # the installed Google Chrome; the bundled Chromium is the fallback
+OLD_COPIES_LEFT = ("The old difficulty check's profile copies at {folder} were not all deleted "
+                   "(a browser still had one open). They hold your sign-ins, and they are "
+                   "deleted the next time the auto-apply browser opens or the dashboard starts.")
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "auto_apply_submit": True,
@@ -193,11 +196,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "auto_apply_batch_cap": 10,
     "auto_apply_generate": True,
     "auto_apply_pause_minutes": 10,     # the pause's wait for the user
-    "auto_apply_check_parallel": 10,    # difficulty checks at once (assess_pool)
 }
 
 
-def launch_profile(pw, profile_dir: Path, *, headless: bool, log=None):
+def launch_profile(pw, profile_dir: Path, *, headless: bool, log=None, guard=None):
     """Open the auto-apply profile in the installed Google Chrome, or in the
     bundled Playwright Chromium when Chrome will not start.
 
@@ -214,12 +216,19 @@ def launch_profile(pw, profile_dir: Path, *, headless: bool, log=None):
     `profile_lock.ProfileBusy` before the bundled build could open a
     profile another browser holds.
 
-    On the real profile, with its sentinel held, the difficulty check's
-    leftover profile copies are swept first (`_sweep_check_copies`)."""
+    `guard` is the sentinel when the caller already holds it (the difficulty
+    check holds it across its jobs, one browser after another, so nothing
+    takes the profile between two of them): it is not taken again, and the
+    caller gives it back, not the context closing.
+
+    The old parallel difficulty check's leftover profile copies are deleted
+    first (`profile_lock.drop_old_check_copies`)."""
     log = log or logging.getLogger("apply_run")
-    guard = profile_lock.hold(profile_dir)
-    if guard is None:
-        raise profile_lock.ProfileBusy(profile_lock.RUN_BUSY)
+    own = guard is None
+    if own:
+        guard = profile_lock.hold(profile_dir)
+        if guard is None:
+            raise profile_lock.ProfileBusy(profile_lock.RUN_BUSY)
     try:
         _sweep_check_copies(profile_dir, log)
         try:
@@ -235,26 +244,23 @@ def launch_profile(pw, profile_dir: Path, *, headless: bool, log=None):
             ctx = pw.chromium.launch_persistent_context(
                 str(profile_dir), headless=headless, viewport=VIEWPORT, **LAUNCH_HARDENING)
     except BaseException:
-        guard.release()
+        if own:
+            guard.release()
         raise
-    _release_on_close(ctx, guard)
+    if own:
+        _release_on_close(ctx, guard)
     return ctx
 
 
 def _sweep_check_copies(profile_dir: Path, log) -> None:
-    """The parallel difficulty check's profile copies hold the sign-in
-    cookies; one that outlived its run (a console closed with X, a browser
-    slow to let go) is deleted here, by a holder of the real profile's
-    sentinel, so a live check's copies are never touched. A copy of another
-    profile, or a slot itself, sweeps nothing. Never raises."""
+    """Delete the profile copies an earlier version's parallel difficulty
+    check left behind (they hold the sign-in cookies), naming any it could
+    not delete. Never raises."""
     try:
-        import assess_pool
-        if not assess_pool.is_real_profile(profile_dir):
-            return
-        for folder in assess_pool.sweep_slots(tries=1):
-            log.warning(assess_pool.LEFT_BEHIND.format(folder=folder))
-    except Exception as e:      # noqa: BLE001  (a sweep never stops a browser opening)
-        log.debug("the profile copies were not swept (%s)", type(e).__name__)
+        if not profile_lock.drop_old_check_copies():
+            log.warning(OLD_COPIES_LEFT.format(folder=profile_lock.old_check_copies_dir()))
+    except Exception as e:      # noqa: BLE001  (a cleanup never stops a browser opening)
+        log.debug("the old profile copies were not deleted (%s)", type(e).__name__)
 
 
 def _release_on_close(ctx, guard) -> None:

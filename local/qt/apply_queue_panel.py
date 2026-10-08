@@ -17,9 +17,9 @@ is switched off, off with the reason while Jev cannot run or a browser holds
 the auto-apply profile).
 
 Several rows: the table takes a Ctrl/Shift-click selection. Check
-difficulty checks every selected job, several at once (`auto_apply_check_parallel`,
-read by the check's console), and Remove drops them all in one write after a
-confirm. Meanwhile the buttons that act on one job (Re-queue, Mark applied,
+difficulty checks the selected jobs one at a time, each in a fresh browser
+window, up to `apply_assess.MAX_JOBS_PER_CHECK` (30) per click, and Remove
+drops them all in one write after a confirm. Meanwhile the buttons that act on one job (Re-queue, Mark applied,
 Don't apply, and the details card's) are off with the tooltip "Select one job".
 
 Park and resume: a run that pauses on a question it cannot
@@ -59,7 +59,6 @@ from PySide6 import QtCore, QtWidgets
 import apply_assess
 import apply_pause
 import apply_queue
-import assess_pool
 import ats_accounts
 import errmsg
 import jev_switch
@@ -262,16 +261,24 @@ def _default_difficulty_hidden() -> bool:
     return jev_switch.switched_off("difficulty")
 
 
-def _default_check_parallel() -> int:
-    """Panel seam: how many difficulty checks run at once (the
-    `auto_apply_check_parallel` setting, clamped 1 to 10 the way
-    `apply_assess.py` reads it); the default when the settings do not read."""
-    try:
-        import settings
-        value = settings.load().get("auto_apply_check_parallel")
-    except Exception:  # noqa: BLE001 - a config hiccup only changes a note
-        value = None
-    return assess_pool.parallel_setting(value)
+def _over_cap_words(n: int) -> str:
+    """", the first 30 of them" when `n` jobs pass the check's cap
+    (`apply_assess.MAX_JOBS_PER_CHECK`), else ""."""
+    cap = apply_assess.MAX_JOBS_PER_CHECK
+    return f", the first {cap} of them" if n > cap else ""
+
+
+def _checking_note(n: int, kind: str) -> str:
+    """The note once the check's console starts on `n` `kind` ("selected" or
+    "queued") jobs: one at a time, and past the cap which ones and what to do
+    with the rest."""
+    cap = apply_assess.MAX_JOBS_PER_CHECK
+    if n <= cap:
+        return (f"Checking {n} {kind} {'job' if n == 1 else 'jobs'}, one at a time, in a "
+                f"new terminal.")
+    return (f"Checking the first {cap} of {n} {kind} jobs, one at a time, in a new "
+            f"terminal (at most {cap} per click). To check the other {n - cap}, select "
+            f"them and click Check difficulty once it ends.")
 
 
 def _default_profile_busy() -> bool:
@@ -572,7 +579,6 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                  difficulty_blocked: Callable[[], str] | None = None,
                  difficulty_hidden: Callable[[], bool] | None = None,
                  profile_busy: Callable[[], bool] | None = None,
-                 check_parallel: Callable[[], int] | None = None,
                  alert: Callable[[QtWidgets.QWidget], None] | None = None,
                  parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
@@ -600,9 +606,6 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self._difficulty_blocked = difficulty_blocked or (lambda: _default_difficulty_blocked())
         self._difficulty_hidden = difficulty_hidden or (lambda: _default_difficulty_hidden())
         self._profile_busy = profile_busy or (lambda: _default_profile_busy())
-        # How many checks run at once, for the note only: the
-        # check's console reads the setting itself.
-        self._check_parallel = check_parallel or (lambda: _default_check_parallel())
         self._gate_busy = False     # the profile's state when the gates were last read
         self._jobs: List[Dict[str, Any]] = []
         self._mtime_sig: tuple | None = None
@@ -836,12 +839,13 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         # refresh_difficulty_state, which shows a reason in its place.
         self._check_tip = (
             "Score how hard the selected jobs (or, with none selected, every queued "
-            "job) are to auto-apply, 1 to 10, in a NEW terminal window. Several jobs "
-            "are checked at once, each in its own browser window on a copy of the "
-            "auto-apply profile, up to the 'Difficulty checks at once' setting. Each "
-            "check opens the posting, follows its Apply button and reads the first "
-            "application page: it types nothing, signs in nowhere and submits "
-            "nothing. About 2 to 4 Jev requests per job.")
+            "job) are to auto-apply, 1 to 10, in a NEW terminal window. The jobs are "
+            f"checked one at a time, up to {apply_assess.MAX_JOBS_PER_CHECK} per click: "
+            "each opens in a fresh browser "
+            "window that closes when its job is read, with a short random pause "
+            "before the next. Each check opens the posting, follows its Apply button "
+            "and reads the first application page: it types nothing, signs in "
+            "nowhere and submits nothing. About 2 to 4 Jev requests per job.")
         self.check_difficulty_btn = button("Check difficulty", self._check_difficulty,
                                            self._check_tip, tier="tertiary")
         v.addLayout(btns)
@@ -1349,27 +1353,15 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             self, "Check difficulty",
             literal(f"Check how hard each of the {n} queued job(s) is to auto-apply? A new "
             f"terminal reads each job's first application page in the auto-apply "
-            f"browser, {self._at_once_words(n)}: about 2 to 4 Jev requests per job."))
+            f"browser, one at a time{_over_cap_words(n)}: about 2 to 4 Jev requests "
+            f"per job."))
         return answer == QtWidgets.QMessageBox.StandardButton.Yes
 
-    def _parallel_now(self) -> int:
-        """The checks-at-once seam, read safely and clamped 1 to 10."""
-        try:
-            return assess_pool.parallel_setting(self._check_parallel())
-        except Exception:  # noqa: BLE001 - a config hiccup only changes a note
-            return assess_pool.PARALLEL_DEFAULT
-
-    def _at_once_words(self, n: int) -> str:
-        """How `n` jobs are checked: "up to K at once" (K never more than n),
-        or "one at a time"."""
-        k = min(self._parallel_now(), n)
-        return f"up to {k} at once" if k > 1 else "one at a time"
-
     def _check_difficulty(self) -> None:
-        """Check the selected jobs (several run at once, up to the
-        `auto_apply_check_parallel` setting, which the check's console reads),
-        or every queued job after a confirm. The gate is read again first: a
-        run may have taken the profile since."""
+        """Check the selected jobs one at a time (the first
+        `apply_assess.MAX_JOBS_PER_CHECK` of them), or every queued job after a
+        confirm. The gate is read again first: a run may have taken the
+        profile since."""
         reason, busy = self.refresh_difficulty_state()
         if reason or busy:
             self._set_note(reason or apply_assess.PROFILE_BUSY)
@@ -1381,12 +1373,14 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             return
         if ids:
             # every queued job selected: `--all` keeps the command line short
-            # (Windows caps it near 32,767 characters, about 900 ids)
+            # (Windows caps it near 32,767 characters, about 900 ids). Past the
+            # check's cap the ids go as they are, so its first jobs are the
+            # table's, not the queue file's.
             queued_ids = {str(e.get("job_posting_id") or "") for e in self._jobs
                           if e.get("status") == "queued"}
-            if self._launch_check([] if set(ids) == queued_ids else ids):
-                self._set_note(f"Checking {len(ids)} selected jobs, "
-                               f"{self._at_once_words(len(ids))}, in a new terminal.")
+            every = set(ids) == queued_ids and len(ids) <= apply_assess.MAX_JOBS_PER_CHECK
+            if self._launch_check([] if every else ids):
+                self._set_note(_checking_note(len(ids), "selected"))
             return
         queued = self._queued_count()
         if queued == 0:
@@ -1395,7 +1389,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         if not self._confirm_check(queued):
             return
         if self._launch_check([]):
-            self._set_note(f"Checking {queued} queued job(s) in a new terminal.")
+            self._set_note(_checking_note(queued, "queued"))
 
     def _launch_check(self, ids: List[str]) -> bool:
         """Start the check's console for `ids` (every queued job when empty);

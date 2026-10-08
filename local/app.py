@@ -68,14 +68,13 @@ def build_app(argv: list[str] | None = None) -> QtWidgets.QApplication:
 
 
 def _sweep_profile_copies() -> threading.Thread:
-    """Delete the parallel difficulty check's leftover profile copies (they
-    hold the sign-in cookies) on a daemon thread, never on the UI thread.
-    `assess_pool.sweep_if_free` takes the real profile's sentinel for the
-    sweep, so a check, a run or a sign-in in progress keeps its own."""
+    """Delete the profile copies an earlier version's parallel difficulty
+    check left behind (they hold the sign-in cookies) on a daemon thread,
+    never on the UI thread (`profile_lock.drop_old_check_copies`)."""
     def sweep() -> None:
         try:
-            import assess_pool
-            assess_pool.sweep_if_free()
+            import profile_lock
+            profile_lock.drop_old_check_copies()
         except Exception:  # noqa: BLE001 - a leftover waits for the next sweep
             pass
     t = threading.Thread(target=sweep, name="assess-copies-sweep", daemon=True)

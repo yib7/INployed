@@ -2190,8 +2190,7 @@ def test_the_check_on_three_selected_jobs_passes_all_three_with_the_note(qtbot, 
     calls, asked = [], []
     qfile = _three(tmp_path)
     _checked(qfile, "4", difficulty=None)      # queued, not selected: the ids are named
-    p = _dpanel(qtbot, qfile, on_check_difficulty=calls.append,
-                check_parallel=lambda: 2)
+    p = _dpanel(qtbot, qfile, on_check_difficulty=calls.append)
     monkeypatch.setattr(p, "_confirm_check", lambda n: asked.append(n) or True)
     _multi(p, "1", "2", "3")
     p.check_difficulty_btn.click()
@@ -2199,32 +2198,61 @@ def test_the_check_on_three_selected_jobs_passes_all_three_with_the_note(qtbot, 
     assert calls[0] == p._selected_job_ids()   # table order
     assert asked == []                         # a chosen selection needs no confirm
     assert p.status_label.text() == \
-        "Checking 3 selected jobs, up to 2 at once, in a new terminal."
-
-
-def test_the_checks_at_once_in_the_note_never_exceed_the_selection(qtbot, tmp_path):
-    calls = []
-    p = _dpanel(qtbot, _three(tmp_path), on_check_difficulty=calls.append,
-                check_parallel=lambda: 10)
-    _multi(p, "1", "3")
-    p.check_difficulty_btn.click()
-    assert p.status_label.text() == \
-        "Checking 2 selected jobs, up to 2 at once, in a new terminal."
-
-
-def test_the_note_says_one_at_a_time_when_the_setting_is_1(qtbot, tmp_path):
-    p = _dpanel(qtbot, _three(tmp_path), on_check_difficulty=lambda ids: None,
-                check_parallel=lambda: 1)
-    _multi(p, "1", "2", "3")
-    p.check_difficulty_btn.click()
-    assert p.status_label.text() == \
         "Checking 3 selected jobs, one at a time, in a new terminal."
+
+
+def test_a_selection_past_the_cap_says_which_jobs_the_check_takes(qtbot, tmp_path):
+    """The check takes the first 30 selected; the note says so and what to do
+    with the rest."""
+    import apply_assess
+    assert apply_assess.MAX_JOBS_PER_CHECK == 30
+    qfile = _three(tmp_path)
+    for k in range(4, 34):
+        _checked(qfile, str(k), difficulty=None)
+    calls = []
+    p = _dpanel(qtbot, qfile, on_check_difficulty=calls.append)
+    picked = [str(k) for k in range(1, 33)]          # 32 of the 33 queued
+    _multi(p, *picked)
+    p.check_difficulty_btn.click()
+    assert len(calls) == 1 and sorted(calls[0], key=int) == picked
+    assert p.status_label.text() == (
+        "Checking the first 30 of 32 selected jobs, one at a time, in a new terminal (at "
+        "most 30 per click). To check the other 2, select them and click Check difficulty "
+        "once it ends.")
+
+
+def test_every_queued_job_selected_past_the_cap_names_the_ids_in_table_order(qtbot,
+                                                                            tmp_path):
+    """`--all` would take the queue file's order; past the cap the check
+    must take the table's first 30."""
+    qfile = _three(tmp_path)
+    for k in range(4, 33):
+        _checked(qfile, str(k), difficulty=None)
+    calls = []
+    p = _dpanel(qtbot, qfile, on_check_difficulty=calls.append)
+    every = [str(k) for k in range(1, 33)]
+    _multi(p, *every)
+    p.check_difficulty_btn.click()
+    assert calls == [p._selected_job_ids()] and sorted(calls[0], key=int) == every
+
+
+def test_the_confirm_for_every_queued_job_says_one_at_a_time(qtbot, tmp_path, monkeypatch):
+    import apply_assess
+    asked = []
+    monkeypatch.setattr(aqp.QtWidgets.QMessageBox, "question",
+                        lambda parent, title, text: asked.append(text)
+                        or aqp.QtWidgets.QMessageBox.StandardButton.No)
+    p = _dpanel(qtbot, _three(tmp_path), on_check_difficulty=lambda ids: None)
+    assert p._confirm_check(3) is False
+    assert "one at a time:" in asked[0] and "first 30" not in asked[0]
+    p._confirm_check(apply_assess.MAX_JOBS_PER_CHECK + 5)
+    assert "one at a time, the first 30 of them:" in asked[1]
+    assert "\u2014" not in "".join(asked)
 
 
 def test_the_single_row_check_is_unchanged(qtbot, tmp_path):
     calls = []
-    p = _dpanel(qtbot, _three(tmp_path), on_check_difficulty=calls.append,
-                check_parallel=lambda: 10)
+    p = _dpanel(qtbot, _three(tmp_path), on_check_difficulty=calls.append)
     p.table.selectRow(_row_of(p, "2"))
     p.check_difficulty_btn.click()
     assert calls == [["2"]]
@@ -2318,33 +2346,16 @@ def test_remove_on_one_row_does_not_ask(qtbot, tmp_path, monkeypatch):
     assert sorted(e["job_posting_id"] for e in apply_queue.load(qfile)["jobs"]) == ["1", "3"]
 
 
-def test_the_check_tip_names_the_selection_and_the_parallel_windows(qtbot, tmp_path):
+def test_the_check_tip_names_the_selection_and_one_job_at_a_time(qtbot, tmp_path):
     p = _dpanel(qtbot, _qfile(tmp_path))
     tip = p._check_tip
     assert "selected jobs" in tip and "with none selected, every queued job" in tip
-    assert "own browser window" in tip and "Difficulty checks at once" in tip
+    assert "one at a time, up to 30 per click" in tip
+    assert "fresh browser window" in tip and "pause" in tip
+    assert "at once" not in tip and "Difficulty checks at once" not in tip
     assert "types nothing, signs in nowhere and submits nothing" in tip
     assert "About 2 to 4 Jev requests per job." in tip
-    assert "—" not in tip
-
-
-@pytest.mark.parametrize("stored, expected", [(4, 4), (25, 10), (0, 1), ("lots", 10),
-                                              (None, 10)])
-def test_the_default_checks_at_once_reads_the_setting_clamped(monkeypatch, stored, expected):
-    import settings
-    monkeypatch.setattr(settings, "load", lambda *a, **k: (
-        {} if stored is None else {"auto_apply_check_parallel": stored}))
-    assert aqp._default_check_parallel() == expected
-
-
-def test_the_default_checks_at_once_survives_a_broken_settings_backend(monkeypatch):
-    import settings
-
-    def broken(*a, **k):
-        raise OSError("config.json unreadable")
-
-    monkeypatch.setattr(settings, "load", broken)
-    assert aqp._default_check_parallel() == 10
+    assert "\u2014" not in tip
 
 
 # --- a large selection, a spawn that fails, an id outside the safe set ----------------------
@@ -2352,19 +2363,17 @@ def test_the_default_checks_at_once_survives_a_broken_settings_backend(monkeypat
 
 def test_a_selection_of_every_queued_job_runs_as_all(qtbot, tmp_path):
     calls = []
-    p = _dpanel(qtbot, _three(tmp_path), on_check_difficulty=calls.append,
-                check_parallel=lambda: 2)
+    p = _dpanel(qtbot, _three(tmp_path), on_check_difficulty=calls.append)
     _multi(p, "1", "2", "3")
     p.check_difficulty_btn.click()
     assert calls == [[]]                       # `--all`: the command line stays short
     assert p.status_label.text() == \
-        "Checking 3 selected jobs, up to 2 at once, in a new terminal."
+        "Checking 3 selected jobs, one at a time, in a new terminal."
 
 
 def test_a_selection_of_some_queued_jobs_names_them(qtbot, tmp_path):
     calls = []
-    p = _dpanel(qtbot, _three(tmp_path), on_check_difficulty=calls.append,
-                check_parallel=lambda: 2)
+    p = _dpanel(qtbot, _three(tmp_path), on_check_difficulty=calls.append)
     _multi(p, "1", "3")
     p.check_difficulty_btn.click()
     assert calls == [p._selected_job_ids()] and sorted(calls[0]) == ["1", "3"]
@@ -2375,7 +2384,7 @@ def test_a_selection_with_a_parked_job_names_every_one(qtbot, tmp_path):
     _checked(qfile, "4", difficulty=None)
     apply_queue.finish("4", "needs_human", tab_note="review tab", path=qfile)
     calls = []
-    p = _dpanel(qtbot, qfile, on_check_difficulty=calls.append, check_parallel=lambda: 2)
+    p = _dpanel(qtbot, qfile, on_check_difficulty=calls.append)
     _multi(p, "1", "2", "3", "4")
     p.check_difficulty_btn.click()
     assert len(calls) == 1 and sorted(calls[0]) == ["1", "2", "3", "4"]
@@ -2385,8 +2394,7 @@ def test_a_selection_with_a_parked_job_names_every_one(qtbot, tmp_path):
 def test_a_check_that_will_not_start_says_so(qtbot, tmp_path, pick):
     def too_long(ids):
         raise OSError(206, "The filename or extension is too long")
-    p = _dpanel(qtbot, _three(tmp_path), on_check_difficulty=too_long,
-                check_parallel=lambda: 2)
+    p = _dpanel(qtbot, _three(tmp_path), on_check_difficulty=too_long)
     _multi(p, *pick)
     p.check_difficulty_btn.click()             # no exception escapes the slot
     note = p.status_label.text()

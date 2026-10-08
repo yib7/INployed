@@ -1360,31 +1360,22 @@ result older than 7 days shows its age beside the score. After you save an answe
 **Check difficulty** is hidden while **Jev difficulty check** is off in Settings → Jev, and
 greyed out with the reason while Jev cannot run or another browser holds the auto-apply
 profile. From a terminal: `python local/apply_assess.py` with job ids, or `--all` for every
-queued job (add `--parallel N`, 1 to 10, to set how many run at once for that run).
+queued job.
 
-**Several jobs at once.** With two or more jobs selected, or none (every queued job), the
-check opens one browser window per job, up to the **Difficulty checks at once** setting (Settings →
-Auto-apply, 1 to 10, default 10; it shows only while the difficulty check is on). When a
-window's job is done, the next job takes its place. Each window runs on its own temporary
-copy of the auto-apply profile, so it is already signed in, and your real profile is held
-for the whole run. The copies hold your session cookies. They are deleted when the run ends,
-after a wait of up to about 12 seconds for a window still closing. A copy that outlives its
-run (you closed the terminal with X, or a window would not let go of it) is deleted the next
-time the auto-apply browser opens (a check, a run or the sign-in) or the dashboard starts,
-and the terminal names any copy it could not delete. The terminal prints one line
-per job as it finishes, with the running total of Jev requests and cost. A run stops
-starting new jobs when Jev is down, when you close one of the windows, or when a browser
-cannot start; the windows still open finish, and the terminal says why. A job whose window
-fails on its own (its check crashed, or its copy was still in use) gets its "not checked"
-line with the reason and the warnings behind it, and the next job starts. Ctrl+C in the
-terminal closes the windows and deletes the copies. A stopped job keeps its earlier result.
-One job selected, or the setting at 1, checks one job at a time on the real profile.
-
-**Memory.** Each window is a full Chrome, so ten windows use several gigabytes. On a smaller
-machine, lower **Difficulty checks at once**.
+**One job at a time, up to 30 per click.** With two or more jobs selected, or none (every
+queued job), the check reads the jobs one after another. Each job opens in a fresh browser
+window on the auto-apply profile, so it is already signed in; the window closes once its job
+is read, and the next job opens after a random pause of 5 to 10 seconds, which keeps the PC
+light and the pace less like a bot's. One click checks at most 30 jobs, in the order
+selected (or queued). With more chosen, the terminal and the panel say how many were left:
+select those and click **Check difficulty** again once the run ends. Your profile is held
+for the whole run, pauses included, so a run or a sign-in cannot start until it ends. The
+terminal prints one line per job with the running total of Jev requests and cost. The run
+stops when Jev is down, when you close the window while a job is read, when a browser
+cannot start, or on Ctrl+C; a job not yet checked keeps its earlier result.
 
 **With several rows selected,** **Check difficulty** checks all of them ("Checking N selected
-jobs, up to K at once, in a new terminal."), and **Remove from queue** asks first, then
+jobs, one at a time, in a new terminal."), and **Remove from queue** asks first, then
 removes them in one step. **Re-queue**, **Mark applied**, **Don't apply** and the details
 pane's **Open job folder**, **Open application record** and **Answer now** are greyed out ("Select one job"), because each
 acts on a single job.

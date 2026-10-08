@@ -16,10 +16,17 @@ lose its saved sign-ins. Two signs say a browser holds it:
 `busy` is either sign. The Auto-apply panel reads it for Start and for
 Check difficulty, `apply_run.py drain` and `one` read it before they claim
 a job, and `apply_assess.py` reads it before it opens the browser.
+
+`drop_old_check_copies` deletes the profile copies an earlier version's
+parallel difficulty check kept under `assess_profiles` (they hold the
+sign-in cookies); the dashboard at start and every browser
+`launch_profile` opens call it.
 """
 from __future__ import annotations
 
 import os
+import shutil
+import stat
 import time
 from pathlib import Path
 
@@ -31,6 +38,7 @@ HOLD_RETRY_S = 0.05
 BUSY_LEAD = ("The auto-apply browser is open: a run, a sign-in or a difficulty check holds "
              "its profile.")
 RUN_BUSY = BUSY_LEAD + " Start the run once that window closes."
+OLD_CHECK_COPIES = "assess_profiles"    # the parallel difficulty check's copies (removed)
 
 
 class ProfileBusy(RuntimeError):
@@ -125,3 +133,36 @@ def hold(profile_dir: Path | None = None, *,
         if time.monotonic() >= deadline:
             return None
         time.sleep(HOLD_RETRY_S)
+
+
+def old_check_copies_dir() -> Path:
+    """Where an earlier version's parallel difficulty check kept its profile
+    copies, beside the profile folder."""
+    return default_profile_dir().with_name(OLD_CHECK_COPIES)
+
+
+def _writable_then_retry(func, path, error) -> None:
+    """`shutil.rmtree`'s error hook: a read-only entry is made writable and
+    removed again; any other error is raised."""
+    if not isinstance(error, PermissionError):
+        raise error
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
+def drop_old_check_copies() -> bool:
+    """Delete the old parallel check's profile copies (`old_check_copies_dir`),
+    which hold the sign-in cookies. Best effort and never raises: True when
+    no such folder is left, False when some of it would not delete (a
+    browser still had a file open; the next call tries again)."""
+    folder = old_check_copies_dir()
+    try:
+        if not os.path.lexists(folder):
+            return True
+        if folder.is_dir() and not folder.is_symlink():
+            shutil.rmtree(folder, onexc=_writable_then_retry)
+        else:
+            folder.unlink()
+    except Exception:  # noqa: BLE001 - a leftover waits for the next call
+        pass
+    return not os.path.lexists(folder)

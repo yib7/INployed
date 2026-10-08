@@ -252,50 +252,114 @@ def test_login_refuses_in_a_sentence_while_another_browser_holds_the_profile(tmp
     assert capsys.readouterr().err.strip() == profile_lock.RUN_BUSY
 
 
-# --- every browser on the real profile sweeps the check's copies ----------------------------
+# --- a sentinel the caller holds; the old parallel check's copies ---------------------------
 
-def _leftover(name="slot-3"):
-    import assess_pool
-    folder = assess_pool.slot_root() / name
+class _ClosingCtx(_Ctx):
+    """A context that fires its close handlers, as Playwright's does."""
+
+    def __init__(self):
+        super().__init__()
+        self.handlers = []
+
+    def on(self, name, fn):
+        if name == "close":
+            self.handlers.append(fn)
+
+    def close(self):
+        for fn in self.handlers:
+            fn(self)
+
+
+def test_launch_profile_uses_a_sentinel_its_caller_holds_and_leaves_it_held(tmp_path):
+    """The difficulty check holds the sentinel across its jobs: each job's
+    browser opens under it, and closing that browser keeps it held."""
+    import profile_lock
+    profile = tmp_path / "profile"
+    guard = profile_lock.hold(profile)
+    chromium = _Chromium()
+    chromium.ctx = _ClosingCtx()
+    try:
+        ctx = apply_run.launch_profile(_PW(chromium), profile, headless=True, guard=guard)
+        assert ctx is chromium.ctx
+        ctx.close()
+        assert profile_lock.sentinel_held(profile) is True
+        # a failed start leaves the caller's sentinel alone too
+        dead = _Chromium(fail_channels={"chrome", None})
+        with pytest.raises(RuntimeError):
+            apply_run.launch_profile(_PW(dead), profile, headless=True, guard=guard)
+        assert profile_lock.sentinel_held(profile) is True
+    finally:
+        guard.release()
+    assert profile_lock.sentinel_held(profile) is False
+
+
+def test_launch_profile_without_a_guard_gives_the_sentinel_back_on_close(tmp_path):
+    import profile_lock
+    profile = tmp_path / "profile"
+    chromium = _Chromium()
+    chromium.ctx = _ClosingCtx()
+    ctx = apply_run.launch_profile(_PW(chromium), profile, headless=True)
+    assert profile_lock.sentinel_held(profile) is True
+    ctx.close()
+    assert profile_lock.sentinel_held(profile) is False
+
+
+def _old_copy(name="slot-3"):
+    import profile_lock
+    folder = profile_lock.old_check_copies_dir() / name
     (folder / "Default" / "Network").mkdir(parents=True)
     (folder / "Default" / "Network" / "Cookies").write_text("old", encoding="utf-8")
     return folder
 
 
-def test_launch_profile_on_the_real_profile_sweeps_leftover_copies(tmp_path, monkeypatch):
+def test_launch_profile_deletes_the_old_parallel_checks_copies(tmp_path, monkeypatch):
     import profile_lock
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    folder = _leftover()
-    swept_while_held = []
-    import assess_pool
-    real = assess_pool.sweep_slots
-
-    def watching(*a, **kw):
-        swept_while_held.append(profile_lock.sentinel_held(profile_lock.default_profile_dir()))
-        return real(*a, **kw)
-    monkeypatch.setattr(assess_pool, "sweep_slots", watching)
-    chromium = _Chromium()
-    apply_run.launch_profile(_PW(chromium), profile_lock.default_profile_dir(), headless=True)
-    assert not folder.exists()
-    assert swept_while_held == [True]          # never without the real profile's sentinel
-
-
-def test_launch_profile_on_another_profile_never_sweeps(tmp_path, monkeypatch):
-    import assess_pool
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    folder = _leftover()
-    apply_run.launch_profile(_PW(_Chromium()), assess_pool.slot_dir(1), headless=True)
+    _old_copy()
+    root = profile_lock.old_check_copies_dir()
+    assert root == tmp_path / "linkedin_watcher" / "assess_profiles"
     apply_run.launch_profile(_PW(_Chromium()), tmp_path / "profile", headless=True)
-    assert folder.exists()
+    assert not root.exists()
 
 
-def test_launch_profile_names_a_copy_it_could_not_delete(tmp_path, monkeypatch, caplog):
-    import assess_pool
+def test_launch_profile_names_old_copies_it_could_not_delete(tmp_path, monkeypatch, caplog):
     import profile_lock
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    folder = _leftover()
-    monkeypatch.setattr(assess_pool, "sweep_slots", lambda *a, **kw: [folder])
+    monkeypatch.setattr(profile_lock, "drop_old_check_copies", lambda: False)
     with caplog.at_level("WARNING"):
-        apply_run.launch_profile(_PW(_Chromium()), profile_lock.default_profile_dir(),
-                                 headless=True)
-    assert assess_pool.LEFT_BEHIND.format(folder=folder) in caplog.text
+        ctx = apply_run.launch_profile(_PW(_Chromium()), tmp_path / "profile", headless=True)
+    assert ctx is not None
+    assert apply_run.OLD_COPIES_LEFT.format(folder=profile_lock.old_check_copies_dir()) \
+        in caplog.text
+
+
+def test_dropping_the_old_copies_never_raises(tmp_path, monkeypatch):
+    import shutil
+
+    import profile_lock
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    assert profile_lock.drop_old_check_copies() is True            # nothing there
+    folder = _old_copy()
+
+    def stuck(*a, **kw):
+        raise PermissionError("a browser has a file open")
+    monkeypatch.setattr(shutil, "rmtree", stuck)
+    assert profile_lock.drop_old_check_copies() is False
+    assert folder.exists()
+    monkeypatch.undo()
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    assert profile_lock.drop_old_check_copies() is True
+    assert not profile_lock.old_check_copies_dir().exists()
+
+
+def test_dropping_the_old_copies_clears_read_only_files(tmp_path, monkeypatch):
+    import os
+    import stat
+
+    import profile_lock
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    folder = _old_copy()
+    cookies = folder / "Default" / "Network" / "Cookies"
+    os.chmod(cookies, stat.S_IREAD)
+    assert profile_lock.drop_old_check_copies() is True
+    assert not profile_lock.old_check_copies_dir().exists()

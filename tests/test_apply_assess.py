@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 import os
+import time
+import types
 from datetime import datetime
 from pathlib import Path
 
@@ -813,20 +815,10 @@ def test_main_opens_the_bundled_browser_when_chrome_does_not_start(browser_cli):
     _fake_playwright(browser_cli, chromium)
     seen = []
     browser_cli.setattr(aa, "run", lambda job_ids, **kw: seen.append(
-        profile_lock.sentinel_held(aa.default_profile_dir())) or 0)
+        profile_lock.sentinel_held(aa.default_profile_dir())) or kw["launch"]().close() or 0)
     assert aa.main(["42"]) == 0
     assert [kw.get("channel") for _, kw in chromium.calls] == ["chrome", None]
     assert seen == [True]
-    assert profile_lock.sentinel_held(aa.default_profile_dir()) is False
-
-
-def test_main_stops_in_a_sentence_when_no_browser_starts(browser_cli, capsys):
-    import profile_lock
-    chromium = _FakeChromium(fail={"chrome", None})
-    _fake_playwright(browser_cli, chromium)
-    browser_cli.setattr(aa, "run", lambda *a, **kw: pytest.fail("the check ran"))
-    assert aa.main(["42"]) == 1
-    assert capsys.readouterr().err.strip() == aa.NO_BROWSER.format(why="RuntimeError")
     assert profile_lock.sentinel_held(aa.default_profile_dir()) is False
 
 
@@ -1119,332 +1111,6 @@ def test_a_noisy_judge_never_clicks_an_account_link_in_the_posting(context, tmp_
     assert got is None or 1 <= got["score"] <= 10
 
 
-# === the worker's result line ===============================================================
-
-RESULT_KEYS = {"job_id", "outcome", "score", "band", "why", "requests", "usd"}
-
-
-@pytest.fixture
-def worker(browser_cli, tmp_path):
-    """`main --worker` on a fake slot profile with a queued job 42; the walk is
-    replaced by `worker.check` (no browser, no Jev request)."""
-    import apply_queue
-    from resume_tailor import apply_answers
-    browser_cli.setattr(apply_answers, "load", lambda *a, **kw: [])
-    queue = tmp_path / "queue.json"
-    apply_queue.enqueue(apply_queue.new_entry("42", company="Fabrikam", title="Analyst",
-                                              apply_url="https://jobs.lever.co/fabrikam/1/apply"),
-                        path=queue)
-    slot = tmp_path / "slot-1"
-    slot.mkdir()
-
-    class _Worker:
-        monkeypatch = browser_cli
-
-        def argv(self, *extra, job="42"):
-            return ["--worker", "--profile", str(slot), "--queue", str(queue), *extra, job]
-
-        def check(self, fn):
-            browser_cli.setattr(aa, "check_job", fn)
-
-        def result(self, capsys):
-            out = capsys.readouterr().out.strip().splitlines()
-            assert out[-1].startswith(aa.RESULT_PREFIX), out
-            return json.loads(out[-1][len(aa.RESULT_PREFIX):])
-
-        def run(self, capsys, argv=None):
-            """(exit code, the result line) with an injected context: no browser."""
-            code = aa.main(argv or self.argv(), context=_FakeCtx())
-            return code, self.result(capsys)
-    w = _Worker()
-    w.queue, w.slot = queue, slot
-    return w
-
-
-def _scored(entry, *, context, judge, answers, settings, entries, log=None):
-    judge.requests += 2                         # the two requests this walk made
-    return {**aa.score(system="lever"), "system": "lever", "questions": []}, ""
-
-
-def test_a_worker_ends_with_its_result_line_for_a_scored_job(worker, capsys):
-    import apply_queue
-    worker.check(_scored)
-    code, got = worker.run(capsys)
-    assert code == 0
-    assert set(got) == RESULT_KEYS
-    assert got["job_id"] == "42" and got["outcome"] == "scored"
-    assert got["score"] == 2 and got["band"] == "Queue it"
-    assert got["why"] == "" and got["requests"] == 2 and got["usd"] == 0
-    stored = apply_queue.load(worker.queue)["jobs"][0]["difficulty"]
-    assert stored["score"] == 2                 # the worker stored it on the queue itself
-
-
-def test_the_result_line_comes_after_the_progress_line(worker, capsys):
-    worker.check(_scored)
-    aa.main(worker.argv(), context=_FakeCtx())
-    lines = capsys.readouterr().out.strip().splitlines()
-    assert lines[0].startswith("[1/1] Fabrikam / Analyst: 2/10, Queue it. ")
-    assert len(lines) == 2 and lines[1].startswith(aa.RESULT_PREFIX)
-
-
-def test_a_worker_reports_a_page_it_could_not_read_as_unread(worker, capsys):
-    import apply_queue
-    worker.check(lambda entry, **kw: (None, "the page did not load"))
-    code, got = worker.run(capsys)
-    assert code == 0 and got["outcome"] == "unread" and got["why"] == "the page did not load"
-    assert got["score"] is None and got["band"] == ""
-    noted = apply_queue.load(worker.queue)["jobs"][0]["difficulty"]
-    assert noted["last_failed_why"] == "the page did not load"
-
-
-def test_a_worker_reports_jev_down_as_an_outage(worker, capsys):
-    def down(entry, **kw):
-        raise jev.JudgeOutage("ConnectError")
-    worker.check(down)
-    code, got = worker.run(capsys)
-    assert code == 1 and got["outcome"] == "outage" and got["why"] == "Jev is down (ConnectError)"
-
-
-def test_a_worker_reports_a_closed_window(worker, capsys):
-    def closed(entry, **kw):
-        raise RuntimeError("Target page, context or browser has been closed")
-    worker.check(closed)
-    code, got = worker.run(capsys)
-    assert code == 1 and got["outcome"] == "closed"
-    assert got["why"] == "the browser window was closed"
-
-
-def test_a_worker_reports_any_other_failure_as_an_error(worker, capsys):
-    def broke(entry, **kw):
-        raise ValueError("a detail the line must not carry")
-    worker.check(broke)
-    code, got = worker.run(capsys)
-    assert code == 0 and got["outcome"] == "error" and got["why"].startswith("ValueError at ")
-    assert "a detail" not in json.dumps(got)
-
-
-def test_a_worker_reports_a_job_that_left_the_queue(worker, capsys):
-    import apply_queue
-
-    def removed(entry, **kw):
-        apply_queue.remove("42", path=worker.queue)
-        return _scored(entry, **kw)
-    worker.check(removed)
-    code, got = worker.run(capsys)
-    assert got["outcome"] == "error" and got["why"] == "left the queue while it was checked"
-
-
-def test_a_worker_reports_an_unknown_job(worker, capsys):
-    code, got = worker.run(capsys, worker.argv(job="7"))
-    assert code == 2 and got["outcome"] == "error" and got["job_id"] == "7"
-    assert got["why"] == "job 7 is not in the queue"
-
-
-def test_a_worker_counts_what_the_walk_spent(worker, capsys):
-    def billed(entry, **kw):
-        jev.count_usage(1_000_000)
-        return _scored(entry, **kw)
-    worker.monkeypatch.setattr(jev, "_TOTAL", dict(jev._TOTAL))
-    worker.check(billed)
-    code, got = worker.run(capsys)
-    assert got["outcome"] == "scored" and got["usd"] > 0 and got["requests"] == 2
-
-
-def test_a_worker_that_is_refused_still_ends_with_a_result_line(worker, capsys):
-    _write_switch(dict(ON, jev_difficulty=False, auto_apply_jev_mode="typesafe"))
-    assert aa.main(worker.argv(), context=_FakeCtx()) == 2
-    captured = capsys.readouterr()
-    assert jev_switch.DIFFICULTY_OFF in captured.err
-    got = json.loads(captured.out.strip().splitlines()[-1][len(aa.RESULT_PREFIX):])
-    assert got["outcome"] == "error" and got["why"] == jev_switch.DIFFICULTY_OFF
-    assert got["job_id"] == "42"
-
-
-def test_a_worker_with_no_browser_says_so_in_its_result(worker, capsys):
-    chromium = _FakeChromium(fail={"chrome", None})
-    _fake_playwright(worker.monkeypatch, chromium)
-    assert aa.main(worker.argv()) == 1
-    got = worker.result(capsys)
-    assert got["outcome"] == "error" and got["why"] == aa.NO_BROWSER.format(why="RuntimeError")
-    assert [c[0] for c in chromium.calls] == [str(worker.slot)] * 2
-
-
-def test_a_worker_opens_its_slot_profile_not_the_real_one(worker, capsys):
-    chromium = _FakeChromium()
-    _fake_playwright(worker.monkeypatch, chromium)
-    worker.check(_scored)
-    assert aa.main(worker.argv()) == 0
-    assert [c[0] for c in chromium.calls] == [str(worker.slot)]
-    assert worker.result(capsys)["outcome"] == "scored"
-
-
-def test_a_worker_that_crashes_still_ends_with_a_result_line(worker, capsys):
-    worker.monkeypatch.setattr(aa, "run", lambda *a, **kw: 1 / 0)
-    assert aa.main(worker.argv(), context=_FakeCtx()) == 1
-    got = worker.result(capsys)
-    assert got["outcome"] == "error" and got["why"] == "the worker failed (ZeroDivisionError)"
-
-
-@pytest.mark.parametrize("extra", [["--all", "42"], ["7", "8"], []])
-def test_a_worker_needs_exactly_one_job(worker, capsys, extra):
-    argv = ["--worker", "--profile", str(worker.slot), "--queue", str(worker.queue), *extra]
-    assert aa.main(argv, context=_FakeCtx()) == 2
-    got = worker.result(capsys)
-    assert got["outcome"] == "error" and got["why"] == aa.WORKER_USAGE
-
-
-def test_a_worker_needs_a_profile(worker, capsys):
-    assert aa.main(["--worker", "42"], context=_FakeCtx()) == 2
-    assert worker.result(capsys)["why"] == aa.WORKER_USAGE
-
-
-def test_without_worker_the_output_has_no_result_line(worker, capsys):
-    worker.check(_scored)
-    assert aa.main(["--queue", str(worker.queue), "42"], context=_FakeCtx()) == 0
-    out = capsys.readouterr().out
-    assert aa.RESULT_PREFIX not in out and out.strip().splitlines()[0].startswith("[1/1] ")
-
-
-def test_the_result_line_round_trips():
-    got = aa.worker_result({"job_id": "9", "outcome": "scored", "score": 5, "band": "May need",
-                            "why": "", "requests": 3, "usd": 0.0123})
-    line = aa.result_line(got)
-    assert line.startswith("@@assess-result {") and "\n" not in line
-    assert aa.parse_result_line("log line\n" + line + "\n") == got
-    assert aa.parse_result_line("no result here\n") is None
-    assert aa.parse_result_line(aa.RESULT_PREFIX + "{not json") is None
-    assert aa.parse_result_line(aa.RESULT_PREFIX + '{"outcome": "weird"}') is None
-
-
-def test_a_run_that_recorded_nothing_is_an_error_result():
-    got = aa.worker_result({}, job_id="42")
-    assert got["outcome"] == "error" and got["job_id"] == "42" and set(got) == RESULT_KEYS
-
-
-# === a worker's crash, refusal and slot ======================================================
-
-def test_a_worker_crash_is_a_failed_job_with_its_traceback_logged(worker, capsys, caplog):
-    import apply_queue
-
-    def broken(*a, **kw):
-        raise OSError("the queue file could not be written")
-    worker.check(_scored)
-    worker.monkeypatch.setattr(apply_queue, "set_difficulty", broken)
-    with caplog.at_level("ERROR", logger="apply_assess"):
-        assert aa.main(worker.argv(), context=_FakeCtx()) == 1
-    got = worker.result(capsys)
-    assert got["outcome"] == "error" and got["why"] == "the worker failed (OSError)"
-    assert got["failed"] is True and "refusal" not in got
-    assert "Traceback" in caplog.text and "OSError" in caplog.text
-
-
-def test_a_worker_that_crashes_is_marked_failed(worker, capsys):
-    worker.monkeypatch.setattr(aa, "run", lambda *a, **kw: 1 / 0)
-    assert aa.main(worker.argv(), context=_FakeCtx()) == 1
-    got = worker.result(capsys)
-    assert got["failed"] is True and "refusal" not in got
-
-
-def test_a_refused_worker_marks_its_result_as_a_refusal(worker, capsys):
-    _write_switch(dict(ON, jev_difficulty=False, auto_apply_jev_mode="typesafe"))
-    assert aa.main(worker.argv(), context=_FakeCtx()) == 2
-    got = worker.result(capsys)
-    assert got["refusal"] is True and "failed" not in got
-
-
-def test_a_worker_with_no_browser_marks_a_refusal(worker, capsys):
-    chromium = _FakeChromium(fail={"chrome", None})
-    _fake_playwright(worker.monkeypatch, chromium)
-    assert aa.main(worker.argv()) == 1
-    assert worker.result(capsys)["refusal"] is True
-
-
-def test_a_worker_on_a_test_judge_marks_a_refusal(worker, capsys):
-    _write_switch(dict(ON, jev_enabled=False, auto_apply_jev_mode="fake"))
-    assert aa.main(worker.argv(), context=_FakeCtx()) == 2
-    assert worker.result(capsys)["refusal"] is True
-
-
-def test_a_worker_usage_error_marks_a_refusal(worker, capsys):
-    assert aa.main(["--worker", "42"], context=_FakeCtx()) == 2
-    assert worker.result(capsys)["refusal"] is True
-
-
-def test_a_job_gone_from_the_queue_is_no_refusal(worker, capsys):
-    code, got = worker.run(capsys, worker.argv(job="7"))
-    assert "refusal" not in got and "failed" not in got
-
-
-def test_a_scored_or_unread_result_carries_no_mark(worker, capsys):
-    worker.check(_scored)
-    code, got = worker.run(capsys)
-    assert set(got) == RESULT_KEYS
-
-
-def test_a_worker_waits_for_its_slot_to_free(worker, capsys):
-    worker.monkeypatch.setattr(aa, "SLOT_BUSY_POLL_S", 0)
-    answers = iter([True, True, False])
-    worker.monkeypatch.setattr(aa, "profile_busy", lambda profile=None: next(answers, False))
-    chromium = _FakeChromium()
-    _fake_playwright(worker.monkeypatch, chromium)
-    worker.check(_scored)
-    assert aa.main(worker.argv()) == 0
-    assert worker.result(capsys)["outcome"] == "scored"
-
-
-def test_a_worker_on_a_slot_still_busy_is_a_failed_job_not_a_refusal(worker, capsys):
-    worker.monkeypatch.setattr(aa, "SLOT_BUSY_WAIT_S", 0.05)
-    worker.monkeypatch.setattr(aa, "SLOT_BUSY_POLL_S", 0.01)
-    worker.monkeypatch.setattr(aa, "profile_busy", lambda profile=None: True)
-    assert aa.main(worker.argv()) == 1
-    got = worker.result(capsys)
-    assert got["outcome"] == "error" and got["why"] == aa.SLOT_BUSY
-    assert got["failed"] is True and "refusal" not in got
-    assert "auto-apply browser is open" not in aa.SLOT_BUSY
-
-
-def test_a_worker_whose_slot_is_taken_as_it_starts_is_a_failed_job(worker, capsys):
-    import profile_lock
-    from test_profile_lock import hold_sentinel
-    worker.monkeypatch.setattr(profile_lock, "HOLD_WAIT_S", 0)
-    worker.monkeypatch.setattr(aa, "profile_busy", lambda profile=None: False)
-    chromium = _FakeChromium()
-    _fake_playwright(worker.monkeypatch, chromium)
-    guard = hold_sentinel(worker.slot)
-    try:
-        assert aa.main(worker.argv()) == 1
-    finally:
-        guard.release()
-    got = worker.result(capsys)
-    assert got["why"] == aa.SLOT_BUSY and got["failed"] is True
-
-
-def test_the_one_job_check_sweeps_leftover_profile_copies(browser_cli):
-    import assess_pool
-    leftover = assess_pool.slot_dir(4)
-    (leftover / "Default" / "Network").mkdir(parents=True)
-    (leftover / "Default" / "Network" / "Cookies").write_text("old", encoding="utf-8")
-    chromium = _FakeChromium()
-    _fake_playwright(browser_cli, chromium)
-    browser_cli.setattr(aa, "run", lambda job_ids, **kw: 0)
-    assert aa.main(["42"]) == 0
-    assert not leftover.exists()
-
-
-def test_a_worker_never_sweeps_the_other_slots(worker, capsys):
-    import assess_pool
-    other = assess_pool.slot_dir(2)
-    other.mkdir(parents=True)
-    chromium = _FakeChromium()
-    _fake_playwright(worker.monkeypatch, chromium)
-    worker.check(_scored)
-    worker_slot = assess_pool.slot_dir(1)
-    worker_slot.mkdir(parents=True)
-    argv = ["--worker", "--profile", str(worker_slot), "--queue", str(worker.queue), "42"]
-    assert aa.main(argv) == 0
-    assert other.exists() and worker_slot.exists()
-
-
 # --- hardening: a hand-edited queue, a missing Playwright, a locked queue, a crash ---------
 
 def test_past_runs_read_an_attempt_count_that_is_no_number_as_none():
@@ -1478,54 +1144,354 @@ def test_a_check_without_playwright_names_the_install_command(browser_cli, capsy
     assert "pip install" not in aa.NO_PLAYWRIGHT
 
 
-def test_a_worker_without_playwright_marks_a_refusal_so_the_pool_stops(worker, capsys):
-    _no_playwright(worker.monkeypatch)
-    assert aa.main(worker.argv()) == 1
-    got = worker.result(capsys)
-    assert got["outcome"] == "error" and got["why"] == aa.NO_PLAYWRIGHT
-    assert got["refusal"] is True
-
-
 def _locked(*a, **kw):
     import apply_queue
     raise apply_queue.QueueLockTimeout("the queue lock stayed taken")
 
 
-def test_a_locked_queue_on_the_score_is_a_clear_error_after_jev_paid(worker, capsys):
-    import apply_queue
-    worker.check(_scored)
-    worker.monkeypatch.setattr(apply_queue, "set_difficulty", _locked)
-    code, got = worker.run(capsys)
-    assert got["outcome"] == "error" and got["why"] == aa.QUEUE_LOCKED
-    assert got["requests"] == 2 and got["failed"] is True, "the pool notes the failure"
-    assert code == 1
+# --- one job at a time, each in a fresh browser ------------------------------------------------
+
+def _time_with(sleep):
+    """The `time` module with `sleep` swapped, for `apply_assess` alone."""
+    names = {k: getattr(time, k) for k in dir(time) if not k.startswith("_")}
+    return types.SimpleNamespace(**{**names, "sleep": sleep})
 
 
-def test_a_locked_queue_on_a_failure_note_is_a_clear_error(worker, capsys):
+class _SeqCtx(_FakeCtx):
+    def __init__(self, events, fail_close=False):
+        super().__init__()
+        self.events, self.fail_close = events, fail_close
+
+    def close(self):
+        self.events.append("close")
+        super().close()
+        if self.fail_close:
+            raise RuntimeError("Target page, context or browser has been closed")
+
+
+class _SeqChromium(_FakeChromium):
+    """Every launch a fresh context; `dead_from` (1 up) is the first job
+    whose browser never starts, Chrome and the bundled build both."""
+
+    def __init__(self, events, *, dead_from=None, fail_close=False, held_from=None):
+        super().__init__()
+        self.events, self.dead_from, self.fail_close = events, dead_from, fail_close
+        self.held_from = held_from      # the first job whose Chrome finds Chrome's own lock
+        self.launches = 0
+
+    def launch_persistent_context(self, user_data_dir, **kw):
+        self.calls.append((user_data_dir, kw))
+        if kw.get("channel"):
+            self.launches += 1
+            if self.held_from is not None and self.launches >= self.held_from:
+                raise RuntimeError("the profile is in use by another browser")
+        if self.dead_from is not None and self.launches >= self.dead_from:
+            raise RuntimeError("Chromium distribution 'chrome' is not found")
+        self.events.append("open")
+        return _SeqCtx(self.events, self.fail_close)
+
+
+@pytest.fixture
+def seq(browser_cli, tmp_path):
+    """`main` on a tmp queue of queued jobs 1..n with a fake browser: the walk
+    is replaced (no page, no Jev request), the pause recorded and never slept."""
     import apply_queue
-    worker.check(lambda entry, **kw: (None, "the page did not load"))
-    worker.monkeypatch.setattr(apply_queue, "note_difficulty_failure", _locked)
-    assert aa.main(worker.argv(), context=_FakeCtx()) == 0
+    import profile_lock
+    from resume_tailor import apply_answers
+    browser_cli.setattr(apply_answers, "load", lambda *a, **kw: [])
+    queue = tmp_path / "queue.json"
+    events: list = []
+
+    def pick(lo, hi):
+        events.append(("pick", lo, hi))
+        return 7.5
+
+    def sleep(seconds):
+        events.append(("sleep", seconds,
+                       profile_lock.sentinel_held(aa.default_profile_dir())))
+    # this module's names only: a sleep elsewhere (the sentinel's retry) stays real
+    browser_cli.setattr(aa, "random", types.SimpleNamespace(uniform=pick))
+    browser_cli.setattr(aa, "time", _time_with(sleep))
+
+    class _Seq:
+        monkeypatch = browser_cli
+
+        def __init__(self):
+            self.queue, self.events = queue, events
+
+        def jobs(self, n):
+            for k in range(1, n + 1):
+                apply_queue.enqueue(apply_queue.new_entry(
+                    str(k), company=f"Co{k}", title="Analyst",
+                    apply_url=f"https://jobs.lever.co/co{k}/1/apply"), path=queue)
+            return [str(k) for k in range(1, n + 1)]
+
+        def browser(self, **kw):
+            chromium = _SeqChromium(events, **kw)
+            _fake_playwright(browser_cli, chromium)
+            return chromium
+
+        def check(self, fn=None):
+            def walk(entry, *, context, judge, answers, settings, entries, log=None):
+                jid = str(entry["job_posting_id"])
+                events.append(("check", jid,
+                               profile_lock.sentinel_held(aa.default_profile_dir())))
+                if fn is not None:
+                    got = fn(jid)
+                    if got is not None:
+                        return got
+                judge.requests += 1
+                return {**aa.score(system="lever"), "system": "lever", "questions": []}, ""
+            browser_cli.setattr(aa, "check_job", walk)
+
+        def main(self, *args):
+            return aa.main(["--queue", str(queue), *args])
+
+        def trace(self):
+            """The events without the sentinel flags, the pick's upper bound."""
+            return [e if isinstance(e, str) else e[:2] for e in events]
+    return _Seq()
+
+
+def test_each_job_opens_its_own_browser_and_closes_it_before_the_next(seq, capsys):
+    ids = seq.jobs(3)
+    seq.browser()
+    seq.check()
+    assert seq.main(*ids) == 0
+    assert seq.trace() == ["open", ("check", "1"), "close", ("pick", 5), ("sleep", 7.5),
+                           "open", ("check", "2"), "close", ("pick", 5), ("sleep", 7.5),
+                           "open", ("check", "3"), "close"]
     out = capsys.readouterr().out
-    assert aa.QUEUE_LOCKED in out and "Traceback" not in out
-    got = json.loads(out.strip().splitlines()[-1][len(aa.RESULT_PREFIX):])
-    assert got["outcome"] == "unread" and got["why"] == "the page did not load"
+    for i in (1, 2, 3):
+        assert f"[{i}/3] Co{i} / Analyst: " in out
+    assert "Jev so far: 3 request(s)" in out        # the running total spans the run
 
 
-def test_a_worker_that_crashes_after_jev_paid_keeps_the_spend(worker, capsys):
+def test_the_pause_is_a_random_5_to_10_seconds_with_no_setting(seq):
+    import apply_run
+    import settings
+    assert (aa.PAUSE_MIN_S, aa.PAUSE_MAX_S) == (5, 10)
+    ids = seq.jobs(2)
+    seq.browser()
+    seq.check()
+    assert seq.main(*ids) == 0
+    assert ("pick", 5, 10) in seq.events
+    keys = {f.key for f in settings.SETTINGS_SCHEMA} | set(apply_run.DEFAULT_SETTINGS)
+    assert not [k for k in keys if "check_pause" in k or "check_parallel" in k]
+
+
+def test_one_job_has_no_pause(seq):
+    seq.jobs(1)
+    seq.browser()
+    seq.check()
+    assert seq.main("1") == 0
+    assert seq.trace() == ["open", ("check", "1"), "close"]
+
+
+def test_the_sentinel_stays_held_across_the_whole_run(seq):
+    """A drain started between two jobs, while no browser is open, still
+    finds the profile taken."""
+    import profile_lock
+    ids = seq.jobs(3)
+    seq.browser()
+    seq.check()
+    assert seq.main(*ids) == 0
+    held = [e[-1] for e in seq.events if isinstance(e, tuple) and e[0] in ("check", "sleep")]
+    assert held == [True] * 5
+    assert profile_lock.sentinel_held(aa.default_profile_dir()) is False
+
+
+def test_a_check_takes_at_most_30_jobs_and_names_the_rest(seq, capsys):
+    assert aa.MAX_JOBS_PER_CHECK == 30
+    ids = seq.jobs(32)
+    seq.browser()
+    seq.check()
+    assert seq.main(*reversed(ids)) == 0
+    checked = [e[1] for e in seq.trace() if isinstance(e, tuple) and e[0] == "check"]
+    assert checked == [str(k) for k in range(32, 2, -1)]       # the first 30 as selected
+    out = capsys.readouterr().out
+    assert "[30/30] " in out and "/32]" not in out
+    assert ("2 more selected jobs were not checked; select them and click Check difficulty "
+            "again.") in out
+
+
+def test_check_all_takes_the_first_30_queued_jobs(seq, capsys):
+    seq.jobs(31)
+    seq.browser()
+    seq.check()
+    assert seq.main("--all") == 0
+    checked = [e[1] for e in seq.trace() if isinstance(e, tuple) and e[0] == "check"]
+    assert checked == [str(k) for k in range(1, 31)]
+    assert "1 more queued job was not checked" in capsys.readouterr().out
+
+
+def test_30_jobs_or_fewer_say_nothing_was_left(seq, capsys):
+    ids = seq.jobs(2)
+    seq.browser()
+    seq.check()
+    assert seq.main(*ids) == 0
+    assert "not checked; select" not in capsys.readouterr().out
+
+
+def test_jev_down_stops_the_run_after_closing_that_jobs_browser(seq, capsys):
+    ids = seq.jobs(3)
+    seq.browser()
+
+    def down(jid):
+        if jid == "2":
+            raise jev.JudgeOutage("ConnectError")
+    seq.check(down)
+    assert seq.main(*ids) == 1
+    assert seq.trace() == ["open", ("check", "1"), "close", ("pick", 5), ("sleep", 7.5),
+                           "open", ("check", "2"), "close"]
+    assert "[2/3] Co2 / Analyst: Jev is down (ConnectError); the check stops here" in \
+        capsys.readouterr().out
+
+
+def test_a_window_the_user_closes_mid_job_stops_the_run(seq, capsys):
+    ids = seq.jobs(3)
+    seq.browser()
+
+    def closed(jid):
+        if jid == "1":
+            raise RuntimeError("Target page, context or browser has been closed")
+    seq.check(closed)
+    assert seq.main(*ids) == 1
+    assert seq.trace() == ["open", ("check", "1"), "close"]
+    assert "the browser window was closed; the check stops here" in capsys.readouterr().out
+
+
+def test_a_browser_already_gone_when_the_job_ends_is_no_closure(seq, capsys):
+    """The window the user shut once its job was read (the close call finding
+    it gone) is no reason to stop: the next job opens its own."""
+    ids = seq.jobs(2)
+    seq.browser(fail_close=True)
+    seq.check()
+    assert seq.main(*ids) == 0
+    assert seq.trace().count("open") == 2
+    assert "stops here" not in capsys.readouterr().out
+
+
+def test_ctrl_c_in_the_pause_stops_the_run_and_frees_the_profile(seq, capsys):
+    import profile_lock
+    ids = seq.jobs(3)
+    seq.browser()
+    seq.check()
+
+    def interrupted(seconds):
+        raise KeyboardInterrupt
+    seq.monkeypatch.setattr(aa, "time", _time_with(interrupted))
+    assert seq.main(*ids) == 1
+    assert seq.trace() == ["open", ("check", "1"), "close", ("pick", 5)]
+    assert aa.INTERRUPTED in capsys.readouterr().out
+    assert profile_lock.sentinel_held(aa.default_profile_dir()) is False
+
+
+def test_ctrl_c_mid_job_closes_that_browser(seq, capsys):
+    ids = seq.jobs(2)
+    seq.browser()
+
+    def interrupted(jid):
+        raise KeyboardInterrupt
+    seq.check(interrupted)
+    assert seq.main(*ids) == 1
+    assert seq.trace() == ["open", ("check", "1"), "close"]
+    assert aa.INTERRUPTED in capsys.readouterr().out
+
+
+def test_a_browser_that_will_not_start_for_a_later_job_stops_the_run(seq, capsys):
+    import profile_lock
+    ids = seq.jobs(3)
+    seq.browser(dead_from=2)
+    seq.check()
+    assert seq.main(*ids) == 1
+    assert seq.trace() == ["open", ("check", "1"), "close", ("pick", 5), ("sleep", 7.5)]
+    captured = capsys.readouterr()
+    assert "[1/3] Co1 / Analyst: " in captured.out
+    assert aa.NO_BROWSER.format(why="RuntimeError") in captured.err
+    assert profile_lock.sentinel_held(aa.default_profile_dir()) is False
+
+
+def test_every_browser_opens_the_real_profile(seq):
+    ids = seq.jobs(2)
+    chromium = seq.browser()
+    seq.check()
+    assert seq.main(*ids) == 0
+    assert {d for d, _ in chromium.calls} == {str(aa.default_profile_dir())}
+
+
+@pytest.mark.parametrize("flag", ["--parallel", "--worker"])
+def test_the_check_has_no_parallel_or_worker_flag(seq, capsys, flag):
+    with pytest.raises(SystemExit):
+        aa.main([flag, "2", "42"])
+    capsys.readouterr()
+
+
+def test_the_check_deletes_the_old_parallel_checks_profile_copies(seq):
+    """An earlier version's parallel check left profile copies holding the
+    sign-in cookies under assess_profiles; the browser the check opens
+    deletes them."""
+    import profile_lock
+    leftover = profile_lock.old_check_copies_dir() / "slot-4"
+    (leftover / "Default" / "Network").mkdir(parents=True)
+    (leftover / "Default" / "Network" / "Cookies").write_text("old", encoding="utf-8")
+    seq.jobs(1)
+    seq.browser()
+    seq.check()
+    assert seq.main("1") == 0
+    assert not profile_lock.old_check_copies_dir().exists()
+
+
+def test_a_locked_queue_on_the_score_is_a_clear_error_after_jev_paid(seq, capsys):
     import apply_queue
+    seq.jobs(1)
+    seq.browser()
+    seq.check()
+    seq.monkeypatch.setattr(apply_queue, "set_difficulty", _locked)
+    assert seq.main("1") == 1
+    out = capsys.readouterr().out
+    assert f"5/10, but {aa.QUEUE_LOCKED}" in out or f", but {aa.QUEUE_LOCKED}" in out
+    assert "Traceback" not in out
 
-    def billed(entry, **kw):
-        jev.count_usage(1_000_000)
-        return _scored(entry, **kw)
 
-    def disk_full(*a, **kw):
-        raise OSError("disk full")
-    worker.monkeypatch.setattr(jev, "_TOTAL", dict(jev._TOTAL))
-    worker.check(billed)
-    worker.monkeypatch.setattr(apply_queue, "set_difficulty", disk_full)
-    assert aa.main(worker.argv(), context=_FakeCtx()) == 1
-    got = worker.result(capsys)
-    assert got["failed"] is True and got["why"] == "the worker failed (OSError)"
-    assert got["usd"] == pytest.approx(jev.usd_for(1_000_000), rel=1e-3)
-    assert got["requests"] >= 1
+def test_a_locked_queue_on_a_failure_note_is_a_clear_error(seq, capsys):
+    import apply_queue
+    seq.jobs(1)
+    seq.browser()
+    seq.check(lambda jid: (None, "the page did not load"))
+    seq.monkeypatch.setattr(apply_queue, "note_difficulty_failure", _locked)
+    assert seq.main("1") == 0
+    out = capsys.readouterr().out
+    assert aa.QUEUE_LOCKED in out and "not checked (the page did not load)" in out
+    assert "Traceback" not in out
+
+
+def test_main_stops_in_a_sentence_when_no_browser_starts(seq, capsys):
+    import profile_lock
+    seq.jobs(2)
+    seq.browser(dead_from=1)
+    seq.check()
+    assert seq.main("1", "2") == 1
+    assert seq.trace() == []                    # nothing checked, no pause
+    assert capsys.readouterr().err.strip() == aa.NO_BROWSER.format(why="RuntimeError")
+    assert profile_lock.sentinel_held(aa.default_profile_dir()) is False
+
+
+@pytest.mark.parametrize("held_from, code", [(1, 2), (2, 1)])
+def test_a_profile_chrome_still_holds_stops_the_run(seq, capsys, held_from, code):
+    """Only Chrome's own lock can refuse a browser while the check holds the
+    sentinel (a Chrome slow to exit): a refusal on the first job, an error
+    past it."""
+    import apply_run
+    import profile_lock
+    ids = seq.jobs(3)
+    chromium = seq.browser(held_from=held_from)
+    # free when the check starts, held once that job's Chrome is refused
+    seq.monkeypatch.setattr(apply_run.profile_lock, "chrome_holds",
+                            lambda *a: chromium.launches >= held_from)
+    seq.check()
+    assert seq.main(*ids) == code
+    assert capsys.readouterr().err.strip().endswith(aa.PROFILE_BUSY)
+    assert [kw.get("channel") for _, kw in chromium.calls][-1] == "chrome"   # no fallback
+    assert seq.trace().count("open") == held_from - 1
+    assert profile_lock.sentinel_held(aa.default_profile_dir()) is False

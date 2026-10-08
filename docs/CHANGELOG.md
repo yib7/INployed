@@ -8,6 +8,14 @@ All notable changes to INployed are recorded here. The format follows
 
 ### Changed
 
+- **Check difficulty reads one job at a time, up to 30 per click.** Ten browser windows at
+  once was heavy on the PC and looked like a bot. Now each job opens in a fresh browser
+  window on the auto-apply profile, the window closes once its job is read, and the next
+  job opens after a random pause of 5 to 10 seconds. A click takes at most 30 jobs, in the
+  order selected (or queued); the terminal and the panel say how many were left, so you
+  can select those and click again. The profile stays held for the whole run, pauses
+  included, so a run or a sign-in refuses to start until it ends. A Jev outage, a window you close
+  mid-job, a browser that will not start and Ctrl+C stop the run as before.
 - **Claude Haiku 5.5 is the fast Claude model.** `claude-haiku-5-5` (released 2026-10-07)
   is now the default for the résumé tailor's fast tier
   (`RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE`) and the Claude scorer's stage 1
@@ -34,6 +42,15 @@ All notable changes to INployed are recorded here. The format follows
   flagged about a quarter of the bullets and caught real contrast framing, but most of its
   rewrites were small word swaps. With Jev on, Jev's own read still gates the sweep and no
   scan runs.
+
+### Removed
+
+- **The Difficulty checks at once setting and the parallel check.** `apply_assess.py`
+  drops `--parallel` and `--worker`, and `local/assess_pool.py` is gone. A saved
+  `auto_apply_check_parallel` in `config.json` is ignored. The profile copies an older
+  parallel check left under `%LOCALAPPDATA%\linkedin_watcher\assess_profiles` (they hold
+  your sign-ins) are deleted the next time the dashboard starts or the auto-apply browser
+  opens.
 
 ### Fixed
 

@@ -12,6 +12,7 @@ import dataclasses
 import json
 import logging
 import math
+import random
 import sys
 import time
 from dataclasses import dataclass, field
@@ -164,6 +165,11 @@ NO_BROWSER = ("The browser did not start ({why}): Google Chrome and the bundled 
 NO_PLAYWRIGHT = ("Playwright is not installed, so the difficulty check cannot open a browser. "
                  r"Run: powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -AutoApply "
                  "in the project folder (README Step 7).")
+MAX_JOBS_PER_CHECK = 30     # the most jobs one check takes; the rest wait for another click
+PAUSE_MIN_S = 5             # the random pause between one job's browser and the next's
+PAUSE_MAX_S = 10
+INTERRUPTED = ("apply_assess: stopped (Ctrl+C). The jobs not yet checked keep their earlier "
+               "result.")
 QUEUE_LOCKED = ("the queue file stayed locked (the dashboard or a drain was writing it), so "
                 "the result was not saved")
 ACCOUNT_NOTE = "An account step comes first: its questions show once you sign in"
@@ -1070,12 +1076,6 @@ class _Counting:
         return answers
 
 
-@dataclass(frozen=True)
-class _Spent:
-    """A request count for `_note` when no `_Counting` judge is left to read."""
-    requests: int
-
-
 def _say(text: str) -> None:
     """`text` on stdout, in whatever the console can show. `apply_run._say`
     does the same; importing `apply_run` for it would add its import time to
@@ -1087,74 +1087,22 @@ def _say(text: str) -> None:
         print(text.encode(enc, "replace").decode(enc), flush=True)
 
 
-# --- the worker's result line ----------------------------------------------------------
-
-RESULT_PREFIX = "@@assess-result "
-OUTCOMES = ("scored", "unread", "outage", "closed", "error")
-# An error result may carry one mark for the coordinator: `refusal` (the
-# check refused to run at all: a gate, no browser; the pool stops) or
-# `failed` (the worker crashed, or its slot stayed busy, and noted nothing on
-# the queue; the pool notes it and goes on). Neither key is there otherwise.
-MARKS = ("refusal", "failed")
-WORKER_USAGE = "apply_assess: --worker takes exactly one job id and --profile, and no --all"
-SLOT_BUSY = "its profile copy was still open in the browser of the job before"
-SLOT_BUSY_WAIT_S = 5.0      # how long a worker waits for its slot's last browser to close
-SLOT_BUSY_POLL_S = 0.25
+def _pause() -> None:
+    """The wait between one job's browser closing and the next one opening:
+    a random PAUSE_MIN_S to PAUSE_MAX_S seconds, so the jobs do not open at a
+    machine's even beat."""
+    seconds = random.uniform(PAUSE_MIN_S, PAUSE_MAX_S)
+    _say(f"Next job in {seconds:.0f} s.")
+    time.sleep(seconds)
 
 
-def _note(report: dict | None, outcome: str, why: str, *, job_id: str = "", counted=None,
-          usd: float = 0.0, score: int | None = None, band: str = "",
-          refusal: bool = False, failed: bool = False) -> None:
-    """Record the last job's outcome for a worker (`run`'s `report`); a run
-    with no report records nothing. `refusal` and `failed` set the MARKS."""
-    if report is None:
-        return
-    report.clear()
-    report.update(job_id=job_id, outcome=outcome, score=score, band=band, why=why,
-                  requests=int(getattr(counted, "requests", 0) or 0), usd=round(float(usd), 6))
-    if refusal:
-        report["refusal"] = True
-    if failed:
-        report["failed"] = True
-
-
-def worker_result(report: Mapping[str, Any], *, job_id: str = "") -> dict:
-    """The worker's result: the keys of `RESULT_PREFIX`'s JSON, whole, and a
-    mark (MARKS) when the report has one. A run that recorded nothing is an
-    error, so the coordinator never has to guess."""
-    got = dict(report)
-    if got.get("outcome") not in OUTCOMES:
-        got = {"outcome": "error", "why": "the check ended with no result"}
-    result = {"job_id": str(got.get("job_id") or job_id), "outcome": got["outcome"],
-              "score": got.get("score"), "band": str(got.get("band") or ""),
-              "why": str(got.get("why") or ""), "requests": int(got.get("requests") or 0),
-              "usd": float(got.get("usd") or 0.0)}
-    for mark in MARKS:
-        if got.get(mark):
-            result[mark] = True
-    return result
-
-
-def result_line(result: Mapping[str, Any]) -> str:
-    """The worker's last stdout line for `result` (`worker_result`)."""
-    return RESULT_PREFIX + json.dumps(dict(result), separators=(",", ":"))
-
-
-def parse_result_line(text: str) -> dict | None:
-    """The result a worker's output ends with: the last `RESULT_PREFIX` line,
-    when it holds a JSON object with a known outcome; None otherwise."""
-    for line in reversed(str(text or "").splitlines()):
-        line = line.strip()
-        if not line.startswith(RESULT_PREFIX):
-            continue
-        try:
-            got = json.loads(line[len(RESULT_PREFIX):])
-        except ValueError:
-            return None
-        if isinstance(got, dict) and got.get("outcome") in OUTCOMES:
-            return got
-        return None
-    return None
+def _close(ctx) -> None:
+    """Close one job's browser. A window the user already shut is no
+    closure here: its job was read, and the next job opens its own."""
+    try:
+        ctx.close()
+    except Exception:       # noqa: BLE001  (closed by the user)
+        pass
 
 
 def select_jobs(entries: list[Mapping[str, Any]], job_ids: list[str], *,
@@ -1175,14 +1123,20 @@ def select_jobs(entries: list[Mapping[str, Any]], job_ids: list[str], *,
 
 
 def run(job_ids: list[str], *, all_queued: bool = False, judge,
-        settings: Mapping[str, Any], context=None, queue_path: Path | None = None,
-        log: logging.Logger | None = None, report: dict | None = None) -> int:
+        settings: Mapping[str, Any], context=None, launch=None, queue_path: Path | None = None,
+        log: logging.Logger | None = None) -> int:
     """Check each job and store its difficulty on its queue entry, printing
-    one line per job with the running Jev total. `context` is the browser
-    context (the persistent profile's; tests inject one). Exit 0, 1 when the
-    judge went down or the window closed, 2 when nothing could be checked.
-    `report`, when given, is filled with the last job's outcome for a worker
-    (`worker_result`); the printed lines do not change."""
+    one line per job with the running Jev total. At most MAX_JOBS_PER_CHECK
+    jobs, in the order chosen (the queue's for `all_queued`); a last line
+    says how many were left.
+
+    `launch` opens a fresh browser for each job (`apply_run.launch_profile`
+    on the real profile), closed once that job is read, with a random pause
+    (`_pause`) before the next one opens. `context` is one browser context
+    every job shares instead (tests inject one). Exit 0, 1 when the judge
+    went down, the window closed, a browser did not start or Ctrl+C was
+    pressed, 2 when nothing could be checked or the first browser found the
+    profile taken."""
     import apply_outcome
     import apply_page
     import jev
@@ -1191,112 +1145,97 @@ def run(job_ids: list[str], *, all_queued: bool = False, judge,
     try:
         answers = apply_answers.load()
     except apply_answers.AnswerStoreError as e:
-        text = (f"The Apply Answers file is damaged ({e.path}): {e.reason}. Open the "
-                f"dashboard's Apply Answers tab to restore the backup.")
-        _note(report, "error", text, refusal=True)
-        _say(text)
+        _say(f"The Apply Answers file is damaged ({e.path}): {e.reason}. Open the "
+             f"dashboard's Apply Answers tab to restore the backup.")
         return 2
     entries = list(apply_queue.load(queue_path).get("jobs") or [])
     chosen, unknown = select_jobs(entries, job_ids, all_queued=all_queued)
     for jid in unknown:
         _say(f"apply_assess: job {jid} is not in the queue")
-        _note(report, "error", f"job {jid} is not in the queue", job_id=str(jid))
     if not chosen:
         _say("apply_assess: no job to check" + ("" if unknown or not all_queued
                                                   else " (nothing is queued)"))
-        if not unknown:
-            _note(report, "error", "no job to check")
         return 0 if all_queued and not unknown else 2
+    left = max(0, len(chosen) - MAX_JOBS_PER_CHECK)
+    chosen = chosen[:MAX_JOBS_PER_CHECK]
+    if left:
+        _say(f"{len(chosen) + left} jobs chosen; this check takes the first "
+             f"{MAX_JOBS_PER_CHECK}, one at a time.")
     counted = _Counting(judge)
     # the lifetime counter: a reset of usage() elsewhere never hides this spend
     usd0 = jev.total_usage()["usd"]
     code = 0
-    for i, entry in enumerate(chosen, 1):
-        jid = str(entry.get("job_posting_id") or "")
-        name = f"{entry.get('company') or '?'} / {entry.get('title') or '?'}"
-        usd_before = jev.total_usage()["usd"]
-        unread = False
-        try:
-            result, why = check_job(entry, context=context, judge=counted, answers=answers,
-                                    settings=settings, entries=entries, log=log)
-        except jev.JudgeOutage as e:
-            _note(report, "outage", f"Jev is down ({e})", job_id=jid, counted=counted,
-                  usd=jev.total_usage()["usd"] - usd0)
-            _say(f"[{i}/{len(chosen)}] {name}: Jev is down ({e}); the check stops here")
-            return 1
-        except Exception as e:      # noqa: BLE001  (one line; the frames go to the log)
-            if apply_outcome._closed_error(e):
-                _note(report, "closed", "the browser window was closed", job_id=jid,
-                      counted=counted, usd=jev.total_usage()["usd"] - usd0)
-                _say(f"[{i}/{len(chosen)}] {name}: the browser window was closed; the check "
-                     f"stops here")
-                return 1
-            result, why = None, f"{type(e).__name__} at {apply_page.error_step(e)}"
-            log.error("job %s: %s; traceback (the message left out):\n  %s", jid, why,
-                      "\n  ".join(apply_page.error_frames(e)))
-        else:
-            unread = result is None
-        spent = jev.total_usage()["usd"] - usd_before
-        total = jev.total_usage()["usd"] - usd0
-        running = f"Jev so far: {counted.requests} request(s), ${total:.4f}"
-        if result is None:
-            _note(report, "unread" if unread else "error", why, job_id=jid, counted=counted,
-                  usd=total)
-            _say(f"[{i}/{len(chosen)}] {name}: not checked ({why}). {running}")
+    try:
+        for i, entry in enumerate(chosen, 1):
+            jid = str(entry.get("job_posting_id") or "")
+            name = f"{entry.get('company') or '?'} / {entry.get('title') or '?'}"
+            ctx = context
+            if launch is not None:
+                if i > 1:
+                    _pause()
+                try:
+                    ctx = launch()
+                except profile_lock.ProfileBusy:
+                    # the run holds the sentinel, so only Chrome's own lock gets here
+                    print(PROFILE_BUSY, file=sys.stderr)
+                    return 2 if i == 1 else 1
+                except Exception as e:      # noqa: BLE001  (Chrome and the bundled build both failed)
+                    # a browser that will not start for one job will not for the next
+                    print(NO_BROWSER.format(why=type(e).__name__), file=sys.stderr)
+                    return 1
+            usd_before = jev.total_usage()["usd"]
             try:
-                # the earlier result stays; the panel shows the failure beside it
-                apply_queue.note_difficulty_failure(jid, why, path=queue_path)
+                result, why = check_job(entry, context=ctx, judge=counted, answers=answers,
+                                        settings=settings, entries=entries, log=log)
+            except jev.JudgeOutage as e:
+                _say(f"[{i}/{len(chosen)}] {name}: Jev is down ({e}); the check stops here")
+                return 1
+            except Exception as e:      # noqa: BLE001  (one line; the frames go to the log)
+                if apply_outcome._closed_error(e):
+                    _say(f"[{i}/{len(chosen)}] {name}: the browser window was closed; the "
+                         f"check stops here")
+                    return 1
+                result, why = None, f"{type(e).__name__} at {apply_page.error_step(e)}"
+                log.error("job %s: %s; traceback (the message left out):\n  %s", jid, why,
+                          "\n  ".join(apply_page.error_frames(e)))
+            finally:
+                if launch is not None:
+                    _close(ctx)
+            spent = jev.total_usage()["usd"] - usd_before
+            total = jev.total_usage()["usd"] - usd0
+            running = f"Jev so far: {counted.requests} request(s), ${total:.4f}"
+            if result is None:
+                _say(f"[{i}/{len(chosen)}] {name}: not checked ({why}). {running}")
+                try:
+                    # the earlier result stays; the panel shows the failure beside it
+                    apply_queue.note_difficulty_failure(jid, why, path=queue_path)
+                except apply_queue.UnknownJobError:
+                    pass
+                except apply_queue.QueueLockTimeout:
+                    _say(f"[{i}/{len(chosen)}] {name}: {QUEUE_LOCKED}.")
+                continue
+            result["jev_usd"] = round(spent, 6)
+            try:
+                apply_queue.set_difficulty(jid, result, path=queue_path)
             except apply_queue.UnknownJobError:
-                pass
+                _say(f"[{i}/{len(chosen)}] {name}: left the queue while it was checked. "
+                     f"{running}")
+                continue
             except apply_queue.QueueLockTimeout:
-                _say(f"[{i}/{len(chosen)}] {name}: {QUEUE_LOCKED}.")
-            continue
-        result["jev_usd"] = round(spent, 6)
-        try:
-            apply_queue.set_difficulty(jid, result, path=queue_path)
-        except apply_queue.UnknownJobError:
-            _note(report, "error", "left the queue while it was checked", job_id=jid,
-                  counted=counted, usd=total)
-            _say(f"[{i}/{len(chosen)}] {name}: left the queue while it was checked. {running}")
-            continue
-        except apply_queue.QueueLockTimeout:
-            # nothing is noted on the queue: `failed` has the pool note it
-            _note(report, "error", QUEUE_LOCKED, job_id=jid, counted=counted, usd=total,
-                  failed=True)
-            _say(f"[{i}/{len(chosen)}] {name}: {result['score']}/10, but {QUEUE_LOCKED}. "
+                _say(f"[{i}/{len(chosen)}] {name}: {result['score']}/10, but {QUEUE_LOCKED}. "
+                     f"{running}")
+                code = 1
+                continue
+            _say(f"[{i}/{len(chosen)}] {name}: {result['score']}/10, {result['band']}. "
                  f"{running}")
-            code = 1
-            continue
-        _note(report, "scored", "", job_id=jid, counted=counted, usd=total,
-              score=result["score"], band=result["band"])
-        _say(f"[{i}/{len(chosen)}] {name}: {result['score']}/10, {result['band']}. {running}")
+    except KeyboardInterrupt:
+        _say(INTERRUPTED)
+        return 1
+    if left:
+        kind = "queued" if all_queued else "selected"
+        _say(f"{left} more {kind} {'job was' if left == 1 else 'jobs were'} not checked; "
+             f"select them and click Check difficulty again.")
     return code
-
-
-def _refuse(report: dict | None, text: str, code: int, *, job_id: str = "") -> int:
-    """Print `text` on stderr, record it as the worker's error marked as a
-    refusal (the pool stops), return `code`."""
-    print(text, file=sys.stderr)
-    _note(report, "error", text, job_id=job_id, refusal=True)
-    return code
-
-
-def _slot_busy(report: dict, *, job_id: str = "") -> int:
-    """A worker's slot still held by the browser of the job before it: this
-    job's own failure (marked `failed`, the pool notes it and goes on), exit 1."""
-    print(f"apply_assess: job {job_id}: {SLOT_BUSY}", file=sys.stderr)
-    _note(report, "error", SLOT_BUSY, job_id=job_id, failed=True)
-    return 1
-
-
-def _slot_frees(profile: Path) -> bool:
-    """Wait up to SLOT_BUSY_WAIT_S for a slot's browser to let go of it."""
-    deadline = time.monotonic() + SLOT_BUSY_WAIT_S
-    while profile_busy(profile):
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(SLOT_BUSY_POLL_S)
-    return True
 
 
 def main(argv: list[str] | None = None, *, context=None) -> int:
@@ -1305,21 +1244,13 @@ def main(argv: list[str] | None = None, *, context=None) -> int:
     them), 2 when it refuses (Jev off, a test judge or an unknown one, the
     profile in use, nothing to check).
 
-    The browser is the auto-apply profile as the drain opens it
-    (`apply_run.launch_profile`): Google Chrome, or the bundled Chromium when
-    Chrome will not start. The sentinel `launch_profile` takes covers either
-    one and stays held while the check runs, so a drain started meanwhile
-    refuses.
-
-    Two or more jobs with more than one check at once (`--parallel N`, else
-    the `auto_apply_check_parallel` setting, 1 to 10) run in parallel
-    (`assess_pool.run_pool`): each job in its own browser window on a copy
-    of the profile, the real profile held for the whole run. One job, or one
-    check at once, is the path above.
-
-    `--worker --profile <dir> <id>` is one job of a parallel check
-    (`assess_pool`): the same path on that profile, and whatever happens its
-    last stdout line is `RESULT_PREFIX` and the outcome as JSON."""
+    The jobs are checked one at a time, up to MAX_JOBS_PER_CHECK per run
+    (`run`): each in a fresh browser on the auto-apply profile as the drain
+    opens it (`apply_run.launch_profile`: Google Chrome, or the bundled
+    Chromium when Chrome will not start), closed once its job is read, then
+    a random pause of PAUSE_MIN_S to PAUSE_MAX_S seconds before the next.
+    The check holds the profile's sentinel for the whole run, pauses
+    included, so a drain started meanwhile refuses."""
     import argparse
     ap = argparse.ArgumentParser(prog="apply_assess",
                                  description="Score how hard each queued job is to auto-apply.")
@@ -1328,66 +1259,10 @@ def main(argv: list[str] | None = None, *, context=None) -> int:
     ap.add_argument("--headless", action="store_true", help="no browser window")
     ap.add_argument("--queue", default=None, help="queue file")
     ap.add_argument("--profile", default=None, help="browser profile dir")
-    ap.add_argument("--worker", action="store_true",
-                    help="check one job on --profile and end with a result line "
-                         "(the parallel check's child)")
-    ap.add_argument("--parallel", type=int, default=None,
-                    help="checks at once, 1 to 10, each in its own browser window "
-                         "(the auto_apply_check_parallel setting unless given)")
     ap.add_argument("--verbose", action="store_true", help="DEBUG logging")
     args = ap.parse_args(argv)
-    if not args.worker:
-        return _main(args, ap, context, None)
-    import jev
-    report: dict = {}
-    job_id = str(args.job_ids[0]) if args.job_ids else ""
-    start = jev.total_usage()
-    try:
-        if args.all_queued or len(args.job_ids) != 1 or not args.profile:
-            code = _refuse(report, WORKER_USAGE, 2, job_id=job_id)
-        else:
-            code = _main(args, ap, context, report)
-    except Exception as e:      # noqa: BLE001  (the coordinator reads the line; the log keeps the frames)
-        code = 1
-        logging.getLogger("apply_assess").exception("job %s: the worker failed", job_id)
-        # what Jev was paid before the crash still counts toward the pool's
-        # "Jev so far": the larger of the job's last note and the lifetime
-        # counter's delta since the worker began
-        now = jev.total_usage()
-        requests = max(int(report.get("requests") or 0), now["requests"] - start["requests"])
-        usd = max(float(report.get("usd") or 0.0), now["usd"] - start["usd"])
-        _note(report, "error", f"the worker failed ({type(e).__name__})", job_id=job_id,
-              counted=_Spent(requests), usd=usd, failed=True)
-    _say(result_line(worker_result(report, job_id=job_id)))
-    return code
-
-
-def _pool(args, settings: Mapping[str, Any], profile: Path, queue: Path | None,
-          log: logging.Logger) -> int | None:
-    """The parallel check (`assess_pool.run_pool`) for two or more jobs with
-    more than one check at once (`--parallel`, else the
-    `auto_apply_check_parallel` setting), its exit code; None for one job or
-    one check at once, which is today's path."""
-    import assess_pool
-    flag = args.parallel if args.parallel is not None else settings.get(
-        "auto_apply_check_parallel")
-    parallel = assess_pool.parallel_setting(flag)
-    if parallel < 2:
-        return None
-    entries = list(apply_queue.load(queue).get("jobs") or [])
-    chosen, unknown = select_jobs(entries, list(args.job_ids), all_queued=args.all_queued)
-    if len(chosen) < 2:
-        return None
-    return assess_pool.run_pool(chosen, unknown=unknown, parallel=parallel, profile=profile,
-                                queue_path=queue, headless=bool(args.headless),
-                                verbose=bool(args.verbose), log=log)
-
-
-def _main(args, ap, context, report: dict | None) -> int:
-    """`main` after the arguments; `report` is the worker's, None otherwise."""
     import apply_run
     import jev
-    job_id = str(args.job_ids[0]) if args.job_ids else ""
     if not args.all_queued and not args.job_ids:
         ap.print_usage(sys.stderr)
         print("apply_assess: name job ids or pass --all", file=sys.stderr)
@@ -1399,56 +1274,49 @@ def _main(args, ap, context, report: dict | None) -> int:
     mode = jev_switch.apply_mode()
     early = mode_gate(mode)
     if early:
-        return _refuse(report, early, 2, job_id=job_id)
+        print(early, file=sys.stderr)
+        return 2
     apply_run._load_env()
     refused = refusal(mode=mode)
     if refused:
-        return _refuse(report, refused, 2, job_id=job_id)
+        print(refused, file=sys.stderr)
+        return 2
     profile = Path(args.profile) if args.profile else default_profile_dir()
     if context is None and profile_busy(profile):
-        if report is None:
-            return _refuse(report, PROFILE_BUSY, 2, job_id=job_id)
-        if not _slot_frees(profile):        # the slot's last browser still closing
-            return _slot_busy(report, job_id=job_id)
+        print(PROFILE_BUSY, file=sys.stderr)
+        return 2
     try:
         judge = jev.Guarded(jev.get(mode), logger=log)
     except (jev.JevUnavailable, ValueError) as e:
-        return _refuse(report, f"apply_assess: {e}", 2, job_id=job_id)
+        print(f"apply_assess: {e}", file=sys.stderr)
+        return 2
     queue = Path(args.queue) if args.queue else None
     common = dict(all_queued=args.all_queued, judge=judge,
                   settings=settings, queue_path=queue, log=log)
-    if report is not None:
-        common["report"] = report
     if context is not None:
         return run(list(args.job_ids), context=context, **common)
-    if report is None:
-        pooled = _pool(args, settings, profile, queue, log)
-        if pooled is not None:
-            return pooled
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
-        # a refusal: the pool stops at the first worker that says so
-        return _refuse(report, NO_PLAYWRIGHT, 1, job_id=job_id)
-    with sync_playwright() as pw:
-        profile.mkdir(parents=True, exist_ok=True)
-        try:
-            ctx = apply_run.launch_profile(
-                pw, profile, headless=bool(settings.get("auto_apply_headless")) or args.headless,
-                log=log)
-        except profile_lock.ProfileBusy:
-            if report is not None:
-                return _slot_busy(report, job_id=job_id)
-            return _refuse(report, PROFILE_BUSY, 2, job_id=job_id)  # opened after the read
-        except Exception as e:      # noqa: BLE001  (Chrome and the bundled build both failed)
-            return _refuse(report, NO_BROWSER.format(why=type(e).__name__), 1, job_id=job_id)
-        try:
-            return run(list(args.job_ids), context=ctx, **common)
-        finally:
-            try:
-                ctx.close()
-            except Exception:       # noqa: BLE001  (closed by the user)
-                pass
+        print(NO_PLAYWRIGHT, file=sys.stderr)
+        return 1
+    # held across every job and every pause, so nothing opens the profile
+    # between two of the check's browsers
+    guard = profile_lock.hold(profile)
+    if guard is None:
+        print(PROFILE_BUSY, file=sys.stderr)    # taken after the read
+        return 2
+    try:
+        with sync_playwright() as pw:
+            profile.mkdir(parents=True, exist_ok=True)
+            headless = bool(settings.get("auto_apply_headless")) or args.headless
+
+            def launch():
+                return apply_run.launch_profile(pw, profile, headless=headless, log=log,
+                                                guard=guard)
+            return run(list(args.job_ids), launch=launch, **common)
+    finally:
+        guard.release()
 
 
 if __name__ == "__main__":

@@ -288,26 +288,26 @@ def test_rendering_a_job_while_expanded_does_not_re_enter_the_resize(qtbot,
     assert win.splitter.sizes() == before
 
 
-# ---- the dashboard sweeps the difficulty check's leftover profile copies --------------
+# ---- the dashboard deletes the old parallel check's leftover profile copies -------
 
 def test_the_startup_sweep_runs_off_the_ui_thread(monkeypatch):
     import threading
 
-    import assess_pool
+    import profile_lock
     seen = []
-    monkeypatch.setattr(assess_pool, "sweep_if_free",
-                        lambda *a, **kw: seen.append(threading.current_thread()) or [])
+    monkeypatch.setattr(profile_lock, "drop_old_check_copies",
+                        lambda *a, **kw: seen.append(threading.current_thread()) or True)
     t = qt_app._sweep_profile_copies()
     t.join(5)
     assert t.daemon and seen and seen[0] is not threading.main_thread()
 
 
 def test_the_startup_sweep_never_raises(monkeypatch):
-    import assess_pool
+    import profile_lock
 
     def broken(*a, **kw):
         raise OSError("disk gone")
-    monkeypatch.setattr(assess_pool, "sweep_if_free", broken)
+    monkeypatch.setattr(profile_lock, "drop_old_check_copies", broken)
     qt_app._sweep_profile_copies().join(5)       # no exception reaches the dashboard
 
 

@@ -481,9 +481,10 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("country", "Country code", "str", "US", "Scraper", "search",
           help="Two-letter country code (e.g. US, GB, CA)."),
     Field("time_range", "Time range", "choice", "Past 24 hours", "Scraper", "search",
-          help="Only collect postings newer than this. Widening beyond 'Past 24 hours' "
-               "raises the chance of re-collecting (and re-paying for) postings older "
-               "than the 90-day exclude window.",
+          help="Only collect postings newer than this. A range wider than 'Past 24 "
+               "hours' can collect (and charge for) a posting you already have again: "
+               "the scraper only skips postings it collected within the exclude "
+               "window, which is exclude_window_days in search_config.json.",
           choices=("Past 24 hours", "Past week", "Past month", "Any time")),
     Field("job_type", "Job type", "choice", "Full-time", "Scraper", "search",
           help="Employment type to search for.",

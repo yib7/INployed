@@ -103,7 +103,8 @@ The discovery step is an async Bright Data client. Triggers keyword × remote-ty
 snapshot to "ready", downloads rows, dedupes, drops blocklisted companies, and
 appends to a cumulative master CSV. Five cost-aware details:
 - It excludes job ids already collected within a recency window (the last
-  `EXCLUDE_WINDOW_DAYS` days, default 90) from re-collection (Bright Data bills
+  `exclude_window_days` days from `search_config.json`, overridable by the
+  `EXCLUDE_WINDOW_DAYS` env var, built-in default 90) from re-collection (Bright Data bills
   per collected posting, so re-fetching a job we already have wastes money). The set
   is windowed because the search only looks back 24h: a posting older than the window
   can't reappear and its id is pure payload. Windowing fails

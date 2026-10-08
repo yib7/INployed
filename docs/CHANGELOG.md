@@ -54,6 +54,23 @@ All notable changes to INployed are recorded here. The format follows
 
 ### Fixed
 
+- **The mechanical filter no longer drops jobs for text that is not a requirement.** It
+  reads each trigger in context now, and these reach the scorer instead of being dropped:
+  - Years figures under a Preferred, Desired, Nice to have or "We'd love" heading, or inside
+    a clause that marks them preferred. Also age rules ("18 years of age"), company history
+    ("over 35 years"), "less than 1 year" and "up to N years", and years offered instead of
+    a bachelor's degree.
+  - Clearance boilerplate: Public Trust, "Clearance Required: None", the Employee Polygraph
+    Protection Act poster line, a clearance needed only if the contract calls for it, "many
+    of our positions require", and preferred clearances.
+  - Degree wording such as "BS/MS" and "No PhD required".
+  - A senior role the hire works with or grows into, a title with "II" that LinkedIn tags
+    Entry level, and "Member of Technical Staff".
+
+  The change only keeps more jobs: none the old filter kept is dropped now. On the 23,056
+  saved jobs, 448 more reach the scorer. In an audit, 67 of 69 confirmed wrongly dropped
+  jobs now pass, and 6 of 3,230 correctly dropped jobs now pass too (the scorer still rates
+  them). **Upgrading:** the VM runs `pipeline/score_jobs.py`, so copy the new file to the VM.
 - **A model that corrects its own answer no longer costs a retry.** On the Claude CLI
   backend a repair reply often held a first answer, a note such as "Wait, correcting the
   format", and a corrected answer. The tailor could not read that reply and asked again,

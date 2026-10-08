@@ -569,6 +569,19 @@ counts as needing an active clearance. Visa and work-authorization sponsorship n
 for or against the clearance: "no visa sponsorship" beside "able to obtain a Secret
 clearance" leaves the clearance obtainable.
 
+The clearance filter also reads wording in context. A Public Trust check, "Clearance
+Required: None", the Employee Polygraph Protection Act poster line, a clearance needed only
+if the contract calls for it, "many of our positions require" and a clearance listed as
+preferred do not drop a posting. A real requirement beside any of them still does.
+
+The other mechanical filters read context the same way. A years figure under a Preferred,
+Desired or Nice to have heading, in a clause marked preferred, in an age rule, in company
+history or offered instead of a bachelor's degree sets no floor. "BS/MS" and "No PhD
+required" do not count as an advanced-degree requirement. A senior role the hire works with
+or grows into, a title with "II" on an Entry level posting and "Member of Technical Staff"
+do not mark a posting too senior. These filters only keep more jobs; the scorer rates the
+extra ones.
+
 When you hold a clearance or tick the checkbox, the scoring prompts state it as well, which
 catches wording the filter misses. A job that needs an active clearance you do not hold
 scores 1, and with the checkbox ticked a clearance the employer sponsors or asks you to

@@ -412,7 +412,6 @@ POSITIVE_SENTENCES = [
     "This position requires a polygraph.",
     "Ability to obtain a clearance is necessary.",
     "Requires an active Secret clearance.",
-    "Public Trust clearance is required.",
     "Current Top-Secret clearance required",
     "Must hold an interim Secret clearance pending adjudication.",
     "Willingness to undergo a polygraph is required.",
@@ -424,6 +423,35 @@ POSITIVE_SENTENCES = [
 # Each one is a single mention that carries an offer cue and a refusal to sponsor the
 # clearance itself. Sentences that a `;` or `.` splits into a requirement and a
 # refusal belong to NO_OFFER_SENTENCES, because the refusal is then no mention.
+# Sentences that name a clearance without asking the candidate for one (real
+# posting wording): no profile is blocked by them.
+WAIVED_SENTENCES = [
+    "Public Trust clearance is required.",
+    "Must be able to obtain a Public Trust clearance.",
+    "**Clearance Required**Ability to Obtain Public Trust",
+    "Must be able to OBTAIN and MAINTAIN a Federal or DHS PUBLIC TRUST clearance.",
+    "Minimum Clearance Required to Start: None",
+    "**Minimum Clearance Required:** N/A",
+    "Clearance: N/A",
+    "**Other****Clearance Level Must Currently Possess:******Clearance Level Must Be "
+    "Able To Obtain:****None",
+    "Employee Polygraph Protection Act (EPPA) Poster",
+    "* Employee Polygraph Protection Act",
+    "NOTICE: EMPLOYEE POLYGRAPH PROTECTION ACT",
+    "If applicable to the contract, you must also obtain the appropriate clearance levels "
+    "required and be able to obtain access to military installations.",
+    "* Active Secret Security Clearance or the ability to obtain and maintain one, if "
+    "required by the contract",
+    "Please be aware many of our positions require the ability to obtain a security "
+    "clearance.",
+    "Active Secret or Top Secret clearance is a plus.",
+    "* Current Clearances: Active TS/SCI clearance is a strong plus",
+    "* Active Top-Secret clearance preferred",
+    "* **Active Top Secret clearance highly preferred.**",
+    "**Preferred Qualifications**\n\n* Active TS/SCI security clearance",
+]
+
+
 REFUSING_SENTENCES = [
     "We are unable to sponsor a Secret clearance.",
     "Sponsorship for a Secret clearance is not available.",
@@ -500,7 +528,8 @@ SEPARATORS = (" ", "\n", "; ", ". ")
 
 def _synthetic_postings():
     pool = (POSITIVE_SENTENCES + REFUSING_SENTENCES + NO_OFFER_SENTENCES
-            + ACCEPTING_SENTENCES + NEGATED_SENTENCES + NEUTRAL_SENTENCES)
+            + ACCEPTING_SENTENCES + NEGATED_SENTENCES + NEUTRAL_SENTENCES
+            + WAIVED_SENTENCES)
     yield from pool
     for a in pool:
         for b in pool:
@@ -596,7 +625,8 @@ def test_the_default_arguments_are_no_clearance_and_not_open():
 # --- the requirement list --------------------------------------------------------
 
 @pytest.mark.parametrize(("text", "expected"), [
-    ("Public Trust clearance is required.", [(1, False)]),
+    ("Public Trust or Secret clearance required.", [(2, False)]),
+    ("Public Trust clearance is required. Active Secret clearance required.", [(2, False)]),
     ("Active Secret clearance required.", [(2, False)]),
     ("Top Secret clearance required.", [(3, False)]),
     ("Top-Secret clearance required.", [(3, False)]),
@@ -613,7 +643,6 @@ def test_the_default_arguments_are_no_clearance_and_not_open():
     ("An interim Secret clearance is fine pending final adjudication.", [(2, True)]),
     ("Willingness to undergo a polygraph is required.", [(4, True)]),
     ("Secret clearance sponsorship available for the right candidate.", [(2, True)]),
-    ("Must be able to obtain a Public Trust clearance.", [(1, True)]),
     ("Active Secret clearance required. Must obtain a TS/SCI clearance.",
      [(2, False), (4, True)]),
     ("Requirements:\nActive Secret clearance\nMust be able to obtain a TS clearance",
@@ -685,8 +714,9 @@ TWO_MENTIONS = "Active Secret clearance required. Must obtain a TS/SCI clearance
     (PUBLIC_TRUST_REQUIRED, 1, False, False),
     (SECRET_REQUIRED, 1, False, True),
     ("Clearance is required.", 1, False, True),
-    # no clearance and closed to sponsorship: everything blocks
-    (PUBLIC_TRUST_REQUIRED, 0, False, True),
+    # no clearance and closed to sponsorship: everything blocks but Public Trust,
+    # a background check rather than a clearance
+    (PUBLIC_TRUST_REQUIRED, 0, False, False),
     (OBTAIN_SECRET, 0, False, True),
     (SPONSORED_SECRET, 0, False, True),
     # no clearance, open to sponsorship: only an obtainable clearance passes
@@ -1312,3 +1342,51 @@ def test_each_availability_adverb_carries_the_refusal(adverb):
 def test_the_unavailable_word_carries_the_refusal_after_an_adverb():
     text = "Sponsorship for a Secret clearance is currently unavailable."
     assert sj.clearance_blocks(text, 0, True) is True
+
+
+# --- sentences that are no clearance requirement ---------------------------------
+
+@pytest.mark.parametrize("text", WAIVED_SENTENCES)
+def test_a_clearance_named_without_asking_for_one_does_not_block(text):
+    assert sj.requires_clearance(text) is False
+    assert sj.clearance_requirement(text) == []
+    for held in range(5):
+        for open_ in (False, True):
+            assert sj.clearance_blocks(text, held, open_) is False
+
+
+@pytest.mark.parametrize("text", [
+    # A real requirement beside a waived sentence still blocks.
+    "Public Trust clearance is required. Active Secret clearance required.",
+    "Clearance: N/A for interns. Active TS/SCI clearance required for this role.",
+    "Employee Polygraph Protection Act Poster\nThis position requires a polygraph.",
+    "Minimum Clearance Required to Start: Secret",
+    "**Minimum Clearance Required:** TS/SCI",
+    # A level named in the "None" field line is still read.
+    "Clearance Required: Secret (None accepted for interim)",
+    # A clearance that is required and also preferred at a higher level.
+    "Active Secret clearance required, TS/SCI preferred.",
+    # Under a preferred heading, a sentence that says required still counts.
+    "**Preferred Qualifications**\n\n* Active TS/SCI clearance required",
+    # A required heading ends the preferred section.
+    "**Preferred Qualifications**\n\n* Python\n\n**Requirements**\n\n"
+    "* Active TS/SCI security clearance",
+    # A wish word that belongs to something else leaves the requirement standing.
+    "U.S. citizenship and ability to obtain a Top Secret clearance (active TS preferred).",
+    "* Active Top Secret level security clearance, preferred TS/SCI",
+    "* Maintain a Secret Security Clearance Preferred: * Master's degree in IT",
+    # Review shapes: a field label, a plain heading, and later requirements.
+    "**Preferred Location:** Remote\n\nActive Secret clearance needed for this role.",
+    "Nice to Have\n- AWS\nSecurity\nActive TS/SCI clearance with polygraph",
+    "Bonus\n- Go\nActive Secret clearance needed to start",
+    "Clearance required: none at start, must obtain a Secret clearance within 6 months",
+    "Many of our positions require a Top Secret clearance, and this position requires "
+    "one too.",
+    # A conditional that names no contract stays a requirement.
+    "Active Secret clearance required if selected.",
+    "Many of our engineers hold clearances; this position requires an active Secret "
+    "clearance.",
+])
+def test_a_real_clearance_requirement_beside_a_waiver_still_blocks(text):
+    assert sj.requires_clearance(text) is True
+    assert sj.clearance_blocks(text) is True

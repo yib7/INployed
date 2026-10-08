@@ -327,3 +327,32 @@ def test_a_pay_bonus_in_a_title_line_is_no_preferred_heading():
             "\n\nThis is an excellent opportunity for a developer with 4+ years of experience.")
     assert min_required_years(text) == 4
     assert min_required_years("**Bonus Points**\n\n* 4+ years of experience with Go") is None
+
+
+# --- review fixes: field labels, plain headings, excluded-below bounds -------------
+@pytest.mark.parametrize(("text", "expected"), [
+    ("**Preferred Location:** Remote\n\nWe are hiring a data engineer. You have 3+ years "
+     "of experience with Python.", 3),
+    ("**Bonus:** 10% annual target\n\nYou bring 3+ years of experience in Java.", 3),
+    ("Bonus Points\n- AWS cert\nWhat You'll Need\n- 3+ years of experience", 3),
+    ("Nice to Have\n- AWS\nThe Team\nWe need 3+ years of experience in Go", 3),
+    ("**Preferred Qualifications:**\n\n* 5+ years of Go", None),
+    ("Candidates with less than 2 years of experience will not be considered. 3+ years "
+     "of experience required.", 2),
+    ("Applicants with fewer than 3 years of experience will not be considered", 3),
+    ("This is a contract role for up to 2 years. Requires 3+ years of experience.", 2),
+    ("Up to 2 years of experience in SQL", 0),
+])
+def test_review_shapes_keep_their_requirement(text, expected):
+    assert min_required_years(text) == expected
+
+
+def test_a_figure_set_aside_never_newly_drops_a_job_at_a_higher_threshold(monkeypatch):
+    import score_jobs
+    monkeypatch.setattr(score_jobs, "MIN_FILTER_YEARS", 3)
+    for text in ("Experience: 2 years preferred. Must have 5+ years of Java experience.",
+                 "Bachelor's degree or 2+ years of experience. 4+ years of experience "
+                 "with Linux required.",
+                 "Nice to have: 1-2 years of Go. Minimum Years Of Work Experience: 4"):
+        assert score_jobs.has_too_many_years(text) is False, text
+    assert score_jobs.has_too_many_years("Must have 5+ years of Java experience.") is True

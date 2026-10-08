@@ -575,10 +575,12 @@ YEARS_RE = re.compile(
 REQ_CUES = ("experien", "minimum", "at least", "require", "must have", "background", "track record", "proven")
 # Marketing / tenure wrappers that must NOT be treated as a requirement even in
 # range / "N+" form ("20+ years of excellence", "30+ years in business",
-# "doubled over the past 5 years", "founded 30 years ago", "5 years of service").
+# "doubled over the past 5 years", "founded 30 years ago", "5 years of service",
+# "Backed by 45+ years of success", "Over the last 20+ years, our company").
 NONREQ_CTX = ("founded", "founding", " ago", "of service", "sabbatical",
               "anniversary", "years in business", "over the past",
-              "been the leading", "of excellence", "year history", "of heritage")
+              "been the leading", "of excellence", "year history", "of heritage",
+              "over the last", "years of success", "history spans")
 # Minimum required years at or above which the role is scrapped. The user only
 # wants roles a 0-experience applicant can clear: a 0-floor range ("0-2 years")
 # stays, but "1+", "1-2", or anything requiring >= 1 year is filtered out.
@@ -1650,6 +1652,289 @@ def requires_advanced_degree(text: Any) -> bool:
     return False
 
 
+# --- section headings ------------------------------------------------------------
+# A requirement list is often split into a required part and a preferred part
+# ("Basic Qualifications" / "Preferred Qualifications"). A line under a
+# preferred-type heading names a wish, not a requirement, so the years rule and
+# the clearance rule both ask preferred_section_at() before they count a match.
+# A heading is one of four line shapes:
+#   * a markdown "#" line;
+#   * a line that opens with **bold** text (any number of stars), as LinkedIn
+#     renders "**Preferred Qualifications**" and "****Preferred Skills****"; the
+#     bold text is the heading even when the line runs on after it;
+#   * a short line (60 characters or fewer) that ends in ":";
+#   * a short plain line with no digits that reads as a heading: Title Case
+#     ("Nice to Have Skills", "Preferred Education and Experience") or up to five
+#     words led by a heading word ("Preferred qualifications"). "Python preferred"
+#     is neither, so a bare list line never opens a section.
+# The nearest heading before a position decides: a required-type heading or any
+# other heading ("Benefits", "About the team") ends a preferred section.
+_PREFERRED_WORDS = (
+    r"preferred|preferably|desired|desirable|nice[\s-]+to[\s-]+haves?|nice[\s-]+if"
+    r"|bonus|pluses|a\s+plus|extra\s+credit|we['’]?d\s+love|what\s+sets\s+you\s+apart"
+    r"|would\s+be\s+great|ideally|additional\s+qualifications|good[\s-]+to[\s-]+have")
+_PREFERRED_HEADING_RE = re.compile(r"\b(?:" + _PREFERRED_WORDS + r")\b", re.I)
+_REQUIRED_HEADING_RE = re.compile(r"\b(?:requir\w*|minimum|basic|must|mandatory)\b", re.I)
+_NOT_REQUIRED_RE = re.compile(r"\bnot\s+(?:be\s+)?(?:required|a\s+requirement)\b", re.I)
+_HEADING_LINE_RE = re.compile(
+    r"^[ \t]*(?:#{1,6}[ \t]+(?P<md>[^\n]+)"
+    r"|\*{2,}(?P<bold>[^*\n]+?)\*{2,}[^\n]*"
+    r"|(?P<colon>[^\n:]{1,60}):[ \t]*"
+    r"|(?P<plain>[A-Z][^\n\d.,:;!?]{0,59}))$", re.M)
+# The words that make a short plain line a heading.
+_HEADING_NOUN_RE = re.compile(
+    r"\b(?:" + _PREFERRED_WORDS + r"|requir\w*|minimum|basic|must|mandatory"
+    r"|qualifications?|skills?|experience|education|knowledge|responsibilities"
+    r"|competencies|abilities|benefits|about)\b", re.I)
+_PLAIN_HEADING_LEAD_RE = re.compile(
+    r"^(?:preferred|desired|nice|bonus|additional|required|requirements|minimum|basic"
+    r"|qualifications|responsibilities|skills|education|experience)\b", re.I)
+
+
+def _plain_heading(line: str) -> bool:
+    """True when a short plain line (no digits, no end punctuation) reads as a heading."""
+    words = line.split()
+    if not words or len(words) > 8 or not _HEADING_NOUN_RE.search(line):
+        return False
+    if all(w[0].isupper() or len(w) < 4 or not w[0].isalpha() for w in words):
+        return True
+    return len(words) <= 5 and bool(_PLAIN_HEADING_LEAD_RE.match(line))
+
+
+# A pay bonus in a title line ("$120,000 base + 10-15% bonus") is no wish list.
+_PAY_BONUS_RE = re.compile(
+    r"(?:[\d%$][^\n]{0,12}|\b(?:annual|signing|sign[\s-]on|performance|cash|target)\s+)"
+    r"bonus\w*|\bbonus\w*\s+(?:eligib\w*|structure|plan|potential|program|pay)", re.I)
+
+
+def _is_preferred_heading(title: str) -> bool:
+    """True when a heading names a preferred-type section and no required one."""
+    title = _PAY_BONUS_RE.sub(" ", _NOT_REQUIRED_RE.sub(" ", title))
+    return bool(_PREFERRED_HEADING_RE.search(title)
+                and not _REQUIRED_HEADING_RE.search(title))
+
+
+def section_headings(text: str) -> list[tuple[int, bool]]:
+    """Each heading in the text as (end position, is_preferred), in text order.
+
+    The end position is where the heading text stops: the end of the line, or the
+    closing stars of a bold heading that runs on, so the rest of that line falls
+    under it. See the note above _PREFERRED_WORDS for the four heading shapes.
+    """
+    heads: list[tuple[int, bool]] = []
+    for m in _HEADING_LINE_RE.finditer(text):
+        if m.group("bold") is not None:
+            title, end = m.group("bold"), m.start("bold") + len(m.group("bold"))
+        elif m.group("plain") is not None:
+            title, end = m.group("plain"), m.end()
+            if not _plain_heading(title.strip()):
+                continue
+        else:
+            title, end = m.group("md") or m.group("colon"), m.end()
+        heads.append((end, _is_preferred_heading(title)))
+    return heads
+
+
+def preferred_section_at(text: str, pos: int,
+                         headings: list[tuple[int, bool]] | None = None) -> bool:
+    """True when the nearest section heading before `pos` is a preferred-type one.
+
+    `headings` is section_headings(text), passed in when the caller asks about
+    several positions of one text.
+    """
+    if headings is None:
+        headings = section_headings(text)
+    preferred = False
+    for end, is_pref in headings:
+        if end > pos:
+            break
+        preferred = is_pref
+    return preferred
+
+
+# --- years figures that are no experience requirement -----------------------------
+# One clause is the text between two sentence breaks (". ", ";", "!", "?" or a
+# line break). A period between two digits is a decimal point, not a break.
+_CLAUSE_BREAK_RE = re.compile(r"[;!?\n]|(?<!\d)\.|\.(?!\d)")
+# The whole number before a decimal point that ends right where a YEARS_RE match
+# starts, or the lower bound of the range it closes ("0-2." before "5 years").
+_DECIMAL_BEFORE_RE = re.compile(
+    r"(?<!\d)(\d{1,2})(?:\s*(?:to|[-‐‑‒–—―−])\s*\d{1,2})?\.$")
+# A form-style field that puts the figure after the words: "**Minimum Years Of Work
+# Experience**\n\n* 3", "Minimum Years of Experience Required: 2".
+_MIN_YEARS_FIELD_RE = re.compile(
+    r"\bminimum\s+(?:years?|yrs?)\s+of\s+(?:[\w-]+\s+){0,3}?experience\b"
+    r"[^\n\d]{0,25}[\s*:•\-]{0,12}(\d{1,2})\b", re.I)
+# Age rules: "18 years of age", "at least 21 years old", "minimum age of 21 years".
+_AGE_AFTER_RE = re.compile(r"\s*(?:of\s+age|old)\b", re.I)
+_AGE_BEFORE_RE = re.compile(r"\bage\s*(?:of|is|:)?\s*(?:at\s+least\s+)?$", re.I)
+# Company history with the company as the subject: "a firm with over 35 years of
+# experience", "an insurance company with over 120 years", "our teams bring over 30
+# years of experience helping business leaders".
+_COMPANY_WITH_RE = re.compile(
+    r"\b(?:company|firm|organi[sz]ation|agency|corporation|institution|enterprise"
+    r"|business|brand|provider|leader)\s+(?:with|that\s+has|has|boasting)"
+    r"\s+(?:(?:over|more\s+than|nearly|almost|about)\s+)?$", re.I)
+_EXPERIENCE_SERVING_RE = re.compile(
+    r"\s+of\s+experience\s*,?\s+(?:serving|helping)\b", re.I)
+_WE_RE = re.compile(r"\b(?:we|our|us)\b", re.I)
+# "< 1 year", "less than 1 year", "under 1 year", "up to 2 years": an upper bound
+# with no floor, so the floor is 0.
+_UPPER_BOUND_RE = re.compile(
+    r"(?:<|≤|(?<!\bnot\s)(?<!\bno\s)\bless\s+than|\bunder|\bup\s+to"
+    r"|(?<!\bnot\s)(?<!\bno\s)\bfewer\s+than|\bno\s+more\s+than)\s*$", re.I)
+# A years figure offered instead of a bachelor's degree. The candidate holds one,
+# so "Bachelor's degree OR 2+ years of experience", "Bachelor's degree OR High
+# school / GED and at least 3 years" and "4 years of experience in lieu of a
+# degree" ask for no years. "Bachelor's degree AND 2 years" and "Bachelor's with
+# 2 years" still count. A degree named after master's, graduate, advanced, doctoral
+# or PhD is no bachelor's degree, so years offered in place of it still count.
+_BACHELOR_RE = re.compile(
+    r"\bbachelor\w*|\bb\.?\s?s\.?c?\b|\bb\.?\s?a\.?\b|\bundergraduate\b"
+    r"|\b(?:four|4)[\s-]year\b|\b(?:college|university)\s+degree\b"
+    r"|(?<!master's )(?<!master’s )(?<!masters )(?<!graduate )(?<!advanced )"
+    r"(?<!doctoral )(?<!ms )(?<!phd )\bdegree\b",
+    re.I)
+_OR_RE = re.compile(r"\bor\b", re.I)
+# What may sit between the "or" and the years figure: nothing but a filler ("or at
+# least 4 years"), or a lesser credential the years go with ("or High school / GED
+# and at least 3 years", "OR Diploma with 2+ years").
+_ALT_FILLER_RE = re.compile(
+    r"^\W*(?:an?\s+)?(?:(?:at\s+least|a\s+minimum\s+of|minimum(?:\s+of)?|over)\s+)?$", re.I)
+_LESSER_CREDENTIAL_RE = re.compile(
+    r"^\W*(?:an?\s+)?(?:high\s+school|h\.?s\.?\s+diploma|ged\b|diploma|associate)", re.I)
+_IN_LIEU_OF_DEGREE_RE = re.compile(
+    r"\b(?:in\s+lieu\s+of|in\s+place\s+of|instead\s+of)\s+(?:an?\s+|the\s+)?"
+    r"(?:(?:bachelor['’]?s?|college|university|undergraduate|four[\s-]year|4[\s-]year)\s+)?"
+    r"degree\b", re.I)
+_ONE_OF_THE_FOLLOWING_RE = re.compile(r"\bone\s+of\s+the\s+following\b", re.I)
+_YEARS_FIGURE_RE = re.compile(r"\d\s*\+?\s*(?:years?|yrs?)\b", re.I)
+_LIST_ITEM_RE = re.compile(r"\n[ \t]*[*\-•●·▪◦]")
+# A clause that marks its own years figure as a wish: "1-2 years of experience
+# preferred", "2+ years business analysis experience (Preferred)", "Preferred: 2
+# years", "ideally 2+ years". The word must follow the figure with no comma between
+# them ("2+ years of SQL, Tableau a plus" hands the plus to Tableau), or lead the
+# clause as a label, or come just before the figure. A clause that also says
+# "required", "must" or "minimum" counts as a requirement ("not required" aside).
+_PREFERRED_INLINE = r"preferred|preferably|desired|desirable|a\s+plus|a\s+bonus|nice\s+to\s+have"
+_PREFERRED_AFTER_RE = re.compile(r"^[^,]*?\b(?:" + _PREFERRED_INLINE + r")\b", re.I)
+_PREFERRED_LABEL_RE = re.compile(
+    r"^\W*(?:" + _PREFERRED_INLINE + r"|bonus|plus)\b[^:\n]{0,30}:\W*$", re.I)
+_PREFERRED_BEFORE_RE = re.compile(r"\b(?:ideally|preferably)\b\W{0,3}(?:\w+\s+){0,3}$", re.I)
+_REQUIRED_INLINE_RE = re.compile(r"\b(?:requir\w*|must|minimum|mandatory)\b", re.I)
+_REQUIRED_IN_SECTION_RE = re.compile(r"\b(?:requir\w*|must)\b", re.I)
+
+
+def _clause_bounds(text: str, start: int, end: int) -> tuple[int, int]:
+    """The start and end of the clause around text[start:end] (see _CLAUSE_BREAK_RE)."""
+    lo = max(0, start - 400)
+    for b in _CLAUSE_BREAK_RE.finditer(text, lo, start):
+        lo = b.end()
+    nxt = _CLAUSE_BREAK_RE.search(text, end)
+    return lo, (nxt.start() if nxt else len(text))
+
+
+def _in_lieu_alternative(before: str, after: str) -> bool:
+    """True when an "in lieu of a degree" phrase governs the figure between `before`
+    and `after` (the rest of its clause on each side).
+
+    The phrase must reach the figure with no "or" between them, and a bachelor's
+    degree named earlier in the clause must sit on the other side of an "or": in
+    "Bachelor's degree and 5 years, or in lieu of a degree, 9 years" only the 9 is
+    the alternative, and in "Bachelor's degree and 4-12 years (more experience may be
+    considered in lieu of degree)" the 4 still counts.
+    """
+    near = (re.match(r"^(?:(?!\bor\b).)*?" + _IN_LIEU_OF_DEGREE_RE.pattern, after,
+                     re.I | re.S)
+            or re.search(_IN_LIEU_OF_DEGREE_RE.pattern + r"(?:(?!\bor\b).)*$", before,
+                         re.I | re.S))
+    if not near:
+        return False
+    rest = _IN_LIEU_OF_DEGREE_RE.sub(" ", before)
+    degrees = list(_BACHELOR_RE.finditer(rest))
+    return not degrees or bool(_OR_RE.search(rest, degrees[-1].end()))
+
+
+def _degree_alternative(text: str, start: int, before: str, after: str) -> bool:
+    """True when the years figure at `start` is offered instead of a bachelor's degree.
+
+    `before` and `after` are the rest of the figure's clause on each side.
+    """
+    if _in_lieu_alternative(before, after):
+        return True
+    # "Bachelor's degree ... OR 2+ years": the last "or" before the figure follows a
+    # bachelor's degree on its own line (or on the line before, for a bullet that
+    # opens with "OR"), and only a filler or a lesser credential sits between the
+    # "or" and the figure: no other years figure and no new list item.
+    window = text[max(0, start - 250):start]
+    ors = list(_OR_RE.finditer(window))
+    if ors:
+        last = ors[-1]
+        between = window[last.end():]
+        line_start = window.rfind("\n", 0, last.start()) + 1
+        degree_line = window[line_start:last.start()]
+        if not degree_line.strip(" \t*-•●·▪◦") and line_start:
+            degree_line = window[window.rfind("\n", 0, line_start - 1) + 1:line_start]
+        if (_BACHELOR_RE.search(degree_line) and len(between) <= 60
+                and not _YEARS_FIGURE_RE.search(between)
+                and not _LIST_ITEM_RE.search(between)
+                and (_ALT_FILLER_RE.match(between)
+                     or (_LESSER_CREDENTIAL_RE.match(between)
+                         and not re.search(r"[.;](?:\s|$)", between)))):
+            return True
+    # "one of the following: Bachelor's degree / Associate degree plus 1 year / High
+    # school diploma plus 2 years": the figure goes with the lesser credential that
+    # leads its own line.
+    line = text[text.rfind("\n", 0, start) + 1:start]
+    lookback = text[max(0, start - 400):start]
+    return bool(_LESSER_CREDENTIAL_RE.match(line)
+                and _ONE_OF_THE_FOLLOWING_RE.search(lookback)
+                and _BACHELOR_RE.search(lookback))
+
+
+def _years_floor(text: str, m: re.Match, headings: list[tuple[int, bool]]) -> int | None:
+    """The floor a counted YEARS_RE match sets, or None when it is no requirement.
+
+    None for an age rule, company history, a figure offered instead of a bachelor's
+    degree, and a figure the clause or its section heading marks as preferred. 0 for
+    an upper bound alone ("< 1 year", "up to 2 years").
+
+    The answer is never above the match's own number, and a 0 floor is never set
+    aside, so a job the plain reading kept is never dropped: "0 years of experience
+    with a PhD" beside "5+ years with a Bachelor's" still keeps its 0.
+    """
+    floor = int(m.group(1))
+    # The figure after a decimal point ("2.5 years" matches as "5 years") belongs to
+    # the number before it, and to the range that number closes: "0-2.5 years" is
+    # the range 0-2.
+    decimal = _DECIMAL_BEFORE_RE.search(text, max(0, m.start() - 12), m.start())
+    if decimal:
+        floor = min(floor, int(decimal.group(1)))
+    if floor == 0:
+        return 0
+    lo, hi = _clause_bounds(text, m.start(), m.end())
+    before, after = text[lo:m.start()], text[m.end():hi]
+    clause = text[lo:hi]
+    if _AGE_AFTER_RE.match(after) or _AGE_BEFORE_RE.search(before):
+        return None
+    if (_COMPANY_WITH_RE.search(before)
+            or (_EXPERIENCE_SERVING_RE.match(after) and _WE_RE.search(before))):
+        return None
+    if _degree_alternative(text, m.start(), before, after):
+        return None
+    stated = _NOT_REQUIRED_RE.sub(" ", clause)
+    if not _REQUIRED_INLINE_RE.search(stated) and (
+            _PREFERRED_AFTER_RE.match(after) or _PREFERRED_LABEL_RE.match(before)
+            or _PREFERRED_BEFORE_RE.search(before)):
+        return None
+    if (preferred_section_at(text, m.start(), headings)
+            and not _REQUIRED_IN_SECTION_RE.search(stated)):
+        return None
+    if _UPPER_BOUND_RE.search(before):
+        return 0
+    return floor
+
+
 def min_required_years(text: Any) -> int | None:
     """Smallest experience-requirement minimum in the text, or None.
 
@@ -1661,10 +1946,19 @@ def min_required_years(text: Any) -> int | None:
     of service") are ignored. Marketing wrappers around a range / "N+" form
     ("20+ years of excellence") are skipped too. Combined with MIN_FILTER_YEARS,
     only roles with a 0-year floor (or no detected requirement) survive.
+
+    _years_floor() then drops what is no requirement at all: an age rule, company
+    history, years offered instead of a bachelor's degree, and years under a
+    preferred-type heading or marked preferred in their own clause. An upper bound
+    alone ("< 1 year") sets the floor 0. A stated "Minimum Years Of Work Experience"
+    field (the figure after the words, which YEARS_RE cannot read) still counts once
+    any years figure was read, so a preferred figure set aside never hides it.
     """
     if not isinstance(text, str):
         return None
+    headings = section_headings(text)
     mins = []
+    read_any = False
     for m in YEARS_RE.finditer(text):
         conn = (m.group(2) or "").lower()
         is_range = bool(m.group(3)) and conn not in ("", "+")
@@ -1675,7 +1969,14 @@ def min_required_years(text: Any) -> int | None:
         if any(w in ctx for w in NONREQ_CTX):
             continue
         if is_range or is_plus or any(cue in ctx for cue in REQ_CUES):
-            mins.append(int(m.group(1)))
+            read_any = True
+            floor = _years_floor(text, m, headings)
+            if floor is not None:
+                mins.append(floor)
+    if read_any:
+        field = _MIN_YEARS_FIELD_RE.search(text)
+        if field:
+            mins.append(int(field.group(1)))
     return min(mins) if mins else None
 
 

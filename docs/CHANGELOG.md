@@ -54,6 +54,17 @@ All notable changes to INployed are recorded here. The format follows
 
 ### Fixed
 
+- **Settings warns about a fallback model it does not know.** The six fallback model lists
+  (Stage-1 and Stage-2 fallback models and the four tailor fallback lists) took any text, so
+  a typo such as `gemini-3.0-flash` saved with nothing said, and the request failed once the
+  app reached it. Settings now shows a yellow note naming any model it does not know (one
+  you name under **Per-model rate limits** counts as known), and one naming a lite model in
+  **Fallbacks: deep (writing)**, where it lowers the quality of your bullets and cover
+  letter. The note never blocks Save, and custom model ids still save.
+- **The Time range help no longer names a 90-day window.** It said a wider range re-pays
+  for postings older than "the 90-day exclude window", but that window is
+  `exclude_window_days` in `search_config.json` and can be shorter. The help now names the
+  setting instead of a number.
 - **The Resume Data tab's resume.md model box no longer looks live on Claude.** With the
   tailor provider set to claude, Generate from my data uses your Claude standard model and
   ignores the Gemini model in the box. The box is now greyed out there, a note next to it

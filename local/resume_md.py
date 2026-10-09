@@ -101,18 +101,27 @@ def build_prompt(yaml_text: str) -> str:
     )
 
 
+def claude_model_in_use() -> str | None:
+    """The Claude model resume.md generation sends to, or None on Gemini.
+
+    Live (reads the tailor provider from config each call), so the Resume Data
+    tab can grey out its Gemini-only model box and name this id instead."""
+    from resume_tailor import config
+    if config.tailor_provider() == "claude":
+        return config.claude_model_for(config.TIER_FLASH)
+    return None
+
+
 def _default_llm_call(system: str, user: str, model: str) -> str:
     """Real, provider-aware transport (paid). Only reached on the user's
     runtime click — never from the build or tests, which inject a fake
     `llm_call`. On the 'claude' provider the Gemini model id in `model` does
     not apply (it comes from the resume.md Settings dropdown, which only
     lists Gemini models); the flash-tier Claude model is used instead."""
-    from resume_tailor import config, llm
-    if config.tailor_provider() == "claude":
-        return llm._call_claude(
-            system, user, config.claude_model_for(config.TIER_FLASH),
-            temperature=0.2,
-        )
+    from resume_tailor import llm
+    claude = claude_model_in_use()
+    if claude:
+        return llm._call_claude(system, user, claude, temperature=0.2)
     return llm._call_gemini(system, user, model, temperature=0.2)
 
 

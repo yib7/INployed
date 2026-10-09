@@ -791,6 +791,8 @@ your data (so the scorer isn't quietly matching against a stale résumé), with 
 **Resume Data** tab, pick a model (`gemini-3.5-flash` by default; the dropdown lists every
 3.x flash and pro id the Settings tab offers, and you can type your own) and click
 **Generate from my data**. It uses Gemini to rebuild `resume.md`
+(with **Resume tailor provider** set to claude, it uses your Claude standard model
+instead, so the model box is greyed out and a note beside it names that model)
 **faithfully, selecting and rephrasing your data, never inventing.** You **review (and
 can edit) the result before it's saved**; saving backs up the old file to `resume.md.bak`.
 If VM features are on, it then offers to push the new `resume.md` to the VM, and a

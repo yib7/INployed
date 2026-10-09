@@ -512,3 +512,70 @@ def test_add_atom_dialog_keeps_input_on_a_failed_write(qtbot, master_tmp, monkey
     monkeypatch.setattr(rdt.QtWidgets.QDialog, "exec", fake_exec)
     ed._add_atom_dialog("projects", 0)
     assert calls["n"] == 2   # the SAME dialog re-opened after the failed write
+
+
+def test_md_model_box_greys_out_and_names_the_claude_model(qtbot, master_tmp, monkeypatch):
+    # On the Claude provider resume_md ignores the Gemini id in the box, so the
+    # box is disabled and a note names the Claude model actually used.
+    monkeypatch.setattr(resume_md, "claude_model_in_use", lambda: "claude-sonnet-x")
+    ed = _editor(qtbot, master_tmp)
+    assert not ed.md_model.isEnabled()
+    assert not ed.md_model_note.isHidden()
+    assert "claude-sonnet-x" in ed.md_model_note.text()
+    assert "Claude" in ed.md_model.toolTip()
+
+
+def test_md_model_box_stays_enabled_on_gemini(qtbot, master_tmp, monkeypatch):
+    monkeypatch.setattr(resume_md, "claude_model_in_use", lambda: None)
+    ed = _editor(qtbot, master_tmp)
+    assert ed.md_model.isEnabled()
+    assert ed.md_model_note.isHidden()
+    assert ed.md_model.currentText() == "gemini-3.5-flash"
+
+
+def test_md_model_box_follows_a_provider_switch(qtbot, master_tmp, monkeypatch):
+    # Settings save calls refresh_model_state(); showing the tab does too.
+    current = {"model": None}
+    monkeypatch.setattr(resume_md, "claude_model_in_use", lambda: current["model"])
+    ed = _editor(qtbot, master_tmp)
+    assert ed.md_model.isEnabled()
+    current["model"] = "claude-sonnet-x"
+    ed.refresh_model_state()
+    assert not ed.md_model.isEnabled()
+    assert "claude-sonnet-x" in ed.md_model_note.text()
+    current["model"] = None
+    ed.show()   # the showEvent path
+    assert ed.md_model.isEnabled()
+    assert ed.md_model_note.isHidden()
+    assert ed.md_model.toolTip() == ""
+
+
+def test_generate_confirm_names_the_claude_model(qtbot, master_tmp, monkeypatch):
+    # The confirm box must not promise a Gemini call when Claude does the work.
+    monkeypatch.setattr(resume_md, "claude_model_in_use", lambda: "claude-sonnet-x")
+    monkeypatch.setattr(resume_md, "MASTER_YAML_PATH", master_tmp)
+    asked = []
+    monkeypatch.setattr(rdt.QtWidgets.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: asked.append(a[2])
+                                     or rdt.QtWidgets.QMessageBox.StandardButton.No))
+    ed = _editor(qtbot, master_tmp)
+    ed._generate()
+    assert "claude-sonnet-x" in asked[0]
+    assert "Gemini" not in asked[0]
+
+
+def test_a_settings_save_refreshes_the_md_model_box(monkeypatch):
+    # The provider lives in Settings, so a save must re-run the model box refresh.
+    from types import SimpleNamespace
+    from qt import main_window as mw
+    for name in ("load_min_score", "load_repost_window_days", "load_followup_days"):
+        monkeypatch.setattr(mw, name, lambda: 0)
+    calls = []
+    window = SimpleNamespace(
+        reload_data_async=lambda: None,
+        resume_data_tab=SimpleNamespace(refresh_push_state=lambda: None,
+                                        refresh_model_state=lambda: calls.append(True)),
+        answers_tab=SimpleNamespace(refresh_test_answers_state=lambda: None),
+        apply_queue_panel=SimpleNamespace(refresh_jev_state=lambda: None))
+    mw.MainWindow._on_settings_saved(window)
+    assert calls == [True]

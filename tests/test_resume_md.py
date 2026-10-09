@@ -189,6 +189,18 @@ def test_default_llm_call_routes_to_gemini_by_default(monkeypatch):
     assert captured["user"] == "usr"
 
 
+def test_claude_model_in_use_names_the_flash_tier_model_on_claude(monkeypatch):
+    # The Resume Data tab shows this id next to the greyed-out model box, so it
+    # must be the very model _default_llm_call sends to on the Claude provider.
+    from resume_tailor import config
+
+    monkeypatch.delenv("RESUME_TAILOR_PROVIDER", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {"tailor_provider": "claude"})
+    assert resume_md.claude_model_in_use() == config.claude_model_for(config.TIER_FLASH)
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    assert resume_md.claude_model_in_use() is None   # Gemini: the box's model applies
+
+
 def test_push_argv_targets_resume_md_on_vm():
     import vm_sync
     t = vm_sync.VMTarget(instance="vm", zone="z", user="u", remote_dir="~")

@@ -54,6 +54,11 @@ All notable changes to INployed are recorded here. The format follows
 
 ### Fixed
 
+- **The Resume Data tab's resume.md model box no longer looks live on Claude.** With the
+  tailor provider set to claude, Generate from my data uses your Claude standard model and
+  ignores the Gemini model in the box. The box is now greyed out there, a note next to it
+  names the Claude model that runs, and the confirm box names that model too. It updates
+  when you save Settings or open the tab.
 - **The dashboard no longer pops open to an empty High Score tab.** The watcher opened it
   for any unseen job at or above your minimum score, while High Score also hides a repost of
   a job you marked seen or applied within the repost window, and counts a job marked in the

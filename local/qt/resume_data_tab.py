@@ -149,6 +149,11 @@ class ResumeDataEditor(QtWidgets.QWidget):
         self.md_model.addItems(list(settings.GEMINI_MODELS))
         self.md_model.setCurrentText("gemini-3.5-flash")
         bar.addWidget(self.md_model)
+        # Shown only on the Claude provider, where the Gemini id above is ignored.
+        self.md_model_note = Label("")
+        self.md_model_note.setProperty("muted", True)
+        self.md_model_note.hide()
+        bar.addWidget(self.md_model_note)
         gen = QtWidgets.QPushButton("Generate from my data")
         gen.clicked.connect(self._generate)
         bar.addWidget(gen)
@@ -157,6 +162,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         bar.addWidget(self.btn_push_md)
         bar.addStretch(1)
         self._refresh_push_state()
+        self.refresh_model_state()
         return bar
 
     def _build_stale_banner(self) -> QtWidgets.QWidget:
@@ -187,6 +193,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
     def showEvent(self, event) -> None:  # noqa: N802 - Qt override
         super().showEvent(event)
         self._refresh_stale_banner()
+        self.refresh_model_state()
 
     def reload(self) -> None:
         self._basics_edits.clear()
@@ -964,18 +971,37 @@ class ResumeDataEditor(QtWidgets.QWidget):
     # Backward-compatible alias (pre-audit callers/tests used the private name).
     _refresh_push_state = refresh_push_state
 
+    def refresh_model_state(self) -> None:
+        """Public slot: grey out the Gemini model box on the Claude provider and
+        name the Claude model resume.md generation really uses. Cheap (reads
+        local config.json only), so it runs on tab show and after a Settings save."""
+        claude = resume_md.claude_model_in_use()
+        self.md_model.setEnabled(not claude)
+        if claude:
+            self.md_model.setToolTip(
+                "Your tailor runs on Claude, so this Gemini model is not used. "
+                "Set Resume tailor provider to gemini in Settings to pick one here.")
+            self.md_model_note.setText(f"Uses {claude} (your Claude tailor's standard model)")
+        else:
+            self.md_model.setToolTip("")
+            self.md_model_note.setText("")
+        self.md_model_note.setVisible(bool(claude))
+
     def _generate(self) -> None:
         model = self.md_model.currentText().strip() or "gemini-3.5-flash"
         if not resume_md.MASTER_YAML_PATH.exists():
             QtWidgets.QMessageBox.critical(
                 self, "Generate resume.md", "No master_experience.yaml found; add Resume Data first.")
             return
+        # On Claude the box's Gemini id is ignored; name the model that really runs.
+        claude = resume_md.claude_model_in_use()
+        shown, vendor = (claude, "Claude") if claude else (model, "Gemini")
         if QtWidgets.QMessageBox.question(
                 self, "Generate resume.md",
-                literal(f"Rebuild resume.md from your Resume Data with {model}?\n\nThis makes a Gemini call.")
+                literal(f"Rebuild resume.md from your Resume Data with {shown}?\n\nThis makes a {vendor} call.")
         ) != QtWidgets.QMessageBox.StandardButton.Yes:
             return
-        self._set_status("Generating resume.md … (Gemini)")
+        self._set_status(f"Generating resume.md … ({vendor})")
         yaml_text = resume_md.MASTER_YAML_PATH.read_text(encoding="utf-8")
         workers.run_async(self, lambda: resume_md.generate_resume_md(yaml_text, model),
                           on_done=self._preview, on_error=self._gen_failed)

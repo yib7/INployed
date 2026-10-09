@@ -1521,6 +1521,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         self.repost_window_days = load_repost_window_days()
         self.followup_days = load_followup_days()
         self.resume_data_tab.refresh_push_state()  # vm_enabled may have changed
+        self.resume_data_tab.refresh_model_state()  # the tailor provider may have changed
         self.answers_tab.refresh_test_answers_state()  # the judge mode or key may have changed
         self.apply_queue_panel.refresh_jev_state()  # Start follows the Jev switch
         self.reload_data_async()

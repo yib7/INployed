@@ -54,6 +54,12 @@ All notable changes to INployed are recorded here. The format follows
 
 ### Fixed
 
+- **The dashboard no longer pops open to an empty High Score tab.** The watcher opened it
+  for any unseen job at or above your minimum score, while High Score also hides a repost of
+  a job you marked seen or applied within the repost window, and counts a job marked in the
+  seen list as seen. The watcher now checks with the same High Score filter before it opens
+  the dashboard, so a run whose only new high scorers are such reposts stays quiet. If that
+  check cannot run, the watcher opens the dashboard as before.
 - **The mechanical filter no longer drops jobs for text that is not a requirement.** It
   reads each trigger in context now, and these reach the scorer instead of being dropped:
   - Years figures under a Preferred, Desired, Nice to have or "We'd love" heading, or inside

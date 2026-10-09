@@ -791,10 +791,13 @@ def load_followup_days(default: int = 5) -> int:
         return default
 
 
-def load_repost_window_days(default: int = 30) -> int:
-    """Days a repost of a job you marked seen or applied stays out of High Score."""
+def load_repost_window_days(default: int = 30, cfg: dict | None = None) -> int:
+    """Days a repost of a job you marked seen or applied stays out of High Score.
+
+    `cfg` is an already-loaded config.json dict (the watcher passes its own);
+    None reads the file."""
     try:
-        return int(_load_cfg().get("repost_window_days", default))
+        return int((_load_cfg() if cfg is None else cfg).get("repost_window_days", default))
     except (TypeError, ValueError):
         return default
 

@@ -10,7 +10,8 @@ Each invocation:
   3. Reconciles is_seen against the local SQLite registry on any file
      whose mtime has advanced since we last processed it.
   4. Launches the dashboard UI iff a file was newly reconciled AND it has
-     unseen score>=4 rows. Otherwise exits silently.
+     unseen score>=4 rows that the High Score tab would show (a repost of a
+     recently marked job does not count). Otherwise exits silently.
 
 No polling loop — the process exits after one pass.
 """
@@ -225,12 +226,17 @@ def master_is_stale(age_h: float, cfg: dict) -> bool:
 _SCAN_CHUNK = 5000
 
 
-def has_unseen_high_score(path: Path, min_score: int) -> bool:
-    """Whether any row is unseen with score >= min_score.
+def has_unseen_high_score(path: Path, min_score: int, registry=None,
+                          cfg: dict | None = None) -> bool:
+    """Whether the dashboard's High Score tab would show at least one row.
 
-    Reads ONLY the two needed columns, in bounded chunks, stopping at the first
-    hit: this fires 6+ times a day against a ~90 MB decompressed
-    master, so a full-frame load here was the watcher's biggest allocation."""
+    A cheap probe runs first: any row unseen with score >= min_score. It reads
+    ONLY the two needed columns, in bounded chunks, stopping at the first hit:
+    this fires 6+ times a day against a ~90 MB decompressed master, so a
+    full-frame load here was the watcher's biggest allocation. A miss answers
+    False with no further work. On a hit, and given the seen `registry`, the
+    hit is confirmed against High Score's own filter (`_high_score_would_show`),
+    which also hides a repost of a job marked within `repost_window_days`."""
     try:
         for chunk in pd.read_csv(path, usecols=["score", "is_seen"],
                                  chunksize=_SCAN_CHUNK):
@@ -239,8 +245,9 @@ def has_unseen_high_score(path: Path, min_score: int) -> bool:
             # (fresh append-to-master rows land blank; see csv_io.read_csv_gz).
             seen = chunk["is_seen"].fillna("no").astype(str)
             if bool(((score >= min_score) & (seen == "no")).any()):
-                return True
-        return False
+                break
+        else:
+            return False
     except Exception as e:  # noqa: BLE001 - "cannot tell" must degrade, not crash
         # ValueError covers a master missing either usecols column, which the old
         # code answered False for. Deliberately broader than that: this reads a
@@ -254,6 +261,58 @@ def has_unseen_high_score(path: Path, min_score: int) -> bool:
         # the next fire retries once the mtime settles.
         log.warning("Could not read %s: %s", path, e)
         return False
+    if registry is None:
+        return True
+    try:
+        return _high_score_would_show(path, min_score, registry, cfg or {})
+    except Exception as e:  # noqa: BLE001 - "cannot tell" keeps the probe's answer
+        log.warning("High Score check failed for %s (%s); launching on the probe's hit",
+                    path, e)
+        return True
+
+
+# Columns `_high_score_would_show` reads: the score/seen filter plus the three
+# `jobsdata.repost_key` inputs. extracted_date is left out on purpose: it only
+# picks which copy of a duplicate survives, never whether any row does.
+_HIGH_SCORE_COLS = ("job_posting_id", "score", "is_seen",
+                    "job_title", "company_name", "job_location")
+
+
+def _high_score_would_show(path: Path, min_score: int, registry, cfg: dict) -> bool:
+    """Run the dashboard's own High Score filter over the rows that can matter.
+
+    Mirrors main_window._apply_df_views: seen.db ORed into is_seen
+    (csv_io.reconcile_is_seen), then jobsdata.filter_high_unseen_with_count
+    with the registry's mark dates and the configured repost window. Only two
+    kinds of row can change that answer, so a chunked read keeps just those:
+    candidates (unseen, score >= min_score) and rows marked in seen.db, which
+    are the only ones `blocked_repost_keys` reads. Raises on any problem; the
+    caller falls back to the probe's answer."""
+    import jobsdata
+    from csv_io import reconcile_is_seen
+
+    marked_at = registry.marked_at_all()
+    if not marked_at:
+        return True   # nothing marked: no seen.db flip and no repost block
+    window_days = jobsdata.load_repost_window_days(cfg=cfg)
+    kept = []
+    with pd.read_csv(path, usecols=lambda c: c in _HIGH_SCORE_COLS,
+                     dtype=str, chunksize=_SCAN_CHUNK) as reader:
+        for chunk in reader:
+            score = pd.to_numeric(chunk["score"], errors="coerce").fillna(0)
+            chunk["is_seen"] = chunk["is_seen"].fillna("no")   # as read_csv_gz does
+            marked = chunk["job_posting_id"].astype(str).isin(marked_at.keys())
+            candidate = (score >= min_score) & (chunk["is_seen"] == "no")
+            kept.append(chunk.loc[marked | candidate])
+    df = pd.concat(kept, ignore_index=True)
+    df, _ = reconcile_is_seen(df, registry)
+    shown, hidden = jobsdata.filter_high_unseen_with_count(
+        df, min_score, marked_at=marked_at, window_days=window_days)
+    if shown.empty:
+        log.info("%s: High Score would be empty (%d repost(s) hidden, rest seen)",
+                 path.name, hidden)
+        return False
+    return True
 
 
 # --------------------------------------------------------------------------- UI launch
@@ -447,7 +506,9 @@ def main() -> int:
                 # morning/evening if the master hasn't synced yet.
                 master = gdrive_root / "linkedin_jobs_master.csv.gz"
                 active = [master] if master.exists() else latest_for_ui(files)
-                to_show = [p for p in active if has_unseen_high_score(p, cfg["min_score"])]
+                to_show = [p for p in active
+                           if has_unseen_high_score(p, cfg["min_score"],
+                                                    registry=registry, cfg=cfg)]
                 if to_show:
                     launch_ui(to_show)
                 else:

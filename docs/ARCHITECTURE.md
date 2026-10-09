@@ -360,7 +360,9 @@ Between VM drops, `local/watcher.py` closes the loop with **no polling**: a one-
 Windows Task Scheduler (Logon / Unlock / Resume plus six scheduled fires around the VM's Drive
 drops; installed by `local/setup_tasks.ps1` from `local/task.xml`), it reconciles each newly-synced
 file's `is_seen` against the registry and launches the dashboard only when unseen score≥4 rows
-arrived. Its summary also flags a master run older than the `stale_after_hours` setting
+arrived that High Score would actually show (`watcher.has_unseen_high_score`: a two-column probe,
+then, on a hit, `jobsdata.filter_high_unseen_with_count` over the candidate and seen.db-marked
+rows, so a repost hidden by the repost window does not pop the dashboard). Its summary also flags a master run older than the `stale_after_hours` setting
 (`watcher.master_is_stale`, the same config key the Stats badge reads). The watcher and the
 dashboard share one concurrent-instance guard, `local/locks.py:SingleInstance` (an OS-level
 msvcrt/fcntl file lock): the dashboard uses it to no-op a relaunch over a live window, the watcher

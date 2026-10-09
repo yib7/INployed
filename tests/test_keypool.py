@@ -914,6 +914,17 @@ def test_every_gemini_models_choice_has_a_real_limits_row():
     assert not missing, f"no keypool.LIMITS row for {missing}"
 
 
+def test_every_limits_row_is_a_model_the_settings_tab_knows():
+    # The Settings tab puts a yellow "not a model this app knows" note on a
+    # fallback id outside settings.GEMINI_MODELS (settings.model_list_warnings).
+    # A model given a LIMITS row here IS known, so it must be in that tuple too,
+    # or the tab would warn about a model the pool gates on purpose.
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "local"))
+    import settings
+    missing = [m for m in keypool.LIMITS if m not in settings.GEMINI_MODELS]
+    assert not missing, f"keypool.LIMITS rows missing from GEMINI_MODELS: {missing}"
+
+
 # -- 503 / model overload -----------------------------------------------------
 # A quota error means "this (key, model) pair has spent its day". A 503 means
 # "Google is momentarily short of capacity for this MODEL" -- minutes, not a

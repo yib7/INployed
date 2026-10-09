@@ -1467,6 +1467,82 @@ def validate(values: dict[str, Any]) -> dict[str, str]:
     return errors
 
 
+# The list fields whose entries are Gemini model ids: the scorer's two ranked
+# fallback chains and the tailor's four. `model_list_warnings` reads them.
+MODEL_LIST_KEYS = ("stage1_models", "stage2_models", "tailor_fallback_models",
+                   "tailor_fallback_flash_lite", "tailor_fallback_flash",
+                   "tailor_fallback_pro")
+
+
+def _model_ids(lines: Any) -> list[str]:
+    """Model ids from list-field lines, split the way keypool.as_model_list
+    splits them (commas, semicolons, whitespace), blanks dropped. Copied rather
+    than imported: settings.py is local-only and pipeline/ is not on its path."""
+    out: list[str] = []
+    for line in lines or []:
+        for part in str(line).replace(",", " ").replace(";", " ").split():
+            if part not in out:
+                out.append(part)
+    return out
+
+
+def _limit_row_models(lines: Any) -> set[str]:
+    """The model each `model_limits` row names: its first word, split on the
+    separators keypool.parse_model_limits accepts (whitespace, comma, colon,
+    and semicolon between rows)."""
+    out: set[str] = set()
+    for line in lines or []:
+        for row in str(line).splitlines():
+            for chunk in row.split(";"):
+                fields = chunk.replace(",", " ").replace(":", " ").split()
+                if fields:
+                    out.add(fields[0])
+    return out
+
+
+def _named(ids: list[str]) -> str:
+    return ids[0] if len(ids) == 1 else ", ".join(ids[:-1]) + " and " + ids[-1]
+
+
+def model_list_warnings(key: str, entries: Any, model_limits_lines: Any,
+                        known: Collection[str] = GEMINI_MODELS) -> str:
+    """The yellow note for a model fallback list, or "" when there is nothing to say.
+
+    A WARNING, never a `validate()` error: a custom model id is allowed on
+    purpose (see GEMINI_MODELS), and the Field.pattern rule is to reject only
+    what the consumer would silently discard. An unknown id is not discarded, it
+    is sent, and Google answers 404. keypool.generate and llm._call_gemini treat
+    that as neither a quota nor an overload error, so it is retried as a
+    transient error and then the request fails; the chain does not step past it.
+
+    Known = `known` (GEMINI_MODELS, which test_keypool pins as covering every
+    keypool.LIMITS row) plus every model a `model_limits` row names, since a row
+    there is the user saying the id is real. The row's first word counts even
+    when its numbers do not parse: the question here is spelling, not limits.
+
+    `tailor_fallback_pro` also flags a "-lite" id: that tier writes the bullets
+    and cover letter, and its own help says a lite model lowers their quality.
+    """
+    if key not in MODEL_LIST_KEYS:
+        return ""
+    ids = _model_ids(entries)
+    named = _limit_row_models(model_limits_lines)
+    unknown = [m for m in ids if m not in known and m not in named]
+    notes: list[str] = []
+    if unknown:
+        verb = "is not a model" if len(unknown) == 1 else "are not models"
+        notes.append(f"{_named(unknown)} {verb} this app knows. Check the spelling: "
+                     "when the app gets to an unknown model, that request fails.")
+    if key == "tailor_fallback_pro":
+        lite = [m for m in ids if "-lite" in m.lower()]
+        if lite:
+            what = ("is a lite model: it lowers" if len(lite) == 1
+                    else "are lite models: they lower")
+            notes.append(f"{_named(lite)} {what} the quality of your bullets and "
+                         "cover letter.")
+    return " ".join(notes)
+
+
 def _atomic_write(path: Path, data: dict[str, Any]) -> None:
     """Write `data` as JSON to `path`, backing up any existing file to .bak.
 

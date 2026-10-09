@@ -133,7 +133,8 @@ COLLAPSIBLE_SECTIONS = {"VM (cloud scraper)": "vm_enabled"}
 
 # The two flavours of inline note a field row can carry (one at a time — see
 # `_set_field_note`). An ERROR blocks Save; a WARN is information about what the
-# form already did to a stored value.
+# form already did to a stored value, or about one Save keeps as typed (an
+# unknown or lite fallback model, `_flag_model_list`). A WARN never blocks Save.
 NOTE_ERROR = "error"
 NOTE_WARN = "warn"
 
@@ -357,6 +358,9 @@ class SettingsForm(QtWidgets.QWidget):
         self._add_buttons()
         self._body.addStretch(1)
         self._name_damaged_files()
+        # After every list exists: a stage list is built before `model_limits`,
+        # whose rows decide which of its ids count as known.
+        self._flag_model_lists()
         # Last, because it writes to the Save button `_add_buttons` just made. Not
         # a no-op on a fresh form either: a stored int the widget had to CLAMP is
         # dirty — the form is holding 5000 where the file says 99999, and
@@ -1470,6 +1474,35 @@ class SettingsForm(QtWidgets.QWidget):
             self._set_field_note(key, "")
         if had != (key in self._errors):
             self._refresh_error_status()
+        # The rate-limit rows decide which ids count as known, so editing them
+        # re-reads every model list; any other key re-reads only itself.
+        if key == "model_limits":
+            self._flag_model_lists()
+        else:
+            self._flag_model_list(key)
+
+    def _flag_model_list(self, key: str) -> None:
+        """Put (or clear) the yellow note on one model fallback list.
+
+        An unknown id or a lite model in the deep tier is saved as typed, so this
+        is a WARNING (`settings.model_list_warnings`): never in `self._errors`,
+        never counted in the status line, never what disables Save. An error on
+        the same field wins (one note at a time), so a flagged field is skipped.
+        Reads the BOXES, not the file, so the note describes what Save would write.
+        """
+        if key not in settings.MODEL_LIST_KEYS or key in self._errors or key not in self._lists:
+            return
+        limits = self._lists.get("model_limits")
+        rows = limits.toPlainText().splitlines() if limits is not None else []
+        note = settings.model_list_warnings(key, self._lists[key].toPlainText().splitlines(), rows)
+        self._set_field_note(key, note, kind=NOTE_WARN)
+
+    def _flag_model_lists(self) -> None:
+        """`_flag_model_list` for every model list: on build, after a refill, after
+        Save (whose `_clear_all_notes` dropped them while the lists stayed as they
+        were), and whenever the error set is replaced."""
+        for key in settings.MODEL_LIST_KEYS:
+            self._flag_model_list(key)
 
     def _refresh_error_status(self) -> None:
         """Rewrite (or clear) the counting status line from `self._errors`.
@@ -1630,6 +1663,7 @@ class SettingsForm(QtWidgets.QWidget):
         for key, message in errors.items():
             self._set_field_note(key, message)
         self._errors = dict(errors)
+        self._flag_model_lists()   # a list whose error just cleared may still warn
         self._refresh_error_status()
 
     def _clear_all_notes(self) -> None:
@@ -1978,6 +2012,7 @@ class SettingsForm(QtWidgets.QWidget):
         archived = self._archive_after_save(values) if summary else False
         self._opening_values = settings.load(self.targets)
         self._clear_all_notes()   # every note described the file this Save replaced
+        self._flag_model_lists()  # ...but an unknown model id is still in the new one
         self._sync_secret_boxes(self._opening_values)  # reflect the canonical stored values
         self._refresh_dirty()     # ...and the new baseline is what was just written
         self.status.setText(
@@ -2183,6 +2218,7 @@ class SettingsForm(QtWidgets.QWidget):
             for f in settings.SETTINGS_SCHEMA:
                 if f.type == "int" and f.key in incoming:
                     self._flag_a_rewritten_int(f, incoming[f.key])
+            self._flag_model_lists()
             self._apply_section_visibility()
             # Revert / Restore defaults / snapshot-load all land here, and any of
             # them can change a gate. Re-evaluate EXPLICITLY: each gate's setter

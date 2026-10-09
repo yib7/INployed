@@ -3276,3 +3276,48 @@ def test_a_clean_form_opens_with_an_empty_status(qtbot, tmp_path):
     form = _form(tmp_path)
     qtbot.addWidget(form)
     assert form.status.text() == ""
+
+
+# --- a yellow note for an unknown or lite fallback model ----------------------------
+
+def test_an_unknown_fallback_model_warns_on_load_and_still_saves(qtbot, tmp_path, monkeypatch):
+    """The user had gemini-3.0-flash in a fallback list and nothing said so. It
+    opens with a yellow note, Save still works, and the note survives the Save
+    because the list it describes is still the one on disk."""
+    targets = _targets(tmp_path)
+    targets["scoring"].write_text(json.dumps({"stage1_models": ["gemini-3.0-flash"]}),
+                                  encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information", staticmethod(lambda *a, **k: None))
+
+    assert "gemini-3.0-flash is not a model this app knows" in _note(form, "stage1_models")
+    assert form._notes["stage1_models"].property("warn") is True
+    assert form._notes["stage1_models"].property("danger") is False
+    assert "stage1_models" not in form._errors
+
+    assert form.save() is True
+    assert settings.load(targets)["stage1_models"] == ["gemini-3.0-flash"]
+    assert "need" not in form.status.text()
+    assert "gemini-3.0-flash" in _note(form, "stage1_models")
+
+
+def test_a_lite_deep_tier_model_warns_as_it_is_typed_and_clears_when_fixed(qtbot, tmp_path):
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    box = form._lists["tailor_fallback_pro"]
+    box.setPlainText("gemini-3.5-flash-lite")
+    assert "lite model" in _note(form, "tailor_fallback_pro")
+    assert form._notes["tailor_fallback_pro"].property("warn") is True
+    assert form._save_btn.isEnabled()
+    box.setPlainText("gemini-3.7-flash")
+    assert _note(form, "tailor_fallback_pro") == ""
+
+
+def test_naming_a_model_in_the_rate_limit_rows_clears_its_warning(qtbot, tmp_path):
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    form._lists["stage2_models"].setPlainText("gemini-4.0-flash")
+    assert "gemini-4.0-flash" in _note(form, "stage2_models")
+    form._lists["model_limits"].setPlainText("gemini-4.0-flash 5 20")
+    assert _note(form, "stage2_models") == ""

@@ -1780,3 +1780,73 @@ def test_save_keeps_a_damaged_json_file_aside(tmp_path):
     assert json.loads(targets["config"].read_text(encoding="utf-8"))["min_score"] == 2
     kept = list(tmp_path.glob("config.json.corrupt-*"))
     assert len(kept) == 1 and kept[0].read_text(encoding="utf-8") == '{"min_score": 5,'
+
+
+# --- a yellow note for an unknown or lite fallback model ---------------------------
+# A warning, never a rejection: a custom model id is deliberately allowed (see the
+# GEMINI_MODELS comment), so validate() keeps accepting all of these.
+
+def test_a_known_fallback_model_gets_no_warning():
+    for key in settings.MODEL_LIST_KEYS:
+        assert settings.model_list_warnings(key, ["gemini-3.5-flash", "gemini-3.7-flash"], []) == ""
+
+
+def test_an_unknown_fallback_model_is_named():
+    note = settings.model_list_warnings("stage1_models", ["gemini-3.0-flash"], [])
+    assert note == ("gemini-3.0-flash is not a model this app knows. Check the spelling: "
+                    "when the app gets to an unknown model, that request fails.")
+
+
+def test_a_model_the_rate_limit_rows_name_counts_as_known():
+    rows = ["gemini-4.0-flash 5 20", "gemini-4.1-flash,5,20; gemini-4.2-flash:5:20"]
+    assert settings.model_list_warnings(
+        "stage2_models", ["gemini-4.0-flash", "gemini-4.1-flash", "gemini-4.2-flash"], rows) == ""
+
+
+def test_several_unknown_models_are_all_named():
+    note = settings.model_list_warnings(
+        "tailor_fallback_models", ["gemini-3.0-flash", "gemini-3.5-flash", "gemni-3.7-flash"], [])
+    assert note.startswith("gemini-3.0-flash and gemni-3.7-flash are not models this app knows.")
+    three = settings.model_list_warnings("stage1_models", ["a", "b", "c"], [])
+    assert three.startswith("a, b and c are not models this app knows.")
+
+
+def test_a_lite_model_in_the_deep_tier_is_flagged():
+    note = settings.model_list_warnings("tailor_fallback_pro", ["gemini-3.5-flash-lite"], [])
+    assert note == ("gemini-3.5-flash-lite is a lite model: it lowers the quality of your "
+                    "bullets and cover letter.")
+
+
+def test_a_lite_model_is_fine_outside_the_deep_tier():
+    for key in settings.MODEL_LIST_KEYS:
+        if key != "tailor_fallback_pro":
+            assert settings.model_list_warnings(key, ["gemini-3.5-flash-lite"], []) == "", key
+
+
+def test_an_unknown_lite_model_in_the_deep_tier_gets_both_sentences():
+    note = settings.model_list_warnings("tailor_fallback_pro", ["gemini-3.0-flash-lite"], [])
+    assert "is not a model this app knows" in note and "is a lite model" in note
+
+
+def test_blank_lines_and_whitespace_are_ignored():
+    assert settings.model_list_warnings(
+        "stage1_models", ["", "   ", "  gemini-3.5-flash  "], ["", "  "]) == ""
+    # Split the way keypool.as_model_list splits, so "a, b" on one line is two ids.
+    note = settings.model_list_warnings("stage1_models", ["gemini-3.5-flash, gemini-x"], [])
+    assert note.startswith("gemini-x is not")
+
+
+def test_other_fields_get_no_model_warning():
+    assert settings.model_list_warnings("keywords", ["gemini-3.0-flash"], []) == ""
+
+
+def test_validate_still_accepts_an_unknown_or_lite_fallback_model():
+    values = {key: ["gemini-3.0-flash", "gemini-3.5-flash-lite"]
+              for key in settings.MODEL_LIST_KEYS}
+    assert settings.validate(values) == {}
+
+
+def test_every_model_list_key_is_a_list_field():
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    for key in settings.MODEL_LIST_KEYS:
+        assert by_key[key].type == "list", key

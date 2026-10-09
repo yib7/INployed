@@ -329,9 +329,9 @@ def exclude_window_days() -> int:
     """Recency window (in days) for pruning the exclude-id set.
 
     Resolution order is env > search_config.json > DEFAULT_EXCLUDE_WINDOW_DAYS,
-    matching every other override in this module. The dashboard's Settings tab
-    writes `exclude_window_days` into search_config.json; without the file leg a
-    user who set 14 would still get the 90-day default and ship their whole master
+    matching every other override in this module. `exclude_window_days` has no
+    Settings row: it is set by hand in search_config.json, and without the file
+    leg a user who set 14 would still get the 90-day default and ship their whole master
     in every trigger POST.
 
     A missing, non-integer, or non-positive value falls THROUGH to the next leg,

@@ -56,6 +56,33 @@ API_TOKEN = os.environ.get("BRIGHT_DATA_API_TOKEN", "")
 DATASET_ID = os.environ.get("BRIGHT_DATA_DATASET_ID", "")
 
 
+def warn(msg: str) -> None:
+    """Print a non-fatal problem as ONE line starting "WARNING: ".
+
+    The dashboard reads the run's output for these lines and shows them to the
+    user after Find new jobs, so each one says what happened, what it costs and
+    what to do, and a stray newline inside it would split it in two."""
+    print(f"WARNING: {_one_line(msg)}", flush=True)
+
+
+_WARNED: set[str] = set()
+
+
+def warn_once(msg: str, key: str | None = None) -> None:
+    """warn(), but once per process for the same `key` (default: the message).
+    For checks inside a helper the run calls many times."""
+    k = key or msg
+    if k in _WARNED:
+        return
+    _WARNED.add(k)
+    warn(msg)
+
+
+def _one_line(text) -> str:
+    """`text` with every run of whitespace (newlines included) collapsed to a space."""
+    return " ".join(str(text).split())
+
+
 def require_credentials() -> None:
     """Exit with a helpful message if Bright Data credentials are missing.
     Called at the start of a run, not at import time."""
@@ -408,9 +435,14 @@ def _parse_dates(df: pd.DataFrame) -> pd.DataFrame:
     sides costs nothing on naive input and removes the whole class. Parse each
     SOURCE on its own before combining: pandas infers one date format per column,
     so a plain date and an ISO offset in one column would turn one of them to NaT.
+    format="ISO8601" goes further: it reads each value on its own as ISO 8601, so
+    a date, a "T" timestamp with an offset and a space-separated time can share
+    one source (a hand-edited row, a merge_incoming fold) without any of them
+    turning to NaT.
     """
     if "extracted_date" in df.columns:
-        dates = pd.to_datetime(df["extracted_date"], errors="coerce", utc=True)
+        dates = pd.to_datetime(df["extracted_date"], errors="coerce", utc=True,
+                               format="ISO8601")
     else:
         dates = pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns, UTC]")
     out = pd.DataFrame({"job_posting_id": df["job_posting_id"], "_extracted": dates})
@@ -418,8 +450,8 @@ def _parse_dates(df: pd.DataFrame) -> pd.DataFrame:
     return out.assign(job_posting_id=out["job_posting_id"].astype(str))
 
 
-def max_exclude_ids() -> int:
-    """The most exclude ids one search input may carry (before the byte budget).
+def _max_exclude_ids_setting() -> tuple[int, bool]:
+    """(the most exclude ids one search input may carry, whether the env var set it).
 
     Resolution order is env > search_config.json > MAX_EXCLUDE_IDS, the same walk
     as exclude_window_days(): a missing, non-integer or non-positive env value
@@ -433,21 +465,37 @@ def max_exclude_ids() -> int:
         try:
             val = int(raw)
         except ValueError:
-            print(f"Invalid {MAX_EXCLUDE_IDS_ENV}={raw!r}; falling back to "
-                  f"search_config.json")
-        else:
-            if val <= 0:
-                print(f"{MAX_EXCLUDE_IDS_ENV}={val} is not positive; falling back to "
-                      f"search_config.json")
-                val = None
+            pass
+        if val is None or val <= 0:
+            warn_once(f"{MAX_EXCLUDE_IDS_ENV}={raw!r} is not a whole number above 0, so "
+                      f"it is ignored and max_exclude_ids comes from search_config.json "
+                      f"or the built-in {MAX_EXCLUDE_IDS}. Fix or remove the variable.")
+            val = None
+    from_env = val is not None
     if val is None:
         val = load_search_config()["max_exclude_ids"]
     if val < MIN_EXCLUDE_IDS:
-        print(f"  WARNING: max_exclude_ids={val} is under the {MIN_EXCLUDE_IDS}-id "
-              f"floor, so using {MIN_EXCLUDE_IDS}. A shorter skip list would collect "
-              f"and bill jobs you already have.")
+        warn_once(f"max_exclude_ids={val} is under the {MIN_EXCLUDE_IDS}-id floor, so "
+                  f"using {MIN_EXCLUDE_IDS}. A shorter skip list would collect and bill "
+                  f"jobs you already have.")
         val = MIN_EXCLUDE_IDS
-    return val
+    return val, from_env
+
+
+def max_exclude_ids() -> int:
+    """The most exclude ids one search input may carry (before the byte budget).
+    See _max_exclude_ids_setting for where the number comes from."""
+    return _max_exclude_ids_setting()[0]
+
+
+def max_exclude_ids_where() -> str:
+    """Where the user changes max_exclude_ids, with its current value, for a hint:
+    the env var when that is what set it (editing the file would change nothing),
+    else search_config.json."""
+    val, from_env = _max_exclude_ids_setting()
+    if from_env:
+        return f"the {MAX_EXCLUDE_IDS_ENV} environment variable (now {val})"
+    return f"max_exclude_ids in search_config.json (now {val})"
 
 
 def _window_dated(dated: pd.DataFrame, window_days: int) -> list[str]:
@@ -484,14 +532,6 @@ def _window_dated(dated: pd.DataFrame, window_days: int) -> list[str]:
     return kept["job_posting_id"].tolist()
 
 
-def _window_ids(df: pd.DataFrame, window_days: int) -> list[str]:
-    """Unique job_posting_ids in `df` scraped within the last `window_days` days
-    (per its extracted_date column), OLDEST FIRST. See _window_dated."""
-    if "job_posting_id" not in df.columns or df.empty:
-        return []
-    return _window_dated(_parse_dates(df), window_days)
-
-
 _ID_DATE_COLUMNS = ("job_posting_id", "extracted_date")
 
 
@@ -516,22 +556,6 @@ def _own_master_frame() -> pd.DataFrame | None:
               f"(found: {list(df.columns) or 'no columns'}); using last-run ids")
         return None
     return df
-
-
-def _master_ids() -> list[str]:
-    """Every job id recorded in this host's master, pruned to the recency window
-    (exclude_window_days) -- or the last-run JSON if the master is missing/unreadable."""
-    df = _own_master_frame()
-    if df is None or df.empty:
-        return load_previous_ids()
-    try:
-        return _window_ids(df, exclude_window_days())
-    except (TypeError, ValueError, pd.errors.ParserError) as e:
-        # Windowing is an optimization on top of the exclude set; if it ever
-        # fails (e.g. an unexpected extracted_date dtype), degrade to keeping
-        # ALL master ids -- a superset never re-bills -- rather than dying.
-        print(f"Could not window exclude ids ({e}); keeping all master ids")
-        return df["job_posting_id"].dropna().astype(str).unique().tolist()
 
 
 def load_external_exclude_ids() -> list[str]:
@@ -569,27 +593,6 @@ def _extra_master_frame() -> pd.DataFrame | None:
     return df
 
 
-def load_extra_master_ids() -> list[str]:
-    """Job ids from the additional master named by $LINKEDIN_EXTRA_MASTER (the synced
-    Drive master, for a local run). [] when the var is unset, the file is missing, or it
-    can't be read. Accepts a plain or gzipped CSV. Best-effort: a bad/absent extra master
-    never crashes a run; it just means weaker exclusion, not a fabricated one."""
-    df = _extra_master_frame()
-    if df is None:
-        return []
-    try:
-        return _window_ids(df, exclude_window_days())
-    except (TypeError, ValueError, pd.errors.ParserError) as e:
-        # Same degrade-to-superset path _master_ids has. Without it an unexpected
-        # extracted_date dtype in the SYNCED master (which this host does not
-        # write, so its shape is not ours to guarantee) took down the whole local
-        # run with a raw traceback, while the identical column in our own master
-        # degraded quietly one function up.
-        name = Path(os.environ.get(EXTRA_MASTER_ENV, "")).name
-        print(f"Could not window extra master {name} ({e}); keeping all its ids")
-        return df["job_posting_id"].dropna().astype(str).unique().tolist()
-
-
 # --- the collection ledger (see LEDGER_CSV) -----------------------------------
 
 _LEDGER_COLUMNS = ["job_posting_id", "collected_date"]
@@ -597,9 +600,17 @@ _ISO_DAY = r"^\d{4}-\d{2}-\d{2}$"
 _RUN_FILE_DAY = re.compile(r"^linkedin_jobs_(\d{4}-\d{2}-\d{2})_")
 
 
+def _ledger_keep_days() -> int:
+    """How many days of collected dates the ledger keeps: LEDGER_KEEP_DAYS, or the
+    skip-list window when that is longer. Pruning inside the window would drop a
+    date the window still wants, and that job would fall back to its master
+    first-found date and be collected and billed again."""
+    return max(LEDGER_KEEP_DAYS, exclude_window_days())
+
+
 def _ledger_cutoff() -> str:
     """The oldest collected_date the ledger keeps, as YYYY-MM-DD (which sorts as text)."""
-    return (datetime.now() - timedelta(days=LEDGER_KEEP_DAYS)).strftime("%Y-%m-%d")
+    return (datetime.now() - timedelta(days=_ledger_keep_days())).strftime("%Y-%m-%d")
 
 
 def _newest_per_id(frames: list[pd.DataFrame]) -> pd.DataFrame:
@@ -629,7 +640,8 @@ def seed_ledger_from_run_files() -> pd.DataFrame:
     """A ledger rebuilt from the run files under the run-label folders: every
     linkedin_jobs_<date>_<label>*.csv and *_scored.csv.gz, each id with the newest
     date it was collected (the row's extracted_date, else the date in the file
-    name). Files older than LEDGER_KEEP_DAYS by name are skipped unread.
+    name). Files older than the ledger keeps (_ledger_keep_days) by name are
+    skipped unread.
 
     Used once, when the ledger does not exist yet (the first run after this was
     added) or cannot be read. A run file that cannot be read is skipped with a
@@ -659,8 +671,8 @@ def seed_ledger_from_run_files() -> pd.DataFrame:
             if "job_posting_id" not in df.columns or df.empty:
                 continue
             if "extracted_date" in df.columns:
-                days = pd.to_datetime(df["extracted_date"], errors="coerce",
-                                      utc=True).dt.strftime("%Y-%m-%d")
+                days = pd.to_datetime(df["extracted_date"], errors="coerce", utc=True,
+                                      format="ISO8601").dt.strftime("%Y-%m-%d")
             else:
                 days = pd.Series(None, index=df.index, dtype=object)
             if file_day:
@@ -671,12 +683,26 @@ def seed_ledger_from_run_files() -> pd.DataFrame:
     return seeded[seeded["collected_date"] >= cutoff].reset_index(drop=True)
 
 
+def _save_seeded_ledger(led: pd.DataFrame) -> None:
+    """Write a ledger just rebuilt from the run files, so the next call (and the
+    next run) reads one small file instead of every run file again. Best effort:
+    the rebuilt rows are already in hand, so a failed write costs a WARNING."""
+    try:
+        _atomic_to_csv(led[_LEDGER_COLUMNS], LEDGER_CSV)
+    except Exception as e:  # noqa: BLE001 -- the skip list is already built
+        warn(f"could not save the rebuilt {LEDGER_CSV.name} ({e}). The skip list "
+             f"is still complete for this run, but each run reads every saved run "
+             f"file again until the file can be written. Check that the folder is "
+             f"writable and the disk is not full.")
+
+
 def _ledger_frame() -> pd.DataFrame:
     """The ledger as (job_posting_id, extracted_date) rows for load_exclude_ids:
-    seeded from the run files when the file does not exist yet, and from the run
-    files with a WARNING when it cannot be read. Never raises."""
+    seeded from the run files (and saved) when the file does not exist yet, and
+    from the run files with a WARNING when it cannot be read. Never raises."""
     if not LEDGER_CSV.exists():
         led = seed_ledger_from_run_files()
+        _save_seeded_ledger(led)
     else:
         try:
             led = _read_ledger()
@@ -693,7 +719,7 @@ def record_collected_ids(ids: list[str], day: str) -> None:
     """Add this run's ids to the ledger with `day` (YYYY-MM-DD): every id Bright
     Data returned, known and new alike, because a known job collected again is the
     one whose master date is wrong. Keeps each id's newest date, prunes rows older
-    than LEDGER_KEEP_DAYS, writes atomically.
+    than _ledger_keep_days(), writes atomically.
 
     Never raises. The jobs are already collected and saved by the time this runs,
     so a ledger problem costs a WARNING and possibly a re-billed job, never the run.
@@ -765,7 +791,7 @@ def load_exclude_ids() -> list[str]:
             parts.append(_parse_dates(df))
         except (TypeError, ValueError, pd.errors.ParserError) as e:
             # Degrade that one source to undated (kept), never the whole run: a
-            # superset never re-bills. Same rule _master_ids follows.
+            # superset never re-bills.
             print(f"Could not read the dates of one exclude source ({e}); keeping all its ids")
             parts.append(_parse_dates(df.drop(columns=["extracted_date"], errors="ignore")))
     if not parts:
@@ -774,7 +800,10 @@ def load_exclude_ids() -> list[str]:
     try:
         return _window_dated(dated, window)
     except (TypeError, ValueError) as e:
-        print(f"Could not window exclude ids ({e}); keeping all of them")
+        warn(f"could not compare the dates on the skip list ({e}), so every known "
+             f"job id is kept on it, however old. That bills nothing again by itself, "
+             f"but the list is longer than it needs to be and the cap may leave "
+             f"recent jobs off it. Report this if it repeats.")
         return dated["job_posting_id"].unique().tolist()
 
 
@@ -944,7 +973,7 @@ def cap_exclude_ids(exclude_ids: list[str], limit_per_input: int) -> list[str]:
     rows without raising anything.
 
     Keeps the TAIL, which load_exclude_ids() guarantees is this host's own master,
-    oldest first (see its docstring and _window_ids). With a
+    oldest first (see its docstring and _window_dated). With a
     time_range="Past 24 hours" search those are the only ids that can resurface,
     so trimming the head instead would keep precisely the ids that cannot recur.
 
@@ -969,23 +998,22 @@ def cap_exclude_ids(exclude_ids: list[str], limit_per_input: int) -> list[str]:
         # gets the collection REJECTED, which costs the whole run and still burns
         # the trigger. The floor is worth having, but not at the price of the
         # failure the cap exists to prevent -- so say plainly what to change.
-        print(f"  WARNING: limit_per_input={limit} leaves room for only {keep} "
-              f"exclude ids, under the {MIN_EXCLUDE_IDS}-id floor. Lower "
-              f"limit_per_input in search_config.json; this run will re-collect "
-              f"postings it already has.")
+        warn(f"limit_per_input={limit} leaves room for only {keep} skip-list ids, "
+             f"under the {MIN_EXCLUDE_IDS}-id floor, so this run will collect and "
+             f"bill again jobs it already has. Lower limit_per_input in "
+             f"search_config.json.")
         keep = max(keep, 1)
         return exclude_ids[-keep:]
     if len(exclude_ids) <= keep:
         return exclude_ids
     if budget > cap:
-        fix = (f"Raise max_exclude_ids in search_config.json (now {cap}) if Bright "
-               f"Data accepts a longer list.")
+        fix = f"Raise {max_exclude_ids_where()} if Bright Data accepts a longer list."
     else:
         fix = (f"limit_per_input={limit} leaves room for only {budget}; lower "
                f"limit_per_input in search_config.json to fit more.")
-    print(f"  WARNING: skip list capped at {keep} of {len(exclude_ids)} known jobs. "
-          f"The {len(exclude_ids) - keep} oldest are left off it, so they may be "
-          f"collected and billed again. {fix}")
+    warn(f"skip list capped at {keep} of {len(exclude_ids)} known jobs. "
+         f"The {len(exclude_ids) - keep} oldest are left off it, so they may be "
+         f"collected and billed again. {fix}")
     return exclude_ids[-keep:]
 
 

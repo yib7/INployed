@@ -126,7 +126,8 @@ def test_recording_keeps_the_newest_date_per_id(sandbox):
     assert _ledger(sandbox) == {"a": _days_ago(1), "b": _days_ago(5)}
 
 
-def test_recording_prunes_rows_older_than_60_days(sandbox):
+def test_recording_prunes_rows_older_than_60_days(sandbox, monkeypatch):
+    monkeypatch.setenv(scraper.EXCLUDE_WINDOW_DAYS_ENV, "14")   # window under 60 days
     _write_ledger(sandbox, [("stale", _days_ago(61)), ("kept", _days_ago(59))])
     scraper.record_collected_ids(["fresh"], _days_ago(0))
     assert _ledger(sandbox) == {"kept": _days_ago(59), "fresh": _days_ago(0)}
@@ -209,7 +210,8 @@ def test_the_seed_reads_scored_files_and_falls_back_to_the_filename_date(sandbox
 
 
 def test_the_seed_skips_run_files_older_than_the_ledger_keeps(sandbox):
-    _run_csv(sandbox, "evening", _days_ago(90), [("ancient", _days_ago(90))])
+    # the default 90-day window is longer than LEDGER_KEEP_DAYS, so it sets the cutoff
+    _run_csv(sandbox, "evening", _days_ago(95), [("ancient", _days_ago(95))])
     _run_csv(sandbox, "evening", _days_ago(1), [("recent", _days_ago(1))])
     seeded = scraper.seed_ledger_from_run_files()
     assert seeded["job_posting_id"].tolist() == ["recent"]
@@ -250,3 +252,92 @@ def test_a_run_records_every_collected_id_known_and_new(sandbox, monkeypatch):
     asyncio.run(scraper.main(snapshot_id="snap", run_label=label))
     today = pd.Timestamp.now().strftime("%Y-%m-%d")
     assert _ledger(sandbox) == {"1": today, "2": today, "3": today}
+
+
+# --- review fixes: mixed date formats, a saved seed, the prune floor, the cap ---
+
+def test_mixed_date_formats_inside_one_source_all_parse():
+    """pandas infers ONE format per column unless told the column is ISO 8601, so
+    a plain date next to an offset or a space-separated time turned to NaT."""
+    df = pd.DataFrame({"job_posting_id": ["a", "b", "c"],
+                       "extracted_date": ["2026-10-05", "2026-10-05T12:00:00+00:00",
+                                          "2026-10-05 08:00:00"]})
+    dated = scraper._parse_dates(df)
+    assert dated["_extracted"].notna().all()
+
+
+def test_the_seed_reads_mixed_date_formats_inside_one_run_file(sandbox):
+    """A mixed-format run file must not fall back to the file-name date for the
+    rows pandas could not infer a format for."""
+    label = scraper.RUN_LABELS[0]
+    d = sandbox / label
+    d.mkdir()
+    (d / f"linkedin_jobs_{_days_ago(3)}_{label}.csv").write_text(
+        "job_posting_id,extracted_date\n"
+        f"plain,{_days_ago(2)}\n"
+        f"offset,{_days_ago(1)}T12:00:00+00:00\n", encoding="utf-8")
+    seeded = scraper.seed_ledger_from_run_files()
+    assert dict(zip(seeded["job_posting_id"], seeded["collected_date"])) == {
+        "plain": _days_ago(2), "offset": _days_ago(1)}
+
+
+def test_a_rebuilt_ledger_is_saved_so_the_run_files_are_read_once(sandbox, monkeypatch):
+    _run_csv(sandbox, "morning", _days_ago(2), [("job", _days_ago(2))])
+    assert scraper.load_exclude_ids() == ["job"]
+    assert _ledger(sandbox) == {"job": _days_ago(2)}
+
+    def boom():
+        raise AssertionError("the saved ledger should be read, not rebuilt again")
+
+    monkeypatch.setattr(scraper, "seed_ledger_from_run_files", boom)
+    assert scraper.load_exclude_ids() == ["job"]
+
+
+def test_a_rebuilt_ledger_that_cannot_be_saved_warns_and_still_counts(
+        sandbox, monkeypatch, capsys):
+    _run_csv(sandbox, "morning", _days_ago(2), [("job", _days_ago(2))])
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "replace", boom)
+    assert scraper.load_exclude_ids() == ["job"]
+    assert not (sandbox / "collected_ids_ledger.csv").exists()
+    out = capsys.readouterr().out
+    assert "WARNING:" in out and "collected_ids_ledger.csv" in out
+
+
+def test_the_ledger_keeps_every_day_the_skip_list_window_wants(sandbox, monkeypatch):
+    """A 90-day window over a 60-day ledger would forget ids the window still keeps."""
+    monkeypatch.setenv(scraper.EXCLUDE_WINDOW_DAYS_ENV, "90")
+    _write_ledger(sandbox, [("day75", _days_ago(75)), ("day95", _days_ago(95))])
+    scraper.record_collected_ids(["today"], _days_ago(0))
+    assert _ledger(sandbox) == {"day75": _days_ago(75), "today": _days_ago(0)}
+
+
+def test_the_ledger_still_keeps_60_days_under_a_short_window(sandbox, monkeypatch):
+    monkeypatch.setenv(scraper.EXCLUDE_WINDOW_DAYS_ENV, "14")
+    _write_ledger(sandbox, [("day59", _days_ago(59)), ("day61", _days_ago(61))])
+    scraper.record_collected_ids(["today"], _days_ago(0))
+    assert _ledger(sandbox) == {"day59": _days_ago(59), "today": _days_ago(0)}
+
+
+def test_a_job_collected_yesterday_survives_a_cap_that_really_binds(sandbox, monkeypatch):
+    """First found long ago, collected again yesterday, with a cap far smaller than
+    the skip list: it must ride the ledger date all the way into the inputs."""
+    monkeypatch.setenv(scraper.MAX_EXCLUDE_IDS_ENV, str(scraper.MIN_EXCLUDE_IDS))
+    rows = [(f"j{n}", _days_ago(2 + n % 40)) for n in range(200)]
+    rows.append(("target", _days_ago(80)))
+    _write_master(sandbox / "linkedin_jobs_master.csv", rows)
+
+    def sent():
+        ids = scraper.load_exclude_ids()
+        assert len(ids) == 201
+        inputs = scraper.build_inputs(ids, max_keywords=1, limit_per_input=100)
+        kept = inputs[0]["jobs_to_not_include"]
+        assert len(kept) == scraper.MIN_EXCLUDE_IDS          # the cap bound
+        return kept
+
+    assert "target" not in sent()                             # the premise
+    _write_ledger(sandbox, [("target", _days_ago(1))])
+    assert "target" in sent()

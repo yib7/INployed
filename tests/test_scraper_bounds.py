@@ -124,65 +124,69 @@ def test_load_exclude_ids_windows_out_stale_ids(monkeypatch, tmp_path):
     assert set(scraper.load_exclude_ids()) == {"recent", "undated"}
 
 
-def test_master_ids_excludes_stale_keeps_recent(monkeypatch, tmp_path):
-    # _master_ids applies the same window: a far-past id is gone, a recent one stays.
-    monkeypatch.setattr(scraper, "MASTER_CSV",
-                        _dated_master(tmp_path, [("old", _days_ago(365)), ("recent", _days_ago(1))]))
+@pytest.fixture
+def own_only(monkeypatch, tmp_path):
+    """load_exclude_ids over this host's master alone: no Drive master, no
+    external file, no ledger, no window override, no search_config.json."""
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(scraper, "EXTERNAL_EXCLUDE_FILE", tmp_path / "external_exclude_ids.json")
+    monkeypatch.setattr(scraper, "LEDGER_CSV", tmp_path / "collected_ids_ledger.csv")
+    monkeypatch.delenv(scraper.EXTRA_MASTER_ENV, raising=False)
     monkeypatch.delenv("EXCLUDE_WINDOW_DAYS", raising=False)
-    ids = set(scraper._master_ids())
+    return tmp_path
+
+
+def test_own_master_excludes_stale_keeps_recent(monkeypatch, own_only):
+    # The window applies to this host's master: a far-past id is gone, a recent one stays.
+    monkeypatch.setattr(scraper, "MASTER_CSV",
+                        _dated_master(own_only, [("old", _days_ago(365)), ("recent", _days_ago(1))]))
+    ids = set(scraper.load_exclude_ids())
     assert "recent" in ids
     assert "old" not in ids
 
 
-def test_master_ids_keeps_undated_row(monkeypatch, tmp_path):
+def test_own_master_keeps_undated_row(monkeypatch, own_only):
     # Superset-fail rule: a row whose extracted_date is missing/unparseable (NaT) is
     # KEPT -- an undated id is treated as recent so we never under-exclude and re-bill.
     monkeypatch.setattr(scraper, "MASTER_CSV",
-                        _dated_master(tmp_path, [("undated", ""), ("garbage", "not-a-date")]))
-    monkeypatch.delenv("EXCLUDE_WINDOW_DAYS", raising=False)
-    assert set(scraper._master_ids()) == {"undated", "garbage"}
+                        _dated_master(own_only, [("undated", ""), ("garbage", "not-a-date")]))
+    assert set(scraper.load_exclude_ids()) == {"undated", "garbage"}
 
 
-def test_master_ids_no_extracted_date_column_keeps_all(monkeypatch, tmp_path):
+def test_own_master_no_extracted_date_column_keeps_all(monkeypatch, own_only):
     # A master with NO extracted_date column at all can't be windowed -> degrade to the
     # pre-window keep-ALL behavior (never silently empty the exclude set).
-    master = tmp_path / "linkedin_jobs_master.csv"
+    master = own_only / "linkedin_jobs_master.csv"
     master.write_text("job_posting_id\na\nb\nc\n", encoding="utf-8")
     monkeypatch.setattr(scraper, "MASTER_CSV", master)
-    monkeypatch.delenv("EXCLUDE_WINDOW_DAYS", raising=False)
-    assert set(scraper._master_ids()) == {"a", "b", "c"}
+    assert set(scraper.load_exclude_ids()) == {"a", "b", "c"}
 
 
-def test_master_ids_windowing_failure_degrades_to_keep_all(monkeypatch, tmp_path):
-    # Defensive: windowing is an optimization on top of the
-    # exclude set. If _window_ids ever raises (e.g. an unexpected extracted_date
-    # dtype), _master_ids degrades to keeping ALL master ids -- a superset never
-    # re-bills -- instead of letting the exception kill the pre-collection step.
-    master = _dated_master(tmp_path, [("old", _days_ago(400)), ("recent", _days_ago(1))])
+def test_windowing_failure_degrades_to_keep_all(monkeypatch, own_only, capsys):
+    # Defensive: windowing is an optimization on top of the exclude set. If it
+    # ever raises (e.g. an unexpected extracted_date dtype), keep ALL ids -- a
+    # superset never re-bills -- instead of letting the exception kill the
+    # pre-collection step. And say so.
+    master = _dated_master(own_only, [("old", _days_ago(400)), ("recent", _days_ago(1))])
     monkeypatch.setattr(scraper, "MASTER_CSV", master)
-    monkeypatch.delenv("EXCLUDE_WINDOW_DAYS", raising=False)
 
-    def _boom(df, window_days):
+    def _boom(dated, window_days):
         raise TypeError("simulated tz-aware/naive comparison failure")
 
-    monkeypatch.setattr(scraper, "_window_ids", _boom)
+    monkeypatch.setattr(scraper, "_window_dated", _boom)
     # both ids kept (the far-past "old" too) -- the whole set, not the windowed subset
-    assert set(scraper._master_ids()) == {"old", "recent"}
+    assert set(scraper.load_exclude_ids()) == {"old", "recent"}
+    assert "WARNING:" in capsys.readouterr().out
 
 
-def test_exclude_window_days_env_override_changes_cutoff(monkeypatch, tmp_path):
+def test_exclude_window_days_env_override_changes_cutoff(monkeypatch, own_only):
     # A 30-day-old id is inside the default 90-day window (kept) but outside a
     # 10-day override window (dropped) -- proving the env var moves the cutoff.
-    monkeypatch.setattr(scraper, "MASTER_CSV", _dated_master(tmp_path, [("mid", _days_ago(30))]))
-    # exclude_window_days() falls through to search_config.json when the env var is
-    # unset, so point OUTPUT_DIR at an empty tmp_path or the repo's own config leaks in.
-    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
-
-    monkeypatch.delenv("EXCLUDE_WINDOW_DAYS", raising=False)
-    assert set(scraper._master_ids()) == {"mid"}          # default 90 -> kept
+    monkeypatch.setattr(scraper, "MASTER_CSV", _dated_master(own_only, [("mid", _days_ago(30))]))
+    assert set(scraper.load_exclude_ids()) == {"mid"}     # default 90 -> kept
 
     monkeypatch.setenv("EXCLUDE_WINDOW_DAYS", "10")
-    assert scraper._master_ids() == []                    # window 10 -> dropped
+    assert scraper.load_exclude_ids() == []               # window 10 -> dropped
 
 
 def test_exclude_window_days_default_and_env(monkeypatch, tmp_path):
@@ -202,9 +206,9 @@ def test_exclude_window_days_invalid_falls_back_to_default(monkeypatch, tmp_path
         assert scraper.exclude_window_days() == 90
 
 
-def test_load_extra_master_ids_windows_stale(monkeypatch, tmp_path):
-    # The extra (synced Drive) master is windowed the same way _master_ids is.
-    extra = tmp_path / "drive_master.csv"
+def test_the_drive_master_is_windowed_too(monkeypatch, own_only):
+    # The extra (synced Drive) master is windowed the same way this host's is.
+    extra = own_only / "drive_master.csv"
     extra.write_text(
         "job_posting_id,extracted_date\n"
         f"xold,{_days_ago(200)}\n"
@@ -213,8 +217,7 @@ def test_load_extra_master_ids_windows_stale(monkeypatch, tmp_path):
         encoding="utf-8",
     )
     monkeypatch.setenv(scraper.EXTRA_MASTER_ENV, str(extra))
-    monkeypatch.delenv("EXCLUDE_WINDOW_DAYS", raising=False)
-    assert set(scraper.load_extra_master_ids()) == {"xnew", "xun"}
+    assert set(scraper.load_exclude_ids()) == {"xnew", "xun"}
 
 
 def test_load_exclude_ids_unions_external_file(monkeypatch, tmp_path):
@@ -235,24 +238,25 @@ def _gz_master(tmp_path, *ids):
     return p
 
 
-def test_load_extra_master_ids_reads_named_csv(monkeypatch, tmp_path):
+def test_the_drive_master_is_read_from_a_named_csv(monkeypatch, own_only):
     # The local dashboard points $LINKEDIN_EXTRA_MASTER at the synced Drive master so a
     # local run also excludes jobs the VM already collected (the local master is a stub).
-    extra = _master(tmp_path, "x", "y")
+    drive = own_only / "drive"
+    drive.mkdir()
+    extra = _master(drive, "x", "y")
     monkeypatch.setenv(scraper.EXTRA_MASTER_ENV, str(extra))
-    assert set(scraper.load_extra_master_ids()) == {"x", "y"}
+    assert set(scraper.load_exclude_ids()) == {"x", "y"}
 
 
-def test_load_extra_master_ids_reads_gzip(monkeypatch, tmp_path):
-    monkeypatch.setenv(scraper.EXTRA_MASTER_ENV, str(_gz_master(tmp_path, "g1", "g2")))
-    assert set(scraper.load_extra_master_ids()) == {"g1", "g2"}
+def test_the_drive_master_is_read_gzipped(monkeypatch, own_only):
+    monkeypatch.setenv(scraper.EXTRA_MASTER_ENV, str(_gz_master(own_only, "g1", "g2")))
+    assert set(scraper.load_exclude_ids()) == {"g1", "g2"}
 
 
-def test_load_extra_master_ids_unset_or_missing_is_empty(monkeypatch, tmp_path):
-    monkeypatch.delenv(scraper.EXTRA_MASTER_ENV, raising=False)
-    assert scraper.load_extra_master_ids() == []                     # unset -> []
-    monkeypatch.setenv(scraper.EXTRA_MASTER_ENV, str(tmp_path / "nope.csv.gz"))
-    assert scraper.load_extra_master_ids() == []                     # missing -> [] (never crashes)
+def test_a_drive_master_that_is_unset_or_missing_adds_nothing(monkeypatch, own_only):
+    assert scraper.load_exclude_ids() == []                          # unset -> []
+    monkeypatch.setenv(scraper.EXTRA_MASTER_ENV, str(own_only / "nope.csv.gz"))
+    assert scraper.load_exclude_ids() == []                          # missing -> [] (never crashes)
 
 
 def test_load_exclude_ids_unions_extra_master(monkeypatch, tmp_path):
@@ -410,7 +414,7 @@ def test_save_current_ids_leaves_file_untouched_on_replace_failure(monkeypatch, 
 
 # load_previous_ids must never raise on a corrupt/truncated file -- a bare
 # json.load would let a bad last_run_job_ids.json kill the whole scrape before
-# _master_ids' fallback could help. A non-list JSON shape must not silently yield
+# load_exclude_ids' fallback could help. A non-list JSON shape must not silently yield
 # garbage ids either.
 
 def test_load_previous_ids_missing_file_is_empty(monkeypatch, tmp_path):
@@ -821,7 +825,7 @@ def test_master_ids_come_back_oldest_date_first(monkeypatch, tmp_path):
     monkeypatch.setattr(scraper, "MASTER_CSV", master)
     monkeypatch.delenv("EXCLUDE_WINDOW_DAYS", raising=False)
     monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
-    assert scraper._master_ids() == ["oldest", "middle", "newest"]
+    assert scraper.load_exclude_ids() == ["oldest", "middle", "newest"]
 
 
 def test_undated_rows_are_evicted_before_dated_recent_ones(monkeypatch, tmp_path):
@@ -834,7 +838,7 @@ def test_undated_rows_are_evicted_before_dated_recent_ones(monkeypatch, tmp_path
     monkeypatch.setattr(scraper, "MASTER_CSV", master)
     monkeypatch.delenv("EXCLUDE_WINDOW_DAYS", raising=False)
     monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
-    ids = scraper._master_ids()
+    ids = scraper.load_exclude_ids()
     assert set(ids) == {"dated_recent", "undated"}
     assert ids.index("undated") < ids.index("dated_recent")   # undated evicted first
 
@@ -983,14 +987,14 @@ def test_a_timezone_aware_extracted_date_does_not_crash_the_run(monkeypatch, tmp
 
 def test_an_extra_master_with_odd_dates_degrades_instead_of_dying(monkeypatch, tmp_path):
     """The SYNCED master is not written by this host, so its column shape is not
-    ours to guarantee. _master_ids already degraded to keep-all on a windowing
-    failure; this path raised, taking the whole local run with it."""
+    ours to guarantee. This host's master already degraded to keep-all on a
+    windowing failure; this path raised, taking the whole local run with it."""
     extra = tmp_path / "drive_master.csv"
     extra.write_text("job_posting_id,extracted_date\nx1,2099-01-01T08:00:00+00:00\n"
                      "x2,2099-01-01T08:00:00-05:00\n", encoding="utf-8")
     monkeypatch.setenv(scraper.EXTRA_MASTER_ENV, str(extra))
     monkeypatch.delenv("EXCLUDE_WINDOW_DAYS", raising=False)
-    assert set(scraper.load_extra_master_ids()) == {"x1", "x2"}
+    assert set(scraper.load_exclude_ids()) == {"x1", "x2"}
 
 
 def test_a_master_with_no_job_posting_id_column_says_so(monkeypatch, tmp_path, capsys):
@@ -1132,3 +1136,19 @@ def test_a_failed_trigger_quotes_the_body_bounded():
     # the short, useful case is untouched
     with pytest.raises(RuntimeError, match="Trigger failed 500: upstream boom"):
         asyncio.run(scraper.trigger(_trigger_session(500, "upstream boom"), {}))
+
+
+def test_a_cap_set_by_the_env_var_names_the_env_var(monkeypatch, capsys):
+    """Pointing at search_config.json when the env var set the cap sends the user
+    to edit a file that changes nothing."""
+    monkeypatch.setenv(scraper.MAX_EXCLUDE_IDS_ENV, "3000")
+    scraper.cap_exclude_ids([str(4_400_000_000 + n) for n in range(5_000)], 100)
+    out = capsys.readouterr().out
+    assert "WARNING:" in out and "MAX_EXCLUDE_IDS environment variable" in out
+    assert "search_config.json" not in out
+
+
+def test_the_deleted_single_source_readers_stay_deleted():
+    """load_exclude_ids is the one reader; the per-source helpers were test-only."""
+    assert not hasattr(scraper, "_master_ids")
+    assert not hasattr(scraper, "load_extra_master_ids")

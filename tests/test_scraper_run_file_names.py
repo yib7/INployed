@@ -110,7 +110,7 @@ def test_only_the_scored_file_left_still_gets_dash_2(fake_run):
 def test_dash_3_when_dash_2_is_taken(fake_run):
     label, day = fake_run.label, _today()
     fake_run.dir.mkdir(parents=True)
-    (fake_run.dir / f"linkedin_jobs_{day}_{label}.csv").write_text("job_posting_id\n1\n")
+    (fake_run.dir / f"linkedin_jobs_{day}_{label}.csv").write_text("job_posting_id\n1\n", encoding="utf-8")
     # -2 only has its scored output left: it still counts as taken.
     _scored(fake_run.dir / f"linkedin_jobs_{day}_{label}-2_scored.csv.gz")
 

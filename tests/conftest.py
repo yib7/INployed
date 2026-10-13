@@ -459,6 +459,11 @@ def _hermetic_claude_cli(request):
     reset()
 
 
+async def _no_progress_check(session, snapshot_id):
+    """scraper.check_recovered_snapshot for tests that do not exercise it."""
+    return None
+
+
 @pytest.fixture(autouse=True)
 def _hermetic_repo_data(tmp_path_factory):
     """No test may read the developer's REAL repo-root config and data files.
@@ -535,6 +540,11 @@ def _hermetic_repo_data(tmp_path_factory):
         # main() writes this on every run that collects rows, so without the
         # redirect an end-to-end main() test writes a ledger into the repo root.
         mp.setattr(scraper, "LEDGER_CSV", d / "collected_ids_ledger.csv")
+        # A --snapshot recovery reads /progress once before downloading. The tests
+        # that drive main() fake download() but not this, so without the stub
+        # they would look up api.brightdata.com. test_scraper_messages keeps the
+        # real one (taken at import) and drives it through its own fake session.
+        mp.setattr(scraper, "check_recovered_snapshot", _no_progress_check)
         mp.setattr(score_jobs, "OUTPUT_DIR", d)
         mp.setattr(score_jobs, "MASTER_CSV", d / "linkedin_jobs_master.csv")
         mp.setattr(score_jobs, "RESUME_PATH", d / "resume.md")

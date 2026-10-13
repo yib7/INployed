@@ -63,7 +63,18 @@ def warn(msg: str) -> None:
     The dashboard reads the run's output for these lines and shows them to the
     user after Find new jobs, so each one says what happened, what it costs and
     what to do, and a stray newline inside it would split it in two."""
-    print(f"WARNING: {_one_line(msg)}", flush=True)
+    _print_line(f"WARNING: {_one_line(msg)}")
+
+
+def _print_line(text: str) -> None:
+    """print() one problem line, falling back to ASCII escapes when stdout cannot
+    encode it. cli() switches stdout to UTF-8, but run() can be called without it
+    (and the VM's shell may hand over an ASCII stdout), and an UnicodeEncodeError
+    here would lose the one line that says what went wrong."""
+    try:
+        print(text, flush=True)
+    except UnicodeEncodeError:
+        print(text.encode("ascii", "backslashreplace").decode("ascii"), flush=True)
 
 
 _WARNED: set[str] = set()
@@ -333,8 +344,40 @@ class SnapshotNotFetched(RuntimeError):
 
 
 class MasterUnreadable(OSError):
-    """append_to_master could not read the existing master. main() adds the run
-    CSV the rows were saved to (saved_csv) and how many there were (n_jobs)."""
+    """append_to_master could not read the existing master."""
+
+
+class MasterNotUpdated(RuntimeError):
+    """Something failed AFTER the run CSV was written: the master update (an
+    unreadable master, or os.replace refused because Excel has the file open) or
+    the last-run ids. The jobs are safe in `saved_csv` and the score step picks
+    that file up, so the ERROR line must not offer a --snapshot rerun: that would
+    only save and score the same jobs again. The cause is __cause__."""
+
+    def __init__(self, msg: str, saved_csv: str, n_jobs: int):
+        super().__init__(msg)
+        self.saved_csv = saved_csv
+        self.n_jobs = n_jobs
+
+
+class TriggerLost(RuntimeError):
+    """The connection broke AFTER the trigger POST was sent (the server hung up,
+    the reply was cut off, or the wait timed out). The collection may be running
+    and billed, so this must not read as "no network". The cause is __cause__."""
+
+    def __init__(self, msg: str, request_bytes: int):
+        super().__init__(msg)
+        self.request_bytes = request_bytes
+
+
+class SnapshotRefused(RuntimeError):
+    """Polling or the download got a 4xx that retrying will not fix: 404 (no
+    such snapshot, often a mistyped --snapshot id) or 401/403 (the token)."""
+
+    def __init__(self, msg: str, snapshot_id: str, status: int):
+        super().__init__(msg)
+        self.snapshot_id = snapshot_id
+        self.status = status
 
 KEYWORDS = [
     '"Data Scientist"',
@@ -1077,8 +1120,8 @@ def append_to_master(df: pd.DataFrame) -> int:
     except (OSError, ValueError, pd.errors.ParserError) as e:
         raise MasterUnreadable(
             f"cannot update {MASTER_CSV.name}: existing master is unreadable ({e}). "
-            f"This run's rows are still saved to the run-dir CSV; fix or restore "
-            f"{MASTER_CSV} and rerun with --snapshot to recover them."
+            f"This run's rows are still saved to the run CSV, which the score step "
+            f"picks up; fix or restore {MASTER_CSV} and the next run adds to it."
         ) from e
     existing_ids: set[str] = set(probe["job_posting_id"].astype(str)) if "job_posting_id" in probe.columns else set()
     del probe  # release memory before streaming
@@ -1463,9 +1506,14 @@ async def trigger(session: aiohttp.ClientSession, payload: dict,
         return _parse_collection_body(await resp.text(), status=resp.status)
 
 
-# "size" also covers input_size and child_input_size, the codes Bright Data
-# gives an oversized input.
-_SIZE_WORDS = re.compile(r"too large|size|payload", re.IGNORECASE)
+# Phrases that mean the request was too big. input_size also covers
+# child_input_size (input_size_validation, child_input_size_validation: the codes
+# Bright Data gives an oversized input). Never bare "payload" or "size": Bright
+# Data calls the request body the payload ('Invalid payload: keyword'), and
+# sending that user to shrink the skip list fixes nothing.
+_SIZE_WORDS = re.compile(
+    r"too large|input_size|size limit|payload too large|entity too large",
+    re.IGNORECASE)
 
 
 def _too_large(status: int, body: str) -> bool:
@@ -1532,15 +1580,61 @@ def _assert_collected_something(progress: dict, snapshot_id: str) -> None:
         else:
             fix = "Check the keywords and filters in Settings (search_config.json)."
         warn(f"Bright Data rejected some of this run's searches ({codes}) and collected "
-             f"{records} job(s) from the rest. Those jobs are saved as usual, but the "
+             f"{records} job(s) from the rest. Those jobs will be saved as usual, but the "
              f"rejected searches collected nothing, so their new jobs are missed until "
              f"a later run. {fix}")
         return
     if not records and errors:
-        warn(f"collection {snapshot_id} returned 0 jobs with {errors} page error(s) "
-             f"({codes}). No search was rejected, so most likely nothing new was "
-             f"posted. If it happens on several runs in a row, check scraper.log and "
-             f"that collection in the Bright Data dashboard.")
+        # A plain info line, never a WARNING: this is what a quiet day (and the
+        # small test run) looks like, and a WARNING opens the dashboard's
+        # problems box. Without error codes there is nothing to say about
+        # rejection, so it claims nothing.
+        if codes:
+            why = (f"({codes}). No search was rejected, so most likely nothing new "
+                   f"was posted.")
+        else:
+            why = ("and Bright Data did not say which, so this run could not check "
+                   "for rejected searches. Most likely nothing new was posted.")
+        print(f"Collection {snapshot_id} returned 0 jobs with {errors} page error(s) "
+              f"{why} If it happens on several runs in a row, check scraper.log and "
+              f"that collection in the Bright Data dashboard.", flush=True)
+
+
+# 4xx answers worth retrying: a request timeout, too early, rate limited.
+_RETRYABLE_4XX = frozenset({408, 425, 429})
+
+
+def _raise_if_permanent(e: BaseException, snapshot_id: str) -> None:
+    """Raise SnapshotRefused when `e` is a 4xx that retrying cannot fix: 404 for a
+    snapshot Bright Data does not have (a mistyped --snapshot id), 401/403 for the
+    token. Retrying those 5 times only delays an answer that will not change."""
+    if not isinstance(e, aiohttp.ClientResponseError):
+        return
+    status = e.status
+    if 400 <= status < 500 and status not in _RETRYABLE_4XX:
+        raise SnapshotRefused(f"Bright Data answered {status} for snapshot {snapshot_id}: "
+                              f"{_exc_text(e)}", snapshot_id, status) from e
+
+
+async def check_recovered_snapshot(session: aiohttp.ClientSession, snapshot_id: str) -> None:
+    """A --snapshot recovery's one GET to /progress (free): the same rejection
+    check a fresh run gets in wait_until_ready, so a recovered collection that
+    Bright Data partly or wholly rejected says so. A 4xx that will not change
+    (404, 401/403) stops the run here with a clear reason; any other failure to
+    read it is a WARNING, and the download goes ahead."""
+    url = f"https://api.brightdata.com/datasets/v3/progress/{snapshot_id}"
+    try:
+        async with session.get(url) as resp:
+            resp.raise_for_status()
+            data = await resp.json()
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
+        _raise_if_permanent(e, snapshot_id)
+        warn(f"could not read the progress record of snapshot {snapshot_id} "
+             f"({_exc_text(e)}), so this run could not check whether Bright Data "
+             f"rejected any of its searches. Its jobs are downloaded as usual.")
+        return
+    if isinstance(data, dict) and data.get("status") == "ready":
+        _assert_collected_something(data, snapshot_id)
 
 
 async def wait_until_ready(session: aiohttp.ClientSession, snapshot_id: str) -> None:
@@ -1554,6 +1648,7 @@ async def wait_until_ready(session: aiohttp.ClientSession, snapshot_id: str) -> 
                 data = await resp.json()
             failures = 0
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            _raise_if_permanent(e, snapshot_id)
             # One transient 5xx must not abort a snapshot that's already billed.
             failures += 1
             if failures >= MAX_POLL_FAILURES:
@@ -1608,6 +1703,7 @@ async def download(session: aiohttp.ClientSession, snapshot_id: str) -> list[dic
                 data = await resp.json()
             failures = 0
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            _raise_if_permanent(e, snapshot_id)
             # Transient network/5xx errors: retry a bounded number of times.
             failures += 1
             if failures >= MAX_POLL_FAILURES:
@@ -1671,6 +1767,8 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
                  f"{capped}. A bad value never lifts a spend guard.")
         limit_per_input = capped
 
+    _RUN_CONTEXT.update(snapshot_id=snapshot_id, run_label=run_label)
+    raw_rows: Path | None = None
     try:
         async with aiohttp.ClientSession(headers=HEADERS) as session:
             if snapshot_id is None:
@@ -1690,47 +1788,131 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
                 kw_used = len(inputs) // max(len(cfg["remote_types"]), 1)
                 print(f"Triggering {len(inputs)} searches ({kw_used} keywords x {len(cfg['remote_types'])} remote types), "
                       f"limit_per_input={limit_per_input} -> up to {len(inputs) * limit_per_input} postings")
-                collected = await trigger(session, payload, limit_per_input=limit_per_input)
+                collected = await _trigger_once(session, payload, limit_per_input)
                 if collected.rows is not None:
                     # Finished inside Bright Data's synchronous window: the records
                     # arrived WITH the POST and no snapshot was ever created, so
                     # there is nothing to poll and nothing --snapshot could recover
                     # later. This collection is already paid for; it gets used here
-                    # or it is lost.
+                    # or it is lost, so a copy goes to disk before anything else.
                     results = collected.rows
                     print(f"Collected {len(results)} rows synchronously "
                           f"(no snapshot issued, nothing to poll)")
-                    if not results:
+                    if results:
+                        raw_rows = _keep_raw_rows(results, run_label)
+                    else:
                         # The /progress payload is where input-rejection codes live,
                         # and this branch never fetches one, so say plainly that the
                         # rejection check did not run rather than implying a clean
-                        # quiet day. See _assert_collected_something.
-                        warn("Bright Data finished the collection at once with 0 jobs "
-                             "and sent no progress record, so this run could not check "
-                             "whether it rejected any searches. Most likely nothing new "
-                             "was posted. If it happens on several runs in a row, check "
-                             "the Bright Data dashboard.")
+                        # quiet day. An info line, not a WARNING: this is what a
+                        # quiet run looks like. See _assert_collected_something.
+                        print("Bright Data finished the collection at once with 0 jobs "
+                              "and sent no progress record, so this run could not check "
+                              "whether it rejected any searches. Most likely nothing new "
+                              "was posted. If it happens on several runs in a row, check "
+                              "the Bright Data dashboard.", flush=True)
                 else:
                     snapshot_id = collected.snapshot_id
+                    _RUN_CONTEXT["snapshot_id"] = snapshot_id
                     print(f"Snapshot: {snapshot_id}")
                     await wait_until_ready(session, snapshot_id)
                     results = await download(session, snapshot_id)
             else:
                 # Recovery path: re-download an already-collected snapshot (e.g. one
-                # whose run aborted after billing). No trigger -> no extra cost.
+                # whose run aborted after billing). No trigger -> no extra cost. The
+                # one /progress read is free and gives it the rejection check a
+                # fresh run gets.
                 print(f"Run: {run_label} | Recovering already-collected snapshot {snapshot_id} (no new trigger/billing)")
+                await check_recovered_snapshot(session, snapshot_id)
                 results = await download(session, snapshot_id)
 
-        _save_results(results, run_label)
-    except Exception as e:
+        try:
+            _save_results(results, run_label)
+        except BaseException as e:
+            if raw_rows is not None:
+                if isinstance(e, MasterNotUpdated):
+                    # The run CSV holds the jobs; the ERROR line names it.
+                    _drop_raw_rows(raw_rows)
+                else:
+                    _tag(e, raw_rows=f"{run_label}/{raw_rows.name}")
+            raise
+        if raw_rows is not None:
+            _drop_raw_rows(raw_rows)
+    except BaseException as e:  # Ctrl+C too: run() names the paid snapshot either way
         # Whatever failed, the ERROR line needs the paid snapshot (if one exists
         # by now) to tell the user how to fetch it again for free. See run().
         _tag(e, snapshot_id=snapshot_id, run_label=run_label)
         raise
 
 
+# Where main() has got to, for run()'s Ctrl+C line. asyncio.run turns Ctrl+C into
+# a cancellation inside main() and then raises a NEW KeyboardInterrupt, which
+# carries none of the tags main() put on the cancellation.
+_RUN_CONTEXT: dict = {}
+
+# Raised before anything reached Bright Data: no collection exists, nothing billed.
+_NOT_SENT_ERRORS = tuple(c for c in (
+    getattr(aiohttp, "ClientConnectorError", None),
+    getattr(aiohttp, "ConnectionTimeoutError", None),   # aiohttp 3.10+
+    socket.gaierror,
+) if c is not None)
+# Raised after the POST may have gone out.
+_MAYBE_SENT_ERRORS = (aiohttp.ClientError, asyncio.TimeoutError, TimeoutError,
+                      ConnectionError)
+
+
+async def _trigger_once(session: aiohttp.ClientSession, payload: dict,
+                        limit_per_input: int) -> Collection:
+    """trigger(), with a broken connection sorted by whether the request may have
+    been sent. A failure to connect leaves nothing running ("could not reach
+    Bright Data"); a server hang-up, a cut-off reply or a timeout can come after
+    Bright Data took the request and started a billed collection, so that one is
+    a TriggerLost that tells the user to look before running again."""
+    try:
+        return await trigger(session, payload, limit_per_input=limit_per_input)
+    except _NOT_SENT_ERRORS:
+        raise
+    except _MAYBE_SENT_ERRORS as e:
+        size = len(json.dumps(payload).encode("utf-8"))
+        raise TriggerLost(f"Lost the connection after sending the trigger "
+                          f"({size} bytes): {_exc_text(e)}", size) from e
+
+
+def _keep_raw_rows(rows: list[dict], run_label: str) -> Path | None:
+    """Write rows that came back with the POST to
+    `<label>/linkedin_jobs_<date>_<label>_raw_<HHMMSS>.json` before saving them,
+    since that collection has no snapshot to download again. A .json name: no
+    run-file reader globs it (they want linkedin_jobs_*.csv or *_scored.csv*).
+    main() deletes it once the save works. Never raises: a failed copy is a
+    WARNING and the save goes ahead."""
+    now = datetime.now()
+    try:
+        run_dir = OUTPUT_DIR / run_label
+        run_dir.mkdir(exist_ok=True)
+        path = run_dir / (f"linkedin_jobs_{now:%Y-%m-%d}_{run_label}"
+                          f"_raw_{now:%H%M%S}.json")
+        _atomic_write_json(path, rows)
+        return path
+    except Exception as e:  # noqa: BLE001 -- the save below is what matters
+        warn(f"could not keep a copy of the {len(rows)} job(s) Bright Data sent back "
+             f"({_exc_text(e)}). They are saved as usual next, but if that fails too "
+             f"they are lost: this collection has no snapshot to download again.")
+        return None
+
+
+def _drop_raw_rows(path: Path) -> None:
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
 def _save_results(results: list[dict], run_label: str) -> None:
-    """Write a run's rows: the run CSV, the ledger, last-run ids, the master."""
+    """Write a run's rows: the run CSV, the ledger, last-run ids, the master.
+
+    Once the run CSV is on disk the jobs are safe (the score step picks the file
+    up), so any later failure is a MasterNotUpdated naming that file, never an
+    offer to fetch the snapshot again."""
     df = pd.json_normalize(results)
     if df.empty:
         # Write nothing: a columnless CSV would crash the scoring step, and the
@@ -1760,26 +1942,76 @@ def _save_results(results: list[dict], run_label: str) -> None:
     df["extracted_date"] = date_str  # the day this job was scraped (shown/sorted in the UI)
     run_dir = OUTPUT_DIR / run_label
     run_dir.mkdir(exist_ok=True)
-    csv_path = _free_run_csv_path(run_dir, date_str, run_label)
+    ids = (set(df["job_posting_id"].astype(str)) if "job_posting_id" in df.columns
+           else set())
+    csv_path, earlier = _run_csv_path(run_dir, date_str, run_label, ids)
 
-    _atomic_to_csv(df, csv_path)  # atomic: a truncated run CSV would crash the scoring step
+    if earlier == "scored":
+        # A --snapshot rerun after a failed save: the same jobs are on disk and
+        # scored already. Writing them again would only pay to score them twice.
+        saved = f"{run_label}/{csv_path.stem}_scored.csv.gz"
+        print(f"This run's {len(df)} jobs are the same as {saved} from an earlier "
+              f"attempt today, which is already scored, so no new run file was written.")
+    else:
+        _atomic_to_csv(df, csv_path)  # atomic: a truncated run CSV would crash the scoring step
+        saved = f"{run_label}/{csv_path.name}"
+        if earlier == "raw":
+            print(f"This run's {len(df)} jobs are the same as {saved} from an earlier "
+                  f"attempt today, so that file was written again instead of a new one.")
     # Right after the run CSV, before the master: append_to_master can still raise
     # on an unreadable master, and these jobs are paid for either way.
     record_collected_ids(collected_ids, date_str)
 
-    if "job_posting_id" in df.columns:
-        save_current_ids(df["job_posting_id"].astype(str).tolist())
-
     try:
+        if "job_posting_id" in df.columns:
+            save_current_ids(df["job_posting_id"].astype(str).tolist())
         master_total = append_to_master(df)
-    except MasterUnreadable as e:
-        e.saved_csv = f"{run_label}/{csv_path.name}"
-        e.n_jobs = len(df)
-        raise
-    note = ("" if csv_path.stem == f"linkedin_jobs_{date_str}_{run_label}" else
-            f" (an earlier {run_label} run today already used the base name)")
-    print(f"Saved {len(df)} jobs -> {run_label}/{csv_path.name}{note}")
+    except Exception as e:
+        raise MasterNotUpdated(f"{MASTER_CSV.name} was not updated after saving "
+                               f"{saved}: {_exc_text(e)}", saved, len(df)) from e
+    if earlier is None:
+        note = ("" if csv_path.stem == f"linkedin_jobs_{date_str}_{run_label}" else
+                f" (an earlier {run_label} run today already used the base name)")
+        print(f"Saved {len(df)} jobs -> {saved}{note}")
     print(f"Master CSV now contains {master_total} unique jobs")
+
+
+def _run_csv_path(run_dir: Path, date_str: str, run_label: str,
+                  ids: set[str]) -> tuple[Path, str | None]:
+    """Where today's run CSV goes, and whether an earlier attempt already saved
+    these exact jobs: (path, None) for a new file (`_free_run_csv_path`), or the
+    earlier file's raw path with "raw" (unscored: write it again) or "scored"
+    (scored: write nothing).
+
+    The match is on the job_posting_id SET, so a --snapshot rerun after a failed
+    save reuses its file instead of adding a `-2` the scorer would pay to score
+    again. A run with any other job set gets a new file, as before. A file that
+    cannot be read never matches."""
+    if ids:
+        for name in _taken_run_names(run_dir, date_str, run_label):
+            raw = run_dir / f"{name}.csv"
+            scored = run_dir / f"{name}_scored.csv.gz"
+            if _file_ids(raw if raw.exists() else scored) == ids:
+                return raw, ("scored" if scored.exists() else "raw")
+    return _free_run_csv_path(run_dir, date_str, run_label), None
+
+
+def _taken_run_names(run_dir: Path, date_str: str, run_label: str) -> list[str]:
+    """Stems of today's run files for this label (base, -2, -3, ...), raw or scored."""
+    stem = f"linkedin_jobs_{date_str}_{run_label}"
+    pat = re.compile(rf"^{re.escape(stem)}(-[2-9]|-[1-9]\d+)?(?:\.csv|_scored\.csv\.gz)$")
+    names = {stem + (m.group(1) or "") for p in run_dir.iterdir()
+             if (m := pat.match(p.name))}
+    return sorted(names, key=lambda n: (len(n), n))
+
+
+def _file_ids(path: Path) -> set[str] | None:
+    """The job ids in a run file (raw .csv or _scored.csv.gz), None when unreadable."""
+    try:
+        col = pd.read_csv(path, usecols=["job_posting_id"], dtype=str)["job_posting_id"]
+    except Exception:  # noqa: BLE001 -- unreadable means "not the same file"
+        return None
+    return set(col.dropna().astype(str))
 
 
 def _free_run_csv_path(run_dir: Path, date_str: str, run_label: str) -> Path:
@@ -1791,7 +2023,13 @@ def _free_run_csv_path(run_dir: Path, date_str: str, run_label: str) -> Path:
     raw file is gone would still leave the new jobs unscored. Overwriting it lost
     185 jobs on 2026-10-12. Every reader accepts the suffix: they glob
     `linkedin_jobs_*.csv` / `*_scored.csv.gz`, read the date from the start of the
-    name, and take the label from the folder or the run_label column."""
+    name, and take the label from the folder or the run_label column.
+
+    Check-then-write, not an atomic reservation: two scrapers saving the same
+    label in the same second could pick the same name. Nothing runs two at once
+    (the dashboard refuses a second run while one is going, and the VM cron runs
+    each label once), and reserving the name with an empty file would leave a
+    columnless CSV that crashes the scorer if the write then failed."""
     stem = f"linkedin_jobs_{date_str}_{run_label}"
     n = 1
     while True:
@@ -1845,7 +2083,18 @@ _NETWORK_ERRORS = (aiohttp.ClientError, asyncio.TimeoutError, TimeoutError,
 
 
 def _fatal_message(e: BaseException) -> str:
-    """The plain-English reason a run failed and what to do, for the ERROR line."""
+    """The plain-English reason a run failed and what to do, for the ERROR line,
+    plus where rows that came back with the POST were kept, when they were."""
+    msg = _fatal_reason(e)
+    kept = getattr(e, "raw_rows", None)
+    if kept:
+        msg += (f" The jobs Bright Data sent back with the request are kept in {kept}. "
+                f"Keep that file: this collection has no snapshot, so it cannot be "
+                f"downloaded again.")
+    return msg
+
+
+def _fatal_reason(e: BaseException) -> str:
     sid = getattr(e, "snapshot_id", None)
     label = getattr(e, "run_label", None)
     refetch = (f" This collection is already paid for. To fetch its jobs without paying "
@@ -1871,32 +2120,56 @@ def _fatal_message(e: BaseException) -> str:
     if isinstance(e, TriggerInvalid):
         return (f"Bright Data refused the request as invalid ({e.status}: "
                 f"{_one_line(e.body)[:200]}), so no jobs were collected. Check the "
-                f"keywords and filters in Settings (search_config.json) and run again. "
-                f"If the message mentions size, lower {max_exclude_ids_where()}.")
+                f"keywords and filters in Settings (search_config.json) and run again.")
     if isinstance(e, TriggerRefused):
         return (f"Bright Data refused to start the collection ({e.status}: "
                 f"{_one_line(e.body)[:200]}), so no jobs were collected. This is usually "
                 f"a problem on their side: try again later, and check the Bright Data "
                 f"dashboard if it keeps happening.")
+    if isinstance(e, TriggerLost):
+        return (f"the request to start the collection ({e.request_bytes / 1_000_000:.2f} "
+                f"MB) was sent, but the connection to Bright Data broke before it "
+                f"answered ({_exc_text(e.__cause__ or e)}). Bright Data may have dropped "
+                f"the request because it was too large, or the collection may already "
+                f"be running and billed. Before running again, check the snapshot list "
+                f"in the Bright Data dashboard. If this run's snapshot is there, run: "
+                f"{_rerun_command('<id>', label)} to fetch its jobs without paying "
+                f"again. If none is there and this keeps happening, lower "
+                f"{max_exclude_ids_where()}.")
+    if isinstance(e, SnapshotRefused):
+        if e.status == 404:
+            return (f"Bright Data has no collection with the id {e.snapshot_id} (404), so "
+                    f"nothing was downloaded. Check the snapshot id in the Bright Data "
+                    f"dashboard and run again.")
+        if e.status in (401, 403):
+            then = (f" Once the token works, run: {_rerun_command(sid, label)} to fetch "
+                    f"its jobs without paying again." if sid else "")
+            return (f"Bright Data refused the API token ({e.status}) while fetching "
+                    f"collection {e.snapshot_id}, so its jobs were not downloaded. "
+                    f"{TOKEN_HINT}{then}")
+        return (f"Bright Data refused to send collection {e.snapshot_id} ({e.status}), "
+                f"so its jobs were not downloaded. Check the snapshot id in the Bright "
+                f"Data dashboard.{refetch}")
     if isinstance(e, CollectionFailed):
         return (f"Bright Data's collection {e.snapshot_id} failed ({e.detail}), so no "
                 f"jobs were collected. Try again later; if it keeps failing, open that "
                 f"collection in the Bright Data dashboard.")
     if isinstance(e, SnapshotNotFetched):
         return f"{e.why}, so this run's jobs were not downloaded.{refetch}"
-    if isinstance(e, MasterUnreadable):
-        saved = getattr(e, "saved_csv", None)
+    if isinstance(e, (MasterNotUpdated, MasterUnreadable)):
+        # No --snapshot here: the jobs are on disk, and a rerun would only save and
+        # score the same jobs again.
+        cause = e.__cause__ or e
+        if isinstance(cause, MasterUnreadable):
+            cause = cause.__cause__ or cause
         n = getattr(e, "n_jobs", None)
-        where = (f"The {n} job(s) were saved to {saved}." if saved
-                 else "The jobs were saved to this run's file.")
-        if sid:
-            then = (f" Restore or fix the master, then run {_rerun_command(sid, label)} "
-                    f"to add them to it without paying again.")
-        else:
-            then = (" Restore or fix the master from a backup; the saved file keeps the "
-                    "jobs, and the dashboard's score step picks it up.")
-        return (f"could not add this run's jobs to {MASTER_CSV.name} because the file "
-                f"cannot be read ({_exc_text(e.__cause__ or e)}). {where}{then}")
+        saved = getattr(e, "saved_csv", None) or "this run's file"
+        jobs = f"{n} job(s)" if n is not None else "jobs"
+        return (f"this run's {jobs} were saved, but {MASTER_CSV.name} was not updated "
+                f"({_exc_text(cause)}). The jobs are safe in {saved}, and the score step "
+                f"picks that file up (the dashboard offers to score it when it next "
+                f"opens). To fix the master, close it if it is open in Excel or another "
+                f"program, or restore it from a backup; the next run adds to it as usual.")
     if isinstance(e, _NETWORK_ERRORS):
         return (f"could not reach Bright Data ({_exc_text(e)}), so the run stopped. "
                 f"Check the internet connection and try again.{refetch}")
@@ -1904,15 +2177,31 @@ def _fatal_message(e: BaseException) -> str:
             f"are in the log above.{refetch}")
 
 
+def _stopped_message(e: BaseException) -> str:
+    """The ERROR line for Ctrl+C. The snapshot comes from the exception's tag or,
+    when asyncio raised a fresh KeyboardInterrupt, from _RUN_CONTEXT."""
+    sid = getattr(e, "snapshot_id", None) or _RUN_CONTEXT.get("snapshot_id")
+    label = getattr(e, "run_label", None) or _RUN_CONTEXT.get("run_label")
+    msg = "the run was stopped (Ctrl+C) before it finished, so its jobs may not be saved."
+    if sid:
+        msg += (f" Its collection is already paid for. To fetch its jobs without paying "
+                f"again, run: {_rerun_command(sid, label)}")
+    return msg
+
+
 def run(snapshot_id: str | None = None, run_label: str | None = None,
         max_keywords: int | None = None, limit_per_input: int | None = None) -> int:
     """main() with the top-level handler: 0 on success; on a failure, the traceback
     to stderr (it goes to the log), then ONE final "ERROR: <reason>. <what to do>"
-    line to stdout, and 1. SystemExit (missing credentials) passes through; it has
-    printed its own ERROR line."""
+    line to stdout, and 1 (130 for Ctrl+C). SystemExit (missing credentials) passes
+    through; it has printed its own ERROR line."""
+    _RUN_CONTEXT.clear()
     try:
         asyncio.run(main(snapshot_id=snapshot_id, run_label=run_label,
                          max_keywords=max_keywords, limit_per_input=limit_per_input))
+    except KeyboardInterrupt as e:
+        _print_line(f"ERROR: {_one_line(_stopped_message(e))}")
+        return 130
     except Exception as e:  # noqa: BLE001 -- the last line of a failed run
         traceback.print_exc()
         sys.stderr.flush()
@@ -1920,12 +2209,28 @@ def run(snapshot_id: str | None = None, run_label: str | None = None,
             msg = _fatal_message(e)
         except Exception:  # noqa: BLE001 -- the classifier must never hide the failure
             msg = f"the job search stopped unexpectedly: {_exc_text(e, 300)}"
-        print(f"ERROR: {_one_line(msg)}", flush=True)
+        _print_line(f"ERROR: {_one_line(msg)}")
         return 1
     return 0
 
 
+def _utf8_stdio() -> None:
+    """Make stdout/stderr UTF-8. Under the dashboard's pipe a Windows child gets
+    cp1252, and an arrow or CJK in a job title or Bright Data's answer then raised
+    UnicodeEncodeError and lost the WARNING or ERROR line that carried it. The
+    dashboard decodes the pipe as UTF-8."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+        except Exception:  # noqa: BLE001 -- _print_line still falls back to ASCII
+            pass
+
+
 def cli(argv: list[str] | None = None) -> int:
+    _utf8_stdio()
     import argparse
 
     parser = argparse.ArgumentParser(

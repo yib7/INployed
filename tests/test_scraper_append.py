@@ -224,10 +224,11 @@ def test_a_synchronous_collection_reaches_the_csv_without_a_second_call(
 
 def test_a_zero_row_synchronous_collection_says_the_rejection_check_did_not_run(
         tmp_path, monkeypatch, capsys):
-    """The `[]` body: nothing to write, exit clean, and the WARNING that the
-    input-rejection check (which lives on the /progress payload) never ran
-    must be reachable and printed, so a quiet day is not mistaken for a
-    verified one."""
+    """The `[]` body: nothing to write, exit clean, and the line saying the
+    input-rejection check (which lives on the /progress payload) never ran is
+    printed, so a quiet day is not mistaken for a verified one. An info line,
+    not a WARNING: a quiet run looks like this, and a WARNING would open the
+    dashboard's problems box on it."""
     label = scraper.RUN_LABELS[0]
     monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(scraper, "PREVIOUS_IDS_FILE", tmp_path / "last_run_job_ids.json")
@@ -258,7 +259,7 @@ def test_a_zero_row_synchronous_collection_says_the_rejection_check_did_not_run(
     asyncio.run(scraper.main(run_label=label))
     out = capsys.readouterr().out
     assert "Collected 0 rows synchronously" in out
-    assert "WARNING: " in out
+    assert "WARNING" not in out
     assert "could not check whether it rejected any searches" in out
     assert not list(tmp_path.glob("*/linkedin_jobs_*.csv"))
 

@@ -324,7 +324,9 @@ def test_append_to_master_abort_message_names_file_and_recovery(monkeypatch, tmp
 
     msg = str(exc_info.value)
     assert master.name in msg
-    assert "--snapshot" in msg
+    assert "restore" in msg and "run CSV" in msg
+    # The rows are in the run CSV already: a --snapshot rerun would score them twice.
+    assert "--snapshot" not in msg
 
 
 def test_append_to_master_still_works_when_master_missing(monkeypatch, tmp_path):
@@ -895,7 +897,7 @@ def test_partial_rejection_with_rows_warns_and_keeps_them(capsys):
     assert "max_exclude_ids" in out
 
 
-def test_zero_rows_with_ordinary_page_errors_warns_but_does_not_raise(capsys):
+def test_zero_rows_with_ordinary_page_errors_says_so_but_does_not_raise(capsys):
     """The false positive that would have been worse than the bug.
 
     Once the exclude set is doing its job the expected steady state IS zero new
@@ -906,7 +908,10 @@ def test_zero_rows_with_ordinary_page_errors_warns_but_does_not_raise(capsys):
     asyncio.run(scraper.wait_until_ready(_progress_session({
         "status": "ready", "records": 0, "errors": 7,
         "error_codes": {"dead_page": 7}}), "sd_x"))
-    assert "WARNING" in capsys.readouterr().out       # loud, just not fatal
+    out = capsys.readouterr().out
+    # Said in the log, and neither fatal nor a WARNING: a WARNING opens the
+    # dashboard's problems box, and this is what a quiet day looks like.
+    assert "returned 0 jobs" in out and "WARNING" not in out
 
 
 def test_zero_rows_error_names_the_size_cause():

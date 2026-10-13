@@ -109,27 +109,37 @@ appends to a cumulative master CSV. Five cost-aware details:
   is windowed because the search only looks back 24h: a posting older than the window
   can't reappear and its id is pure payload. Windowing fails
   toward a superset (undated/unparseable rows are kept), so it never drops an id it
-  should have excluded. The set is the union of this host's own windowed master, the
-  synced Drive master named by `$LINKEDIN_EXTRA_MASTER`, and `external_exclude_ids.json`
-  (ids another machine collected and pushed here, deliberately not windowed). See
-  `load_exclude_ids()` / `_window_ids()`.
+  should have excluded. The set is the union of this host's own master, the synced Drive
+  master named by `$LINKEDIN_EXTRA_MASTER`, `external_exclude_ids.json` (ids another
+  machine collected and pushed here, undated) and the collection ledger. Each id is
+  dated by the newest date any source gives it, and the window applies to that date.
+  The ledger exists because a master's `extracted_date` is the day a job was FIRST found
+  (`append_to_master` keeps the existing row), so a job collected again yesterday looked
+  weeks old and fell off the list. `collected_ids_ledger.csv` in `OUTPUT_DIR` holds one
+  row per id with the last day a run collected it, pruned to 60 days (or the window, if
+  longer), and is seeded once from the run files when missing. See `load_exclude_ids()`.
 - **The window is not the real bound; `cap_exclude_ids()` is.** Bright Data copies the
   `jobs_to_not_include` array onto every one of the up-to-`limit_per_input` child fetches
   a single search input fans out to, so the payload is spent `len(ids) x limit_per_input`
-  times over. Past `MAX_EXCLUDE_PAYLOAD_BYTES` (4.2 MB) the whole collection is rejected
-  with `child_input_size_validation` and returns zero rows. So the set is trimmed to
-  whatever fits that budget, hard-capped at `MAX_EXCLUDE_IDS` (2,000, about two runs'
-  worth), with the per-id width measured off the ids in hand, so a LinkedIn id that
-  outgrows today's 10 digits still counts correctly. Two orderings matter: `_window_ids()` yields
-  oldest first so the cap evicts by date, and `load_exclude_ids()` puts this host's own
-  ids last so the tail the cap keeps is the only ids a "Past 24 hours" search can
-  actually resurface. Below `MIN_EXCLUDE_IDS` (50) the run warns and proceeds, because a
+  times over. Past an unpublished limit the whole collection is rejected with
+  `child_input_size_validation` and returns zero rows. `MAX_EXCLUDE_PAYLOAD_BYTES`
+  (14.1 MB) comes from a 2026-10-13 one-search probe: 10,000 ids at `limit_per_input` 100
+  (a 140,279-byte input, 14,027,900 bytes across its children) was accepted. So the set
+  is trimmed to whatever fits that budget (about 6,700 ids at 150), hard-capped at
+  `max_exclude_ids()` (10,000 by default; `max_exclude_ids` in `search_config.json` or the
+  `MAX_EXCLUDE_IDS` env var), with the per-id width measured off the ids in hand, so a
+  LinkedIn id that outgrows today's 10 digits still counts correctly. `load_exclude_ids()`
+  returns ids oldest first by that newest date, undated ids at the front, so the tail the
+  cap keeps is the most recently collected, the ids a "Past 24 hours" search can actually
+  resurface. When the cap trims ids inside the window the run prints a `WARNING:` with the
+  count. Below `MIN_EXCLUDE_IDS` (50) the run warns and proceeds, because a
   rejected collection costs more than some re-collected rows.
 - **A rejected collection is a failure, not a quiet empty run.** When Bright Data refuses
   every input the snapshot still reports `status="ready"` with `records=0`. Read naively that
   looks like "no new jobs" and exits 0, which is how the VM cron logged clean successes for
   weeks while collecting nothing. `_assert_collected_something()` keys on the error *codes*: an
-  input-rejection code raises whether or not rows came back, while zero rows alongside the
+  input-rejection code with zero rows raises, an input-rejection code with rows keeps and
+  saves those paid rows and prints a `WARNING:`, while zero rows alongside the
   ordinary `dead_page` / `page_too_big` noise is only a warning (that is the healthy steady
   state once the exclude set is working).
 - `--snapshot <id>` re-downloads an already-collected (already-billed) snapshot

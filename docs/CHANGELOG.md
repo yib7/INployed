@@ -54,6 +54,47 @@ All notable changes to INployed are recorded here. The format follows
 
 ### Fixed
 
+- **Find new jobs stops paying again for jobs it already has.** The skip list sent to
+  Bright Data (`jobs_to_not_include`) was dated by the day a job was first found, so a job
+  first found three weeks ago and collected again yesterday fell off the list and was
+  collected and billed on every run. Each run now writes every job id Bright Data returns,
+  with the day, to `collected_ids_ledger.csv` beside the job master, and the skip list
+  dates each job by the newest day any source knows. The ledger keeps 60 days (or
+  `exclude_window_days`, if longer) and builds itself from your run files the first time.
+  Checked against the 2026-10-13 01:22 run, the new list skips 188 of its 195 known jobs;
+  the old list skipped 0 of the 181 that an earlier run had collected the same day.
+  **Upgrading:** the VM runs `pipeline/scraper.py` too, so copy the new file there to get
+  these scraper fixes on the VM.
+- **The skip list holds up to 10,000 jobs, up from 2,000.** On 2026-10-13 Bright Data
+  accepted a test search carrying 10,000 ids at `limit_per_input` 100 (about 14 MB once the
+  list is copied onto each of the search's child fetches), well past the August rejection
+  that set the old cap. Change it with `max_exclude_ids` in `search_config.json` or the
+  `MAX_EXCLUDE_IDS` environment variable; there is no Settings row. A higher
+  `limit_per_input` fits fewer ids (about 6,700 at 150). When the cap leaves known jobs
+  off, the run says how many may be billed again.
+- **The scraper says what went wrong, why it matters and what to do.** A problem the run
+  survives prints one `WARNING:` line: a missing or unreadable Google Drive master (a
+  truncated one used to crash the run), an unreadable `search_config.json`, a skip list
+  cut short, a run with 0 jobs and page errors. A run that fails ends on one `ERROR:`
+  line with the reason: a refused token, a skip list too large, a request too large, no
+  network, a failed collection or an unreadable master. When that collection was already
+  paid for, the line ends with the command that downloads it without paying again, such
+  as `python pipeline/scraper.py --snapshot <id> --label <label>`.
+- **A run Bright Data partly rejects keeps the jobs it paid for.** When some searches were
+  rejected and others returned jobs, the whole collection was thrown away. Those jobs are
+  now saved to the run file, the master and the ledger, a `WARNING:` names the rejected
+  searches and the fix, and the run goes on to scoring. A run with every search rejected
+  still fails, with an `ERROR:` line naming the setting to change.
+- **The dashboard shows a run's problems.** After **Find new jobs**, a run that printed
+  warnings opens a "The job search finished, with problems" box listing them, with the
+  log path, and the status bar counts them. A failed run's box leads with the scraper's
+  `ERROR:` reason. A dashboard run with no Google Drive master to read (Drive offline, or
+  no file) warns that known jobs may be collected and billed again.
+- **A second same-day run of a label gets its own file.** It wrote over
+  `linkedin_jobs_<date>_<label>.csv`, and since the first run's scored file already
+  existed, the scorer skipped the new jobs: 185 jobs from 2026-10-12 were never scored.
+  The second run now writes `linkedin_jobs_<date>_<label>-2.csv` (then `-3`, and so on),
+  which the scorer, the dashboard and the VM sync already read.
 - **Settings warns about a fallback model it does not know.** The six fallback model lists
   (Stage-1 and Stage-2 fallback models and the four tailor fallback lists) took any text, so
   a typo such as `gemini-3.0-flash` saved with nothing said, and the request failed once the

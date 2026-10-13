@@ -218,8 +218,8 @@ names whichever piece is still missing.
 ## What it does
 
 - **Discover:** on the VM's cron schedule, or on demand with **Find new jobs**. The
-  exclude list sent to Bright Data keeps the newest 2,000 ids, so a posting is never
-  bought twice.
+  exclude list sent to Bright Data holds up to 10,000 ids, ranked by the day each job was
+  last collected, so a posting you already have is not bought again.
 - **Score:** a cheap first stage drops the clear misses; a deeper second stage gives the
   rest a 1 to 10 fit, strengths, gaps and apply / consider / skip. **About you** (school
   status, graduation month, clearance) feeds both stages.

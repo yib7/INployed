@@ -117,8 +117,8 @@ def test_trigger_url_cannot_carry_an_injected_query_parameter(monkeypatch):
 
 
 # --- exclude_window_days ------------------------------------------------------
-# The dashboard's Settings tab writes exclude_window_days into search_config.json,
-# and scraper.exclude_window_days() reads it there as well as from the
+# exclude_window_days has no Settings row: the user sets it by hand in
+# search_config.json, and scraper.exclude_window_days() reads it there as well as from the
 # EXCLUDE_WINDOW_DAYS env var. A user-set window it ignored would fall back to the
 # 90-day default, keep the whole master in jobs_to_not_include and grow the trigger
 # POST until Bright Data rejects it.

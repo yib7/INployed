@@ -205,6 +205,43 @@ dashboard's other new jobs are.
   (This path needs the **Google Drive desktop app** on your PC so the VM's output
   folder syncs down; the local CLI path above doesn't.)
 
+#### When a job search reports problems
+**Find new jobs** shows anything that went wrong in a run, with the reason and what to do.
+The scraper prints the same lines on the command line, starting with `WARNING:` or `ERROR:`.
+
+- **"The job search finished, with problems":** the run worked and the dashboard shows its
+  jobs, but something in it needs a look. Each line says what happened, what it may cost
+  and what to do. The common ones:
+  - *No Google Drive master was found:* Google Drive for desktop is not running, so the run
+    could not skip the jobs the VM already collected and may pay for some again. Start
+    Google Drive before the next run.
+  - *Skip list capped:* there are more known recent jobs than `max_exclude_ids` allows,
+    so the oldest of them may be collected and billed again.
+  - *Bright Data rejected some of this run's searches:* the jobs from the other searches
+    are saved and scored; the rejected searches collected nothing this time.
+- **"Find new jobs" with "The job search failed":** the run stopped. The box leads with
+  the reason, then the last lines of the log. If the collection was already paid for, the
+  reason ends with a command such as `python pipeline/scraper.py --snapshot <id> --label
+  <label>`. Run it in a terminal in the project folder to download those jobs without
+  paying again, then run `python pipeline/score_jobs.py` to score them.
+
+Both boxes name the full log, `%LOCALAPPDATA%\linkedin_watcher\scrape.log`.
+
+**The skip list and `max_exclude_ids`.** Bright Data bills for every job it collects, so
+each search carries the ids of jobs you already have. The list holds the jobs collected in
+the last `exclude_window_days` days (the scraper records the day it last collected each job
+in `collected_ids_ledger.csv`), up to `max_exclude_ids` jobs, 10,000 by default. Neither
+has a Settings row: set them by hand in `search_config.json`, for example
+`"max_exclude_ids": 6000`. If a run fails because Bright Data rejected the skip list as
+too large, lower `max_exclude_ids` and run again. A lower number lets more known jobs be
+billed again, so lower it only as far as you need. The `MAX_EXCLUDE_IDS` environment
+variable, when set, wins over the file.
+
+**Run files.** Each run saves its jobs to `linkedin_jobs_<date>_<label>.csv` in its
+run-label folder. A second run with the same label on the same day writes
+`linkedin_jobs_<date>_<label>-2.csv` (then `-3`), so it keeps the earlier run's file. The
+scorer and the dashboard read all of them.
+
 ### Configure everything from the Settings tab (no file editing)
 Open the dashboard (double-click `Open INployed Dashboard.cmd`) and click the
 **Settings** tab: one

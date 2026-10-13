@@ -271,7 +271,7 @@ def test_scrape_work_success_returns_true(qtbot, monkeypatch, tmp_path):
     _stub_vm_hooks(monkeypatch)
     monkeypatch.setattr(mw_pipeline.subprocess, "Popen",
                         lambda *a, **k: _FakeProc(["ok\n"], 0))
-    assert w._scrape_work(True) is True
+    assert isinstance(w._scrape_work(True), mw_pipeline.RunReport)
     assert "ok" in (tmp_path / "scrape.log").read_text(encoding="utf-8")
 
 
@@ -311,6 +311,179 @@ def test_after_scrape_error_shows_dialog(qtbot, monkeypatch):
     w._scraping = True
     w._after_scrape_error(RuntimeError("scraper.py failed (exit 1).\n\ndetails"))
     assert shown.get("msg") and w._scraping is False
+
+
+# ── the run's WARNING: / ERROR: lines reach the user ──────────────────────────
+
+def _popen_by_step(outputs):
+    """A Popen fake that hands each command the (lines, rc) of its step:
+    "scraper" or "scorer", by the script the command runs."""
+    def fake(cmd, **k):
+        step = "scraper" if cmd[-1].endswith("scraper.py") or "--max-keywords" in cmd \
+            else "scorer"
+        lines, rc = outputs.get(step, ([], 0))
+        return _FakeProc(list(lines), rc)
+    return fake
+
+
+def _no_reload(monkeypatch, w):
+    monkeypatch.setattr(mw.jobsdata, "local_run_files", lambda *a, **k: [])
+    monkeypatch.setattr(w, "reload_data_async", lambda: None)
+
+
+def test_scrape_env_tells_the_scraper_to_expect_the_drive_master(qtbot, monkeypatch, tmp_path):
+    # With the flag set, a scraper that gets no Drive master (Drive offline, or no
+    # file) prints a WARNING, and that WARNING lands in the post-run dialog.
+    import scraper
+    w = _win(qtbot)
+    monkeypatch.delenv(scraper.EXPECT_DRIVE_MASTER_ENV, raising=False)
+    monkeypatch.setattr(mw_pipeline, "gdrive_root_dir", lambda paths: None)   # Drive offline
+    env = w._scrape_env()
+    assert env[scraper.EXPECT_DRIVE_MASTER_ENV] == "1"
+    assert scraper.EXTRA_MASTER_ENV not in env
+    (tmp_path / "linkedin_jobs_master.csv.gz").write_bytes(b"")
+    monkeypatch.setattr(mw_pipeline, "gdrive_root_dir", lambda paths: tmp_path)
+    assert w._scrape_env()[scraper.EXPECT_DRIVE_MASTER_ENV] == "1"
+    assert scraper.EXPECT_DRIVE_MASTER_ENV not in os.environ                  # child env only
+
+
+def test_scrape_work_collects_the_runs_warnings(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    monkeypatch.setattr(mw_pipeline, "APPDATA", tmp_path)
+    _stub_vm_hooks(monkeypatch)
+    monkeypatch.setattr(mw_pipeline.subprocess, "Popen", _popen_by_step({
+        "scraper": (["Run: night\n", "WARNING: the skip list was cut.\n", "Saved 4 jobs\n",
+                     "WARNING:   the skip list was cut.  \n"], 0),     # same problem twice
+        "scorer": (["Scoring\n", "WARNING: could not heal reused rows in the master\n"], 0),
+    }))
+    report = w._scrape_work(True)
+    assert isinstance(report, mw_pipeline.RunReport)
+    assert report.warnings == ("the skip list was cut.",
+                               "could not heal reused rows in the master")
+    assert report.log_path == tmp_path / "scrape.log"
+
+
+def test_scrape_work_clean_run_reports_no_warnings(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    monkeypatch.setattr(mw_pipeline, "APPDATA", tmp_path)
+    _stub_vm_hooks(monkeypatch)
+    monkeypatch.setattr(mw_pipeline.subprocess, "Popen",
+                        lambda *a, **k: _FakeProc(["ok\n", "no WARNING: here\n"], 0))
+    assert w._scrape_work(True).warnings == ()
+
+
+def test_after_scrape_with_warnings_shows_a_warning_dialog(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    _no_reload(monkeypatch, w)
+    shown = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: shown.append(a)))
+    drive = r"C:\Users\someone\My Drive\LinkedInJobs\linkedin_jobs_master.csv.gz"
+    w._scraping = True
+    w._after_scrape(mw_pipeline.RunReport(
+        warnings=(f"the Google Drive master {drive} does not exist, so some jobs may be "
+                  "collected and billed again. Start Google Drive and run again.",
+                  "the skip list was cut."),
+        log_path=tmp_path / "scrape.log"))
+    assert w._scraping is False
+    assert len(shown) == 1
+    _parent, title, text = shown[0][:3]
+    assert title == "The job search finished, with problems"
+    assert "The Google Drive master linkedin_jobs_master.csv.gz does not exist" in text
+    assert "The skip list was cut." in text
+    assert "WARNING" not in text and "someone" not in text      # no prefix, no home path
+    assert "scrape.log" in text
+    assert "2 problems" in w.statusBar().currentMessage()
+
+
+def test_after_scrape_clean_run_shows_no_dialog(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    _no_reload(monkeypatch, w)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", staticmethod(
+        lambda *a, **k: pytest.fail("a clean run shows no dialog")))
+    w._after_scrape(mw_pipeline.RunReport(warnings=(), log_path=tmp_path / "scrape.log"))
+    w._after_scrape(True)                                       # the old result still works
+    assert w.statusBar().currentMessage() == "Job search + score complete; dashboard refreshed."
+
+
+def test_after_scrape_caps_the_listed_warnings(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    _no_reload(monkeypatch, w)
+    shown = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: shown.append(a)))
+    many = tuple(f"problem number {i}." for i in range(13))
+    w._after_scrape(mw_pipeline.RunReport(warnings=many, log_path=tmp_path / "scrape.log"))
+    text = shown[0][2]
+    assert "Problem number 9." in text and "Problem number 10." not in text
+    assert "and 3 more in the log" in text
+    assert "13 problems" in w.statusBar().currentMessage()
+
+
+def test_shown_log_path_is_findable_without_the_user_name(monkeypatch, tmp_path):
+    import errmsg
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    shown = mw_pipeline._shown_log_path(tmp_path / "linkedin_watcher" / "scrape.log")
+    assert shown == os.path.join("%LOCALAPPDATA%", "linkedin_watcher", "scrape.log")
+    assert errmsg.scrub_paths(f"Full log: {shown}") == f"Full log: {shown}"  # survives the scrub
+    assert mw_pipeline._shown_log_path(tmp_path.parent / "elsewhere.log") == "elsewhere.log"
+
+
+def test_scrape_work_error_line_leads_the_failure(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    monkeypatch.setattr(mw_pipeline, "APPDATA", tmp_path)
+    _stub_vm_hooks(monkeypatch)
+    reason = ("the Bright Data token was refused, so no jobs were collected. "
+              "Check the token in Settings and run again.")
+    monkeypatch.setattr(mw_pipeline.subprocess, "Popen", _popen_by_step({
+        "scraper": (["Run: night\n", "WARNING: the skip list was cut.\n",
+                     "Traceback (most recent call last):\n", "  File x\n",
+                     "RuntimeError: 401\n", f"ERROR: {reason}\n"], 1),
+        "scorer": ([], 0),
+    }))
+    with pytest.raises(mw_pipeline.PipelineFailed) as ei:
+        w._scrape_work(True)
+    exc = ei.value
+    assert exc.reason == reason
+    assert exc.warnings == ("the skip list was cut.",)
+    assert str(exc).startswith(f"The job search failed: {reason}")
+    assert "The skip list was cut." in str(exc)
+    assert "RuntimeError: 401" in str(exc)                         # a short log tail follows
+
+    shown = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "critical",
+                        staticmethod(lambda *a, **k: shown.append(a)))
+    w._scraping = True
+    w._after_scrape_error(exc)
+    text = shown[0][2]
+    assert text.startswith(f"The job search failed: {reason}")
+    status = w.statusBar().currentMessage()
+    assert reason in status and "exit 1" not in status
+    assert w._scraping is False
+
+
+def test_failure_without_error_line_keeps_the_tail(qtbot, monkeypatch, tmp_path):
+    # An older scraper, or a scorer crash: no ERROR line, so the dialog keeps the
+    # exit code and the tail, with the run's warnings beside them.
+    w = _win(qtbot)
+    monkeypatch.setattr(mw_pipeline, "APPDATA", tmp_path)
+    _stub_vm_hooks(monkeypatch)
+    monkeypatch.setattr(mw_pipeline.subprocess, "Popen", _popen_by_step({
+        "scraper": (["WARNING: the skip list was cut.\n"], 0),
+        "scorer": (["Scoring\n", "KeyError: 'job_title'\n"], 1),
+    }))
+    with pytest.raises(mw_pipeline.PipelineFailed) as ei:
+        w._scrape_work(True)
+    exc = ei.value
+    assert exc.reason == ""
+    assert str(exc).startswith("score_jobs.py failed (exit 1).")
+    assert "KeyError: 'job_title'" in str(exc) and "The skip list was cut." in str(exc)
+    shown = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "critical",
+                        staticmethod(lambda *a, **k: shown.append(a)))
+    w._after_scrape_error(exc)
+    assert shown[0][2].startswith("The run failed.")
+    assert "score_jobs.py failed (exit 1)" in w.statusBar().currentMessage()
 
 
 def test_preview_visible_only_on_job_tabs(qtbot):
@@ -1445,7 +1618,7 @@ def test_score_only_work_runs_scorer_only_and_appends_log(qtbot, monkeypatch, tm
     monkeypatch.setattr(mw_pipeline.subprocess, "Popen",
                         lambda cmd, **k: (cmds.append(cmd), _FakeProc(["scored ok\n"], 0))[1])
     _stub_vm_hooks(monkeypatch)
-    assert w._score_only_work() is True
+    assert isinstance(w._score_only_work(), mw_pipeline.RunReport)
     assert len(cmds) == 1 and cmds[0][-1].endswith("score_jobs.py")  # no scraper rerun
     text = (tmp_path / "scrape.log").read_text(encoding="utf-8")
     assert "earlier scrape" in text and "scored ok" in text          # appended, not clobbered
@@ -1465,7 +1638,7 @@ def test_score_only_work_hands_the_scorer_the_dashboard_jev_switch(qtbot, monkey
     envs = []
     monkeypatch.setattr(mw_pipeline.subprocess, "Popen",
                         lambda cmd, **k: (envs.append(k.get("env")), _FakeProc(["ok\n"], 0))[1])
-    assert w._score_only_work() is True
+    assert isinstance(w._score_only_work(), mw_pipeline.RunReport)
     assert len(envs) == 1 and envs[0] is not None
     assert envs[0]["SCORE_USE_JEV"] == value
     assert envs[0].get("PATH") == os.environ.get("PATH")          # the rest is our environment

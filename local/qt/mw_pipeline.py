@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6 import QtCore, QtWidgets
@@ -57,6 +58,81 @@ def _scorer_jev_switch() -> str:
     missing it prints the one warning that names it. Reads config.json, so call
     it off the UI thread."""
     return "0" if jev_switch.switched_off("scoring") else "1"
+
+
+# The pipeline's own line prefixes (pipeline/scraper.py `warn` and `run`): each
+# non-fatal problem is one WARNING line saying what happened and what to do, and
+# a failed scrape ends on one ERROR line with the reason. The scorer prints
+# WARNING lines too, and only when something went wrong: a normal run has none.
+WARNING_PREFIX = "WARNING:"
+ERROR_PREFIX = "ERROR:"
+# Problems a dialog lists before "and N more in the log".
+MAX_SHOWN_PROBLEMS = 10
+# Log lines a failure dialog shows under an ERROR reason, which already says why.
+SHORT_TAIL_LINES = 6
+
+
+@dataclass(frozen=True)
+class RunReport:
+    """What a finished run hands `_after_scrape`: the problems its steps printed
+    as WARNING lines (prefix stripped, each once, in order) and the log path."""
+    warnings: tuple[str, ...] = ()
+    log_path: Path | None = None
+
+
+class PipelineFailed(RuntimeError):
+    """A pipeline step exited non-zero. str() is the whole report the dialog
+    shows; `reason` is the step's ERROR line text ("" when it printed none: an
+    older scraper, or the scorer) and `warnings` the run's WARNING lines so far."""
+
+    def __init__(self, message: str, *, reason: str = "",
+                 warnings: tuple[str, ...] = (), log_path: Path | None = None) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.warnings = tuple(warnings)
+        self.log_path = log_path
+
+
+def _prefixed(line: str, prefix: str) -> str:
+    """The text after `prefix` when `line` starts with it, else ""."""
+    s = line.strip()
+    return s[len(prefix):].strip() if s.startswith(prefix) else ""
+
+
+def _dedupe(items) -> list[str]:
+    return list(dict.fromkeys(items))
+
+
+def _sentence(text: str) -> str:
+    """`text` with a capital first letter: the scraper's lines read as the end
+    of "WARNING: ...", and the dialog drops that prefix."""
+    return text[:1].upper() + text[1:]
+
+
+def _problem_list(warnings) -> str:
+    """The run's warnings as a dialog list: at most MAX_SHOWN_PROBLEMS, each
+    with its absolute paths reduced to file names (`errmsg.scrub_paths`)."""
+    lines = [f"- {_sentence(errmsg.scrub_paths(w))}" for w in warnings[:MAX_SHOWN_PROBLEMS]]
+    more = len(warnings) - MAX_SHOWN_PROBLEMS
+    if more > 0:
+        lines.append(f"...and {more} more in the log.")
+    return "\n\n".join(lines)
+
+
+def _shown_log_path(path) -> str:
+    """The log's location for a dialog. Under %LOCALAPPDATA% (where it always
+    is on Windows) it is written that way, so the user can paste it into
+    Explorer and the dialog never shows their user name; anywhere else it is the
+    bare file name, which is what `errmsg.for_user` would leave of it."""
+    if path is None:
+        return "scrape.log"
+    base = os.environ.get("LOCALAPPDATA")
+    if base:
+        try:
+            return str(Path("%LOCALAPPDATA%") / Path(path).relative_to(base))
+        except ValueError:
+            pass
+    return Path(path).name
 
 
 class _PipelineActions:
@@ -194,8 +270,14 @@ class _PipelineActions:
         local runs, so without this a local 'Find new jobs' run re-pulls (and re-scores)
         postings the VM already has. Set on the CHILD's env only, not our own process, so
         the post-scrape VM-push set stays lean — it carries what THIS host collected, not
-        the Drive master pulled down from the VM."""
+        the Drive master pulled down from the VM.
+
+        It also sets scraper.EXPECT_DRIVE_MASTER_ENV: a dashboard run always means to
+        exclude the Drive master, so when there is none to point at (Drive offline, or
+        no file) the scraper prints a WARNING saying known jobs may be billed again,
+        and `_after_scrape` shows it."""
         env = self._scorer_env()
+        env["INPLOYED_EXPECT_DRIVE_MASTER"] = "1"
         root = gdrive_root_dir(self.csv_paths)
         if root is not None:
             master = Path(root) / "linkedin_jobs_master.csv.gz"
@@ -209,19 +291,20 @@ class _PipelineActions:
 
         Output is captured (the dashboard runs under pythonw with no console) so a
         failure surfaces the real error instead of a dead 'check the console'.
+        Returns a `RunReport` carrying the run's WARNING lines for `_after_scrape`.
         """
         log_path = self._scrape_log_path()
         env = self._scrape_env()
         before = self._outbox_snapshot()
         with open(log_path, "w", encoding="utf-8", errors="replace") as log:
-            self._run_pipeline((self.scraper_cmd(bounded), self.scorer_cmd()),
-                               log, log_path, env=env)
+            warnings = self._run_pipeline((self.scraper_cmd(bounded), self.scorer_cmd()),
+                                          log, log_path, env=env)
             # Both steps succeeded: push the freshly-collected ids to the VM (if
             # configured) so its next scheduled run doesn't re-collect — and re-bill —
             # what this run just pulled. Best-effort: never fail the scrape over a sync.
             self._push_seen_ids_to_vm(log)
             self._push_outbox_to_vm(log, before)
-        return True
+        return RunReport(warnings, log_path)
 
     def _score_only_work(self):
         """Recovery worker: run ONLY score_jobs.py (it picks up the newest unscored
@@ -230,20 +313,24 @@ class _PipelineActions:
         log_path = self._scrape_log_path()
         before = self._outbox_snapshot()
         with open(log_path, "a", encoding="utf-8", errors="replace") as log:
-            self._run_pipeline((self.scorer_cmd(),), log, log_path, env=self._scorer_env())
+            warnings = self._run_pipeline((self.scorer_cmd(),), log, log_path,
+                                          env=self._scorer_env())
             # The recovered run's ids/rows never made it to the VM either — they
             # ride the same post-scrape sync as a normal run, or the recovery
             # stays local-only.
             self._push_seen_ids_to_vm(log)
             self._push_outbox_to_vm(log, before)
-        return True
+        return RunReport(warnings, log_path)
 
-    def _run_pipeline(self, cmds, log, log_path, env=None) -> None:
+    def _run_pipeline(self, cmds, log, log_path, env=None) -> tuple[str, ...]:
         """Run each command with the repo root as cwd, streaming combined
-        stdout+stderr to `log`; raise RuntimeError carrying the output tail when
-        one exits non-zero (the dashboard runs under pythonw — the log is the
-        only console there is)."""
+        stdout+stderr to `log`, and return the WARNING lines they printed (prefix
+        stripped, each once). Raise `PipelineFailed` when one exits non-zero: it
+        leads with the step's ERROR line when there is one, else the exit code,
+        then the warnings and the output tail (the dashboard runs under pythonw,
+        so the log is the only console there is)."""
         repo = Path(__file__).resolve().parents[2]
+        warnings: list[str] = []
         for cmd in cmds:
             log.write(f"\n=== {' '.join(cmd)} ===\n")
             log.flush()
@@ -257,13 +344,42 @@ class _PipelineActions:
                     captured.append(line)
                     log.write(line)
                     log.flush()
+                    warning = _prefixed(line, WARNING_PREFIX)
+                    if warning:
+                        warnings.append(warning)
             rc = proc.wait()
             if rc != 0:
-                tail = "".join(captured).strip().splitlines()[-15:]
-                raise RuntimeError(
-                    f"{self._cmd_label(cmd)} failed (exit {rc}).\n\n"
-                    + ("\n".join(tail) if tail else "(no output captured)")
-                    + f"\n\nFull log: {log_path}")
+                raise self._step_failed(cmd, rc, captured, tuple(_dedupe(warnings)),
+                                        log_path)
+        return tuple(_dedupe(warnings))
+
+    def _step_failed(self, cmd, rc: int, captured: list[str],
+                     warnings: tuple[str, ...], log_path) -> PipelineFailed:
+        """The error for a step that exited `rc`. With an ERROR line the reason
+        leads and the tail is short, since the reason already says why; without
+        one (an older scraper, or the scorer) the exit code leads and the tail is
+        the last 15 lines. The run's warnings sit between: they often explain the
+        failure."""
+        label = self._cmd_label(cmd)
+        lines = "".join(captured).strip().splitlines()
+        reason = "\n".join(_dedupe(e for e in (_prefixed(x, ERROR_PREFIX) for x in lines) if e))
+        if reason:
+            head = "The job search failed" if label == "scraper.py" else f"{label} failed"
+            parts = [f"{head}: {reason}"]
+            tail = [x for x in lines if not (_prefixed(x, WARNING_PREFIX)
+                                             or _prefixed(x, ERROR_PREFIX))]
+            tail = tail[-SHORT_TAIL_LINES:]
+        else:
+            parts = [f"{label} failed (exit {rc})."]
+            tail = lines[-15:]
+        if warnings:
+            parts.append("Problems the run reported before it stopped:\n\n"
+                         + _problem_list(warnings))
+        parts.append("Last lines of the log:\n" + "\n".join(tail) if tail
+                     else "(no output captured)")
+        parts.append(f"Full log: {_shown_log_path(log_path)}")
+        return PipelineFailed("\n\n".join(parts), reason=reason, warnings=warnings,
+                              log_path=log_path)
 
     @staticmethod
     def _push_seen_ids_to_vm(log) -> None:
@@ -376,7 +492,7 @@ class _PipelineActions:
             except Exception:  # noqa: BLE001
                 pass
 
-    def _after_scrape(self, _result) -> None:
+    def _after_scrape(self, result) -> None:
         self._scraping = False
         # A local scrape writes to the repo dir, not the synced Drive folder this
         # window was opened against — fold the new scored run file(s) into the
@@ -385,11 +501,33 @@ class _PipelineActions:
             if p not in self.csv_paths:
                 self.csv_paths.append(p)
         self.reload_data_async()
-        self._set_status("Job search + score complete; dashboard refreshed.")
+        warnings = tuple(getattr(result, "warnings", ()) or ())
+        if not warnings:
+            self._set_status("Job search + score complete; dashboard refreshed.")
+            return
+        # The run worked, and something in it still needs the user: a skip list cut
+        # short, a Drive master that was not there. Each says what it costs and what
+        # to do, so show them here instead of leaving them in the log.
+        n = len(warnings)
+        self._set_status(f"Job search + score finished with {n} problem{'' if n == 1 else 's'}; "
+                         "dashboard refreshed.")
+        these = "this problem" if n == 1 else "these problems"
+        QtWidgets.QMessageBox.warning(
+            self, "The job search finished, with problems",
+            literal(f"The run finished and the dashboard is refreshed. It reported {these}:"
+                    f"\n\n{_problem_list(warnings)}"
+                    f"\n\nFull log: {_shown_log_path(getattr(result, 'log_path', None))}"))
 
     def _after_scrape_error(self, exc) -> None:
         self._scraping = False
         msg = errmsg.for_user(exc)
+        reason = getattr(exc, "reason", "")
+        if reason:
+            # The scraper's ERROR line already says why; the message leads with it.
+            self._set_status(
+                f"Find new jobs failed: {errmsg.scrub_paths(reason.splitlines()[0])}")
+            QtWidgets.QMessageBox.critical(self, "Find new jobs", literal(msg))
+            return
         self._set_status(f"Find new jobs failed: {msg.splitlines()[0] if msg else exc}")
         QtWidgets.QMessageBox.critical(self, "Find new jobs", literal(f"The run failed.\n\n{msg}"))
 

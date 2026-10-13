@@ -113,7 +113,7 @@ def test_scrape_work_invokes_outbox_hook_after_success(monkeypatch, tmp_path, wi
                         staticmethod(lambda log: order.append("seen")))
     monkeypatch.setattr(MainWindow, "_push_outbox_to_vm",
                         staticmethod(lambda log, before: order.append(("outbox", before))))
-    assert win._scrape_work(True) is True
+    assert isinstance(win._scrape_work(True), mw_pipeline.RunReport)
     assert order == ["seen", ("outbox", {"s": 1})]
 
 
@@ -130,7 +130,7 @@ def test_score_only_work_invokes_outbox_hook_after_success(monkeypatch, tmp_path
                         staticmethod(lambda log: order.append("seen")))
     monkeypatch.setattr(MainWindow, "_push_outbox_to_vm",
                         staticmethod(lambda log, before: order.append(("outbox", before))))
-    assert win._score_only_work() is True
+    assert isinstance(win._score_only_work(), mw_pipeline.RunReport)
     assert order == ["seen", ("outbox", {"s": 2})]
 
 

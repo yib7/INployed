@@ -789,7 +789,13 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
             df, _ = reconcile_is_seen(df, self.registry)
         self.df = df
         self._apply_df_views()
-        self._set_status(self._summary_line())
+        # A run's "finished with N problems" note (mw_pipeline._after_scrape) is set
+        # just before the reload this ends, so put it back in front of the summary,
+        # once; the dialog it came with is the main signal.
+        note = getattr(self, "_status_note_after_reload", None)
+        self._status_note_after_reload = None
+        self._set_status(f"{note} · {self._summary_line()}" if note
+                         else self._summary_line())
 
     def _summary_line(self) -> str:
         """The persistent status-bar summary: counts + discovery freshness."""

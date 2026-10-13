@@ -75,9 +75,12 @@ SHORT_TAIL_LINES = 6
 @dataclass(frozen=True)
 class RunReport:
     """What a finished run hands `_after_scrape`: the problems its steps printed
-    as WARNING lines (prefix stripped, each once, in order) and the log path."""
+    as WARNING lines (prefix stripped, each once, in order), the log path, and
+    which run it was: "search" (Find new jobs) or "score" (the score-only
+    recovery of an earlier run's results)."""
     warnings: tuple[str, ...] = ()
     log_path: Path | None = None
+    kind: str = "search"
 
 
 class PipelineFailed(RuntimeError):
@@ -91,6 +94,7 @@ class PipelineFailed(RuntimeError):
         self.reason = reason
         self.warnings = tuple(warnings)
         self.log_path = log_path
+        self.kind = "search"   # _score_only_work sets "score"
 
 
 def _prefixed(line: str, prefix: str) -> str:
@@ -117,6 +121,19 @@ def _problem_list(warnings) -> str:
     if more > 0:
         lines.append(f"...and {more} more in the log.")
     return "\n\n".join(lines)
+
+
+def _drive_master_expected() -> bool:
+    """True when this dashboard has a Google Drive master to exclude from: a job
+    data folder (`gdrive_root`) is set in config.json, or VM features are on.
+    A local-only setup has neither, and telling its scraper to expect a Drive
+    master would open the problems box on every run for a file that never
+    existed. Reads config.json, so call it off the UI thread."""
+    cfg = jobsdata._load_cfg()
+    if str(cfg.get("gdrive_root") or "").strip():
+        return True
+    vm = cfg.get("vm_enabled")
+    return vm is True or str(vm).strip().lower() in ("1", "true", "yes", "on")
 
 
 def _shown_log_path(path) -> str:
@@ -272,12 +289,16 @@ class _PipelineActions:
         the post-scrape VM-push set stays lean — it carries what THIS host collected, not
         the Drive master pulled down from the VM.
 
-        It also sets scraper.EXPECT_DRIVE_MASTER_ENV: a dashboard run always means to
-        exclude the Drive master, so when there is none to point at (Drive offline, or
-        no file) the scraper prints a WARNING saying known jobs may be billed again,
-        and `_after_scrape` shows it."""
+        It also sets scraper.EXPECT_DRIVE_MASTER_ENV when this setup has a Drive
+        master to exclude from (`_drive_master_expected`: a job data folder or VM
+        features), so when there is none to point at (Drive offline, or no file) the
+        scraper prints a WARNING saying known jobs may be billed again, and
+        `_after_scrape` shows it. A local-only setup never gets the flag."""
         env = self._scorer_env()
-        env["INPLOYED_EXPECT_DRIVE_MASTER"] = "1"
+        if _drive_master_expected():
+            env["INPLOYED_EXPECT_DRIVE_MASTER"] = "1"
+        else:
+            env.pop("INPLOYED_EXPECT_DRIVE_MASTER", None)
         root = gdrive_root_dir(self.csv_paths)
         if root is not None:
             master = Path(root) / "linkedin_jobs_master.csv.gz"
@@ -313,14 +334,18 @@ class _PipelineActions:
         log_path = self._scrape_log_path()
         before = self._outbox_snapshot()
         with open(log_path, "a", encoding="utf-8", errors="replace") as log:
-            warnings = self._run_pipeline((self.scorer_cmd(),), log, log_path,
-                                          env=self._scorer_env())
+            try:
+                warnings = self._run_pipeline((self.scorer_cmd(),), log, log_path,
+                                              env=self._scorer_env())
+            except PipelineFailed as e:
+                e.kind = "score"
+                raise
             # The recovered run's ids/rows never made it to the VM either — they
             # ride the same post-scrape sync as a normal run, or the recovery
             # stays local-only.
             self._push_seen_ids_to_vm(log)
             self._push_outbox_to_vm(log, before)
-        return RunReport(warnings, log_path)
+        return RunReport(warnings, log_path, kind="score")
 
     def _run_pipeline(self, cmds, log, log_path, env=None) -> tuple[str, ...]:
         """Run each command with the repo root as cwd, streaming combined
@@ -502,19 +527,28 @@ class _PipelineActions:
                 self.csv_paths.append(p)
         self.reload_data_async()
         warnings = tuple(getattr(result, "warnings", ()) or ())
+        scoring = getattr(result, "kind", "search") == "score"
         if not warnings:
-            self._set_status("Job search + score complete; dashboard refreshed.")
+            self._set_status("Scoring complete; dashboard refreshed." if scoring
+                             else "Job search + score complete; dashboard refreshed.")
             return
         # The run worked, and something in it still needs the user: a skip list cut
         # short, a Drive master that was not there. Each says what it costs and what
         # to do, so show them here instead of leaving them in the log.
         n = len(warnings)
-        self._set_status(f"Job search + score finished with {n} problem{'' if n == 1 else 's'}; "
-                         "dashboard refreshed.")
+        problems = f"{n} problem{'' if n == 1 else 's'}"
+        note = (f"Scoring finished with {problems}" if scoring
+                else f"Job search + score finished with {problems}")
+        self._set_status(f"{note}; dashboard refreshed.")
+        # The reload just started ends by writing its summary over the status bar;
+        # _apply_frames puts this note back in front of it, once.
+        self._status_note_after_reload = note
         these = "this problem" if n == 1 else "these problems"
+        what = "The scoring run" if scoring else "The run"
         QtWidgets.QMessageBox.warning(
-            self, "The job search finished, with problems",
-            literal(f"The run finished and the dashboard is refreshed. It reported {these}:"
+            self, "Scoring finished, with problems" if scoring
+            else "The job search finished, with problems",
+            literal(f"{what} finished and the dashboard is refreshed. It reported {these}:"
                     f"\n\n{_problem_list(warnings)}"
                     f"\n\nFull log: {_shown_log_path(getattr(result, 'log_path', None))}"))
 
@@ -522,14 +556,16 @@ class _PipelineActions:
         self._scraping = False
         msg = errmsg.for_user(exc)
         reason = getattr(exc, "reason", "")
+        scoring = getattr(exc, "kind", "search") == "score"
+        failed = "Scoring failed" if scoring else "Find new jobs failed"
+        title = "Score recovered results" if scoring else "Find new jobs"
         if reason:
             # The scraper's ERROR line already says why; the message leads with it.
-            self._set_status(
-                f"Find new jobs failed: {errmsg.scrub_paths(reason.splitlines()[0])}")
-            QtWidgets.QMessageBox.critical(self, "Find new jobs", literal(msg))
+            self._set_status(f"{failed}: {errmsg.scrub_paths(reason.splitlines()[0])}")
+            QtWidgets.QMessageBox.critical(self, title, literal(msg))
             return
-        self._set_status(f"Find new jobs failed: {msg.splitlines()[0] if msg else exc}")
-        QtWidgets.QMessageBox.critical(self, "Find new jobs", literal(f"The run failed.\n\n{msg}"))
+        self._set_status(f"{failed}: {msg.splitlines()[0] if msg else exc}")
+        QtWidgets.QMessageBox.critical(self, title, literal(f"The run failed.\n\n{msg}"))
 
     # ---- add a job by hand (no scraper, no scoring) ----------------------------
 

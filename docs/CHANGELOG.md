@@ -75,11 +75,16 @@ All notable changes to INployed are recorded here. The format follows
 - **The scraper says what went wrong, why it matters and what to do.** A problem the run
   survives prints one `WARNING:` line: a missing or unreadable Google Drive master (a
   truncated one used to crash the run), an unreadable `search_config.json`, a skip list
-  cut short, a run with 0 jobs and page errors. A run that fails ends on one `ERROR:`
-  line with the reason: a refused token, a skip list too large, a request too large, no
-  network, a failed collection or an unreadable master. When that collection was already
-  paid for, the line ends with the command that downloads it without paying again, such
-  as `python pipeline/scraper.py --snapshot <id> --label <label>`.
+  cut short. A run that fails ends on one `ERROR:` line with the reason: a refused token,
+  a skip list too large, a request too large, no network, a connection that broke after
+  the request was sent (check Bright Data's snapshot list before running again: the
+  collection may be running), a mistyped snapshot id, Ctrl+C, a failed collection, or a
+  master that could not be updated (open in Excel, or unreadable; the jobs are safe in the
+  run file and get scored). When that collection was already paid for and its jobs are
+  not on disk yet, the line ends with the command that downloads it without paying
+  again, such as `python pipeline/scraper.py --snapshot <id> --label <label>`. Jobs
+  that come back with the request itself are kept in a `_raw_<time>.json` file until
+  they are saved.
 - **A run Bright Data partly rejects keeps the jobs it paid for.** When some searches were
   rejected and others returned jobs, the whole collection was thrown away. Those jobs are
   now saved to the run file, the master and the ledger, a `WARNING:` names the rejected
@@ -88,13 +93,15 @@ All notable changes to INployed are recorded here. The format follows
 - **The dashboard shows a run's problems.** After **Find new jobs**, a run that printed
   warnings opens a "The job search finished, with problems" box listing them, with the
   log path, and the status bar counts them. A failed run's box leads with the scraper's
-  `ERROR:` reason. A dashboard run with no Google Drive master to read (Drive offline, or
-  no file) warns that known jobs may be collected and billed again.
+  `ERROR:` reason. When a Google Drive folder or the VM is set up, a dashboard run with no
+  Google Drive master to read (Drive offline, or no file) warns that known jobs may be
+  collected and billed again.
 - **A second same-day run of a label gets its own file.** It wrote over
   `linkedin_jobs_<date>_<label>.csv`, and since the first run's scored file already
   existed, the scorer skipped the new jobs: 185 jobs from 2026-10-12 were never scored.
   The second run now writes `linkedin_jobs_<date>_<label>-2.csv` (then `-3`, and so on),
-  which the scorer, the dashboard and the VM sync already read.
+  which the scorer, the dashboard and the VM sync already read. A `--snapshot` rerun of
+  the same jobs reuses the earlier file instead, so they are never scored twice.
 - **Settings warns about a fallback model it does not know.** The six fallback model lists
   (Stage-1 and Stage-2 fallback models and the four tailor fallback lists) took any text, so
   a typo such as `gemini-3.0-flash` saved with nothing said, and the request failed once the

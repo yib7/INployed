@@ -265,7 +265,7 @@ def _stub_vm_hooks(monkeypatch):
                         staticmethod(lambda log, before: None))
 
 
-def test_scrape_work_success_returns_true(qtbot, monkeypatch, tmp_path):
+def test_scrape_work_success_returns_a_run_report_and_logs(qtbot, monkeypatch, tmp_path):
     w = _win(qtbot)
     monkeypatch.setattr(mw_pipeline, "APPDATA", tmp_path)
     _stub_vm_hooks(monkeypatch)
@@ -331,11 +331,24 @@ def _no_reload(monkeypatch, w):
     monkeypatch.setattr(w, "reload_data_async", lambda: None)
 
 
-def test_scrape_env_tells_the_scraper_to_expect_the_drive_master(qtbot, monkeypatch, tmp_path):
+def _dashboard_config(values: dict) -> None:
+    """Write the (hermetic) local/config.json the dashboard reads."""
+    import json
+    mw.jobsdata._cfg_path().write_text(json.dumps(values), encoding="utf-8")
+
+
+@pytest.mark.parametrize("config", [
+    {"gdrive_root": r"G:\My Drive\LinkedInJobs"},
+    {"vm_enabled": True},
+    {"gdrive_root": r"G:\My Drive\LinkedInJobs", "vm_enabled": False},
+])
+def test_scrape_env_expects_the_drive_master_when_drive_or_the_vm_is_set_up(
+        qtbot, monkeypatch, tmp_path, config):
     # With the flag set, a scraper that gets no Drive master (Drive offline, or no
     # file) prints a WARNING, and that WARNING lands in the post-run dialog.
     import scraper
     w = _win(qtbot)
+    _dashboard_config(config)
     monkeypatch.delenv(scraper.EXPECT_DRIVE_MASTER_ENV, raising=False)
     monkeypatch.setattr(mw_pipeline, "gdrive_root_dir", lambda paths: None)   # Drive offline
     env = w._scrape_env()
@@ -345,6 +358,20 @@ def test_scrape_env_tells_the_scraper_to_expect_the_drive_master(qtbot, monkeypa
     monkeypatch.setattr(mw_pipeline, "gdrive_root_dir", lambda paths: tmp_path)
     assert w._scrape_env()[scraper.EXPECT_DRIVE_MASTER_ENV] == "1"
     assert scraper.EXPECT_DRIVE_MASTER_ENV not in os.environ                  # child env only
+
+
+@pytest.mark.parametrize("config", [{}, {"gdrive_root": "", "vm_enabled": False},
+                                    {"gdrive_root": "   "}])
+def test_scrape_env_does_not_expect_a_drive_master_on_a_local_only_setup(
+        qtbot, monkeypatch, config):
+    """No Drive folder and no VM: there is no Drive master to miss, so a WARNING
+    about it would open the problems box on every run for nothing."""
+    import scraper
+    w = _win(qtbot)
+    _dashboard_config(config)
+    monkeypatch.setenv(scraper.EXPECT_DRIVE_MASTER_ENV, "1")      # even if our env has it
+    monkeypatch.setattr(mw_pipeline, "gdrive_root_dir", lambda paths: None)
+    assert scraper.EXPECT_DRIVE_MASTER_ENV not in w._scrape_env()
 
 
 def test_scrape_work_collects_the_runs_warnings(qtbot, monkeypatch, tmp_path):
@@ -404,6 +431,64 @@ def test_after_scrape_clean_run_shows_no_dialog(qtbot, monkeypatch, tmp_path):
     w._after_scrape(mw_pipeline.RunReport(warnings=(), log_path=tmp_path / "scrape.log"))
     w._after_scrape(True)                                       # the old result still works
     assert w.statusBar().currentMessage() == "Job search + score complete; dashboard refreshed."
+
+
+def test_score_only_recovery_reports_its_problems_as_scoring(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    _no_reload(monkeypatch, w)
+    shown = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: shown.append(a)))
+    w._after_scrape(mw_pipeline.RunReport(warnings=("could not heal reused rows.",),
+                                          log_path=tmp_path / "scrape.log", kind="score"))
+    _parent, title, text = shown[0][:3]
+    assert title == "Scoring finished, with problems"
+    assert "job search" not in text.lower()
+    status = w.statusBar().currentMessage()
+    assert status.startswith("Scoring finished with 1 problem")
+    assert "Job search" not in status
+
+
+def test_score_only_recovery_clean_run_says_scoring(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    _no_reload(monkeypatch, w)
+    w._after_scrape(mw_pipeline.RunReport(log_path=tmp_path / "scrape.log", kind="score"))
+    assert w.statusBar().currentMessage() == "Scoring complete; dashboard refreshed."
+
+
+def test_score_only_work_marks_its_report_and_failure_as_scoring(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    monkeypatch.setattr(mw_pipeline, "APPDATA", tmp_path)
+    _stub_vm_hooks(monkeypatch)
+    monkeypatch.setattr(mw_pipeline.subprocess, "Popen",
+                        lambda *a, **k: _FakeProc(["ok\n"], 0))
+    assert w._score_only_work().kind == "score"
+    monkeypatch.setattr(mw_pipeline.subprocess, "Popen",
+                        lambda *a, **k: _FakeProc(["KeyError: x\n"], 1))
+    with pytest.raises(mw_pipeline.PipelineFailed) as ei:
+        w._score_only_work()
+    shown = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "critical",
+                        staticmethod(lambda *a, **k: shown.append(a)))
+    w._after_scrape_error(ei.value)
+    assert shown[0][1] == "Score recovered results"
+    assert w.statusBar().currentMessage().startswith("Scoring failed")
+
+
+def test_the_problems_status_survives_the_reload(qtbot, monkeypatch, tmp_path):
+    """_after_scrape starts a reload, and the reload ends by writing the summary
+    line over the status bar: the problem count must come back with it."""
+    w = _win(qtbot)
+    monkeypatch.setattr(mw.jobsdata, "local_run_files", lambda *a, **k: [])
+    monkeypatch.setattr(w, "reload_data_async", lambda: None)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", staticmethod(lambda *a, **k: None))
+    w._after_scrape(mw_pipeline.RunReport(warnings=("a.", "b."),
+                                          log_path=tmp_path / "scrape.log"))
+    w._apply_frames(mw.LoadedFrames(pd.DataFrame(), {}, None, 36))
+    status = w.statusBar().currentMessage()
+    assert "2 problems" in status and "jobs" in status       # the note plus the summary
+    w._apply_frames(mw.LoadedFrames(pd.DataFrame(), {}, None, 36))
+    assert "problems" not in w.statusBar().currentMessage()  # once, not forever
 
 
 def test_after_scrape_caps_the_listed_warnings(qtbot, monkeypatch, tmp_path):

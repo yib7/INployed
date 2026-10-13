@@ -214,7 +214,7 @@ The scraper prints the same lines on the command line, starting with `WARNING:` 
   and what to do. The common ones:
   - *No Google Drive master was found:* Google Drive for desktop is not running, so the run
     could not skip the jobs the VM already collected and may pay for some again. Start
-    Google Drive before the next run.
+    Google Drive before the next run. (Only when a job data folder or the VM is set up.)
   - *Skip list capped:* there are more known recent jobs than `max_exclude_ids` allows,
     so the oldest of them may be collected and billed again.
   - *Bright Data rejected some of this run's searches:* the jobs from the other searches
@@ -223,7 +223,16 @@ The scraper prints the same lines on the command line, starting with `WARNING:` 
   the reason, then the last lines of the log. If the collection was already paid for, the
   reason ends with a command such as `python pipeline/scraper.py --snapshot <id> --label
   <label>`. Run it in a terminal in the project folder to download those jobs without
-  paying again, then run `python pipeline/score_jobs.py` to score them.
+  paying again, then run `python pipeline/score_jobs.py` to score them. Two reasons need
+  something else:
+  - *The master was not updated:* the jobs are already saved in the run file the reason
+    names, and the score step picks that file up. Close `linkedin_jobs_master.csv` if it
+    is open in Excel, or restore it from a backup.
+  - *The connection broke after the request was sent:* the collection may be running and
+    billed. Look at the snapshot list in the Bright Data dashboard before running again,
+    and if this run's snapshot is there, fetch it with `--snapshot <id>`.
+- **"Scoring finished, with problems":** the same box for the score step the dashboard
+  offers at startup for results an earlier run left unscored.
 
 Both boxes name the full log, `%LOCALAPPDATA%\linkedin_watcher\scrape.log`.
 
@@ -240,7 +249,8 @@ variable, when set, wins over the file.
 **Run files.** Each run saves its jobs to `linkedin_jobs_<date>_<label>.csv` in its
 run-label folder. A second run with the same label on the same day writes
 `linkedin_jobs_<date>_<label>-2.csv` (then `-3`), so it keeps the earlier run's file. The
-scorer and the dashboard read all of them.
+scorer and the dashboard read all of them. A `--snapshot` rerun that brings back the same
+jobs as a file from earlier that day reuses that file, so the jobs are not scored twice.
 
 ### Configure everything from the Settings tab (no file editing)
 Open the dashboard (double-click `Open INployed Dashboard.cmd`) and click the

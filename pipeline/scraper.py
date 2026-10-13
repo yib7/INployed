@@ -1744,7 +1744,7 @@ def _save_results(results: list[dict], run_label: str) -> None:
     df["extracted_date"] = date_str  # the day this job was scraped (shown/sorted in the UI)
     run_dir = OUTPUT_DIR / run_label
     run_dir.mkdir(exist_ok=True)
-    csv_path = run_dir / f"linkedin_jobs_{date_str}_{run_label}.csv"
+    csv_path = _free_run_csv_path(run_dir, date_str, run_label)
 
     _atomic_to_csv(df, csv_path)  # atomic: a truncated run CSV would crash the scoring step
     # Right after the run CSV, before the master: append_to_master can still raise
@@ -1760,8 +1760,30 @@ def _save_results(results: list[dict], run_label: str) -> None:
         e.saved_csv = f"{run_label}/{csv_path.name}"
         e.n_jobs = len(df)
         raise
-    print(f"Saved {len(df)} jobs -> {run_label}/{csv_path.name}")
+    note = ("" if csv_path.stem == f"linkedin_jobs_{date_str}_{run_label}" else
+            f" (an earlier {run_label} run today already used the base name)")
+    print(f"Saved {len(df)} jobs -> {run_label}/{csv_path.name}{note}")
     print(f"Master CSV now contains {master_total} unique jobs")
+
+
+def _free_run_csv_path(run_dir: Path, date_str: str, run_label: str) -> Path:
+    """The run CSV path for today: `linkedin_jobs_<date>_<label>.csv`, or `-2`,
+    `-3`, ... when an earlier same-day run of this label already took the name.
+
+    A name counts as taken while its raw CSV OR its `_scored.csv.gz` exists: the
+    scorer skips any input whose scored sibling exists, so reusing a stem whose
+    raw file is gone would still leave the new jobs unscored. Overwriting it lost
+    185 jobs on 2026-10-12. Every reader accepts the suffix: they glob
+    `linkedin_jobs_*.csv` / `*_scored.csv.gz`, read the date from the start of the
+    name, and take the label from the folder or the run_label column."""
+    stem = f"linkedin_jobs_{date_str}_{run_label}"
+    n = 1
+    while True:
+        name = stem if n == 1 else f"{stem}-{n}"
+        if not ((run_dir / f"{name}.csv").exists()
+                or (run_dir / f"{name}_scored.csv.gz").exists()):
+            return run_dir / f"{name}.csv"
+        n += 1
 
 
 # --- the one ERROR line a failed run ends with ---------------------------------

@@ -38,8 +38,9 @@ def _stamp() -> str:
 def snapshot_run_files(base: Path | None = None) -> dict[Path, tuple[float, int]]:
     """{scored-run-file: (mtime, size)} for every local run file, taken BEFORE a
     scrape so new_run_ids can tell which files the scrape produced or rewrote (a
-    same-day re-run overwrites the same filename, so presence alone is not
-    enough). Size rides along: a rewrite landing within one mtime
+    same-day re-run now gets its own `-2`, `-3`, ... file, but a run file can
+    still be rewritten in place (the manual-jobs file, a repost heal), so
+    presence alone is not enough). Size rides along: a rewrite landing within one mtime
     tick — or on a coarse-resolution filesystem — would otherwise read as
     unchanged and its fresh rows would wait for the sweep."""
     import jobsdata

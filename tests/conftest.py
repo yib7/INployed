@@ -96,6 +96,9 @@ for _leaked in (
     "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION",
     "RESUME_TAILOR_OUTPUT", "RESUME_TAILOR_CANDIDATE", "RESUME_TAILOR_GEMINI_AUTH",
     "RESUME_TAILOR_PROVIDER", "LINKEDIN_EXTRA_MASTER", "APPLY_QUEUE_PATH",
+    # scraper.py's skip-list knobs, read live: a shell export would change the
+    # window and the cap every scraper test asserts against.
+    "EXCLUDE_WINDOW_DAYS", "MAX_EXCLUDE_IDS",
     # Import-time layout constants (measure.py): a developer override would otherwise
     # decide the golden and the fill-fraction defaults the suite asserts.
     "RESUME_TAILOR_FULL_LINE_FILL", "RESUME_TAILOR_LAST_LINE_FILL",
@@ -526,6 +529,9 @@ def _hermetic_repo_data(tmp_path_factory):
         mp.setattr(scraper, "PREVIOUS_IDS_FILE", d / "last_run_job_ids.json")
         mp.setattr(scraper, "EXTERNAL_EXCLUDE_FILE", d / "external_exclude_ids.json")
         mp.setattr(scraper, "BLOCKLIST_FILE", d / "company_blocklist.txt")
+        # main() writes this on every run that collects rows, so without the
+        # redirect an end-to-end main() test writes a ledger into the repo root.
+        mp.setattr(scraper, "LEDGER_CSV", d / "collected_ids_ledger.csv")
         mp.setattr(score_jobs, "OUTPUT_DIR", d)
         mp.setattr(score_jobs, "MASTER_CSV", d / "linkedin_jobs_master.csv")
         mp.setattr(score_jobs, "RESUME_PATH", d / "resume.md")

@@ -886,13 +886,14 @@ def test_partial_errors_with_rows_collected_do_not_raise():
 # --- who survives the cap: ordering is a contract, not an accident -----------
 
 def test_this_hosts_own_ids_are_the_ones_that_survive_the_cap(monkeypatch, tmp_path):
-    """load_exclude_ids() puts OUR ids last, because cap_exclude_ids keeps the tail.
+    """Among ids no source can date, OUR ids sort last, because cap_exclude_ids
+    keeps the tail.
 
-    Appended FIRST, they would put other machines' ids in the tail. On the VM
-    the pushed external file routinely carries more than MAX_EXCLUDE_IDS
-    entries, so the cap would keep 100% foreign ids and 0% of the VM's own
-    master -- and ours are the only ids that can resurface in a "Past 24 hours"
-    search, so every run would re-collect the previous day's work."""
+    Dated ids now rank by the newest date any source knows (see
+    tests/test_scraper_ledger.py), so this pins the tie-break: the external file
+    carries no dates, and on the VM it routinely holds more than the cap. Ranked
+    after our own undated ids, it would keep 100% foreign ids and 0% of the VM's
+    own master, and every run would re-collect the previous day's work."""
     monkeypatch.setattr(scraper, "MASTER_CSV", _master(tmp_path, *[f"own{n}" for n in range(10)]))
     ext = tmp_path / "external_exclude_ids.json"
     ext.write_text(json.dumps([f"foreign{n}" for n in range(5_000)]), encoding="utf-8")

@@ -1,12 +1,15 @@
 import asyncio
+import gzip
 import json
 import os
+import re
 import sys
 import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime
+import zlib
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import NamedTuple
 
@@ -84,6 +87,20 @@ EXTERNAL_EXCLUDE_FILE = OUTPUT_DIR / "external_exclude_ids.json"
 # Drive master is the VM's full cumulative record. Unset on the VM (whose own master IS
 # the full set), so the VM's exclusion is unchanged.
 EXTRA_MASTER_ENV = "LINKEDIN_EXTRA_MASTER"
+
+# Every id each run got back from Bright Data, with the LAST day it was collected.
+# The masters cannot answer that: append_to_master keeps the existing row for a
+# known id, so a master's extracted_date is the day the job was FIRST found. A job
+# first found three weeks ago and collected again yesterday then looked three weeks
+# old to the skip-list window, fell off jobs_to_not_include, and was collected and
+# billed again on every run (a replay of the 2026-10-05..13 runs skipped ~7 of
+# 2,320 repeats). load_exclude_ids windows on the newest date ANY source knows,
+# this file included. One row per id (its newest date); rows older than
+# LEDGER_KEEP_DAYS are pruned on every write, because a "Past 24 hours" search does
+# not bring back a job nobody has seen for two months. A missing ledger is seeded
+# once from the run files in the run-label folders (seed_ledger_from_run_files).
+LEDGER_CSV = OUTPUT_DIR / "collected_ids_ledger.csv"
+LEDGER_KEEP_DAYS = 60
 
 # Cap the exclude-id set to a recency window. The search filter is time_range="Past
 # 24 hours", so a posting scraped more than ~60 days ago can never reappear in a
@@ -363,89 +380,115 @@ def exclude_window_days() -> int:
     return val
 
 
-def _window_ids(df: pd.DataFrame, window_days: int) -> list[str]:
-    """Unique job_posting_ids in `df`, keeping only those scraped within the last
-    `window_days` days (per the extracted_date column), OLDEST FIRST.
+def _parse_dates(df: pd.DataFrame) -> pd.DataFrame:
+    """`df`'s job ids (as str, null ids dropped, row order kept) with extracted_date
+    parsed to a UTC timestamp, NaT where it is missing or unparseable.
+
+    A frame with no extracted_date column comes back all-NaT, and an undated row
+    is KEPT by the window (see _window_dated), so a source we cannot date degrades
+    to the pre-window keep-all behavior instead of silently emptying the set.
+
+    utc=True, and a UTC cutoff to match. The master this host writes is plain
+    YYYY-MM-DD, but merge_incoming folds rows from other machines and a Drive
+    master can carry an ISO offset. Without utc=True pandas 3 returns a tz-AWARE
+    column for those, and comparing it to a tz-naive Timestamp.now() raises
+    "Invalid comparison between dtype=datetime64[us, UTC] and Timestamp" -- or,
+    for a column mixing offsets, "Mixed timezones detected". Normalising both
+    sides costs nothing on naive input and removes the whole class. Parse each
+    SOURCE on its own before combining: pandas infers one date format per column,
+    so a plain date and an ISO offset in one column would turn one of them to NaT.
+    """
+    if "extracted_date" in df.columns:
+        dates = pd.to_datetime(df["extracted_date"], errors="coerce", utc=True)
+    else:
+        dates = pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns, UTC]")
+    out = pd.DataFrame({"job_posting_id": df["job_posting_id"], "_extracted": dates})
+    out = out[out["job_posting_id"].notna()]
+    return out.assign(job_posting_id=out["job_posting_id"].astype(str))
+
+
+def _window_dated(dated: pd.DataFrame, window_days: int) -> list[str]:
+    """Unique ids from a _parse_dates frame, keeping those dated within the last
+    `window_days` days, OLDEST FIRST by each id's newest date.
 
     The order is part of the contract: cap_exclude_ids() evicts from the front, so
-    this has to be sorted by date, not left in master row order.
+    this has to be sorted by date, not left in row order.
 
     Fail toward a SUPERSET -- an exclude set that is too SMALL re-bills already-
-    collected jobs, so when recency can't be determined we KEEP the id:
-      - No extracted_date column, or EVERY date unparseable -> keep ALL ids (degrade
-        to the pre-window keep-all behavior; never silently empty the set).
-      - A single row with a missing/unparseable extracted_date (NaT) -> KEEP that id
-        (an undated posting is treated as recent).
+    collected jobs, so when recency can't be determined we KEEP the id: a row with
+    no parseable date (NaT) is treated as recent.
     """
-    if "job_posting_id" not in df.columns or df.empty:
-        return []
-    if "extracted_date" not in df.columns:
-        return df["job_posting_id"].dropna().astype(str).unique().tolist()
-    # utc=True, and a UTC cutoff to match. The master this host writes is plain
-    # YYYY-MM-DD, but merge_incoming folds rows from other machines and a Drive
-    # master can carry an ISO offset. Without utc=True pandas 3 returns a
-    # tz-AWARE column for those, and comparing it to a tz-naive Timestamp.now()
-    # raises "Invalid comparison between dtype=datetime64[us, UTC] and Timestamp"
-    # -- or, for a column mixing offsets, "Mixed timezones detected". Normalising
-    # both sides costs nothing on naive input and removes the whole class.
-    dates = pd.to_datetime(df["extracted_date"], errors="coerce", utc=True)
-    if dates.isna().all():
-        # No parseable dates at all -> can't window; keep everything.
-        return df["job_posting_id"].dropna().astype(str).unique().tolist()
     cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=window_days)
-    keep = dates.isna() | (dates >= cutoff)  # NaT (undated) rows are kept
-    kept = df.loc[keep, ["job_posting_id"]].copy()
-    kept["_extracted"] = dates[keep]
-    # Collapse a repeated id to its NEWEST date before sorting. unique() below keeps
-    # first-appearance order, so without this a job that appears twice (an original
-    # row plus a re-collected one, which is exactly what a merge_incoming fold or a
-    # hand-added row produces) would sort at the position of its OLDEST copy and be
-    # evicted early -- the opposite of what the sort is for.
-    # sort=False keeps first-appearance (master row) order, so ids sharing a date
-    # still come back in the order the master holds them.
+    keep = dated["_extracted"].isna() | (dated["_extracted"] >= cutoff)  # NaT rows kept
+    kept = dated.loc[keep]
+    # Collapse a repeated id to its NEWEST date before sorting. The same job shows
+    # up more than once by design: the master holds the day it was first found, the
+    # ledger the day it was last collected, the Drive master the VM's copy, and a
+    # merge_incoming fold or a hand-added row can repeat it inside one master. Sorted
+    # at the position of its OLDEST copy it would be evicted early, the opposite of
+    # what the sort is for. max() skips NaT, so an id is undated only when no source
+    # dates it inside the window. sort=False keeps first-appearance order, so ids
+    # sharing a date come back in the order the sources were combined.
     kept = kept.groupby("job_posting_id", as_index=False, sort=False)["_extracted"].max()
     # Oldest date FIRST, so cap_exclude_ids' tail slice evicts by date rather than by
-    # master row order. Those usually agree, but a merge_incoming fold on the VM (or a
-    # hand-added row) can land an older posting after a newer one, and evicting on row
-    # order would then drop a recent id and keep a stale one -- backwards for a
-    # "Past 24 hours" search. Undated rows sort first, so they are evicted first: the
-    # window keeps them so the set never silently shrinks, but a date we cannot prove
-    # must not outrank one we can.
+    # row order. A merge_incoming fold on the VM (or a hand-added row) can land an
+    # older posting after a newer one, and evicting on row order would then drop a
+    # recent id and keep a stale one -- backwards for a "Past 24 hours" search.
+    # Undated rows sort first, so they are evicted first: the window keeps them so
+    # the set never silently shrinks, but a date we cannot prove must not outrank
+    # one we can.
     kept = kept.sort_values("_extracted", na_position="first", kind="stable")
-    return kept["job_posting_id"].dropna().astype(str).unique().tolist()
+    return kept["job_posting_id"].tolist()
+
+
+def _window_ids(df: pd.DataFrame, window_days: int) -> list[str]:
+    """Unique job_posting_ids in `df` scraped within the last `window_days` days
+    (per its extracted_date column), OLDEST FIRST. See _window_dated."""
+    if "job_posting_id" not in df.columns or df.empty:
+        return []
+    return _window_dated(_parse_dates(df), window_days)
+
+
+_ID_DATE_COLUMNS = ("job_posting_id", "extracted_date")
+
+
+def _own_master_frame() -> pd.DataFrame | None:
+    """This host's master as (job_posting_id, extracted_date) rows, or None when it
+    is missing, unreadable or not a master (the reason is printed). An empty but
+    valid master is an empty frame."""
+    if not MASTER_CSV.exists():
+        return None
+    try:
+        df = pd.read_csv(MASTER_CSV, usecols=lambda c: c in _ID_DATE_COLUMNS, dtype=str)
+    except (OSError, ValueError, pd.errors.ParserError) as e:
+        print(f"Could not read master for exclusions ({e}); using last-run ids")
+        return None
+    if "job_posting_id" not in df.columns:
+        # Parsed, but not a master: a truncated write, or the wrong CSV copied
+        # in. Say so. Falling through silently means an empty exclude set,
+        # which re-collects and re-bills every posting already held -- and on
+        # the VM the only trace would be the ABSENCE of a line in scraper.log.
+        # An empty-but-valid master is a different thing and stays quiet.
+        print(f"WARNING: {MASTER_CSV.name} has no job_posting_id column "
+              f"(found: {list(df.columns) or 'no columns'}); using last-run ids")
+        return None
+    return df
 
 
 def _master_ids() -> list[str]:
     """Every job id recorded in this host's master, pruned to the recency window
     (exclude_window_days) -- or the last-run JSON if the master is missing/unreadable."""
-    if MASTER_CSV.exists():
-        try:
-            df = pd.read_csv(
-                MASTER_CSV,
-                usecols=lambda c: c in ("job_posting_id", "extracted_date"),
-                dtype=str,
-            )
-        except (OSError, ValueError, pd.errors.ParserError) as e:
-            print(f"Could not read master for exclusions ({e}); using last-run ids")
-            return load_previous_ids()
-        if "job_posting_id" in df.columns and not df.empty:
-            try:
-                return _window_ids(df, exclude_window_days())
-            except (TypeError, ValueError, pd.errors.ParserError) as e:
-                # Windowing is an optimization on top of the exclude set; if it ever
-                # fails (e.g. an unexpected extracted_date dtype), degrade to keeping
-                # ALL master ids -- a superset never re-bills -- rather than dying.
-                print(f"Could not window exclude ids ({e}); keeping all master ids")
-                return df["job_posting_id"].dropna().astype(str).unique().tolist()
-        if "job_posting_id" not in df.columns:
-            # Parsed, but not a master: a truncated write, or the wrong CSV copied
-            # in. Say so. Falling through silently means an empty exclude set,
-            # which re-collects and re-bills every posting already held -- and on
-            # the VM the only trace would be the ABSENCE of a line in scraper.log.
-            # An empty-but-valid master is a different thing and stays quiet.
-            print(f"WARNING: {MASTER_CSV.name} has no job_posting_id column "
-                  f"(found: {list(df.columns) or 'no columns'}); using last-run ids")
-    return load_previous_ids()
+    df = _own_master_frame()
+    if df is None or df.empty:
+        return load_previous_ids()
+    try:
+        return _window_ids(df, exclude_window_days())
+    except (TypeError, ValueError, pd.errors.ParserError) as e:
+        # Windowing is an optimization on top of the exclude set; if it ever
+        # fails (e.g. an unexpected extracted_date dtype), degrade to keeping
+        # ALL master ids -- a superset never re-bills -- rather than dying.
+        print(f"Could not window exclude ids ({e}); keeping all master ids")
+        return df["job_posting_id"].dropna().astype(str).unique().tolist()
 
 
 def load_external_exclude_ids() -> list[str]:
@@ -461,25 +504,35 @@ def load_external_exclude_ids() -> list[str]:
         return []
 
 
+def _extra_master_frame() -> pd.DataFrame | None:
+    """The additional master named by $LINKEDIN_EXTRA_MASTER as (job_posting_id,
+    extracted_date) rows, or None when the var is unset, the file is missing or
+    unreadable, or it holds no ids. Accepts a plain or gzipped CSV."""
+    raw = os.environ.get(EXTRA_MASTER_ENV, "").strip()
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.exists():
+        return None
+    try:
+        comp = "gzip" if path.suffix == ".gz" else "infer"
+        df = pd.read_csv(path, usecols=lambda c: c in _ID_DATE_COLUMNS,
+                         dtype=str, compression=comp)
+    except (OSError, ValueError, pd.errors.ParserError) as e:
+        print(f"Could not read extra master {path.name} for exclusions ({e}); ignoring")
+        return None
+    if "job_posting_id" not in df.columns or df.empty:
+        return None
+    return df
+
+
 def load_extra_master_ids() -> list[str]:
     """Job ids from the additional master named by $LINKEDIN_EXTRA_MASTER (the synced
     Drive master, for a local run). [] when the var is unset, the file is missing, or it
     can't be read. Accepts a plain or gzipped CSV. Best-effort: a bad/absent extra master
     never crashes a run — it just means weaker exclusion, not a fabricated one."""
-    raw = os.environ.get(EXTRA_MASTER_ENV, "").strip()
-    if not raw:
-        return []
-    path = Path(raw)
-    if not path.exists():
-        return []
-    try:
-        comp = "gzip" if path.suffix == ".gz" else "infer"
-        df = pd.read_csv(path, usecols=lambda c: c in ("job_posting_id", "extracted_date"),
-                         dtype=str, compression=comp)
-    except (OSError, ValueError, pd.errors.ParserError) as e:
-        print(f"Could not read extra master {path.name} for exclusions ({e}); ignoring")
-        return []
-    if "job_posting_id" not in df.columns or df.empty:
+    df = _extra_master_frame()
+    if df is None:
         return []
     try:
         return _window_ids(df, exclude_window_days())
@@ -489,40 +542,197 @@ def load_extra_master_ids() -> list[str]:
         # write, so its shape is not ours to guarantee) took down the whole local
         # run with a raw traceback, while the identical column in our own master
         # degraded quietly one function up.
-        print(f"Could not window extra master {path.name} ({e}); keeping all its ids")
+        name = Path(os.environ.get(EXTRA_MASTER_ENV, "")).name
+        print(f"Could not window extra master {name} ({e}); keeping all its ids")
         return df["job_posting_id"].dropna().astype(str).unique().tolist()
+
+
+# --- the collection ledger (see LEDGER_CSV) -----------------------------------
+
+_LEDGER_COLUMNS = ["job_posting_id", "collected_date"]
+_ISO_DAY = r"^\d{4}-\d{2}-\d{2}$"
+_RUN_FILE_DAY = re.compile(r"^linkedin_jobs_(\d{4}-\d{2}-\d{2})_")
+
+
+def _ledger_cutoff() -> str:
+    """The oldest collected_date the ledger keeps, as YYYY-MM-DD (which sorts as text)."""
+    return (datetime.now() - timedelta(days=LEDGER_KEEP_DAYS)).strftime("%Y-%m-%d")
+
+
+def _newest_per_id(frames: list[pd.DataFrame]) -> pd.DataFrame:
+    """One ledger row per id from `frames`, its newest collected_date, oldest first.
+    A row without a YYYY-MM-DD date is dropped: an undated ledger row says nothing."""
+    frames = [f for f in frames if not f.empty]
+    if not frames:
+        return pd.DataFrame(columns=_LEDGER_COLUMNS, dtype=str)
+    df = pd.concat([f[_LEDGER_COLUMNS] for f in frames], ignore_index=True).dropna()
+    df = df.astype(str)
+    df = df[df["collected_date"].str.match(_ISO_DAY)]
+    df = df.groupby("job_posting_id", as_index=False, sort=False)["collected_date"].max()
+    return df.sort_values("collected_date", kind="stable").reset_index(drop=True)
+
+
+def _read_ledger() -> pd.DataFrame:
+    """LEDGER_CSV as one row per id. Raises OSError/ValueError when the file cannot
+    be read or is not a ledger; the callers decide what that costs."""
+    df = pd.read_csv(LEDGER_CSV, dtype=str, keep_default_na=False)
+    missing = [c for c in _LEDGER_COLUMNS if c not in df.columns]
+    if missing:
+        raise ValueError(f"it has no {' or '.join(missing)} column")
+    return _newest_per_id([df])
+
+
+def seed_ledger_from_run_files() -> pd.DataFrame:
+    """A ledger rebuilt from the run files under the run-label folders: every
+    linkedin_jobs_<date>_<label>*.csv and *_scored.csv.gz, each id with the newest
+    date it was collected (the row's extracted_date, else the date in the file
+    name). Files older than LEDGER_KEEP_DAYS by name are skipped unread.
+
+    Used once, when the ledger does not exist yet (the first run after this was
+    added) or cannot be read. A run file that cannot be read is skipped with a
+    WARNING: one bad file must not cost the rest of the seed.
+    """
+    cutoff = _ledger_cutoff()
+    frames = []
+    for label in RUN_LABELS:
+        folder = OUTPUT_DIR / label
+        if not folder.is_dir():
+            continue
+        files = sorted(folder.glob("linkedin_jobs_*.csv")) + sorted(
+            folder.glob("linkedin_jobs_*_scored.csv.gz"))
+        for path in files:
+            m = _RUN_FILE_DAY.match(path.name)
+            file_day = m.group(1) if m else None
+            if file_day and file_day < cutoff:
+                continue
+            try:
+                df = pd.read_csv(path, usecols=lambda c: c in _ID_DATE_COLUMNS, dtype=str)
+            except (OSError, ValueError, EOFError, zlib.error, gzip.BadGzipFile) as e:
+                print(f"WARNING: could not read {label}/{path.name} while rebuilding "
+                      f"{LEDGER_CSV.name} ({e}). The jobs in that run may be collected "
+                      f"and billed again. The file is probably damaged; the rest of "
+                      f"the run files are still used.")
+                continue
+            if "job_posting_id" not in df.columns or df.empty:
+                continue
+            if "extracted_date" in df.columns:
+                days = pd.to_datetime(df["extracted_date"], errors="coerce",
+                                      utc=True).dt.strftime("%Y-%m-%d")
+            else:
+                days = pd.Series(None, index=df.index, dtype=object)
+            if file_day:
+                days = days.fillna(file_day)
+            frames.append(pd.DataFrame({"job_posting_id": df["job_posting_id"],
+                                        "collected_date": days}))
+    seeded = _newest_per_id(frames)
+    return seeded[seeded["collected_date"] >= cutoff].reset_index(drop=True)
+
+
+def _ledger_frame() -> pd.DataFrame:
+    """The ledger as (job_posting_id, extracted_date) rows for load_exclude_ids:
+    seeded from the run files when the file does not exist yet, and from the run
+    files with a WARNING when it cannot be read. Never raises."""
+    if not LEDGER_CSV.exists():
+        led = seed_ledger_from_run_files()
+    else:
+        try:
+            led = _read_ledger()
+        except (OSError, ValueError) as e:
+            print(f"WARNING: could not read {LEDGER_CSV.name} ({e}). It holds the "
+                  f"last day each job was collected, so without it jobs collected "
+                  f"recently may be left off the skip list and billed again. Using "
+                  f"the saved run files instead; this run rewrites the file.")
+            led = seed_ledger_from_run_files()
+    return led.rename(columns={"collected_date": "extracted_date"})
+
+
+def record_collected_ids(ids: list[str], day: str) -> None:
+    """Add this run's ids to the ledger with `day` (YYYY-MM-DD): every id Bright
+    Data returned, known and new alike, because a known job collected again is the
+    one whose master date is wrong. Keeps each id's newest date, prunes rows older
+    than LEDGER_KEEP_DAYS, writes atomically.
+
+    Never raises. The jobs are already collected and saved by the time this runs,
+    so a ledger problem costs a WARNING and possibly a re-billed job, never the run.
+    """
+    try:
+        if LEDGER_CSV.exists():
+            try:
+                led = _read_ledger()
+            except (OSError, ValueError) as e:
+                print(f"WARNING: could not read {LEDGER_CSV.name} ({e}). Rebuilding "
+                      f"it from the saved run files, so jobs collected only in runs "
+                      f"whose files are gone may be collected and billed again.")
+                led = seed_ledger_from_run_files()
+        else:
+            led = seed_ledger_from_run_files()
+        run = pd.DataFrame({"job_posting_id": [str(i) for i in ids],
+                            "collected_date": day}, columns=_LEDGER_COLUMNS)
+        merged = _newest_per_id([led, run])
+        merged = merged[merged["collected_date"] >= _ledger_cutoff()]
+        _atomic_to_csv(merged, LEDGER_CSV)
+    except (OSError, ValueError) as e:
+        print(f"WARNING: could not save the ids of this run's {len(ids)} job(s) to "
+              f"{LEDGER_CSV.name} ({e}). The next run may leave them off the skip "
+              f"list, so they may be collected and billed again. Check that the "
+              f"file is not open in another program and that the disk is not full.")
 
 
 def load_exclude_ids() -> list[str]:
     """Every job id this host knows to skip — a hard no-repeat guard. Bright Data
     bills per collection, so re-fetching a posting we already have is pure wasted
-    spend. We exclude this host's master (pruned to the last exclude_window_days by
-    extracted_date — the search is 'Past 24 hours', so an older posting can't reappear
-    and its id is only trigger-POST bloat), UNIONED with the extra master named by
-    $LINKEDIN_EXTRA_MASTER (the synced Drive master, likewise windowed, so a LOCAL run
-    skips what the VM already collected) and with external_exclude_ids.json (ids
-    collected on another machine — e.g. a manual local run — and pushed here so a
-    scheduled VM run skips them; these are freshly-collected this-session ids and are
-    NOT windowed). Falls back to the last-run JSON when this host's master is
-    missing/unreadable.
+    spend. The sources, combined:
+      - this host's master (or the last-run JSON when it is missing/unreadable);
+      - the extra master named by $LINKEDIN_EXTRA_MASTER (the synced Drive master,
+        so a LOCAL run skips what the VM already collected);
+      - external_exclude_ids.json (ids collected on another machine and pushed
+        here so a scheduled VM run skips them; they carry no date);
+      - the collection ledger (LEDGER_CSV): the last day each id was collected.
 
-    ORDER IS A CONTRACT, not an accident: cap_exclude_ids() keeps the TAIL, so
-    this host's own ids go LAST, newest last. Appended first, they put the other
-    machines' ids in the tail and evicted our own -- and on the VM, where the
-    pushed file routinely carries more than MAX_EXCLUDE_IDS entries, the cap then
-    kept 100% foreign ids and 0% of the VM's own master, so every run re-collected
-    what it had collected the day before.
-    Ours are the ids that can actually resurface in a "Past 24 hours" search, so
-    ours are the ones that must survive the cap."""
-    own = _master_ids()                       # dated, oldest-first (see _window_ids)
-    ids: list[str] = []
-    seen = set(own)
-    for jid in load_extra_master_ids() + load_external_exclude_ids():
-        if jid not in seen:
-            ids.append(jid)
-            seen.add(jid)
-    ids.extend(own)
-    return ids
+    Each id is dated by the NEWEST date any source gives it and windowed to the
+    last exclude_window_days on that date. The search is 'Past 24 hours', so an
+    id nobody has collected in weeks cannot reappear and is only trigger-POST
+    bloat; but the masters hold the day a job was FIRST found, and windowing on
+    that dropped a job collected yesterday and re-billed it every run. Undated ids
+    (the external file, a master without dates) are kept.
+
+    ORDER IS A CONTRACT, not an accident: cap_exclude_ids() keeps the TAIL, so the
+    list is oldest first by that newest date, undated ids first. Every source is
+    ranked on the same clock: a job the VM collected yesterday can resurface just
+    like one of ours, so it outranks an id of ours last seen a week ago. Undated
+    ids tie at the front in source order (Drive, external, ours), so on the VM,
+    where the pushed external file routinely carries more ids than the cap, the
+    foreign undated ids are evicted before any of this host's own.
+    """
+    window = exclude_window_days()
+    own = _own_master_frame()
+    if own is None or own.empty:
+        own = pd.DataFrame({"job_posting_id": load_previous_ids()}, dtype=str)
+    sources = [
+        _extra_master_frame(),
+        pd.DataFrame({"job_posting_id": load_external_exclude_ids()}, dtype=str),
+        own,
+        _ledger_frame(),
+    ]
+    parts = []
+    for df in sources:
+        if df is None or df.empty or "job_posting_id" not in df.columns:
+            continue
+        try:
+            parts.append(_parse_dates(df))
+        except (TypeError, ValueError, pd.errors.ParserError) as e:
+            # Degrade that one source to undated (kept), never the whole run: a
+            # superset never re-bills. Same rule _master_ids follows.
+            print(f"Could not read the dates of one exclude source ({e}); keeping all its ids")
+            parts.append(_parse_dates(df.drop(columns=["extracted_date"], errors="ignore")))
+    if not parts:
+        return []
+    dated = pd.concat(parts, ignore_index=True)
+    try:
+        return _window_dated(dated, window)
+    except (TypeError, ValueError) as e:
+        print(f"Could not window exclude ids ({e}); keeping all of them")
+        return dated["job_posting_id"].unique().tolist()
 
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -1218,6 +1428,10 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
         df["job_posting_id"] = df["job_posting_id"].astype(str)
         df = df.drop_duplicates(subset=["job_posting_id"])
         print(f"Deduped: {before} -> {len(df)} unique jobs")
+    # Taken before the blocklist drop: a blocked company's job was billed all the
+    # same, and leaving it out of the ledger would collect and bill it every run.
+    collected_ids = (df["job_posting_id"].dropna().astype(str).tolist()
+                     if "job_posting_id" in df.columns else [])
 
     before = len(df)
     df = drop_blocklisted_companies(df)
@@ -1234,6 +1448,9 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
     csv_path = run_dir / f"linkedin_jobs_{date_str}_{run_label}.csv"
 
     _atomic_to_csv(df, csv_path)  # atomic: a truncated run CSV would crash the scoring step
+    # Right after the run CSV, before the master: append_to_master can still raise
+    # on an unreadable master, and these jobs are paid for either way.
+    record_collected_ids(collected_ids, date_str)
 
     if "job_posting_id" in df.columns:
         save_current_ids(df["job_posting_id"].astype(str).tolist())

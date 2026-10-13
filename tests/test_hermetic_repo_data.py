@@ -33,7 +33,7 @@ def _is_sandboxed(p) -> bool:
 def test_scraper_data_paths_are_sandboxed():
     import scraper
     for attr in ("OUTPUT_DIR", "MASTER_CSV", "PREVIOUS_IDS_FILE",
-                 "EXTERNAL_EXCLUDE_FILE", "BLOCKLIST_FILE"):
+                 "EXTERNAL_EXCLUDE_FILE", "BLOCKLIST_FILE", "LEDGER_CSV"):
         p = getattr(scraper, attr)
         assert _is_sandboxed(p), f"scraper.{attr} still points into the repo: {p}"
 

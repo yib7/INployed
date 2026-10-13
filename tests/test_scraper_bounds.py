@@ -653,15 +653,20 @@ def test_account_problems_flags_missing_credentials_without_a_call(monkeypatch):
 
 # --- jobs_to_not_include payload cap -----------------------------------------
 # Bright Data expands one search input into up to `limit_per_input` CHILD inputs,
-# each carrying a verbatim copy of the parent's jobs_to_not_include. A 2,679-id
-# exclude set (34.9 KB per input) passes at limit_per_input=1 and is rejected on
-# 100% of inputs at limit_per_input=150 with `child_input_size_validation`
-# -- 0 rows collected, no error raised, the run just looks like "no new jobs".
-# These tests pin the bound that makes that unreachable.
+# each carrying a verbatim copy of the parent's jobs_to_not_include. In August a
+# 2,679-id exclude set (34.9 KB per input) passed at limit_per_input=1 and was
+# rejected on 100% of inputs at limit_per_input=150 with
+# `child_input_size_validation` -- 0 rows collected, no error raised, the run just
+# looked like "no new jobs". These tests pin the bound that keeps the payload
+# inside what Bright Data has been seen to accept.
+
+# Wider than any cap, so every test below actually exercises the trim.
+_HUGE = 20_000
+
 
 def test_exclude_ids_are_capped_so_bright_data_accepts_the_input():
     """THE regression guard against a silent-zero-rows scrape."""
-    huge = [str(4_400_000_000 + n) for n in range(5_000)]
+    huge = [str(4_400_000_000 + n) for n in range(_HUGE)]
     inputs = scraper.build_inputs(huge, max_keywords=1, limit_per_input=150)
     for i in inputs:
         kept = i["jobs_to_not_include"]
@@ -673,7 +678,7 @@ def test_exclude_ids_are_capped_so_bright_data_accepts_the_input():
 
 def test_exclude_cap_scales_with_the_per_input_limit():
     """A bigger fan-out means each id is paid for more times, so fewer ids fit."""
-    huge = [str(4_400_000_000 + n) for n in range(5_000)]
+    huge = [str(4_400_000_000 + n) for n in range(_HUGE)]
     few = scraper.build_inputs(huge, max_keywords=1, limit_per_input=200)
     many = scraper.build_inputs(huge, max_keywords=1, limit_per_input=10)
     assert len(few[0]["jobs_to_not_include"]) < len(many[0]["jobs_to_not_include"])
@@ -683,7 +688,7 @@ def test_exclude_cap_keeps_the_NEWEST_ids():
     """Order matters: load_exclude_ids() returns oldest-first, and only a recently
     scraped posting can resurface in a time_range='Past 24 hours' search. Dropping
     the tail instead of the head would keep exactly the ids that cannot recur."""
-    ids = [str(4_400_000_000 + n) for n in range(5_000)]
+    ids = [str(4_400_000_000 + n) for n in range(_HUGE)]
     kept = scraper.build_inputs(ids, max_keywords=1, limit_per_input=150)[0]["jobs_to_not_include"]
     assert kept == ids[-len(kept):]
     assert ids[-1] in kept
@@ -714,9 +719,9 @@ def test_an_absurd_limit_keeps_the_payload_legal_and_says_why(capsys):
     re-billing run instead guaranteed a rejected one -- which re-bills everything
     AND collects nothing. Honour the budget, and name the setting to change."""
     ids = [str(4_400_000_000 + n) for n in range(5_000)]
-    kept = scraper.cap_exclude_ids(ids, 10_000)
+    kept = scraper.cap_exclude_ids(ids, 30_000)
     assert 0 < len(kept) < scraper.MIN_EXCLUDE_IDS
-    assert len(json.dumps(kept)) * 10_000 <= scraper.MAX_EXCLUDE_PAYLOAD_BYTES
+    assert len(json.dumps(kept)) * 30_000 <= scraper.MAX_EXCLUDE_PAYLOAD_BYTES
     out = capsys.readouterr().out
     assert "WARNING" in out and "limit_per_input" in out
 
@@ -725,40 +730,80 @@ def test_the_cap_measures_the_ids_it_has_rather_than_assuming_a_width():
     """BYTES_PER_EXCLUDE_ID bakes in today's 10-digit posting ids. Ids are at
     4.4e9; the first 11-digit one would have quietly pushed the real payload past
     the cap with nothing noticing, because nothing measured it."""
-    wide = [str(44_000_000_000 + n) for n in range(9_000)]      # 11 digits
+    wide = [str(44_000_000_000 + n) for n in range(_HUGE)]      # 11 digits
     kept = scraper.cap_exclude_ids(wide, 150)
     assert len(json.dumps(kept)) * 150 <= scraper.MAX_EXCLUDE_PAYLOAD_BYTES
-    # and a wider id must buy FEWER slots than a narrow one, not the same 2,000
-    narrow = scraper.cap_exclude_ids([str(4_400_000_000 + n) for n in range(9_000)], 150)
+    # and a wider id must buy FEWER slots than a narrow one, not the same count
+    narrow = scraper.cap_exclude_ids([str(4_400_000_000 + n) for n in range(_HUGE)], 150)
     assert len(kept) < len(narrow)
 
 
 def test_build_inputs_defaults_the_limit_from_config(monkeypatch, tmp_path):
     """main() may not thread limit_per_input through; the cap must still apply."""
     monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
-    huge = [str(4_400_000_000 + n) for n in range(5_000)]
+    huge = [str(4_400_000_000 + n) for n in range(_HUGE)]
     kept = scraper.build_inputs(huge, max_keywords=1)[0]["jobs_to_not_include"]
     assert len(kept) < len(huge)
 
 
-# --- eviction is by DATE, and the target is the newest 2,000 ------------------
-# Measured against Bright Data, one search at limit_per_input=150:
-# 2,000 ids (4,239,000 bytes of children) was ACCEPTED and collected 128 jobs;
-# 2,679 ids (5,262,000 bytes) was REJECTED. 5 MiB = 5,242,880 sits between them.
-# MAX_EXCLUDE_PAYLOAD_BYTES is set so 150 x 2,000 lands on the measured-good side.
+# --- eviction is by DATE, and the target is the newest 10,000 -----------------
+# Probed against Bright Data on 2026-10-13, one search at limit_per_input=100:
+# 10,000 ids (a 140,279-byte input, x100 children = 14,027,900 bytes) was ACCEPTED.
+# MAX_EXCLUDE_PAYLOAD_BYTES is set so 100 x 10,000 real-width ids fits.
 
-def test_cap_target_is_2000_ids_at_the_configured_limit():
-    ids = [str(4_400_000_000 + n) for n in range(9_000)]
-    kept = scraper.cap_exclude_ids(ids, 150)
-    assert len(kept) == 2000
+def test_cap_target_is_10000_ids_at_the_default_limit():
+    ids = [str(4_400_000_000 + n) for n in range(_HUGE)]
+    kept = scraper.cap_exclude_ids(ids, 100)
+    assert len(kept) == 10_000
     assert len(kept) == scraper.MAX_EXCLUDE_IDS
 
 
-def test_cap_stays_inside_the_measured_good_payload():
-    """150 children x the kept array must not exceed what Bright Data accepted."""
-    ids = [str(4_400_000_000 + n) for n in range(9_000)]
-    kept = scraper.cap_exclude_ids(ids, 150)
-    assert len(json.dumps(kept)) * 150 <= scraper.MAX_EXCLUDE_PAYLOAD_BYTES <= 4_239_000
+def test_cap_stays_inside_the_probed_good_payload():
+    """100 children x the kept array must not exceed what Bright Data accepted."""
+    ids = [str(4_400_000_000 + n) for n in range(_HUGE)]
+    kept = scraper.cap_exclude_ids(ids, 100)
+    assert len(json.dumps(kept)) * 100 <= 14_027_900
+    assert len(json.dumps(kept)) * 100 <= scraper.MAX_EXCLUDE_PAYLOAD_BYTES <= 14_100_000
+
+
+def test_a_bigger_fan_out_lands_near_6700_ids():
+    """The budget is bytes x children, so limit_per_input=150 fits two thirds as many."""
+    ids = [str(4_400_000_000 + n) for n in range(_HUGE)]
+    assert 6_600 <= len(scraper.cap_exclude_ids(ids, 150)) <= 6_800
+
+
+def test_max_exclude_ids_in_search_config_moves_the_cap(monkeypatch, tmp_path):
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    (tmp_path / "search_config.json").write_text(json.dumps({"max_exclude_ids": 3_000}),
+                                                 encoding="utf-8")
+    ids = [str(4_400_000_000 + n) for n in range(_HUGE)]
+    assert len(scraper.cap_exclude_ids(ids, 100)) == 3_000
+
+
+def test_a_cap_that_trims_known_jobs_says_what_it_costs(capsys):
+    """Every id reaching the cap is a known job inside the window, so a trim means
+    those jobs can be collected and billed again. Say so, and say what to raise."""
+    ids = [str(4_400_000_000 + n) for n in range(12_000)]
+    scraper.cap_exclude_ids(ids, 100)
+    out = capsys.readouterr().out
+    assert "WARNING:" in out
+    assert "10000 of 12000" in out
+    assert "2000 oldest" in out and "billed again" in out
+    assert "max_exclude_ids" in out and "search_config.json" in out
+
+
+def test_a_trim_forced_by_the_fan_out_names_limit_per_input(capsys):
+    """At limit 150 the byte budget binds before max_exclude_ids does, so raising
+    max_exclude_ids would change nothing: point at the setting that would."""
+    ids = [str(4_400_000_000 + n) for n in range(_HUGE)]
+    scraper.cap_exclude_ids(ids, 150)
+    out = capsys.readouterr().out
+    assert "WARNING:" in out and "limit_per_input" in out
+
+
+def test_no_warning_when_nothing_is_trimmed(capsys):
+    scraper.cap_exclude_ids([str(4_400_000_000 + n) for n in range(100)], 100)
+    assert "WARNING" not in capsys.readouterr().out
 
 
 def test_master_ids_come_back_oldest_date_first(monkeypatch, tmp_path):
@@ -867,6 +912,8 @@ def test_zero_rows_error_names_the_size_cause():
             "status": "ready", "records": 0, "errors": 2,
             "error_codes": {"child_input_size_validation": 2}}), "sd_x"))
     assert "exclude" in str(excinfo.value).lower()
+    assert "max_exclude_ids" in str(excinfo.value)
+    assert "search_config.json" in str(excinfo.value)
 
 
 def test_zero_rows_with_NO_errors_is_a_normal_quiet_run():

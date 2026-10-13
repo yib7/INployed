@@ -173,6 +173,53 @@ def test_with_no_file_a_junk_env_var_still_lands_on_the_default(monkeypatch, tmp
     assert scraper.exclude_window_days() == scraper.DEFAULT_EXCLUDE_WINDOW_DAYS
 
 
+# --- max_exclude_ids ----------------------------------------------------------
+# The skip-list cap. Hand-set in search_config.json (it has no Settings row) or
+# the MAX_EXCLUDE_IDS env var, env > file > default, same walk as
+# exclude_window_days.
+
+def test_max_exclude_ids_defaults_to_10000(monkeypatch, tmp_path):
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    assert scraper.max_exclude_ids() == scraper.MAX_EXCLUDE_IDS == 10_000
+    assert scraper.load_search_config()["max_exclude_ids"] == 10_000
+
+
+def test_max_exclude_ids_honours_search_config(monkeypatch, tmp_path):
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    _write_config(tmp_path, {"max_exclude_ids": 4_000})
+    assert scraper.max_exclude_ids() == 4_000
+
+
+def test_max_exclude_ids_env_var_wins(monkeypatch, tmp_path):
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    _write_config(tmp_path, {"max_exclude_ids": 4_000})
+    monkeypatch.setenv(scraper.MAX_EXCLUDE_IDS_ENV, "6000")
+    assert scraper.max_exclude_ids() == 6_000
+
+
+def test_a_junk_max_exclude_ids_env_falls_through_to_the_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    _write_config(tmp_path, {"max_exclude_ids": 4_000})
+    for junk in ("banana", "0", "-5", "  "):
+        monkeypatch.setenv(scraper.MAX_EXCLUDE_IDS_ENV, junk)
+        assert scraper.max_exclude_ids() == 4_000, f"{junk!r} skipped the file"
+
+
+def test_junk_max_exclude_ids_in_config_falls_back(monkeypatch, tmp_path):
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    for bad in ("banana", 0, -5, None):
+        _write_config(tmp_path, {"max_exclude_ids": bad})
+        assert scraper.max_exclude_ids() == scraper.MAX_EXCLUDE_IDS
+
+
+def test_a_tiny_max_exclude_ids_is_raised_to_the_floor(monkeypatch, tmp_path, capsys):
+    """A skip list of 5 ids would collect and bill nearly everything again."""
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    _write_config(tmp_path, {"max_exclude_ids": 5})
+    assert scraper.max_exclude_ids() == scraper.MIN_EXCLUDE_IDS
+    assert "WARNING" in capsys.readouterr().out
+
+
 def test_a_bom_does_not_discard_the_whole_config(monkeypatch, tmp_path):
     """Same failure as scoring_config.json, same fix: see that test for the why.
 

@@ -93,8 +93,8 @@ EXTRA_MASTER_ENV = "LINKEDIN_EXTRA_MASTER"
 # known id, so a master's extracted_date is the day the job was FIRST found. A job
 # first found three weeks ago and collected again yesterday then looked three weeks
 # old to the skip-list window, fell off jobs_to_not_include, and was collected and
-# billed again on every run (a replay of the 2026-10-05..13 runs skipped ~7 of
-# 2,320 repeats). load_exclude_ids windows on the newest date ANY source knows,
+# billed again on every run (replaying the 2026-10-05..13 runs, that rule skipped
+# ~7 of 2,320 repeats). load_exclude_ids windows on the newest date ANY source knows,
 # this file included. One row per id (its newest date); rows older than
 # LEDGER_KEEP_DAYS are pruned on every write, because a "Past 24 hours" search does
 # not bring back a job nobody has seen for two months. A missing ledger is seeded
@@ -124,22 +124,28 @@ DEFAULT_EXCLUDE_WINDOW_DAYS = 90
 # returned this run" and exits 0. Nothing raises. The pipeline looks healthy and
 # silently collects nothing, which is how this went unnoticed for weeks.
 #
-# Bright Data does not publish the threshold, so it was measured directly against
-# the LinkedIn jobs dataset with one search at limit_per_input=150:
-#   2,000 ids -> 4,239,000 bytes of children -> ACCEPTED (collected 128 jobs)
-#   2,679 ids -> 5,262,000 bytes of children -> REJECTED, 100% of inputs
-# 5 MiB (5,242,880) falls between those two, which is almost certainly the real cap.
-# The budget below sits on the measured-good side, so 2,000 ids fit at
-# limit_per_input=150 and proportionally fewer fit as the fan-out grows.
+# Bright Data does not publish the threshold, so it has been measured directly
+# against the LinkedIn jobs dataset, one search at a time:
+#   August, limit_per_input=150:
+#     2,000 ids -> 4,239,000 bytes of children -> ACCEPTED (collected 128 jobs)
+#     2,679 ids -> 5,262,000 bytes of children -> REJECTED, 100% of inputs
+#   2026-10-13, limit_per_input=100:
+#     10,000 ids -> a 140,279-byte input, x100 = 14,027,900 bytes -> ACCEPTED
+# The October probe is far past the August rejection, so the limit has moved (or
+# was never a plain byte count) since August. The budget below is the October
+# figure, so 10,000 real-width ids fit at limit_per_input=100 and proportionally
+# fewer fit as the fan-out grows (about 6,700 at 150). Two things are untested:
+# 150 x 6,700, and a full trigger whose ~40 inputs each carry 10,000 ids. If
+# Bright Data rejects either, the child_input_size_validation error names
+# max_exclude_ids in search_config.json as the setting to lower.
 #
-# Windowing alone cannot hold this: at ~500 postings/day even a 14-day window is
-# ~7,000 ids. The cap is what actually bounds the request -- the search is
-# time_range="Past 24 hours", so only a recently scraped posting can resurface and
-# older ids are pure payload. 2,000 covers roughly the last two runs, which is the
-# overlap a twice-daily schedule can actually re-collect. Re-collecting a few
-# duplicates costs a little; a rejected collection costs the entire run and still
-# burns the trigger.
-MAX_EXCLUDE_PAYLOAD_BYTES = 4_200_000   # = 2,000 ids x 14 bytes x 150 children
+# The cap used to be 2,000, about two runs' worth, on the theory that only those
+# can resurface in a time_range="Past 24 hours" search. A replay of the
+# 2026-10-05..13 runs showed jobs coming back from weeks earlier, re-collected and
+# re-billed because they had fallen off the list. Re-collecting a few duplicates
+# costs a little; a rejected collection costs the entire run and still burns the
+# trigger, which is why the budget stays on the measured-good side.
+MAX_EXCLUDE_PAYLOAD_BYTES = 14_100_000  # ~ 10,000 ids x 14 bytes x 100 children
 # The width that budget was derived from: '"4444097977", ', the shape a 10-digit
 # posting id takes once aiohttp's json.dumps has written it. cap_exclude_ids does
 # not USE this -- it measures the ids actually in hand, so an 11-digit id can
@@ -147,7 +153,11 @@ MAX_EXCLUDE_PAYLOAD_BYTES = 4_200_000   # = 2,000 ids x 14 bytes x 150 children
 # _BYTES above was computed from, so it stays as the record of that arithmetic.
 BYTES_PER_EXCLUDE_ID = 14
 MIN_EXCLUDE_IDS = 50           # never exclude nothing: that re-bills every posting
-MAX_EXCLUDE_IDS = 2000         # the target: ~2 runs' worth, all that can recur
+# The default target, the most ids sent when the byte budget allows it. Overridable
+# by max_exclude_ids in search_config.json or the MAX_EXCLUDE_IDS env var (env >
+# file > default, see max_exclude_ids()); no Settings row, it is set by hand.
+MAX_EXCLUDE_IDS = 10_000
+MAX_EXCLUDE_IDS_ENV = "MAX_EXCLUDE_IDS"
 
 # Bright Data error codes that mean "we refused your input", as opposed to the
 # per-page codes (dead_page, page_too_big) that show up on healthy runs. Any of
@@ -323,6 +333,7 @@ def load_search_config() -> dict:
         "experience_level": raw.get("experience_level", BASE_FILTERS["experience_level"]),
         "exclude_window_days": _positive_int(raw.get("exclude_window_days"),
                                              DEFAULT_EXCLUDE_WINDOW_DAYS),
+        "max_exclude_ids": _positive_int(raw.get("max_exclude_ids"), MAX_EXCLUDE_IDS),
     }
 
 
@@ -360,9 +371,9 @@ def exclude_window_days() -> int:
     exact failure this guard prevents -- so we always fail toward the safe default
     rather than an empty window.
 
-    Note the cap dominates the window in practice: MAX_EXCLUDE_IDS trims whatever
-    this returns down to ~2,000 ids, so widening the window past a few days changes
-    nothing. See cap_exclude_ids."""
+    The cap still bounds what is sent: max_exclude_ids() (10,000 by default) trims
+    whatever the window keeps, newest kept, and says so when it trims. See
+    cap_exclude_ids."""
     raw = os.environ.get(EXCLUDE_WINDOW_DAYS_ENV, "").strip()
     if not raw:
         # _positive_int() already collapses junk/0/negative to the default.
@@ -405,6 +416,38 @@ def _parse_dates(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame({"job_posting_id": df["job_posting_id"], "_extracted": dates})
     out = out[out["job_posting_id"].notna()]
     return out.assign(job_posting_id=out["job_posting_id"].astype(str))
+
+
+def max_exclude_ids() -> int:
+    """The most exclude ids one search input may carry (before the byte budget).
+
+    Resolution order is env > search_config.json > MAX_EXCLUDE_IDS, the same walk
+    as exclude_window_days(): a missing, non-integer or non-positive env value
+    falls THROUGH to the file, and _positive_int() collapses junk in the file to
+    the default. A positive value under MIN_EXCLUDE_IDS is raised to it with a
+    WARNING: a skip list that short collects and bills almost everything again.
+    """
+    raw = os.environ.get(MAX_EXCLUDE_IDS_ENV, "").strip()
+    val = None
+    if raw:
+        try:
+            val = int(raw)
+        except ValueError:
+            print(f"Invalid {MAX_EXCLUDE_IDS_ENV}={raw!r}; falling back to "
+                  f"search_config.json")
+        else:
+            if val <= 0:
+                print(f"{MAX_EXCLUDE_IDS_ENV}={val} is not positive; falling back to "
+                      f"search_config.json")
+                val = None
+    if val is None:
+        val = load_search_config()["max_exclude_ids"]
+    if val < MIN_EXCLUDE_IDS:
+        print(f"  WARNING: max_exclude_ids={val} is under the {MIN_EXCLUDE_IDS}-id "
+              f"floor, so using {MIN_EXCLUDE_IDS}. A shorter skip list would collect "
+              f"and bill jobs you already have.")
+        val = MIN_EXCLUDE_IDS
+    return val
 
 
 def _window_dated(dated: pd.DataFrame, window_days: int) -> list[str]:
@@ -530,7 +573,7 @@ def load_extra_master_ids() -> list[str]:
     """Job ids from the additional master named by $LINKEDIN_EXTRA_MASTER (the synced
     Drive master, for a local run). [] when the var is unset, the file is missing, or it
     can't be read. Accepts a plain or gzipped CSV. Best-effort: a bad/absent extra master
-    never crashes a run — it just means weaker exclusion, not a fabricated one."""
+    never crashes a run; it just means weaker exclusion, not a fabricated one."""
     df = _extra_master_frame()
     if df is None:
         return []
@@ -671,7 +714,7 @@ def record_collected_ids(ids: list[str], day: str) -> None:
         merged = _newest_per_id([led, run])
         merged = merged[merged["collected_date"] >= _ledger_cutoff()]
         _atomic_to_csv(merged, LEDGER_CSV)
-    except (OSError, ValueError) as e:
+    except Exception as e:  # noqa: BLE001 -- the rows are saved; this must not end the run
         print(f"WARNING: could not save the ids of this run's {len(ids)} job(s) to "
               f"{LEDGER_CSV.name} ({e}). The next run may leave them off the skip "
               f"list, so they may be collected and billed again. Check that the "
@@ -909,13 +952,17 @@ def cap_exclude_ids(exclude_ids: list[str], limit_per_input: int) -> list[str]:
     BYTES_PER_EXCLUDE_ID constant bakes in a 10-digit LinkedIn posting id, ids are
     at 4.4e9 now, and the first 11-digit id would silently push the real payload
     past the cap with nothing noticing.
+
+    Every id that reaches here is a known job inside the window, so a trim is a
+    cost, and it is reported as a WARNING naming the setting that would avoid it.
     """
     limit = _positive_int(limit_per_input, LIMIT_PER_INPUT)
     if not exclude_ids:
         return exclude_ids
     per_id = max(1, len(json.dumps(exclude_ids)) // len(exclude_ids))
     budget = MAX_EXCLUDE_PAYLOAD_BYTES // (per_id * limit)
-    keep = min(budget, MAX_EXCLUDE_IDS)
+    cap = max_exclude_ids()
+    keep = min(budget, cap)
     if keep < MIN_EXCLUDE_IDS:
         # The budget, not the floor, wins here. An exclude set below the floor
         # re-bills postings we already hold, which is bad; a payload over the cap
@@ -927,10 +974,18 @@ def cap_exclude_ids(exclude_ids: list[str], limit_per_input: int) -> list[str]:
               f"limit_per_input in search_config.json; this run will re-collect "
               f"postings it already has.")
         keep = max(keep, 1)
+        return exclude_ids[-keep:]
     if len(exclude_ids) <= keep:
         return exclude_ids
-    print(f"  exclude set capped: {len(exclude_ids)} -> {keep} most recent ids "
-          f"(limit_per_input={limit}; Bright Data rejects oversized inputs)")
+    if budget > cap:
+        fix = (f"Raise max_exclude_ids in search_config.json (now {cap}) if Bright "
+               f"Data accepts a longer list.")
+    else:
+        fix = (f"limit_per_input={limit} leaves room for only {budget}; lower "
+               f"limit_per_input in search_config.json to fit more.")
+    print(f"  WARNING: skip list capped at {keep} of {len(exclude_ids)} known jobs. "
+          f"The {len(exclude_ids) - keep} oldest are left off it, so they may be "
+          f"collected and billed again. {fix}")
     return exclude_ids[-keep:]
 
 
@@ -1250,7 +1305,8 @@ def _assert_collected_something(progress: dict, snapshot_id: str) -> None:
             hint = ("\nThat error means the request itself was too large. It is almost always "
                     "the exclude list (jobs_to_not_include), which is copied onto every one of "
                     "the up-to-limit_per_input child fetches each search spawns. Lower "
-                    f"limit_per_input, or MAX_EXCLUDE_IDS (currently {MAX_EXCLUDE_IDS}).")
+                    f"max_exclude_ids in search_config.json (currently "
+                    f"{max_exclude_ids()}), or limit_per_input.")
         raise RuntimeError(
             f"Collection {snapshot_id} was rejected by Bright Data: {codes}. "
             f"It collected {records} row(s), so the inputs it did accept are not the "

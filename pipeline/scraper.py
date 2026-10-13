@@ -1,10 +1,11 @@
 import asyncio
-import gzip
 import json
 import os
 import re
+import socket
 import sys
 import tempfile
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -87,11 +88,12 @@ def require_credentials() -> None:
     """Exit with a helpful message if Bright Data credentials are missing.
     Called at the start of a run, not at import time."""
     if not API_TOKEN or not DATASET_ID:
-        sys.exit(
-            "Missing Bright Data credentials. Set BRIGHT_DATA_API_TOKEN and "
-            "BRIGHT_DATA_DATASET_ID in your environment or a local .env file "
-            "(see .env.example)."
-        )
+        # stdout, like every other ERROR line: the dashboard reads it from there.
+        print("ERROR: the Bright Data credentials are missing, so no jobs can be "
+              "collected. Set BRIGHT_DATA_API_TOKEN and BRIGHT_DATA_DATASET_ID in "
+              "Settings, your environment or a local .env file (see .env.example).",
+              flush=True)
+        sys.exit(1)
 CHUNK = 2000  # Chunked streaming row count for append_to_master (memory bounded)
 
 LIMIT_PER_INPUT = 100
@@ -114,6 +116,12 @@ EXTERNAL_EXCLUDE_FILE = OUTPUT_DIR / "external_exclude_ids.json"
 # Drive master is the VM's full cumulative record. Unset on the VM (whose own master IS
 # the full set), so the VM's exclusion is unchanged.
 EXTRA_MASTER_ENV = "LINKEDIN_EXTRA_MASTER"
+# Set (to 1) by a caller that EXPECTS a Drive master: the dashboard sets it on a
+# local run. Unset LINKEDIN_EXTRA_MASTER is normal on the VM and quiet there, but
+# on a local run it means Google Drive was not available, so the skip list lacks
+# every job the VM collected; with this set, the run says so in a WARNING. A
+# LINKEDIN_EXTRA_MASTER that is set but names a missing file always warns.
+EXPECT_DRIVE_MASTER_ENV = "INPLOYED_EXPECT_DRIVE_MASTER"
 
 # Every id each run got back from Bright Data, with the LAST day it was collected.
 # The masters cannot answer that: append_to_master keeps the existing row for a
@@ -188,13 +196,16 @@ MAX_EXCLUDE_IDS_ENV = "MAX_EXCLUDE_IDS"
 
 # Bright Data error codes that mean "we refused your input", as opposed to the
 # per-page codes (dead_page, page_too_big) that show up on healthy runs. Any of
-# these means part or all of the search never ran, so the collection is a failure
-# even when some rows came back. See _assert_collected_something.
+# these means part or all of the search never ran: with no rows at all the run
+# fails, and with some rows it keeps them and warns. See _assert_collected_something.
 INPUT_REJECTION_CODES = frozenset({
     "child_input_size_validation",
     "input_size_validation",
     "invalid_input",
 })
+# The subset that means "too large": the skip list, almost always, so the fix the
+# messages name is max_exclude_ids.
+SIZE_REJECTION_CODES = frozenset({"child_input_size_validation", "input_size_validation"})
 
 # Spammy aggregator companies to drop entirely — from every fresh run AND from
 # the cumulative master (case-insensitive substring match on company_name).
@@ -218,7 +229,10 @@ def load_blocklist() -> tuple[str, ...]:
                     merged.append(name)
                     have.add(name.lower())
         except OSError as e:
-            print(f"Could not read {BLOCKLIST_FILE.name} ({e}); using built-ins only")
+            warn_once(f"could not read {BLOCKLIST_FILE.name} ({e}), so only the built-in "
+                      f"blocklist is used and jobs from companies you blocked are kept "
+                      f"this run. Close any program that has the file open and run again.",
+                      key=f"blocklist:{BLOCKLIST_FILE}")
     return tuple(merged)
 
 HEADERS = {
@@ -249,6 +263,72 @@ TOKEN_HINT = (
     "permissions (not read-only) at https://brightdata.com/cp/setting/users, "
     "then put it in .env as BRIGHT_DATA_API_TOKEN."
 )
+
+
+# --- known ways a run fails --------------------------------------------------
+# Each is a RuntimeError (or, for the master, an OSError) so existing handlers and
+# tests keep working; the type is what _fatal_message reads to tell the user the
+# plain reason and what to do. main() also tags any failure with the snapshot id
+# and run label it had reached (see _tag), so a paid collection can be fetched
+# again with --snapshot.
+
+class TokenRejected(RuntimeError):
+    """Bright Data answered 401/403: the token is wrong, expired or not allowed
+    to start a collection (the status check or the trigger)."""
+
+    def __init__(self, msg: str, status: int):
+        super().__init__(msg)
+        self.status = status
+
+
+class RequestTooLarge(RuntimeError):
+    """The trigger was refused as too large (413, or 400 / a body about size)."""
+
+    def __init__(self, msg: str, status: int):
+        super().__init__(msg)
+        self.status = status
+
+
+class TriggerRefused(RuntimeError):
+    """Any other refusal of the trigger POST (5xx, 429, ...)."""
+
+    def __init__(self, msg: str, status: int, body: str):
+        super().__init__(msg)
+        self.status = status
+        self.body = body
+
+
+class InputsRejected(RuntimeError):
+    """Bright Data refused every search input and collected nothing."""
+
+    def __init__(self, msg: str, snapshot_id: str, codes: dict):
+        super().__init__(msg)
+        self.snapshot_id = snapshot_id
+        self.codes = codes
+
+
+class CollectionFailed(RuntimeError):
+    """Bright Data reported the collection itself as failed."""
+
+    def __init__(self, msg: str, snapshot_id: str, detail: str):
+        super().__init__(msg)
+        self.snapshot_id = snapshot_id
+        self.detail = detail
+
+
+class SnapshotNotFetched(RuntimeError):
+    """Polling or the download gave up (retries spent or the wait ran out) on a
+    collection that is already paid for. `why` is the plain-English reason."""
+
+    def __init__(self, msg: str, snapshot_id: str, why: str):
+        super().__init__(msg)
+        self.snapshot_id = snapshot_id
+        self.why = why
+
+
+class MasterUnreadable(OSError):
+    """append_to_master could not read the existing master. main() adds the run
+    CSV the rows were saved to (saved_csv) and how many there were (n_jobs)."""
 
 KEYWORDS = [
     '"Data Scientist"',
@@ -318,8 +398,8 @@ def _keyword_cap(value: int) -> int:
     `keywords[:0]` is empty and already spends nothing.
     """
     if value < 0:
-        print(f"  WARNING: --max-keywords={value} is negative, which would use "
-              "every keyword BUT the last and cap nothing; using 1")
+        warn(f"--max-keywords={value} is negative, which would use every keyword "
+             f"except the last and cap nothing, so using 1. Pass a positive number.")
         return 1
     return value
 
@@ -348,7 +428,12 @@ def load_search_config() -> dict:
             if isinstance(data, dict):
                 raw = data
         except (OSError, ValueError) as e:
-            print(f"Could not read {SEARCH_CONFIG_FILE} ({e}); using built-in defaults")
+            # Once per process: build_inputs, the cap and the window all read the
+            # config, and one broken file is one problem.
+            warn_once(f"could not read {SEARCH_CONFIG_FILE} ({e}), so this run uses the "
+                      f"built-in search settings (keywords, filters, limit_per_input "
+                      f"and the skip-list size) instead of yours. Fix the file or save "
+                      f"Settings again.", key=f"search_config:{path}:{e}")
     return {
         "keywords": raw.get("keywords", KEYWORDS),
         "remote_types": raw.get("remote_types", REMOTE_TYPES),
@@ -375,7 +460,9 @@ def load_previous_ids() -> list[str]:
         with open(PREVIOUS_IDS_FILE, "r", encoding="utf-8-sig") as f:
             data = json.load(f)
     except (OSError, ValueError) as e:
-        print(f"Could not read {PREVIOUS_IDS_FILE.name} ({e}); ignoring last-run ids")
+        warn(f"could not read {PREVIOUS_IDS_FILE.name} ({e}), so the job ids from the "
+             f"last run are not on the skip list and may be collected and billed again. "
+             f"The next run that collects jobs rewrites the file.")
         return []
     return [str(x) for x in data] if isinstance(data, list) else []
 
@@ -408,12 +495,12 @@ def exclude_window_days() -> int:
     try:
         val = int(raw)
     except ValueError:
-        print(f"Invalid {EXCLUDE_WINDOW_DAYS_ENV}={raw!r}; falling back to "
-              f"search_config.json")
-        return load_search_config()["exclude_window_days"]
+        val = 0
     if val <= 0:
-        print(f"{EXCLUDE_WINDOW_DAYS_ENV}={val} is not positive; falling back to "
-              f"search_config.json")
+        warn_once(f"{EXCLUDE_WINDOW_DAYS_ENV}={raw!r} is not a whole number above 0, so "
+                  f"it is ignored and exclude_window_days comes from search_config.json "
+                  f"or the built-in {DEFAULT_EXCLUDE_WINDOW_DAYS}. Fix or remove the "
+                  f"variable.")
         return load_search_config()["exclude_window_days"]
     return val
 
@@ -533,6 +620,21 @@ def _window_dated(dated: pd.DataFrame, window_days: int) -> list[str]:
 
 
 _ID_DATE_COLUMNS = ("job_posting_id", "extracted_date")
+# What reading a CSV (plain or gzipped) can raise when the file is locked, damaged
+# or half-synced: a truncated .csv.gz ends in EOFError, a corrupt deflate stream
+# in zlib.error, neither of which is an OSError or a ValueError.
+# (gzip.BadGzipFile is an OSError, UnicodeDecodeError and ParserError ValueErrors.)
+_READ_ERRORS = (OSError, ValueError, EOFError, zlib.error)
+
+
+def _warn_undated(df: pd.DataFrame, what: str) -> None:
+    """WARNING when a non-empty id source carries no extracted_date column."""
+    if df.empty or "extracted_date" in df.columns:
+        return
+    warn(f"{what} has no extracted_date column, so its {len(df)} job(s) cannot be "
+         f"dated. They stay on the skip list, but they are the first left off when "
+         f"the list is longer than the cap, so some may be collected and billed "
+         f"again. Restore the file from a backup that has the column.")
 
 
 def _own_master_frame() -> pd.DataFrame | None:
@@ -543,8 +645,11 @@ def _own_master_frame() -> pd.DataFrame | None:
         return None
     try:
         df = pd.read_csv(MASTER_CSV, usecols=lambda c: c in _ID_DATE_COLUMNS, dtype=str)
-    except (OSError, ValueError, pd.errors.ParserError) as e:
-        print(f"Could not read master for exclusions ({e}); using last-run ids")
+    except _READ_ERRORS as e:
+        warn(f"could not read {MASTER_CSV.name} for the skip list ({e}). Using the job "
+             f"ids from the last run instead, so jobs collected before that may be "
+             f"collected and billed again. Close any program that has the file open, "
+             f"or restore it from a backup, and run again.")
         return None
     if "job_posting_id" not in df.columns:
         # Parsed, but not a master: a truncated write, or the wrong CSV copied
@@ -552,9 +657,12 @@ def _own_master_frame() -> pd.DataFrame | None:
         # which re-collects and re-bills every posting already held -- and on
         # the VM the only trace would be the ABSENCE of a line in scraper.log.
         # An empty-but-valid master is a different thing and stays quiet.
-        print(f"WARNING: {MASTER_CSV.name} has no job_posting_id column "
-              f"(found: {list(df.columns) or 'no columns'}); using last-run ids")
+        warn(f"{MASTER_CSV.name} has no job_posting_id column (found: "
+             f"{list(df.columns) or 'no columns'}), so it cannot be used. Using the "
+             f"job ids from the last run instead, so jobs collected before that may "
+             f"be collected and billed again. Restore the master from a backup.")
         return None
+    _warn_undated(df, MASTER_CSV.name)
     return df
 
 
@@ -567,29 +675,54 @@ def load_external_exclude_ids() -> list[str]:
             data = json.load(f)
         return [str(x) for x in data] if isinstance(data, list) else []
     except (OSError, ValueError) as e:
-        print(f"Could not read {EXTERNAL_EXCLUDE_FILE.name} ({e}); ignoring external excludes")
+        warn(f"could not read {EXTERNAL_EXCLUDE_FILE.name} ({e}). It lists jobs collected "
+             f"on another computer, so some of them may be collected and billed again. "
+             f"The next push from the dashboard replaces the file.")
         return []
+
+
+def _truthy_env(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _extra_master_frame() -> pd.DataFrame | None:
     """The additional master named by $LINKEDIN_EXTRA_MASTER as (job_posting_id,
     extracted_date) rows, or None when the var is unset, the file is missing or
-    unreadable, or it holds no ids. Accepts a plain or gzipped CSV."""
+    unreadable, or it holds no ids. Accepts a plain or gzipped CSV.
+
+    Never raises: the Drive master is a synced copy this host does not write, and
+    a half-synced or damaged one must cost a WARNING, not the run. Unset is quiet
+    unless the caller set EXPECT_DRIVE_MASTER_ENV (the dashboard, on a local run);
+    set-but-missing always warns."""
+    cost = ("so the skip list lacks the jobs already collected on the VM, and some "
+            "of them may be collected and billed again.")
     raw = os.environ.get(EXTRA_MASTER_ENV, "").strip()
     if not raw:
+        if _truthy_env(EXPECT_DRIVE_MASTER_ENV):
+            warn(f"no Google Drive master was found, {cost} Start Google Drive and "
+                 f"let it finish syncing, then run again.")
         return None
     path = Path(raw)
     if not path.exists():
+        warn(f"the Google Drive master {path} does not exist, {cost} Start Google "
+             f"Drive (or check that the file was not moved) and run again.")
         return None
     try:
         comp = "gzip" if path.suffix == ".gz" else "infer"
         df = pd.read_csv(path, usecols=lambda c: c in _ID_DATE_COLUMNS,
                          dtype=str, compression=comp)
-    except (OSError, ValueError, pd.errors.ParserError) as e:
-        print(f"Could not read extra master {path.name} for exclusions ({e}); ignoring")
+    except _READ_ERRORS as e:
+        warn(f"could not read the Google Drive master {path.name} "
+             f"({type(e).__name__}: {e}), {cost} If Google Drive is still syncing, "
+             f"wait for it to finish and run again; otherwise the file is damaged.")
         return None
-    if "job_posting_id" not in df.columns or df.empty:
+    if "job_posting_id" not in df.columns:
+        warn(f"the Google Drive master {path.name} has no job_posting_id column, "
+             f"{cost} Check that {EXTRA_MASTER_ENV} points at the right file.")
         return None
+    if df.empty:
+        return None
+    _warn_undated(df, f"the Google Drive master {path.name}")
     return df
 
 
@@ -662,11 +795,11 @@ def seed_ledger_from_run_files() -> pd.DataFrame:
                 continue
             try:
                 df = pd.read_csv(path, usecols=lambda c: c in _ID_DATE_COLUMNS, dtype=str)
-            except (OSError, ValueError, EOFError, zlib.error, gzip.BadGzipFile) as e:
-                print(f"WARNING: could not read {label}/{path.name} while rebuilding "
-                      f"{LEDGER_CSV.name} ({e}). The jobs in that run may be collected "
-                      f"and billed again. The file is probably damaged; the rest of "
-                      f"the run files are still used.")
+            except _READ_ERRORS as e:
+                warn(f"could not read {label}/{path.name} while rebuilding "
+                     f"{LEDGER_CSV.name} ({e}). The jobs in that run may be collected "
+                     f"and billed again. The file is probably damaged; the rest of "
+                     f"the run files are still used.")
                 continue
             if "job_posting_id" not in df.columns or df.empty:
                 continue
@@ -707,10 +840,10 @@ def _ledger_frame() -> pd.DataFrame:
         try:
             led = _read_ledger()
         except (OSError, ValueError) as e:
-            print(f"WARNING: could not read {LEDGER_CSV.name} ({e}). It holds the "
-                  f"last day each job was collected, so without it jobs collected "
-                  f"recently may be left off the skip list and billed again. Using "
-                  f"the saved run files instead; this run rewrites the file.")
+            warn(f"could not read {LEDGER_CSV.name} ({e}). It holds the "
+                 f"last day each job was collected, so without it jobs collected "
+                 f"recently may be left off the skip list and billed again. Using "
+                 f"the saved run files instead; this run rewrites the file.")
             led = seed_ledger_from_run_files()
     return led.rename(columns={"collected_date": "extracted_date"})
 
@@ -729,9 +862,9 @@ def record_collected_ids(ids: list[str], day: str) -> None:
             try:
                 led = _read_ledger()
             except (OSError, ValueError) as e:
-                print(f"WARNING: could not read {LEDGER_CSV.name} ({e}). Rebuilding "
-                      f"it from the saved run files, so jobs collected only in runs "
-                      f"whose files are gone may be collected and billed again.")
+                warn(f"could not read {LEDGER_CSV.name} ({e}). Rebuilding "
+                     f"it from the saved run files, so jobs collected only in runs "
+                     f"whose files are gone may be collected and billed again.")
                 led = seed_ledger_from_run_files()
         else:
             led = seed_ledger_from_run_files()
@@ -741,10 +874,10 @@ def record_collected_ids(ids: list[str], day: str) -> None:
         merged = merged[merged["collected_date"] >= _ledger_cutoff()]
         _atomic_to_csv(merged, LEDGER_CSV)
     except Exception as e:  # noqa: BLE001 -- the rows are saved; this must not end the run
-        print(f"WARNING: could not save the ids of this run's {len(ids)} job(s) to "
-              f"{LEDGER_CSV.name} ({e}). The next run may leave them off the skip "
-              f"list, so they may be collected and billed again. Check that the "
-              f"file is not open in another program and that the disk is not full.")
+        warn(f"could not save the ids of this run's {len(ids)} job(s) to "
+             f"{LEDGER_CSV.name} ({e}). The next run may leave them off the skip "
+             f"list, so they may be collected and billed again. Check that the "
+             f"file is not open in another program and that the disk is not full.")
 
 
 def load_exclude_ids() -> list[str]:
@@ -776,23 +909,37 @@ def load_exclude_ids() -> list[str]:
     window = exclude_window_days()
     own = _own_master_frame()
     if own is None or own.empty:
-        own = pd.DataFrame({"job_posting_id": load_previous_ids()}, dtype=str)
+        previous = load_previous_ids()
+        # An unreadable master has already said so. A missing or emptied master
+        # with ids from a last run means the master went away; a first run with
+        # neither is normal and stays quiet.
+        if previous and (own is not None or not MASTER_CSV.exists()):
+            state = "has no jobs" if own is not None else "is missing"
+            warn(f"{MASTER_CSV.name} {state}, so the skip list uses the "
+                 f"{len(previous)} job ids from the last run instead. Jobs collected "
+                 f"before that may be collected and billed again. Restore the master "
+                 f"from a backup if it was moved, deleted or emptied.")
+        own = pd.DataFrame({"job_posting_id": previous}, dtype=str)
     sources = [
-        _extra_master_frame(),
-        pd.DataFrame({"job_posting_id": load_external_exclude_ids()}, dtype=str),
-        own,
-        _ledger_frame(),
+        ("the Google Drive master", _extra_master_frame()),
+        (EXTERNAL_EXCLUDE_FILE.name,
+         pd.DataFrame({"job_posting_id": load_external_exclude_ids()}, dtype=str)),
+        (MASTER_CSV.name, own),
+        (LEDGER_CSV.name, _ledger_frame()),
     ]
     parts = []
-    for df in sources:
+    for name, df in sources:
         if df is None or df.empty or "job_posting_id" not in df.columns:
             continue
         try:
             parts.append(_parse_dates(df))
-        except (TypeError, ValueError, pd.errors.ParserError) as e:
+        except (TypeError, ValueError) as e:
             # Degrade that one source to undated (kept), never the whole run: a
             # superset never re-bills.
-            print(f"Could not read the dates of one exclude source ({e}); keeping all its ids")
+            warn(f"could not read the dates in {name} ({e}), so its jobs stay on the "
+                 f"skip list without dates. They are the first left off when the list "
+                 f"is longer than the cap, so some may be collected and billed again. "
+                 f"Report this if it repeats.")
             parts.append(_parse_dates(df.drop(columns=["extracted_date"], errors="ignore")))
     if not parts:
         return []
@@ -922,7 +1069,7 @@ def append_to_master(df: pd.DataFrame) -> int:
         probe = pd.read_csv(MASTER_CSV, usecols=lambda c: c == "job_posting_id",
                             dtype=str)
     except (OSError, ValueError, pd.errors.ParserError) as e:
-        raise OSError(
+        raise MasterUnreadable(
             f"cannot update {MASTER_CSV.name}: existing master is unreadable ({e}). "
             f"This run's rows are still saved to the run-dir CSV; fix or restore "
             f"{MASTER_CSV} and rerun with --snapshot to recover them."
@@ -1062,7 +1209,7 @@ async def preflight(session: aiohttp.ClientSession) -> None:
     "Invalid credentials" charged against a valid token.
 
     FAIL OPEN: only an outright 401/403 (the token is dead or revoked) aborts the
-    run. A timeout, a 5xx or anything else prints a warning and continues. This
+    run. A timeout, a 5xx or anything else prints a WARNING and continues. This
     script runs unattended on the VM cron, and a probe that is itself unavailable
     must never become the reason a working scrape doesn't happen.
 
@@ -1077,11 +1224,17 @@ async def preflight(session: aiohttp.ClientSession) -> None:
             status = resp.status
             body = (await resp.text())[:200]
     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-        print(f"  preflight skipped (token check unavailable: {e})")
+        warn(f"could not reach Bright Data's account check ({_exc_text(e)}), so the "
+             f"token was not checked. The run went ahead anyway; if it fails next, "
+             f"check the internet connection.")
         return
     if status in (401, 403):
-        raise RuntimeError(
-            f"Bright Data rejected the API token ({status}: {body}).\n{TOKEN_HINT}")
+        raise TokenRejected(
+            f"Bright Data rejected the API token ({status}: {body}).\n{TOKEN_HINT}", status)
+    if not 200 <= status < 300:
+        warn(f"Bright Data's account check answered {status}, so the token could not "
+             f"be checked. The run went ahead anyway; if the collection fails next, "
+             f"try again later.")
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -1284,13 +1437,29 @@ async def trigger(session: aiohttp.ClientSession, payload: dict,
     async with session.post(url, json=payload) as resp:
         if resp.status >= 400:
             body = await resp.text()
+            head = f"Trigger failed {resp.status}: {_quoted(body)}"
             # Backstop for when preflight failed open (probe down) but the account
             # is the real problem: 401/403 here means the same thing it does there.
-            hint = f"\n{TOKEN_HINT}" if resp.status in (401, 403) else ""
-            raise RuntimeError(f"Trigger failed {resp.status}: {_quoted(body)}{hint}")
+            if resp.status in (401, 403):
+                raise TokenRejected(f"{head}\n{TOKEN_HINT}", resp.status)
+            if _too_large(resp.status, body):
+                raise RequestTooLarge(
+                    f"{head}\nThe request was too large. The skip list "
+                    f"(jobs_to_not_include) sent with every search is the usual cause: "
+                    f"lower {max_exclude_ids_where()}.", resp.status)
+            raise TriggerRefused(head, resp.status, body)
         # text(), not json(): a collection that beat the sync window comes back
         # as NDJSON, which json() cannot read. See _parse_collection_body.
         return _parse_collection_body(await resp.text(), status=resp.status)
+
+
+def _too_large(status: int, body: str) -> bool:
+    """A trigger refusal that means the request was too big: 413, a 400 (what
+    Bright Data has answered an oversized input with), or another 4xx whose body
+    talks about size."""
+    if status in (400, 413):
+        return True
+    return status < 500 and bool(re.search(r"too large|size", body or "", re.IGNORECASE))
 
 
 def _assert_collected_something(progress: dict, snapshot_id: str) -> None:
@@ -1318,8 +1487,10 @@ def _assert_collected_something(progress: dict, snapshot_id: str) -> None:
         90% of the children and 10% return rows, `records` is truthy and a
         count-only check waves through a badly degraded collection.
 
-    So: an input-rejection code is fatal whether or not rows came back, and zero
-    rows with only ordinary page errors is a warning, not an exception.
+    So: an input-rejection code with NO rows is fatal (InputsRejected). With rows,
+    those rows are already paid for, so they are downloaded and saved like any
+    others and the rejection is a WARNING: raising there threw the paid rows away
+    and skipped scoring. Zero rows with only ordinary page errors is a WARNING too.
 
     Pure ASCII: this text lands in the Windows console and the dashboard dialog.
     """
@@ -1328,21 +1499,32 @@ def _assert_collected_something(progress: dict, snapshot_id: str) -> None:
     codes = progress.get("error_codes") or {}
     rejected = sorted(c for c in codes if c in INPUT_REJECTION_CODES)
     if rejected:
-        hint = ""
-        if "child_input_size_validation" in rejected:
-            hint = ("\nThat error means the request itself was too large. It is almost always "
-                    "the exclude list (jobs_to_not_include), which is copied onto every one of "
-                    "the up-to-limit_per_input child fetches each search spawns. Lower "
-                    f"max_exclude_ids in search_config.json (currently "
-                    f"{max_exclude_ids()}), or limit_per_input.")
-        raise RuntimeError(
-            f"Collection {snapshot_id} was rejected by Bright Data: {codes}. "
-            f"It collected {records} row(s), so the inputs it did accept are not the "
-            f"whole search.{hint}")
+        size = any(c in SIZE_REJECTION_CODES for c in rejected)
+        if not records:
+            hint = ""
+            if size:
+                hint = ("\nThat error means the request itself was too large. It is almost "
+                        "always the exclude list (jobs_to_not_include), which is copied onto "
+                        "every one of the up-to-limit_per_input child fetches each search "
+                        f"spawns. Lower {max_exclude_ids_where()}, or limit_per_input.")
+            raise InputsRejected(
+                f"Collection {snapshot_id} was rejected by Bright Data: {codes}. "
+                f"It collected 0 rows.{hint}", snapshot_id, codes)
+        if size:
+            fix = (f"The rejection code means those searches' skip list was too large. "
+                   f"Lower {max_exclude_ids_where()} so every search fits.")
+        else:
+            fix = "Check the keywords and filters in Settings (search_config.json)."
+        warn(f"Bright Data rejected some of this run's searches ({codes}) and collected "
+             f"{records} job(s) from the rest. Those jobs are saved as usual, but the "
+             f"rejected searches collected nothing, so their new jobs are missed until "
+             f"a later run. {fix}")
+        return
     if not records and errors:
-        print(f"  WARNING: collection {snapshot_id} returned 0 rows with {errors} "
-              f"error(s): {codes}. No input was rejected, so this is most likely a "
-              f"quiet 24 hours. Check scraper.log if it repeats.")
+        warn(f"collection {snapshot_id} returned 0 jobs with {errors} page error(s) "
+             f"({codes}). No search was rejected, so most likely nothing new was "
+             f"posted. If it happens on several runs in a row, check scraper.log and "
+             f"that collection in the Bright Data dashboard.")
 
 
 async def wait_until_ready(session: aiohttp.ClientSession, snapshot_id: str) -> None:
@@ -1359,11 +1541,16 @@ async def wait_until_ready(session: aiohttp.ClientSession, snapshot_id: str) -> 
             # One transient 5xx must not abort a snapshot that's already billed.
             failures += 1
             if failures >= MAX_POLL_FAILURES:
-                raise RuntimeError(f"Progress polling failed {failures}x in a row: {e}") from e
+                raise SnapshotNotFetched(
+                    f"Progress polling failed {failures}x in a row: {e}", snapshot_id,
+                    f"Bright Data's progress check failed {failures} times in a row "
+                    f"({_exc_text(e)})") from e
             print(f"  poll error ({e}); retrying ({failures}/{MAX_POLL_FAILURES})")
             if asyncio.get_event_loop().time() > deadline:
-                raise RuntimeError(
-                    f"Timeout after {MAX_WAIT_MINUTES} min while polling") from e
+                raise SnapshotNotFetched(
+                    f"Timeout after {MAX_WAIT_MINUTES} min while polling", snapshot_id,
+                    f"Bright Data's progress check was still failing after "
+                    f"{MAX_WAIT_MINUTES} minutes ({_exc_text(e)})") from e
             await asyncio.sleep(POLL_INTERVAL)
             continue
         status = data.get("status")
@@ -1373,9 +1560,13 @@ async def wait_until_ready(session: aiohttp.ClientSession, snapshot_id: str) -> 
             _assert_collected_something(data, snapshot_id)
             return
         if status == "failed":
-            raise RuntimeError(f"Collection failed: {data}")
+            raise CollectionFailed(f"Collection failed: {data}", snapshot_id,
+                                   _failure_detail(data))
         if asyncio.get_event_loop().time() > deadline:
-            raise RuntimeError(f"Timeout after {MAX_WAIT_MINUTES} min, last status: {status}")
+            raise SnapshotNotFetched(
+                f"Timeout after {MAX_WAIT_MINUTES} min, last status: {status}", snapshot_id,
+                f"the collection was still running after {MAX_WAIT_MINUTES} minutes "
+                f"(last status: {status})")
         await asyncio.sleep(POLL_INTERVAL)
 
 
@@ -1404,11 +1595,16 @@ async def download(session: aiohttp.ClientSession, snapshot_id: str) -> list[dic
             # Transient network/5xx errors: retry a bounded number of times.
             failures += 1
             if failures >= MAX_POLL_FAILURES:
-                raise RuntimeError(f"Snapshot download failed {failures}x in a row: {e}") from e
+                raise SnapshotNotFetched(
+                    f"Snapshot download failed {failures}x in a row: {e}", snapshot_id,
+                    f"the download failed {failures} times in a row "
+                    f"({_exc_text(e)})") from e
             print(f"  download error ({e}); retrying ({failures}/{MAX_POLL_FAILURES})")
             if asyncio.get_event_loop().time() > deadline:
-                raise RuntimeError(
-                    f"Timeout after {MAX_WAIT_MINUTES} min downloading snapshot") from e
+                raise SnapshotNotFetched(
+                    f"Timeout after {MAX_WAIT_MINUTES} min downloading snapshot",
+                    snapshot_id, f"the download was still failing after "
+                    f"{MAX_WAIT_MINUTES} minutes ({_exc_text(e)})") from e
             await asyncio.sleep(POLL_INTERVAL)
             continue
 
@@ -1421,14 +1617,19 @@ async def download(session: aiohttp.ClientSession, snapshot_id: str) -> list[dic
         status = (data.get("status") if isinstance(data, dict) else "") or ""
         message = (data.get("message") if isinstance(data, dict) else "") or ""
         if status.lower() == "failed":
-            raise RuntimeError(f"Collection failed during download: {data}")
+            raise CollectionFailed(f"Collection failed during download: {data}",
+                                   snapshot_id, _failure_detail(data))
         not_ready = status.lower() in {"building", "running", "pending", "collecting", "scheduled"} \
             or "not ready" in message.lower() or "try again" in message.lower()
         if not not_ready:
             # Genuinely unexpected payload — surface it rather than loop forever.
             raise RuntimeError(f"Unexpected snapshot response shape: {data}")
         if asyncio.get_event_loop().time() > deadline:
-            raise RuntimeError(f"Timeout after {MAX_WAIT_MINUTES} min; snapshot still '{status or 'building'}'")
+            raise SnapshotNotFetched(
+                f"Timeout after {MAX_WAIT_MINUTES} min; snapshot still "
+                f"'{status or 'building'}'", snapshot_id,
+                f"the collection was still not ready to download after "
+                f"{MAX_WAIT_MINUTES} minutes")
         print(f"  snapshot not ready yet (status: {status or 'building'}); retrying in {POLL_INTERVAL}s")
         await asyncio.sleep(POLL_INTERVAL)
 
@@ -1450,56 +1651,70 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
         # force. Coerce once, here, and say so.
         capped = _positive_int(limit_per_input, cfg["limit_per_input"])
         if capped != limit_per_input:
-            print(f"  WARNING: --limit={limit_per_input} is not a positive count; "
-                  f"using {capped}. A bad value never lifts a spend guard.")
+            warn(f"--limit={limit_per_input} is not a positive count, so using "
+                 f"{capped}. A bad value never lifts a spend guard.")
         limit_per_input = capped
 
-    async with aiohttp.ClientSession(headers=HEADERS) as session:
-        if snapshot_id is None:
-            # Normal path: trigger a fresh (billed) collection and wait for it.
-            # Preflight first so a dead account costs nothing. The recovery path
-            # below is deliberately NOT gated: that snapshot is already paid for,
-            # and a fail-open probe must never block collecting what you own.
-            await preflight(session)
-            exclude_ids = load_exclude_ids()
-            print(f"Run: {run_label} | Excluding {len(exclude_ids)} already-scraped job IDs")
-            inputs = build_inputs(exclude_ids, max_keywords=max_keywords,
-                                  limit_per_input=limit_per_input)
-            payload = {"input": inputs}
-            # Derived from `inputs`, not from the raw flag: build_inputs coerces
-            # the flag, and a run log naming a cap the run did not apply is worse
-            # than no line at all.
-            kw_used = len(inputs) // max(len(cfg["remote_types"]), 1)
-            print(f"Triggering {len(inputs)} searches ({kw_used} keywords x {len(cfg['remote_types'])} remote types), "
-                  f"limit_per_input={limit_per_input} -> up to {len(inputs) * limit_per_input} postings")
-            collected = await trigger(session, payload, limit_per_input=limit_per_input)
-            if collected.rows is not None:
-                # Finished inside Bright Data's synchronous window: the records
-                # arrived WITH the POST and no snapshot was ever created, so
-                # there is nothing to poll and nothing --snapshot could recover
-                # later. This collection is already paid for; it gets used here
-                # or it is lost.
-                results = collected.rows
-                print(f"Collected {len(results)} rows synchronously "
-                      f"(no snapshot issued, nothing to poll)")
-                if not results:
-                    # The /progress payload is where input-rejection codes live,
-                    # and this branch never fetches one, so say plainly that the
-                    # rejection check did not run rather than implying a clean
-                    # quiet day. See _assert_collected_something.
-                    print("  NOTE: a synchronous collection has no progress "
-                          "record, so the input-rejection check did not run.")
+    try:
+        async with aiohttp.ClientSession(headers=HEADERS) as session:
+            if snapshot_id is None:
+                # Normal path: trigger a fresh (billed) collection and wait for it.
+                # Preflight first so a dead account costs nothing. The recovery path
+                # below is deliberately NOT gated: that snapshot is already paid for,
+                # and a fail-open probe must never block collecting what you own.
+                await preflight(session)
+                exclude_ids = load_exclude_ids()
+                print(f"Run: {run_label} | Excluding {len(exclude_ids)} already-scraped job IDs")
+                inputs = build_inputs(exclude_ids, max_keywords=max_keywords,
+                                      limit_per_input=limit_per_input)
+                payload = {"input": inputs}
+                # Derived from `inputs`, not from the raw flag: build_inputs coerces
+                # the flag, and a run log naming a cap the run did not apply is worse
+                # than no line at all.
+                kw_used = len(inputs) // max(len(cfg["remote_types"]), 1)
+                print(f"Triggering {len(inputs)} searches ({kw_used} keywords x {len(cfg['remote_types'])} remote types), "
+                      f"limit_per_input={limit_per_input} -> up to {len(inputs) * limit_per_input} postings")
+                collected = await trigger(session, payload, limit_per_input=limit_per_input)
+                if collected.rows is not None:
+                    # Finished inside Bright Data's synchronous window: the records
+                    # arrived WITH the POST and no snapshot was ever created, so
+                    # there is nothing to poll and nothing --snapshot could recover
+                    # later. This collection is already paid for; it gets used here
+                    # or it is lost.
+                    results = collected.rows
+                    print(f"Collected {len(results)} rows synchronously "
+                          f"(no snapshot issued, nothing to poll)")
+                    if not results:
+                        # The /progress payload is where input-rejection codes live,
+                        # and this branch never fetches one, so say plainly that the
+                        # rejection check did not run rather than implying a clean
+                        # quiet day. See _assert_collected_something.
+                        warn("Bright Data finished the collection at once with 0 jobs "
+                             "and sent no progress record, so this run could not check "
+                             "whether it rejected any searches. Most likely nothing new "
+                             "was posted. If it happens on several runs in a row, check "
+                             "the Bright Data dashboard.")
+                else:
+                    snapshot_id = collected.snapshot_id
+                    print(f"Snapshot: {snapshot_id}")
+                    await wait_until_ready(session, snapshot_id)
+                    results = await download(session, snapshot_id)
             else:
-                snapshot_id = collected.snapshot_id
-                print(f"Snapshot: {snapshot_id}")
-                await wait_until_ready(session, snapshot_id)
+                # Recovery path: re-download an already-collected snapshot (e.g. one
+                # whose run aborted after billing). No trigger -> no extra cost.
+                print(f"Run: {run_label} | Recovering already-collected snapshot {snapshot_id} (no new trigger/billing)")
                 results = await download(session, snapshot_id)
-        else:
-            # Recovery path: re-download an already-collected snapshot (e.g. one
-            # whose run aborted after billing). No trigger -> no extra cost.
-            print(f"Run: {run_label} | Recovering already-collected snapshot {snapshot_id} (no new trigger/billing)")
-            results = await download(session, snapshot_id)
 
+        _save_results(results, run_label)
+    except Exception as e:
+        # Whatever failed, the ERROR line needs the paid snapshot (if one exists
+        # by now) to tell the user how to fetch it again for free. See run().
+        _tag(e, snapshot_id=snapshot_id, run_label=run_label)
+        raise
+
+
+def _save_results(results: list[dict], run_label: str) -> None:
+    """Write a run's rows: the run CSV, the ledger, last-run ids, the master."""
     df = pd.json_normalize(results)
     if df.empty:
         # Write nothing: a columnless CSV would crash the scoring step, and the
@@ -1539,12 +1754,135 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
     if "job_posting_id" in df.columns:
         save_current_ids(df["job_posting_id"].astype(str).tolist())
 
-    master_total = append_to_master(df)
+    try:
+        master_total = append_to_master(df)
+    except MasterUnreadable as e:
+        e.saved_csv = f"{run_label}/{csv_path.name}"
+        e.n_jobs = len(df)
+        raise
     print(f"Saved {len(df)} jobs -> {run_label}/{csv_path.name}")
     print(f"Master CSV now contains {master_total} unique jobs")
 
 
-if __name__ == "__main__":
+# --- the one ERROR line a failed run ends with ---------------------------------
+
+def _tag(exc: BaseException, **attrs) -> None:
+    """Attach context (snapshot_id, run_label) to `exc` unless it already has it.
+    Best effort: an exception type that refuses attributes just goes without."""
+    for name, value in attrs.items():
+        if value is not None and getattr(exc, name, None) is None:
+            try:
+                setattr(exc, name, value)
+            except (AttributeError, TypeError):
+                pass
+
+
+def _exc_text(e: BaseException, limit: int = 200) -> str:
+    """'Type: message' on one line, bounded; just the type when the message is empty."""
+    text = _one_line(e)
+    if len(text) > limit:
+        text = text[:limit] + "..."
+    return f"{type(e).__name__}: {text}" if text else type(e).__name__
+
+
+def _failure_detail(data) -> str:
+    """The part of a failed-collection payload worth quoting to the user."""
+    if isinstance(data, dict):
+        for key in ("error", "message", "error_message", "reason"):
+            if data.get(key):
+                return _one_line(data[key])[:300]
+    return _one_line(data)[:300]
+
+
+def _rerun_command(snapshot_id: str, run_label: str | None) -> str:
+    """The command that fetches an already-paid snapshot without a new trigger. In
+    the repo the script is pipeline/scraper.py; on the VM it sits flat in ~/."""
+    script = "pipeline/scraper.py" if _HERE.name == "pipeline" else "~/scraper.py"
+    cmd = f"python {script} --snapshot {snapshot_id}"
+    return f"{cmd} --label {run_label}" if run_label else cmd
+
+
+_NETWORK_ERRORS = (aiohttp.ClientError, asyncio.TimeoutError, TimeoutError,
+                   ConnectionError, socket.gaierror)
+
+
+def _fatal_message(e: BaseException) -> str:
+    """The plain-English reason a run failed and what to do, for the ERROR line."""
+    sid = getattr(e, "snapshot_id", None)
+    label = getattr(e, "run_label", None)
+    refetch = (f" This collection is already paid for. To fetch its jobs without paying "
+               f"again, run: {_rerun_command(sid, label)}" if sid else "")
+    if isinstance(e, TokenRejected):
+        return (f"Bright Data refused the API token ({e.status}), so no jobs were "
+                f"collected. The token is wrong, expired, or not allowed to start a "
+                f"collection. {TOKEN_HINT}")
+    if isinstance(e, InputsRejected):
+        codes = ", ".join(f"{k}: {v}" for k, v in sorted(e.codes.items()))
+        if any(c in SIZE_REJECTION_CODES for c in e.codes):
+            return (f"Bright Data rejected every search ({codes}) because the skip list "
+                    f"sent with each one was too large, so nothing was collected. Lower "
+                    f"{max_exclude_ids_where()} and run again.")
+        return (f"Bright Data rejected every search as invalid ({codes}), so nothing was "
+                f"collected. Check the keywords and filters in Settings "
+                f"(search_config.json) and run again.")
+    if isinstance(e, RequestTooLarge):
+        return (f"Bright Data refused to start the collection because the request was "
+                f"too large ({e.status}), so no jobs were collected. The skip list sent "
+                f"with every search is the usual cause. Lower {max_exclude_ids_where()} "
+                f"and run again.")
+    if isinstance(e, TriggerRefused):
+        return (f"Bright Data refused to start the collection ({e.status}: "
+                f"{_one_line(e.body)[:200]}), so no jobs were collected. This is usually "
+                f"a problem on their side: try again later, and check the Bright Data "
+                f"dashboard if it keeps happening.")
+    if isinstance(e, CollectionFailed):
+        return (f"Bright Data's collection {e.snapshot_id} failed ({e.detail}), so no "
+                f"jobs were collected. Try again later; if it keeps failing, open that "
+                f"collection in the Bright Data dashboard.")
+    if isinstance(e, SnapshotNotFetched):
+        return f"{e.why}, so this run's jobs were not downloaded.{refetch}"
+    if isinstance(e, MasterUnreadable):
+        saved = getattr(e, "saved_csv", None)
+        n = getattr(e, "n_jobs", None)
+        where = (f"The {n} job(s) were saved to {saved}." if saved
+                 else "The jobs were saved to this run's file.")
+        if sid:
+            then = (f" Restore or fix the master, then run {_rerun_command(sid, label)} "
+                    f"to add them to it without paying again.")
+        else:
+            then = (" Restore or fix the master from a backup; the saved file keeps the "
+                    "jobs, and the dashboard's score step picks it up.")
+        return (f"could not add this run's jobs to {MASTER_CSV.name} because the file "
+                f"cannot be read ({_exc_text(e.__cause__ or e)}). {where}{then}")
+    if isinstance(e, _NETWORK_ERRORS):
+        return (f"could not reach Bright Data ({_exc_text(e)}), so the run stopped. "
+                f"Check the internet connection and try again.{refetch}")
+    return (f"the job search stopped unexpectedly: {_exc_text(e, 300)}. The details "
+            f"are in the log above.{refetch}")
+
+
+def run(snapshot_id: str | None = None, run_label: str | None = None,
+        max_keywords: int | None = None, limit_per_input: int | None = None) -> int:
+    """main() with the top-level handler: 0 on success; on a failure, the traceback
+    to stderr (it goes to the log), then ONE final "ERROR: <reason>. <what to do>"
+    line to stdout, and 1. SystemExit (missing credentials) passes through; it has
+    printed its own ERROR line."""
+    try:
+        asyncio.run(main(snapshot_id=snapshot_id, run_label=run_label,
+                         max_keywords=max_keywords, limit_per_input=limit_per_input))
+    except Exception as e:  # noqa: BLE001 -- the last line of a failed run
+        traceback.print_exc()
+        sys.stderr.flush()
+        try:
+            msg = _fatal_message(e)
+        except Exception:  # noqa: BLE001 -- the classifier must never hide the failure
+            msg = f"the job search stopped unexpectedly: {_exc_text(e, 300)}"
+        print(f"ERROR: {_one_line(msg)}", flush=True)
+        return 1
+    return 0
+
+
+def cli(argv: list[str] | None = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -1573,10 +1911,14 @@ if __name__ == "__main__":
         help="Spend guard: max postings collected per search "
              f"(default: search_config.json limit_per_input, else {LIMIT_PER_INPUT}).",
     )
-    args = parser.parse_args()
-    asyncio.run(main(
+    args = parser.parse_args(argv)
+    return run(
         snapshot_id=args.snapshot,
         run_label=args.label,
         max_keywords=args.max_keywords,
         limit_per_input=args.limit,
-    ))
+    )
+
+
+if __name__ == "__main__":
+    sys.exit(cli())

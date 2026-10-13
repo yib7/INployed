@@ -224,7 +224,7 @@ def test_a_synchronous_collection_reaches_the_csv_without_a_second_call(
 
 def test_a_zero_row_synchronous_collection_says_the_rejection_check_did_not_run(
         tmp_path, monkeypatch, capsys):
-    """The `[]` body: nothing to write, exit clean, and the NOTE that the
+    """The `[]` body: nothing to write, exit clean, and the WARNING that the
     input-rejection check (which lives on the /progress payload) never ran
     must be reachable and printed, so a quiet day is not mistaken for a
     verified one."""
@@ -258,7 +258,8 @@ def test_a_zero_row_synchronous_collection_says_the_rejection_check_did_not_run(
     asyncio.run(scraper.main(run_label=label))
     out = capsys.readouterr().out
     assert "Collected 0 rows synchronously" in out
-    assert "input-rejection check did not run" in out
+    assert "WARNING: " in out
+    assert "could not check whether it rejected any searches" in out
     assert not list(tmp_path.glob("*/linkedin_jobs_*.csv"))
 
 

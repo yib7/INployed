@@ -881,18 +881,18 @@ def test_ready_with_zero_rows_and_errors_raises():
     assert "rejected" in msg.lower()
 
 
-def test_partial_rejection_raises_even_though_rows_came_back():
-    """The check keys on the CODES, not the row count.
-
-    Bright Data can refuse most children and still return rows from the few it
-    accepted. A records-based rule sees a truthy `records` and waves that through,
-    so a badly degraded collection is silently treated as a good one -- which is
-    the same class of miss as a refused collection read as a quiet day."""
-    with pytest.raises(RuntimeError) as excinfo:
-        asyncio.run(scraper.wait_until_ready(_progress_session({
-            "status": "ready", "records": 12, "errors": 88,
-            "error_codes": {"child_input_size_validation": 88}}), "sd_x"))
-    assert "child_input_size_validation" in str(excinfo.value)
+def test_partial_rejection_with_rows_warns_and_keeps_them(capsys):
+    """The check keys on the CODES, not the row count, so a partial rejection is
+    still reported. It no longer raises: the rows that came back are paid for,
+    and raising threw them away and skipped scoring. They are downloaded and
+    saved as usual (see tests/test_scraper_messages.py for the end-to-end save),
+    and the rejection is a WARNING naming the setting to change."""
+    asyncio.run(scraper.wait_until_ready(_progress_session({
+        "status": "ready", "records": 12, "errors": 88,
+        "error_codes": {"child_input_size_validation": 88}}), "sd_x"))
+    out = capsys.readouterr().out
+    assert "WARNING:" in out and "child_input_size_validation" in out
+    assert "max_exclude_ids" in out
 
 
 def test_zero_rows_with_ordinary_page_errors_warns_but_does_not_raise(capsys):

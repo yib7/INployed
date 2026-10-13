@@ -99,6 +99,9 @@ for _leaked in (
     # scraper.py's skip-list knobs, read live: a shell export would change the
     # window and the cap every scraper test asserts against.
     "EXCLUDE_WINDOW_DAYS", "MAX_EXCLUDE_IDS",
+    # The dashboard's "a Drive master was expected" flag: set in a shell it would
+    # add a WARNING to every scraper test that reads the skip list.
+    "INPLOYED_EXPECT_DRIVE_MASTER",
     # Import-time layout constants (measure.py): a developer override would otherwise
     # decide the golden and the fill-fraction defaults the suite asserts.
     "RESUME_TAILOR_FULL_LINE_FILL", "RESUME_TAILOR_LAST_LINE_FILL",

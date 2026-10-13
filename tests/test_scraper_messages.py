@@ -237,7 +237,9 @@ def test_every_search_rejected_as_invalid_input_is_an_error(run, capsys):
 @pytest.mark.parametrize("status,body", [
     (413, "Request Entity Too Large"),
     (400, "input is too large"),
-    (400, "bad request"),
+    (400, "payload exceeds the limit"),
+    (400, '{"error": "child_input_size_validation"}'),
+    (400, "input_size limit exceeded"),
 ])
 def test_a_trigger_refused_as_too_big_says_to_lower_the_cap(run, capsys, status, body):
     run.trigger(status, body)
@@ -248,10 +250,37 @@ def test_a_trigger_refused_as_too_big_says_to_lower_the_cap(run, capsys, status,
 
 @pytest.mark.parametrize("status,body", [(413, "x"), (400, "payload size limit")])
 def test_trigger_puts_the_size_hint_in_its_own_error(status, body):
-    with pytest.raises(RuntimeError) as excinfo:
+    with pytest.raises(scraper.RequestTooLarge) as excinfo:
         asyncio.run(scraper.trigger(_Session(post=_Resp(status, body)), {}))
     msg = str(excinfo.value)
     assert f"Trigger failed {status}" in msg and "max_exclude_ids" in msg
+
+
+def test_a_plain_400_is_refused_as_invalid_not_too_large(run, capsys):
+    """A 400 that says nothing about size is a bad request (a keyword or filter
+    Bright Data will not take). Calling it "too large" would send the user to
+    shrink the skip list for nothing."""
+    run.trigger(400, '{"error": "Invalid value for field location"}')
+    assert run.go() == 1
+    line, _ = _final_error(capsys)
+    assert "refused" in line and "invalid" in line
+    assert "Invalid value for field location" in line       # Bright Data's own words
+    assert "keywords and filters" in line
+    assert "too large" not in line
+    assert "if the message mentions size" in line.lower()
+    assert "max_exclude_ids in search_config.json" in line
+    assert "try again later" not in line.lower()
+
+
+def test_trigger_raises_trigger_invalid_for_a_plain_400():
+    long_body = "bad request " + "x" * 2000
+    with pytest.raises(scraper.TriggerInvalid) as excinfo:
+        asyncio.run(scraper.trigger(_Session(post=_Resp(400, long_body)), {}))
+    e = excinfo.value
+    assert isinstance(e, scraper.TriggerRefused)            # still a refusal
+    assert not isinstance(e, scraper.RequestTooLarge)
+    assert e.status == 400
+    assert len(scraper._fatal_message(e)) < 1000            # the body is bounded
 
 
 def test_a_trigger_server_error_says_to_try_again_later(run, capsys):

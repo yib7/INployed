@@ -282,7 +282,8 @@ class TokenRejected(RuntimeError):
 
 
 class RequestTooLarge(RuntimeError):
-    """The trigger was refused as too large (413, or 400 / a body about size)."""
+    """The trigger was refused as too large (413, or a 4xx whose body is about
+    size). See _too_large."""
 
     def __init__(self, msg: str, status: int):
         super().__init__(msg)
@@ -296,6 +297,11 @@ class TriggerRefused(RuntimeError):
         super().__init__(msg)
         self.status = status
         self.body = body
+
+
+class TriggerInvalid(TriggerRefused):
+    """A 400 whose body says nothing about size: Bright Data refused the request
+    as invalid (a keyword or filter it will not take). Retrying will not help."""
 
 
 class InputsRejected(RuntimeError):
@@ -1447,19 +1453,29 @@ async def trigger(session: aiohttp.ClientSession, payload: dict,
                     f"{head}\nThe request was too large. The skip list "
                     f"(jobs_to_not_include) sent with every search is the usual cause: "
                     f"lower {max_exclude_ids_where()}.", resp.status)
+            if resp.status == 400:
+                raise TriggerInvalid(
+                    f"{head}\nBright Data refused the request as invalid. Check the "
+                    f"keywords and filters in search_config.json.", resp.status, body)
             raise TriggerRefused(head, resp.status, body)
         # text(), not json(): a collection that beat the sync window comes back
         # as NDJSON, which json() cannot read. See _parse_collection_body.
         return _parse_collection_body(await resp.text(), status=resp.status)
 
 
+# "size" also covers input_size and child_input_size, the codes Bright Data
+# gives an oversized input.
+_SIZE_WORDS = re.compile(r"too large|size|payload", re.IGNORECASE)
+
+
 def _too_large(status: int, body: str) -> bool:
-    """A trigger refusal that means the request was too big: 413, a 400 (what
-    Bright Data has answered an oversized input with), or another 4xx whose body
-    talks about size."""
-    if status in (400, 413):
+    """A trigger refusal that means the request was too big: 413, or a 4xx (400
+    is what Bright Data has answered an oversized input with) whose body talks
+    about size. A 400 that does not is a different problem (TriggerInvalid), and
+    calling it too large would send the user to shrink the skip list for nothing."""
+    if status == 413:
         return True
-    return status < 500 and bool(re.search(r"too large|size", body or "", re.IGNORECASE))
+    return 400 <= status < 500 and bool(_SIZE_WORDS.search(body or ""))
 
 
 def _assert_collected_something(progress: dict, snapshot_id: str) -> None:
@@ -1852,6 +1868,11 @@ def _fatal_message(e: BaseException) -> str:
                 f"too large ({e.status}), so no jobs were collected. The skip list sent "
                 f"with every search is the usual cause. Lower {max_exclude_ids_where()} "
                 f"and run again.")
+    if isinstance(e, TriggerInvalid):
+        return (f"Bright Data refused the request as invalid ({e.status}: "
+                f"{_one_line(e.body)[:200]}), so no jobs were collected. Check the "
+                f"keywords and filters in Settings (search_config.json) and run again. "
+                f"If the message mentions size, lower {max_exclude_ids_where()}.")
     if isinstance(e, TriggerRefused):
         return (f"Bright Data refused to start the collection ({e.status}: "
                 f"{_one_line(e.body)[:200]}), so no jobs were collected. This is usually "

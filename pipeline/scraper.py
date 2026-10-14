@@ -1202,14 +1202,18 @@ def cap_exclude_ids(exclude_ids: list[str], limit_per_input: int) -> list[str]:
         return exclude_ids[-keep:]
     if len(exclude_ids) <= keep:
         return exclude_ids
+    trimmed = (f"skip list capped at {keep} of {len(exclude_ids)} known jobs. "
+               f"The {len(exclude_ids) - keep} oldest are left off it, so they may be "
+               f"collected and billed again.")
     if budget > cap:
-        fix = f"Raise {max_exclude_ids_where()} if Bright Data accepts a longer list."
+        # max_exclude_ids is the user's own limit (a window wider than the cap is a
+        # choice), so this goes to the log only: a WARNING would open the
+        # dashboard's problems box on every run.
+        print(f"{trimmed} Raise {max_exclude_ids_where()} if Bright Data accepts "
+              f"a longer list.")
     else:
-        fix = (f"limit_per_input={limit} leaves room for only {budget}; lower "
-               f"limit_per_input in search_config.json to fit more.")
-    warn(f"skip list capped at {keep} of {len(exclude_ids)} known jobs. "
-         f"The {len(exclude_ids) - keep} oldest are left off it, so they may be "
-         f"collected and billed again. {fix}")
+        warn(f"{trimmed} limit_per_input={limit} leaves room for only {budget}; "
+             f"lower limit_per_input in search_config.json to fit more.")
     return exclude_ids[-keep:]
 
 

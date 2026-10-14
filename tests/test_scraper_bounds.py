@@ -788,11 +788,14 @@ def test_max_exclude_ids_in_search_config_moves_the_cap(monkeypatch, tmp_path):
 
 def test_a_cap_that_trims_known_jobs_says_what_it_costs(capsys):
     """Every id reaching the cap is a known job inside the window, so a trim means
-    those jobs can be collected and billed again. Say so, and say what to raise."""
+    those jobs can be collected and billed again. Say so in the log, and say what
+    to raise. It is an info line: a window wider than the cap is a choice the user
+    made (2026-10-13: 30 days, cap 10,000), so it must not open the dashboard's
+    problems box on every run."""
     ids = [str(4_400_000_000 + n) for n in range(12_000)]
     scraper.cap_exclude_ids(ids, 100)
     out = capsys.readouterr().out
-    assert "WARNING:" in out
+    assert "WARNING" not in out
     assert "10000 of 12000" in out
     assert "2000 oldest" in out and "billed again" in out
     assert "max_exclude_ids" in out and "search_config.json" in out
@@ -1149,7 +1152,7 @@ def test_a_cap_set_by_the_env_var_names_the_env_var(monkeypatch, capsys):
     monkeypatch.setenv(scraper.MAX_EXCLUDE_IDS_ENV, "3000")
     scraper.cap_exclude_ids([str(4_400_000_000 + n) for n in range(5_000)], 100)
     out = capsys.readouterr().out
-    assert "WARNING:" in out and "MAX_EXCLUDE_IDS environment variable" in out
+    assert "MAX_EXCLUDE_IDS environment variable" in out
     assert "search_config.json" not in out
 
 

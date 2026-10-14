@@ -1,3 +1,4 @@
+import ast
 import asyncio
 import json
 import os
@@ -789,9 +790,57 @@ def _extra_master_frame() -> pd.DataFrame | None:
 
 # --- the collection ledger (see LEDGER_CSV) -----------------------------------
 
-_LEDGER_COLUMNS = ["job_posting_id", "collected_date"]
+# job_title and keywords were added for the skip list per search keyword: with
+# selective_search on, a search only returns jobs whose title holds its keyword,
+# so a search only needs the known jobs whose title matches it, plus the jobs
+# that search is on record as returning (a margin for LinkedIn's own matching).
+# keywords is the |-joined, sorted set of the normalized (_norm_text) keywords of
+# every search that returned the id, unioned across runs; job_title is the newest
+# non-empty title. A ledger written before these columns existed has only the
+# first two; it reads as empty titles and keywords and gains the columns on the
+# next write. Only the first two are required.
+_LEDGER_COLUMNS = ["job_posting_id", "collected_date", "job_title", "keywords"]
+_LEDGER_REQUIRED = _LEDGER_COLUMNS[:2]
+_KEYWORD_SEP = "|"
 _ISO_DAY = r"^\d{4}-\d{2}-\d{2}$"
 _RUN_FILE_DAY = re.compile(r"^linkedin_jobs_(\d{4}-\d{2}-\d{2})_")
+# Straight, curly and back quotes, written as escapes so the line stays ASCII.
+_QUOTES = re.compile("[\"'`\u2018\u2019\u201c\u201d]")
+_NON_ALNUM = re.compile(r"[\W_]+")
+
+
+def _norm_text(value) -> str:
+    """A keyword or job title reduced to what a match should compare: lowercase,
+    quotes removed (a quoted "exact phrase" keyword and an apostrophe inside a
+    word both vanish), every other run of non-alphanumeric characters one space,
+    trimmed. None, NaN and anything that is not text come back as "".
+
+    The ledger stores keywords this way, and the skip list per keyword compares
+    titles with it, so a search for "Gen-AI Engineer" and a title saying
+    "gen ai engineer" read the same."""
+    if not isinstance(value, str):
+        return ""
+    return _NON_ALNUM.sub(" ", _QUOTES.sub("", value.lower())).strip()
+
+
+def _keyword_set(value) -> set[str]:
+    """A ledger keywords cell (or one keyword, or an iterable of them) as a set of
+    normalized keywords, empties dropped. A cell is split on the | separator;
+    each piece is normalized again, so a hand-edited cell still merges cleanly."""
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        pieces = value.split(_KEYWORD_SEP)
+    else:
+        try:
+            pieces = list(value)
+        except TypeError:       # NaN or another scalar: no keyword
+            return set()
+    return {k for k in (_norm_text(p) for p in pieces) if k}
+
+
+def _join_keywords(keywords: set[str]) -> str:
+    return _KEYWORD_SEP.join(sorted(keywords))
 
 
 def _ledger_keep_days() -> int:
@@ -808,23 +857,41 @@ def _ledger_cutoff() -> str:
 
 
 def _newest_per_id(frames: list[pd.DataFrame]) -> pd.DataFrame:
-    """One ledger row per id from `frames`, its newest collected_date, oldest first.
-    A row without a YYYY-MM-DD date is dropped: an undated ledger row says nothing."""
+    """One ledger row per id from `frames`, oldest first by its newest
+    collected_date. A row without a YYYY-MM-DD date is dropped: an undated ledger
+    row says nothing.
+
+    The id's job_title is the title on its newest dated row that HAS one (on a
+    date tie, the later frame wins, so pass the older data first): a later run
+    whose row came back without a title must not erase the one already known.
+    Its keywords are the union over every row, older ones too, because a search
+    that returned the job once is on record as a search that can return it. A
+    frame without the title or keywords column (a ledger written before they
+    existed, a run file) counts as empty there."""
     frames = [f for f in frames if not f.empty]
     if not frames:
         return pd.DataFrame(columns=_LEDGER_COLUMNS, dtype=str)
-    df = pd.concat([f[_LEDGER_COLUMNS] for f in frames], ignore_index=True).dropna()
-    df = df.astype(str)
+    df = pd.concat([f.reindex(columns=_LEDGER_COLUMNS) for f in frames],
+                   ignore_index=True)
+    df = df.dropna(subset=_LEDGER_REQUIRED).fillna("").astype(str)
     df = df[df["collected_date"].str.match(_ISO_DAY)]
-    df = df.groupby("job_posting_id", as_index=False, sort=False)["collected_date"].max()
-    return df.sort_values("collected_date", kind="stable").reset_index(drop=True)
+    out = df.groupby("job_posting_id", as_index=False, sort=False)["collected_date"].max()
+    titled = df.assign(job_title=df["job_title"].str.strip())
+    titled = titled[titled["job_title"] != ""].sort_values("collected_date", kind="stable")
+    titles = titled.groupby("job_posting_id", sort=False)["job_title"].last()
+    keyed = df[df["keywords"].str.strip() != ""]
+    keywords = keyed.groupby("job_posting_id", sort=False)["keywords"].agg(
+        lambda cells: _join_keywords(set().union(*map(_keyword_set, cells))))
+    out["job_title"] = out["job_posting_id"].map(titles).fillna("")
+    out["keywords"] = out["job_posting_id"].map(keywords).fillna("")
+    return out.sort_values("collected_date", kind="stable").reset_index(drop=True)
 
 
 def _read_ledger() -> pd.DataFrame:
     """LEDGER_CSV as one row per id. Raises OSError/ValueError when the file cannot
     be read or is not a ledger; the callers decide what that costs."""
     df = pd.read_csv(LEDGER_CSV, dtype=str, keep_default_na=False)
-    missing = [c for c in _LEDGER_COLUMNS if c not in df.columns]
+    missing = [c for c in _LEDGER_REQUIRED if c not in df.columns]
     if missing:
         raise ValueError(f"it has no {' or '.join(missing)} column")
     return _newest_per_id([df])
@@ -834,8 +901,10 @@ def seed_ledger_from_run_files() -> pd.DataFrame:
     """A ledger rebuilt from the run files under the run-label folders: every
     linkedin_jobs_<date>_<label>*.csv and *_scored.csv.gz, each id with the newest
     date it was collected (the row's extracted_date, else the date in the file
-    name). Files older than the ledger keeps (_ledger_keep_days) by name are
-    skipped unread.
+    name) and its newest title. Files older than the ledger keeps
+    (_ledger_keep_days) by name are skipped unread. A run file has no keyword
+    column (the discovery_input columns are dropped before it is written), so a
+    seeded row has no keywords; the skip list per keyword then goes by its title.
 
     Used once, when the ledger does not exist yet (the first run after this was
     added) or cannot be read. A run file that cannot be read is skipped with a
@@ -855,7 +924,8 @@ def seed_ledger_from_run_files() -> pd.DataFrame:
             if file_day and file_day < cutoff:
                 continue
             try:
-                df = pd.read_csv(path, usecols=lambda c: c in _ID_DATE_COLUMNS, dtype=str)
+                df = pd.read_csv(path, dtype=str, usecols=lambda c: (
+                    c in _ID_DATE_COLUMNS or c == "job_title"))
             except _READ_ERRORS as e:
                 warn(f"could not read {label}/{path.name} while rebuilding "
                      f"{LEDGER_CSV.name} ({e}). The jobs in that run may be collected "
@@ -871,8 +941,10 @@ def seed_ledger_from_run_files() -> pd.DataFrame:
                 days = pd.Series(None, index=df.index, dtype=object)
             if file_day:
                 days = days.fillna(file_day)
-            frames.append(pd.DataFrame({"job_posting_id": df["job_posting_id"],
-                                        "collected_date": days}))
+            frames.append(pd.DataFrame({
+                "job_posting_id": df["job_posting_id"], "collected_date": days,
+                "job_title": df.get("job_title",
+                                    pd.Series("", index=df.index, dtype=object))}))
     seeded = _newest_per_id(frames)
     return seeded[seeded["collected_date"] >= cutoff].reset_index(drop=True)
 
@@ -891,9 +963,14 @@ def _save_seeded_ledger(led: pd.DataFrame) -> None:
 
 
 def _ledger_frame() -> pd.DataFrame:
-    """The ledger as (job_posting_id, extracted_date) rows for load_exclude_ids:
-    seeded from the run files (and saved) when the file does not exist yet, and
-    from the run files with a WARNING when it cannot be read. Never raises."""
+    """The ledger as (job_posting_id, extracted_date, job_title, keywords) rows,
+    one per id, oldest first: seeded from the run files (and saved) when the file
+    does not exist yet, and from the run files with a WARNING when it cannot be
+    read. Never raises.
+
+    load_exclude_ids reads only the id and the date (_parse_dates ignores the
+    rest); job_title and keywords (|-joined normalized keywords, "" when none is
+    known) are there for the skip list per search keyword."""
     if not LEDGER_CSV.exists():
         led = seed_ledger_from_run_files()
         _save_seeded_ledger(led)
@@ -909,11 +986,18 @@ def _ledger_frame() -> pd.DataFrame:
     return led.rename(columns={"collected_date": "extracted_date"})
 
 
-def record_collected_ids(ids: list[str], day: str) -> None:
+def record_collected_ids(ids: list[str], day: str,
+                         titles: dict[str, str] | None = None,
+                         keywords: dict[str, set[str]] | None = None) -> None:
     """Add this run's ids to the ledger with `day` (YYYY-MM-DD): every id Bright
     Data returned, known and new alike, because a known job collected again is the
     one whose master date is wrong. Keeps each id's newest date, prunes rows older
     than _ledger_keep_days(), writes atomically.
+
+    `titles` (id -> job title) and `keywords` (id -> the keywords of the searches
+    that returned it this run) are optional; an id missing from either records no
+    title or no keyword this time and keeps what the ledger already knows (see
+    _newest_per_id). Keywords are stored normalized (_norm_text).
 
     Never raises. The jobs are already collected and saved by the time this runs,
     so a ledger problem costs a WARNING and possibly a re-billed job, never the run.
@@ -929,8 +1013,15 @@ def record_collected_ids(ids: list[str], day: str) -> None:
                 led = seed_ledger_from_run_files()
         else:
             led = seed_ledger_from_run_files()
-        run = pd.DataFrame({"job_posting_id": [str(i) for i in ids],
-                            "collected_date": day}, columns=_LEDGER_COLUMNS)
+        ids = [str(i) for i in ids]
+        titles, keywords = titles or {}, keywords or {}
+        run = pd.DataFrame({
+            "job_posting_id": ids,
+            "collected_date": day,
+            "job_title": [t.strip() if isinstance(t := titles.get(i), str) else ""
+                          for i in ids],
+            "keywords": [_join_keywords(_keyword_set(keywords.get(i))) for i in ids],
+        }, columns=_LEDGER_COLUMNS)
         merged = _newest_per_id([led, run])
         merged = merged[merged["collected_date"] >= _ledger_cutoff()]
         _atomic_to_csv(merged, LEDGER_CSV)
@@ -1927,6 +2018,72 @@ def _drop_raw_rows(path: Path) -> None:
         pass
 
 
+# Where a collected row says which search returned it. Bright Data echoes each
+# search's input on its rows as discovery_input; json_normalize flattens a dict
+# to discovery_input.keyword, but some snapshots carry the whole input in one
+# column instead, as a dict or as its Python-repr / JSON text. input.* is the
+# older name for the same echo.
+_KEYWORD_COLUMNS = ("discovery_input.keyword", "input.keyword")
+_INPUT_COLUMNS = ("discovery_input", "input")
+
+
+def _input_keyword(value) -> str | None:
+    """The keyword inside one discovery_input / input cell (a dict, or its
+    Python-repr or JSON text), or None when the cell holds no keyword."""
+    if isinstance(value, str):
+        text = value.strip()
+        if not text.startswith("{"):
+            return None
+        try:
+            value = json.loads(text)
+        except ValueError:
+            try:
+                value = ast.literal_eval(text)
+            except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+                return None
+    if isinstance(value, dict):
+        kw = value.get("keyword")
+        return kw if isinstance(kw, str) else None
+    return None
+
+
+def _keywords_by_id(df: pd.DataFrame) -> dict[str, set[str]]:
+    """id -> the normalized keywords of every search that returned it, read from
+    the raw rows of a run (BEFORE the dedupe: one job found by three searches is
+    three rows, one per keyword, and the dedupe keeps only the first). Ids with
+    no keyword on any row are left out."""
+    if "job_posting_id" not in df.columns:
+        return {}
+    ids = df["job_posting_id"].astype(str)
+    found: dict[str, set[str]] = {}
+
+    def add(values) -> None:
+        for jid, kw in zip(ids, values):
+            norm = _norm_text(kw)
+            if norm:
+                found.setdefault(jid, set()).add(norm)
+
+    for col in _KEYWORD_COLUMNS:
+        if col in df.columns:
+            add(df[col])
+    for col in _INPUT_COLUMNS:
+        if col in df.columns:
+            add(df[col].map(_input_keyword))
+    return found
+
+
+def _titles_by_id(df: pd.DataFrame) -> dict[str, str]:
+    """id -> its first non-empty job_title across the raw rows of a run (the row
+    the dedupe keeps can be one that came back without a title)."""
+    if "job_posting_id" not in df.columns or "job_title" not in df.columns:
+        return {}
+    titles: dict[str, str] = {}
+    for jid, title in zip(df["job_posting_id"].astype(str), df["job_title"]):
+        if isinstance(title, str) and title.strip():
+            titles.setdefault(jid, title.strip())
+    return titles
+
+
 def _save_results(results: list[dict], run_label: str) -> None:
     """Write a run's rows: the run CSV, the ledger, last-run ids, the master.
 
@@ -1940,9 +2097,21 @@ def _save_results(results: list[dict], run_label: str) -> None:
         print("No new jobs returned this run; nothing to write.")
         return
 
+    collected_titles: dict[str, str] = {}
+    collected_keywords: dict[str, set[str]] = {}
     if "job_posting_id" in df.columns:
         before = len(df)
         df["job_posting_id"] = df["job_posting_id"].astype(str)
+        # For the ledger, from every raw row before the dedupe below and before
+        # drop_unneeded_columns drops discovery_input.*: the title, and the
+        # keyword of each search that returned the job (the skip list per keyword
+        # reads both). Best effort: a malformed row costs its keyword, not the run.
+        try:
+            collected_titles = _titles_by_id(df)
+            collected_keywords = _keywords_by_id(df)
+        except Exception as e:  # noqa: BLE001 -- the ledger dates matter more
+            print(f"Could not read the search keywords on this run's rows ({e}); "
+                  f"the ledger records their ids and dates without them.")
         df = df.drop_duplicates(subset=["job_posting_id"])
         print(f"Deduped: {before} -> {len(df)} unique jobs")
     # Taken before the blocklist drop: a blocked company's job was billed all the
@@ -1980,7 +2149,8 @@ def _save_results(results: list[dict], run_label: str) -> None:
                   f"attempt today, so that file was written again instead of a new one.")
     # Right after the run CSV, before the master: append_to_master can still raise
     # on an unreadable master, and these jobs are paid for either way.
-    record_collected_ids(collected_ids, date_str)
+    record_collected_ids(collected_ids, date_str, titles=collected_titles,
+                         keywords=collected_keywords)
 
     try:
         if "job_posting_id" in df.columns:

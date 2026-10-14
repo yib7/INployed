@@ -52,10 +52,22 @@ def _write_ledger_file(path, rows):
     return path
 
 
+LEDGER_HEADER = ["job_posting_id", "collected_date", "job_title", "keywords"]
+
+
 def _ledger(sandbox) -> dict:
     df = pd.read_csv(sandbox / "collected_ids_ledger.csv", dtype=str)
-    assert list(df.columns) == ["job_posting_id", "collected_date"]
+    assert list(df.columns) == LEDGER_HEADER
     return dict(zip(df["job_posting_id"], df["collected_date"]))
+
+
+def _ledger_rows(sandbox) -> dict:
+    """id -> (collected_date, job_title, keywords) as the file holds them."""
+    df = pd.read_csv(sandbox / "collected_ids_ledger.csv", dtype=str,
+                     keep_default_na=False)
+    assert list(df.columns) == LEDGER_HEADER
+    return {r.job_posting_id: (r.collected_date, r.job_title, r.keywords)
+            for r in df.itertuples()}
 
 
 # --- the bug -----------------------------------------------------------------
@@ -341,3 +353,171 @@ def test_a_job_collected_yesterday_survives_a_cap_that_really_binds(sandbox, mon
     assert "target" not in sent()                             # the premise
     _write_ledger(sandbox, [("target", _days_ago(1))])
     assert "target" in sent()
+
+
+# --- each job's title and the keyword search(es) that returned it ---------------
+#
+# The next step builds a skip list per search keyword (selective_search only
+# returns jobs whose title holds the keyword), so the ledger remembers each id's
+# title and which keyword searches found it.
+
+def test_norm_text_lowercases_strips_quotes_and_collapses_punctuation():
+    assert scraper._norm_text('"Machine Learning" Engineer') == "machine learning engineer"
+    assert scraper._norm_text("  Sr. Software-Engineer (AI/ML)  ") == \
+        "sr software engineer ai ml"
+    assert scraper._norm_text("Women's Health") == "womens health"
+    assert scraper._norm_text("\u201cQuant\u201d Dev\u2019s") == "quant devs"
+    assert scraper._norm_text("C++ / C# Dev_Ops") == "c c dev ops"
+    assert scraper._norm_text(None) == ""
+    assert scraper._norm_text(float("nan")) == ""
+    assert scraper._norm_text("---") == ""
+
+
+def test_the_old_call_shape_still_records_ids_without_title_or_keyword(sandbox):
+    scraper.record_collected_ids(["a"], _days_ago(0))
+    assert _ledger_rows(sandbox) == {"a": (_days_ago(0), "", "")}
+
+
+def test_a_two_column_ledger_is_read_and_upgraded_on_the_next_write(sandbox):
+    _write_ledger(sandbox, [("old", _days_ago(3))])
+    assert scraper.load_exclude_ids() == ["old"]
+    frame = scraper._ledger_frame()
+    assert frame.loc[0, "job_title"] == "" and frame.loc[0, "keywords"] == ""
+    scraper.record_collected_ids(["new"], _days_ago(0),
+                                 titles={"new": "Data Scientist"},
+                                 keywords={"new": {"Data Scientist"}})
+    assert _ledger_rows(sandbox) == {
+        "old": (_days_ago(3), "", ""),
+        "new": (_days_ago(0), "Data Scientist", "data scientist")}
+
+
+def test_keywords_are_unioned_across_runs(sandbox):
+    scraper.record_collected_ids(["a", "b"], _days_ago(2),
+                                 keywords={"a": {"Software Engineer"}, "b": {"Quant"}})
+    scraper.record_collected_ids(["a"], _days_ago(1),
+                                 keywords={"a": {"Backend Engineer", "software engineer"}})
+    # an OLDER run's keyword is still a keyword that found the job
+    scraper.record_collected_ids(["b"], _days_ago(5), keywords={"b": {"Data Analyst"}})
+    rows = _ledger_rows(sandbox)
+    assert rows["a"] == (_days_ago(1), "", "backend engineer|software engineer")
+    assert rows["b"] == (_days_ago(2), "", "data analyst|quant")
+
+
+def test_the_newest_non_empty_title_wins(sandbox):
+    scraper.record_collected_ids(["a", "b"], _days_ago(3),
+                                 titles={"a": "ML Engineer", "b": "Old Title"})
+    scraper.record_collected_ids(["a", "b"], _days_ago(1),
+                                 titles={"a": "", "b": "New Title"})
+    scraper.record_collected_ids(["b"], _days_ago(6), titles={"b": "Ancient Title"})
+    rows = _ledger_rows(sandbox)
+    assert rows["a"] == (_days_ago(1), "ML Engineer", "")
+    assert rows["b"] == (_days_ago(1), "New Title", "")
+
+
+def test_bad_title_or_keyword_values_never_crash_the_recording(sandbox, capsys):
+    scraper.record_collected_ids(["a", "b"], _days_ago(0),
+                                 titles={"a": None, "b": float("nan")},
+                                 keywords={"a": None, "b": "Quant"})
+    assert _ledger_rows(sandbox) == {"a": (_days_ago(0), "", ""),
+                                     "b": (_days_ago(0), "", "quant")}
+    assert "WARNING:" not in capsys.readouterr().out
+
+
+def test_the_ledger_frame_exposes_titles_and_keywords_in_skip_list_order(sandbox):
+    scraper.record_collected_ids(["new"], _days_ago(1), titles={"new": "B"},
+                                 keywords={"new": {"k2"}})
+    scraper.record_collected_ids(["old"], _days_ago(4), titles={"old": "A"},
+                                 keywords={"old": {"k1"}})
+    frame = scraper._ledger_frame()
+    assert frame.columns.tolist() == ["job_posting_id", "extracted_date",
+                                      "job_title", "keywords"]
+    assert frame["job_posting_id"].tolist() == ["old", "new"]
+    assert frame["job_title"].tolist() == ["A", "B"]
+    assert frame["keywords"].tolist() == ["k1", "k2"]
+    assert scraper.load_exclude_ids() == ["old", "new"]
+
+
+def test_the_seed_carries_titles(sandbox):
+    label = scraper.RUN_LABELS[0]
+    d = sandbox / label
+    d.mkdir()
+    (d / f"linkedin_jobs_{_days_ago(3)}_{label}.csv").write_text(
+        "job_posting_id,job_title,extracted_date\n"
+        f"a,Quant Researcher,{_days_ago(3)}\n"
+        f"b,,{_days_ago(3)}\n", encoding="utf-8")
+    (d / f"linkedin_jobs_{_days_ago(1)}_{label}.csv").write_text(
+        "job_posting_id,job_title,extracted_date\n"
+        f"a,,{_days_ago(1)}\n", encoding="utf-8")
+    seeded = scraper.seed_ledger_from_run_files()
+    got = {r.job_posting_id: (r.collected_date, r.job_title, r.keywords)
+           for r in seeded.itertuples()}
+    assert got == {"a": (_days_ago(1), "Quant Researcher", ""),
+                   "b": (_days_ago(3), "", "")}
+    scraper.record_collected_ids(["c"], _days_ago(0))         # persists the seed
+    assert _ledger_rows(sandbox)["a"] == (_days_ago(1), "Quant Researcher", "")
+
+
+def _save(sandbox, monkeypatch, rows):
+    monkeypatch.setattr(scraper, "load_blocklist", lambda: [])
+    scraper._save_results(rows, scraper.RUN_LABELS[0])
+    return _ledger_rows(sandbox)
+
+
+def test_a_run_records_the_title_and_the_flattened_discovery_keyword(sandbox, monkeypatch):
+    """Bright Data echoes each search's input in discovery_input; json_normalize
+    flattens it to discovery_input.keyword, and drop_unneeded_columns drops that
+    before the run file is written, so it is read from the raw rows."""
+    rows = _save(sandbox, monkeypatch, [
+        {"job_posting_id": "1", "job_title": "Quant Developer",
+         "discovery_input": {"keyword": '"Quant"', "location": "United States",
+                             "jobs_to_not_include": ["x"]}},
+        {"job_posting_id": "2", "job_title": "Gen AI Engineer",
+         "discovery_input": {"keyword": "GenAI Engineer"}},
+    ])
+    today = _days_ago(0)
+    assert rows == {"1": (today, "Quant Developer", "quant"),
+                    "2": (today, "Gen AI Engineer", "genai engineer")}
+    saved = next((sandbox / scraper.RUN_LABELS[0]).glob("linkedin_jobs_*.csv"))
+    assert not any(c.startswith("discovery_input")
+                   for c in pd.read_csv(saved, nrows=0).columns)
+
+
+def test_a_run_reads_a_discovery_input_kept_as_a_string_or_dict(sandbox, monkeypatch):
+    """Some snapshots carry discovery_input as one column: a Python repr or JSON
+    string (a CSV-shaped download), or a dict json_normalize did not flatten."""
+    rows = [
+        {"job_posting_id": "1", "job_title": "A",
+         "discovery_input": "{'keyword': 'Data Scientist', 'remote': 'Remote'}"},
+        {"job_posting_id": "2", "job_title": "B",
+         "discovery_input": '{"keyword": "Machine Learning"}'},
+        {"job_posting_id": "3", "job_title": "C", "discovery_input": "not a dict"},
+        {"job_posting_id": "4", "job_title": "D", "input.keyword": "Backend Engineer"},
+    ]
+    today = _days_ago(0)
+    assert _save(sandbox, monkeypatch, rows) == {
+        "1": (today, "A", "data scientist"),
+        "2": (today, "B", "machine learning"),
+        "3": (today, "C", ""),
+        "4": (today, "D", "backend engineer")}
+    df = pd.DataFrame({"job_posting_id": ["5", "6"],
+                       "discovery_input": [{"keyword": "Quant Analyst"}, None]})
+    assert scraper._keywords_by_id(df) == {"5": {"quant analyst"}}
+
+
+def test_one_job_found_by_several_searches_in_one_run_keeps_every_keyword(
+        sandbox, monkeypatch):
+    """The rows are deduped by id before the run file is written, so the keywords
+    come from every raw row of the id, not just the one that is kept."""
+    rows = _save(sandbox, monkeypatch, [
+        {"job_posting_id": "1", "job_title": "",
+         "discovery_input": {"keyword": "Software Engineer"}},
+        {"job_posting_id": "1", "job_title": "ML Software Engineer",
+         "discovery_input": {"keyword": "Machine Learning Engineer"}},
+        {"job_posting_id": "1", "job_title": "ML Software Engineer",
+         "discovery_input": {"keyword": "software engineer"}},
+        {"job_posting_id": "2", "job_title": "Analyst"},
+    ])
+    today = _days_ago(0)
+    assert rows == {
+        "1": (today, "ML Software Engineer", "machine learning engineer|software engineer"),
+        "2": (today, "Analyst", "")}

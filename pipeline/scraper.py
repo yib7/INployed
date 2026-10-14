@@ -1,5 +1,7 @@
 import ast
 import asyncio
+import bisect
+import itertools
 import json
 import os
 import re
@@ -1385,30 +1387,33 @@ def _cap_ids(exclude_ids: list[str], limit: int) -> tuple[list[str], _Trim | Non
     above the floor). Prints nothing: cap_exclude_ids reports its one list, and
     _cap_per_keyword one line for every keyword's list together.
 
-    The per-id width is measured off the list, then the tail actually kept is
-    measured again and shrunk until it fits: ids grow over time, so the newest
-    (the ones kept) can be wider than the list's average, and what has to fit is
-    the payload as sent."""
+    The payload is sized exactly, not from an average width: json.dumps of a
+    list is "[" + ", ".join(json.dumps(id) ...) + "]", so the newest k ids take
+    2 + (their widths) + 2 x (k - 1) bytes. A running sum of the widths from the
+    newest end gives every k's size at once, and the budget is the largest k
+    whose size x limit fits MAX_EXCLUDE_PAYLOAD_BYTES. Ids grow over time, so
+    the newest (the ones kept) can be wider than the list's average; an
+    estimate from the average either overflows or, rounded up to be safe,
+    leaves a few hundred ids off for nothing. When the whole list fits, the
+    budget counts on past it at the widest id's width, so the floor and the
+    "which limit bound" hint still read sensibly for a short list."""
     if not exclude_ids:
         return exclude_ids, None
-    per_id = max(1, len(json.dumps(exclude_ids)) // len(exclude_ids))
-    budget = MAX_EXCLUDE_PAYLOAD_BYTES // (per_id * limit)
+    total = len(exclude_ids)
+    allowed = MAX_EXCLUDE_PAYLOAD_BYTES // limit       # the most bytes one copy may take
+    widths = [len(json.dumps(x)) for x in reversed(exclude_ids)]
+    # sizes[k - 1] = the json.dumps length of the newest k ids.
+    sizes = [2 + run + 2 * k for k, run in enumerate(itertools.accumulate(widths))]
+    budget = bisect.bisect_right(sizes, allowed)
+    if budget == total:
+        budget += (allowed - sizes[-1]) // (max(widths) + 2)
     cap = max_exclude_ids()
     room = min(budget, cap)
-    keep = max(1, min(room, len(exclude_ids)))
-    kept = exclude_ids[-keep:]
-    size = len(json.dumps(kept))
-    if keep > 1 and size * limit > MAX_EXCLUDE_PAYLOAD_BYTES:
-        while keep > 1 and size * limit > MAX_EXCLUDE_PAYLOAD_BYTES:
-            width = -(-size // keep)                   # ceil: never under-measure
-            keep = max(1, min(keep - 1, MAX_EXCLUDE_PAYLOAD_BYTES // (width * limit)))
-            kept = exclude_ids[-keep:]
-            size = len(json.dumps(kept))
-        budget = room = keep            # the bytes bound, whatever the average said
+    keep = max(1, min(room, total))
     floor = room < MIN_EXCLUDE_IDS
-    if not floor and keep == len(exclude_ids):
+    if not floor and keep == total:
         return exclude_ids, None
-    return kept, _Trim(keep, len(exclude_ids), room, budget, cap, floor)
+    return exclude_ids[-keep:], _Trim(keep, total, room, budget, cap, floor)
 
 
 def _floor_warning(limit: int, room: int) -> str:

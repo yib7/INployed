@@ -402,3 +402,25 @@ def test_no_known_jobs_gives_every_search_an_empty_list(sandbox):
     assert [i["jobs_to_not_include"] for i in inputs] == [[], []]
     assert scraper._skip_list_summary("x", 0, inputs).startswith(
         "Run: x | no known jobs from the last ")
+
+
+def test_the_cap_fits_exactly_the_most_ids_the_budget_allows():
+    """2026-10-14 real-data check: 4,098 "Software Engineer" ids at limit 300 kept
+    3,133 (13.16 MB) when ~3,357 fit under 14.1 MB, because the width estimate was
+    rounded up. The size is exact now: the largest k that fits, and k + 1 would not."""
+    ids = _ids(0, 4_098)
+    kept = scraper.cap_exclude_ids(ids, 300)
+    k = len(kept)
+    assert kept == ids[-k:]
+    assert len(json.dumps(ids[-k:])) * 300 <= scraper.MAX_EXCLUDE_PAYLOAD_BYTES
+    assert len(json.dumps(ids[-(k + 1):])) * 300 > scraper.MAX_EXCLUDE_PAYLOAD_BYTES
+
+
+def test_a_wide_tail_is_sized_exactly_too(sandbox):
+    """Mixed widths: the kept tail is the largest that fits as sent."""
+    narrow = [str(1_000 + n) for n in range(3_000)]
+    wide = [str(44_000_000_000_000 + n) for n in range(4_000)]
+    ids = narrow + wide
+    k = len(scraper.cap_exclude_ids(ids, 300))
+    assert len(json.dumps(ids[-k:])) * 300 <= scraper.MAX_EXCLUDE_PAYLOAD_BYTES
+    assert len(json.dumps(ids[-(k + 1):])) * 300 > scraper.MAX_EXCLUDE_PAYLOAD_BYTES

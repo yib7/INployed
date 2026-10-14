@@ -860,25 +860,72 @@ def _join_keywords(keywords: set[str]) -> str:
     return _KEYWORD_SEP.join(sorted(keywords))
 
 
+# A keyword LinkedIn reads as a boolean search: OR / AND / NOT as whole words in
+# capitals, or a parenthesis. What such a search can return is not a title match
+# we can predict, so its search skips every known job (see _keyword_rule).
+_BOOLEAN_KEYWORD = re.compile(r"\b(?:OR|AND|NOT)\b|[()]")
+# Straight and curly double quotes, written as escapes so the line stays ASCII.
+_DOUBLE_QUOTES = "\"\u201c\u201d"
+
+
+def _keyword_key(keyword) -> str:
+    """The key a search keyword's skip list is filed under: the keyword itself when
+    it is text. A hand-edited search_config.json can hold a number or a list
+    there; that gets a key of its own (its type and repr), so it still gets a
+    list and nothing raises before the trigger."""
+    if isinstance(keyword, str):
+        return keyword
+    return f"<{type(keyword).__name__} {keyword!r}>"
+
+
+def _keyword_rule(keyword) -> tuple[str, list[str] | None] | None:
+    """How a search keyword matches titles, or None when its search must skip
+    every known job: a keyword that is not text, blank, or boolean (OR, AND, NOT,
+    parentheses), none of which title_matches can predict.
+
+    Otherwise (the keyword normalized with its spaces removed, its words or None).
+    The words are given for an UNQUOTED keyword of two or more words: LinkedIn
+    searches those as separate words (Settings tells the user to quote a phrase),
+    so a title holding every word, in any order, can come back. A keyword wrapped
+    in one pair of double quotes is a phrase and has no words rule."""
+    if not isinstance(keyword, str) or _BOOLEAN_KEYWORD.search(keyword):
+        return None
+    norm = _norm_text(keyword)
+    if not norm:
+        return None
+    raw = keyword.strip()
+    quoted = (len(raw) >= 2 and raw[0] in _DOUBLE_QUOTES and raw[-1] in _DOUBLE_QUOTES
+              and not any(c in _DOUBLE_QUOTES for c in raw[1:-1]))
+    words = norm.split(" ")
+    return norm.replace(" ", ""), (None if quoted or len(words) < 2 else words)
+
+
 def title_matches(keyword, title) -> bool:
     """Whether a search for `keyword` can return a job titled `title`, the rule
     the skip list per keyword uses to decide which known jobs a search needs.
 
     Both sides go through _norm_text, then the keyword must appear in the title as
-    a plain SUBSTRING, or as one once every space is removed from both, so "GenAI"
-    and "Gen AI" find each other. No word boundaries on purpose: "quant" has to
-    match "quantitative" and "llm" "llms". Measured on 5,440 real (job, keyword)
-    pairs from ten snapshots, this missed none; a whole-word rule missed 320. A
-    looser match only puts more ids on a list, which is the safe side.
+    a plain SUBSTRING once every space is removed from both, so "GenAI" and
+    "Gen AI" find each other (a substring with the spaces in stays one without
+    them). No word boundaries on purpose: "quant" has to match "quantitative" and
+    "llm" "llms". Measured on 5,440 real (job, keyword) pairs from ten snapshots,
+    this missed none; a whole-word rule missed 320. A looser match only puts more
+    ids on a list, which is the safe side.
 
-    A blank keyword restricts nothing, so it matches every title; an empty title
-    matches no keyword (exclude_ids_per_keyword puts an id with no title and no
-    recorded keyword on every list instead)."""
-    kw = _norm_text(keyword)
-    if not kw:
+    An unquoted keyword of two or more words also matches a title that holds
+    every one of its words, each as a substring, in any order ("Data Scientist"
+    unquoted matches "Scientist, Data Platform"). A keyword with no title rule
+    (blank, boolean, not text; see _keyword_rule) matches every title. An empty
+    title matches no keyword (exclude_ids_per_keyword puts an id with no title
+    and no recorded keyword on every list instead)."""
+    rule = _keyword_rule(keyword)
+    if rule is None:
         return True
+    phrase, words = rule
     text = _norm_text(title)
-    return kw in text or kw.replace(" ", "") in text.replace(" ", "")
+    if phrase in text.replace(" ", ""):
+        return True
+    return bool(words) and all(w in text for w in words)
 
 
 def _ledger_keep_days() -> int:
@@ -1479,39 +1526,49 @@ def cap_exclude_ids(exclude_ids: list[str], limit_per_input: int) -> list[str]:
 
 def exclude_ids_per_keyword(known: pd.DataFrame, keywords) -> dict[str, list[str]]:
     """keyword -> the known ids its search has to skip, each list in the order of
-    `known` (load_known_jobs: oldest first, so a trim keeps the newest).
+    `known` (load_known_jobs: oldest first, so a trim keeps the newest). Filed
+    under _keyword_key(keyword), which is the keyword itself when it is text.
 
     With selective_search on, a search only returns jobs whose title holds its
     keyword, so it only needs the known jobs it could return. An id goes on
     keyword K's list when its title matches K (title_matches), or when the ledger
     records a search for K returning it (LinkedIn matches in its own way, and a
-    job it returned once it can return again). An id with no title AND no
-    recorded keyword goes on every list: nothing proves it irrelevant. A blank
-    keyword is not title-restricted and gets the whole list.
+    job it returned once it can return again; compared with spaces removed, like
+    the title, so "genai" on record counts for a "Gen AI" search). An id with no
+    title AND no recorded keyword goes on every list: nothing proves it
+    irrelevant. A keyword with no title rule (blank, boolean, not text; see
+    _keyword_rule) gets the whole list.
 
     Built for the real window (~20,000 ids x ~20 keywords): every title is
     normalized once, then each keyword is one plain substring scan over the titles
-    with their spaces removed. That one scan is all of title_matches: a keyword
-    found in a title is still found once the spaces go from both."""
+    with their spaces removed (plus one scan per word for an unquoted phrase)."""
     ids = known["job_posting_id"].astype(object).astype(str)
-    titles = known["job_title"].astype(object).map(_norm_text).str.replace(
-        " ", "", regex=False)
+    spaced = known["job_title"].astype(object).map(_norm_text)
+    titles = spaced.str.replace(" ", "", regex=False)
     recorded = known["keywords"].astype(object).map(
-        lambda c: _KEYWORD_SEP + _join_keywords(_keyword_set(c)) + _KEYWORD_SEP)
+        lambda c: _KEYWORD_SEP + _KEYWORD_SEP.join(
+            sorted({k.replace(" ", "") for k in _keyword_set(c)})) + _KEYWORD_SEP)
     blank = (titles == "") & (recorded == _KEYWORD_SEP * 2)
     lists: dict[str, list[str]] = {}
     for kw in keywords:
-        if kw in lists:
+        key = _keyword_key(kw)
+        if key in lists:
             continue
-        norm = _norm_text(kw)
-        if not norm:
-            lists[kw] = ids.tolist()
+        rule = _keyword_rule(kw)
+        if rule is None:
+            lists[key] = ids.tolist()
             continue
+        phrase, words = rule
         mask = (blank
-                | titles.str.contains(norm.replace(" ", ""), regex=False)
-                | recorded.str.contains(f"{_KEYWORD_SEP}{norm}{_KEYWORD_SEP}",
+                | titles.str.contains(phrase, regex=False)
+                | recorded.str.contains(f"{_KEYWORD_SEP}{phrase}{_KEYWORD_SEP}",
                                         regex=False))
-        lists[kw] = ids[mask].tolist()
+        if words:
+            every = spaced.str.contains(words[0], regex=False)
+            for word in words[1:]:
+                every &= spaced.str.contains(word, regex=False)
+            mask |= every
+        lists[key] = ids[mask].tolist()
     return lists
 
 
@@ -1544,8 +1601,8 @@ def _cap_per_keyword(lists: dict[str, list[str]], limit: int) -> dict[str, list[
     if len(by_budget) < len(trims):
         hints.append(f"Raise {max_exclude_ids_where()} if Bright Data accepts a "
                      f"longer list.")
-    print(f"skip list capped for {len(trims)} of {len(lists)} keywords: {each}; "
-          f"{cost}. {' '.join(hints)}")
+    _print_line(f"skip list capped for {len(trims)} of {len(lists)} keywords: {each}; "
+                f"{cost}. {' '.join(hints)}")
     return capped
 
 
@@ -1582,7 +1639,7 @@ def build_inputs(exclude: list[str] | pd.DataFrame, max_keywords: int | None = N
         per_keyword = _cap_per_keyword(exclude_ids_per_keyword(exclude, keywords), limit)
     else:
         shared = cap_exclude_ids(exclude, limit_per_input)
-        per_keyword = {kw: shared for kw in keywords}
+        per_keyword = {_keyword_key(kw): shared for kw in keywords}
     base_filters = {
         "location": cfg["location"],
         "country": cfg["country"],
@@ -1593,7 +1650,7 @@ def build_inputs(exclude: list[str] | pd.DataFrame, max_keywords: int | None = N
     }
     return [
         {**base_filters, "keyword": kw, "remote": remote,
-         "jobs_to_not_include": per_keyword[kw]}
+         "jobs_to_not_include": per_keyword[_keyword_key(kw)]}
         for kw in keywords
         for remote in remote_types
     ]
@@ -2145,7 +2202,7 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
                 known = load_known_jobs()
                 inputs = build_inputs(known, max_keywords=max_keywords,
                                       limit_per_input=limit_per_input)
-                print(_skip_list_summary(run_label, len(known), inputs))
+                _print_line(_skip_list_summary(run_label, len(known), inputs))
                 payload = {"input": inputs}
                 # Derived from `inputs`, not from the raw flag: build_inputs coerces
                 # the flag, and a run log naming a cap the run did not apply is worse

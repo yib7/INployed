@@ -424,3 +424,79 @@ def test_a_wide_tail_is_sized_exactly_too(sandbox):
     k = len(scraper.cap_exclude_ids(ids, 300))
     assert len(json.dumps(ids[-k:])) * 300 <= scraper.MAX_EXCLUDE_PAYLOAD_BYTES
     assert len(json.dumps(ids[-(k + 1):])) * 300 > scraper.MAX_EXCLUDE_PAYLOAD_BYTES
+
+
+# --- unquoted, boolean and odd keywords (2026-10-14 review) ----------------------
+
+def test_an_unquoted_phrase_matches_its_words_in_any_order():
+    """Settings says quotes make a phrase, so an unquoted keyword is separate words."""
+    assert scraper.title_matches("Data Scientist", "Scientist, Data Platform")
+    assert scraper.title_matches("data  scientist", "Lead Scientist - Big Data")
+
+
+def test_a_quoted_phrase_still_needs_the_phrase():
+    assert not scraper.title_matches('"Data Scientist"', "Scientist, Data Platform")
+    assert not scraper.title_matches("\u201cData Scientist\u201d", "Scientist, Data Platform")
+
+
+def test_an_unquoted_phrase_needs_every_word():
+    assert not scraper.title_matches("Data Scientist", "Data Engineer")
+
+
+def test_the_lists_follow_the_unquoted_rule():
+    known = _known([("phrase", "Data Scientist", ""), ("words", "Scientist, Data Platform", ""),
+                    ("one", "Data Engineer", "")])
+    lists = scraper.exclude_ids_per_keyword(known, ["Data Scientist", '"Data Scientist"'])
+    assert lists["Data Scientist"] == ["phrase", "words"]
+    assert lists['"Data Scientist"'] == ["phrase"]
+
+
+@pytest.mark.parametrize("keyword", ['"A" OR "B"', "Data AND Science", "AI NOT Sales",
+                                     "(Data Scientist)", '"ML" OR ("AI" AND "LLM")'])
+def test_a_boolean_keyword_gets_the_whole_list(keyword):
+    lists = scraper.exclude_ids_per_keyword(KNOWN, [keyword])
+    assert lists[keyword] == KNOWN["job_posting_id"].tolist()
+    assert scraper.title_matches(keyword, "Nurse")
+
+
+def test_lowercase_or_inside_a_word_is_not_boolean():
+    """LinkedIn's operators are capitals and whole words; "Oracle" or "or" are not."""
+    lists = scraper.exclude_ids_per_keyword(KNOWN, ['"Oracle"', "data or quant"])
+    assert lists['"Oracle"'] == ["untitled"]
+    assert len(lists["data or quant"]) < len(KNOWN)
+
+
+@pytest.mark.parametrize("keyword", [["Data", "Scientist"], 7, None, {"k": "v"}])
+def test_an_odd_keyword_does_not_raise_and_gets_the_whole_list(sandbox, keyword):
+    _config(sandbox, keywords=[keyword, '"Quant"'], remote_types=["Hybrid", "On-site"],
+            limit_per_input=300)
+    inputs = scraper.build_inputs(KNOWN)
+    assert [i["keyword"] for i in inputs] == [keyword, keyword, '"Quant"', '"Quant"']
+    assert inputs[0]["jobs_to_not_include"] == KNOWN["job_posting_id"].tolist()
+    assert inputs[2]["jobs_to_not_include"] == ["untitled", "quant"]
+
+
+def test_an_odd_keyword_with_a_plain_list_does_not_raise(sandbox):
+    _config(sandbox, keywords=[["a", "b"], "x"], remote_types=[], limit_per_input=300)
+    inputs = scraper.build_inputs(["1", "2"])
+    assert [i["jobs_to_not_include"] for i in inputs] == [["1", "2"], ["1", "2"]]
+
+
+@pytest.mark.parametrize("recorded, search", [("genai", '"Gen AI"'), ("gen ai", '"GenAI"')])
+def test_a_recorded_keyword_matches_with_spaces_ignored(recorded, search):
+    known = _known([("rec", "Platform Engineer", recorded), ("other", "Nurse", "quant")])
+    assert scraper.exclude_ids_per_keyword(known, [search])[search] == ["rec"]
+
+
+def test_the_summary_lines_survive_an_ascii_stdout(sandbox, monkeypatch):
+    """Both lines go through _print_line, which falls back to escapes."""
+    import io
+    import sys
+    raw = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(raw, encoding="ascii"))
+    _config(sandbox, keywords=['"Software Engineer\u2122"'], remote_types=[],
+            limit_per_input=300)
+    known = _known([(i, "Software Engineer\u2122", "") for i in _ids(0, 5_000)])
+    scraper.build_inputs(known)
+    sys.stdout.flush()
+    assert b"skip list capped for 1 of 1 keywords" in raw.getvalue()

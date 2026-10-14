@@ -468,7 +468,9 @@ SETTINGS_SCHEMA: list[Field] = [
                "single words need no quotes. Each line runs once per ticked remote type."),
     Field("remote_types", "Remote types", "multichoice", ["Hybrid", "On-site"],
           "Scraper", "search",
-          help="Which workplace types to search. Each ticked type runs once per keyword.",
+          help="Which workplace types to search. Tick all three to run one search per keyword "
+               "for every type (cheapest: the split searches return mostly the same jobs, "
+               "billed twice). Otherwise each ticked type runs once per keyword.",
           choices=("On-site", "Remote", "Hybrid")),
     Field("limit_per_input", "Postings per search", "int", 100, "Scraper", "search",
           help="Max postings collected per (keyword x remote type). Higher = more spend.",

@@ -803,11 +803,38 @@ def test_a_cap_that_trims_known_jobs_says_what_it_costs(capsys):
 
 def test_a_trim_forced_by_the_fan_out_names_limit_per_input(capsys):
     """At limit 150 the byte budget binds before max_exclude_ids does, so raising
-    max_exclude_ids would change nothing: point at the setting that would."""
+    max_exclude_ids would change nothing: point at the setting that would. A log
+    line only: a high limit_per_input is a choice (2026-10-13: 300), and a WARNING
+    would open the dashboard's problems box on every run."""
     ids = [str(4_400_000_000 + n) for n in range(_HUGE)]
     scraper.cap_exclude_ids(ids, 150)
     out = capsys.readouterr().out
-    assert "WARNING:" in out and "limit_per_input" in out
+    assert "WARNING" not in out
+    assert "limit_per_input" in out and "billed again" in out
+
+
+def _remote_config(monkeypatch, remote_types):
+    cfg = dict(scraper.load_search_config(), keywords=["k1", "k2"], remote_types=remote_types)
+    monkeypatch.setattr(scraper, "load_search_config", lambda: cfg)
+
+
+@pytest.mark.parametrize("types", [["On-site", "Hybrid", "Remote"],
+                                   ["Remote", "Hybrid", "On-site"], []])
+def test_every_workplace_type_is_one_search_per_keyword(monkeypatch, types):
+    """Bright Data's remote filter is mostly ignored (2026-10-13: a keyword's
+    On-site and Hybrid searches returned 85% the same jobs, each billed twice), so
+    all three types, or none ticked, run ONE unfiltered search per keyword."""
+    _remote_config(monkeypatch, types)
+    inputs = scraper.build_inputs([])
+    assert [i["keyword"] for i in inputs] == ["k1", "k2"]
+    assert all(i["remote"] == "" for i in inputs)
+
+
+def test_a_subset_of_workplace_types_still_runs_one_search_each(monkeypatch):
+    _remote_config(monkeypatch, ["Hybrid", "On-site"])
+    inputs = scraper.build_inputs([])
+    assert [(i["keyword"], i["remote"]) for i in inputs] == [
+        ("k1", "Hybrid"), ("k1", "On-site"), ("k2", "Hybrid"), ("k2", "On-site")]
 
 
 def test_no_warning_when_nothing_is_trimmed(capsys):

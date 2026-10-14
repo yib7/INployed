@@ -403,6 +403,18 @@ KEYWORDS = [
 ]
 
 REMOTE_TYPES = ["Hybrid", "On-site"]
+ALL_REMOTE_TYPES = ("On-site", "Hybrid", "Remote")
+
+
+def remote_filters(remote_types) -> list[str]:
+    """The `remote` value of each search a keyword runs. Every type ticked (or none)
+    is ONE search with no filter: Bright Data mostly ignores the filter (2026-10-13:
+    a keyword's On-site and Hybrid searches returned 85% the same jobs, and each copy
+    was billed), so one unfiltered search per keyword costs about a third less per job."""
+    types = list(remote_types or [])
+    if not types or set(ALL_REMOTE_TYPES) <= set(types):
+        return [""]
+    return types
 
 BASE_FILTERS = {
     "location": "United States",
@@ -1205,21 +1217,22 @@ def cap_exclude_ids(exclude_ids: list[str], limit_per_input: int) -> list[str]:
     trimmed = (f"skip list capped at {keep} of {len(exclude_ids)} known jobs. "
                f"The {len(exclude_ids) - keep} oldest are left off it, so they may be "
                f"collected and billed again.")
+    # Both limits are the user's own settings (a window wider than the cap, a high
+    # limit_per_input), so a trim goes to the log only: a WARNING would open the
+    # dashboard's problems box on every run. Below the floor (above) still warns.
     if budget > cap:
-        # max_exclude_ids is the user's own limit (a window wider than the cap is a
-        # choice), so this goes to the log only: a WARNING would open the
-        # dashboard's problems box on every run.
         print(f"{trimmed} Raise {max_exclude_ids_where()} if Bright Data accepts "
               f"a longer list.")
     else:
-        warn(f"{trimmed} limit_per_input={limit} leaves room for only {budget}; "
-             f"lower limit_per_input in search_config.json to fit more.")
+        print(f"{trimmed} limit_per_input={limit} leaves room for only {budget}; "
+              f"lower limit_per_input in search_config.json to fit more.")
     return exclude_ids[-keep:]
 
 
 def build_inputs(exclude_ids: list[str], max_keywords: int | None = None,
                  limit_per_input: int | None = None) -> list[dict]:
-    """One search input per (keyword x remote type).
+    """One search input per (keyword x remote type); one per keyword when every
+    type is wanted (see remote_filters).
 
     Keywords, remote types, and the base filters come from load_search_config()
     (which falls back to the module constants when no search_config.json exists).
@@ -1235,7 +1248,7 @@ def build_inputs(exclude_ids: list[str], max_keywords: int | None = None,
     cfg = load_search_config()
     keywords = (cfg["keywords"] if max_keywords is None
                 else cfg["keywords"][:_keyword_cap(max_keywords)])
-    remote_types = cfg["remote_types"]
+    remote_types = remote_filters(cfg["remote_types"])
     if limit_per_input is None:
         limit_per_input = cfg["limit_per_input"]
     exclude_ids = cap_exclude_ids(exclude_ids, limit_per_input)
@@ -1789,8 +1802,11 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
                 # Derived from `inputs`, not from the raw flag: build_inputs coerces
                 # the flag, and a run log naming a cap the run did not apply is worse
                 # than no line at all.
-                kw_used = len(inputs) // max(len(cfg["remote_types"]), 1)
-                print(f"Triggering {len(inputs)} searches ({kw_used} keywords x {len(cfg['remote_types'])} remote types), "
+                filters = remote_filters(cfg["remote_types"])
+                kw_used = len(inputs) // max(len(filters), 1)
+                shape = ("all workplace types in one search each" if filters == [""]
+                         else f"x {len(filters)} remote types")
+                print(f"Triggering {len(inputs)} searches ({kw_used} keywords {shape}), "
                       f"limit_per_input={limit_per_input} -> up to {len(inputs) * limit_per_input} postings")
                 collected = await _trigger_once(session, payload, limit_per_input)
                 if collected.rows is not None:

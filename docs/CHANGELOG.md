@@ -65,13 +65,31 @@ All notable changes to INployed are recorded here. The format follows
   the old list skipped 0 of the 181 that an earlier run had collected the same day.
   **Upgrading:** the VM runs `pipeline/scraper.py` too, so copy the new file there to get
   these scraper fixes on the VM.
-- **The skip list holds up to 10,000 jobs, up from 2,000.** On 2026-10-13 Bright Data
+- **A skip list holds up to 10,000 jobs, up from 2,000.** On 2026-10-13 Bright Data
   accepted a test search carrying 10,000 ids at `limit_per_input` 100 (about 14 MB once the
   list is copied onto each of the search's child fetches), well past the August rejection
   that set the old cap. Change it with `max_exclude_ids` in `search_config.json` or the
-  `MAX_EXCLUDE_IDS` environment variable; there is no Settings row. A higher
-  `limit_per_input` fits fewer ids (about 6,700 at 150). When the cap leaves known jobs
-  off, the run says how many may be billed again.
+  `MAX_EXCLUDE_IDS` environment variable; there is no Settings row. The cap applies to
+  each search's list. A higher `limit_per_input` fits fewer ids (about 6,700 at 150).
+  When the cap leaves known jobs off, the run says how many may be billed again.
+- **Each search skips only the known jobs its keyword can return, so far more of them
+  fit.** Every search carried the same skip list, and at `limit_per_input` 300 Bright
+  Data's size limit let it hold only the newest 3,357 known jobs, about five days. A
+  search only returns jobs whose title holds its keyword, so each search now carries its
+  own list: the known jobs whose title matches its keyword, or that the ledger says that
+  search returned before. A job with no title and no record goes on every list. At 300,
+  every search now carries its keyword's full 30-day history except "Software Engineer",
+  which keeps its newest ~3,355 of ~4,100. Measured on the real data on 2026-10-14:
+  17,864 of the 18,557 known jobs from the last 30 days are on some search's list,
+  against 3,357 with one shared list, and the request to Bright Data is 0.27 MB instead
+  of 0.76 MB. `collected_ids_ledger.csv` now also records each job's title and the
+  keyword search(es) that returned it; an older two-column ledger upgrades on its next
+  write. An unquoted keyword of several words matches a title holding every one of its
+  words; a keyword with OR, AND, NOT or parentheses carries the whole list. The size
+  limit is now worked out from each id's exact length, so a list holds every id that
+  fits. The run log's `Run:` line now reads `Run: <label> | N known jobs from the last D
+  days; each search skips the ones its keyword can return (a to b ids per search)`, and
+  one more line names any keyword whose list was trimmed.
 - **The scraper says what went wrong, why it matters and what to do.** A problem the run
   survives prints one `WARNING:` line: a missing or unreadable Google Drive master (a
   truncated one used to crash the run), an unreadable `search_config.json`, a skip list

@@ -215,8 +215,9 @@ The scraper prints the same lines on the command line, starting with `WARNING:` 
   - *No Google Drive master was found:* Google Drive for desktop is not running, so the run
     could not skip the jobs the VM already collected and may pay for some again. Start
     Google Drive before the next run. (Only when a job data folder or the VM is set up.)
-  - *Skip list capped:* there are more known recent jobs than `max_exclude_ids` allows,
-    so the oldest of them may be collected and billed again.
+  - *Room for only N skip-list ids:* `limit_per_input` is so high that a search's skip
+    list has room for fewer than 50 jobs, so jobs you already have may be collected and
+    billed again. Lower `limit_per_input` in `search_config.json`.
   - *Bright Data rejected some of this run's searches:* the jobs from the other searches
     are saved and scored; the rejected searches collected nothing this time.
 - **"Find new jobs" with "The job search failed":** the run stopped. The box leads with
@@ -237,10 +238,17 @@ The scraper prints the same lines on the command line, starting with `WARNING:` 
 Both boxes name the full log, `%LOCALAPPDATA%\linkedin_watcher\scrape.log`.
 
 **The skip list and `max_exclude_ids`.** Bright Data bills for every job it collects, so
-each search carries the ids of jobs you already have. The list holds the jobs collected in
-the last `exclude_window_days` days (the scraper records the day it last collected each job
-in `collected_ids_ledger.csv`), up to `max_exclude_ids` jobs, 10,000 by default. Neither
-has a Settings row: set them by hand in `search_config.json`, for example
+each search carries a skip list: the ids of jobs you already have that its keyword can
+return. That is the jobs collected in the last `exclude_window_days` days whose title holds
+the keyword, or that the same search returned before (the scraper records each job's
+title, the day it last collected it and the searches that found it in
+`collected_ids_ledger.csv`). Each search's list holds up to `max_exclude_ids` jobs, 10,000
+by default. Bright Data also limits its size: it copies the list once for every posting the
+search may collect, so a higher **Postings per search** (`limit_per_input`) fits fewer ids
+(about 3,350 at 300). Most keywords have fewer known jobs than that, so lowering
+`limit_per_input` only matters for the biggest ones, such as Software Engineer; the run log
+names any keyword whose list was trimmed. Neither `exclude_window_days` nor
+`max_exclude_ids` has a Settings row: set them by hand in `search_config.json`, for example
 `"max_exclude_ids": 6000`. If a run fails because Bright Data rejected the skip list as
 too large, lower `max_exclude_ids` and run again. A lower number lets more known jobs be
 billed again, so lower it only as far as you need. The `MAX_EXCLUDE_IDS` environment

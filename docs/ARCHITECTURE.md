@@ -116,24 +116,56 @@ appends to a cumulative master CSV. Five cost-aware details:
   The ledger exists because a master's `extracted_date` is the day a job was FIRST found
   (`append_to_master` keeps the existing row), so a job collected again yesterday looked
   weeks old and fell off the list. `collected_ids_ledger.csv` in `OUTPUT_DIR` holds one
-  row per id with the last day a run collected it, pruned to 60 days (or the window, if
-  longer), and is seeded once from the run files when missing. See `load_exclude_ids()`.
-- **The window is not the real bound; `cap_exclude_ids()` is.** Bright Data copies the
-  `jobs_to_not_include` array onto every one of the up-to-`limit_per_input` child fetches
-  a single search input fans out to, so the payload is spent `len(ids) x limit_per_input`
-  times over. Past an unpublished limit the whole collection is rejected with
+  row per id: `job_posting_id`, `collected_date` (the last day a run collected it),
+  `job_title` (the newest non-empty title) and `keywords` (the normalized keywords of the
+  searches that returned it, `|`-joined and unioned across runs; `_save_results` reads them
+  off `discovery_input` before those columns are dropped). It is pruned to 60 days (or the
+  window, if longer) and seeded once from the run files when missing (titles only: a run
+  file keeps no keyword). A two-column ledger written before the title and keywords
+  existed reads with them empty and gets all four columns on its next write. See
+  `load_exclude_ids()`, and `load_known_jobs()`, which returns the same ids in the same
+  order with each id's title (ledger, then own master, then Drive master) and keywords.
+- **The window is not the real bound; the byte budget per input is.** Bright Data copies
+  an input's `jobs_to_not_include` array onto every one of the up-to-`limit_per_input`
+  child fetches it fans out to, so the payload is spent `len(ids) x limit_per_input` times
+  over. Past an unpublished limit the whole collection is rejected with
   `child_input_size_validation` and returns zero rows. `MAX_EXCLUDE_PAYLOAD_BYTES`
   (14.1 MB) comes from a 2026-10-13 one-search probe: 10,000 ids at `limit_per_input` 100
-  (a 140,279-byte input, 14,027,900 bytes across its children) was accepted. So the set
-  is trimmed to whatever fits that budget (about 6,700 ids at 150), hard-capped at
-  `max_exclude_ids()` (10,000 by default; `max_exclude_ids` in `search_config.json` or the
-  `MAX_EXCLUDE_IDS` env var), with the per-id width measured off the ids in hand, so a
-  LinkedIn id that outgrows today's 10 digits still counts correctly. `load_exclude_ids()`
-  returns ids oldest first by that newest date, undated ids at the front, so the tail the
-  cap keeps is the most recently collected, the ids a "Past 24 hours" search can actually
-  resurface. When the cap trims ids inside the window the run prints a `WARNING:` with the
-  count. Below `MIN_EXCLUDE_IDS` (50) the run warns and proceeds, because a
-  rejected collection costs more than some re-collected rows.
+  (a 140,279-byte input, 14,027,900 bytes across its children) was accepted. One list
+  shared by every search fits only about 3,350 ids at 300, a few days of a 30-day window
+  of ~20,000, so each keyword gets its own list. With `selective_search` on, a search only
+  returns jobs whose title holds its keyword, so `exclude_ids_per_keyword()` puts a known
+  id on keyword K's list when its title matches K (`title_matches()`) or the ledger
+  records a K search returning it. The match normalizes both sides (lowercase, every
+  non-alphanumeric run to one space, so quotes drop out), then looks for the keyword as a
+  plain substring of the title with every space removed: "GenAI" meets "Gen AI", "quant"
+  meets "quantitative", "llm" meets "llms". On 5,440 real (job, keyword) pairs from ten
+  snapshots it missed none; a whole-word phrase rule missed 320. A looser match only puts
+  more ids on a list, the safe side. An unquoted keyword of two or more words also matches
+  a title holding every one of its words in any order (LinkedIn searches those as
+  separate words). An id with no title and no recorded keyword goes on every list, and a
+  keyword with no title rule (blank, not text, or boolean: OR, AND, NOT or parentheses;
+  see `_keyword_rule()`) carries the whole list. Each list keeps the `load_known_jobs()`
+  order, oldest first.
+- **Each keyword's list is capped on its own.** `_cap_per_keyword()` runs `_cap_ids()` on
+  every list: the newest k ids whose `json.dumps` size times `limit_per_input` fits
+  `MAX_EXCLUDE_PAYLOAD_BYTES`, sized exactly (brackets, each id's JSON width and the
+  separators, summed from the newest end), so a LinkedIn id that outgrows today's 10
+  digits still counts correctly and no room is lost to an average width. Each list is
+  also capped at `max_exclude_ids()` (10,000 by default; `max_exclude_ids` in
+  `search_config.json` or the `MAX_EXCLUDE_IDS` env var). The ids are oldest first by
+  their newest date, undated ids at the front, so the tail the cap keeps is the most
+  recently collected, the ids a "Past 24 hours" search can actually resurface. Every input
+  of a keyword (one per remote type when the types are split) carries that keyword's
+  list. On the real data on 2026-10-14 at `limit_per_input` 300, every keyword's full
+  30-day list fit except "Software Engineer" (its newest ~3,355 of ~4,100); 17,864 of
+  18,557 known ids were on some list, against 3,357 with one shared list, and the trigger
+  body was 0.27 MB instead of 0.76 MB. Trims go to the log as one info line naming each
+  trimmed keyword and the setting that would avoid it, not a `WARNING:`, since both
+  limits are the user's own settings. Below `MIN_EXCLUDE_IDS` (50) the run warns once and
+  proceeds, because a rejected collection costs more than some re-collected rows.
+  `build_inputs()` still takes a plain id list for older callers and tests: one list every
+  search shares, capped once by `cap_exclude_ids()`.
 - **A rejected collection is a failure, not a quiet empty run.** When Bright Data refuses
   every input the snapshot still reports `status="ready"` with `records=0`. Read naively that
   looks like "no new jobs" and exits 0, which is how the VM cron logged clean successes for

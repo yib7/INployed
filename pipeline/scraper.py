@@ -151,10 +151,11 @@ LEDGER_KEEP_DAYS = 60
 
 # Cap the exclude-id set to a recency window. The search filter is time_range="Past
 # 24 hours", so a posting scraped more than ~60 days ago can never reappear in a
-# fresh run -- keeping its id in jobs_to_not_include is pure payload. The full
-# cumulative set is embedded once per (keyword x remote) input (~40 inputs), so a
-# months-long history makes the Bright Data trigger POST grow monotonically until it
-# hard-fails the request-size limit and silently kills the cron before collection.
+# fresh run -- keeping its id in jobs_to_not_include is pure payload. Every search
+# input carries its own skip list (the known jobs its keyword can return, see
+# exclude_ids_per_keyword), so a months-long history makes the Bright Data trigger
+# POST grow monotonically until it hard-fails the request-size limit and silently
+# kills the cron before collection.
 # Ids whose extracted_date is older than this many days are dropped from the exclude
 # set. Overridable via the EXCLUDE_WINDOW_DAYS env var. See .env.example.
 EXCLUDE_WINDOW_DAYS_ENV = "EXCLUDE_WINDOW_DAYS"
@@ -192,6 +193,16 @@ DEFAULT_EXCLUDE_WINDOW_DAYS = 90
 # re-billed because they had fallen off the list. Re-collecting a few duplicates
 # costs a little; a rejected collection costs the entire run and still burns the
 # trigger, which is why the budget stays on the measured-good side.
+#
+# The budget is per search INPUT, because each input's children copy only that
+# input's list. So each search carries its own list: the known jobs whose title
+# holds its keyword, plus those a search for it returned before (with
+# selective_search on, a search returns nothing else; see exclude_ids_per_keyword).
+# Measured 2026-10-13 on the 30-day window at limit_per_input=300: one shared list
+# fit about 3,350 of ~20,000 known ids (four or five days), while the per-keyword
+# lists ran 130 to 3,060 ids, all inside the budget, except "Software Engineer" at
+# 4,714, which keeps its newest ~3,350. Each list is capped on its own, and the
+# run log gets one line naming every keyword that was trimmed.
 MAX_EXCLUDE_PAYLOAD_BYTES = 14_100_000  # ~ 10,000 ids x 14 bytes x 100 children
 # The width that budget was derived from: '"4444097977", ', the shape a 10-digit
 # posting id takes once aiohttp's json.dumps has written it. cap_exclude_ids does
@@ -547,9 +558,9 @@ def exclude_window_days() -> int:
     exact failure this guard prevents -- so we always fail toward the safe default
     rather than an empty window.
 
-    The cap still bounds what is sent: max_exclude_ids() (10,000 by default) trims
-    whatever the window keeps, newest kept, and says so when it trims. See
-    cap_exclude_ids."""
+    The cap still bounds what is sent: max_exclude_ids() (10,000 by default) and
+    the byte budget trim each search's list, newest kept, and the run log says so
+    when they trim. See cap_exclude_ids and _cap_per_keyword."""
     raw = os.environ.get(EXCLUDE_WINDOW_DAYS_ENV, "").strip()
     if not raw:
         # _positive_int() already collapses junk/0/negative to the default.
@@ -682,6 +693,10 @@ def _window_dated(dated: pd.DataFrame, window_days: int) -> list[str]:
 
 
 _ID_DATE_COLUMNS = ("job_posting_id", "extracted_date")
+# What the skip list reads from a master: the id, its date, and its title for the
+# skip list per search keyword (see exclude_ids_per_keyword). One extra column of
+# a ~100 MB master is a small cost next to reading the whole file.
+_KNOWN_COLUMNS = (*_ID_DATE_COLUMNS, "job_title")
 # What reading a CSV (plain or gzipped) can raise when the file is locked, damaged
 # or half-synced: a truncated .csv.gz ends in EOFError, a corrupt deflate stream
 # in zlib.error, neither of which is an OSError or a ValueError.
@@ -700,13 +715,13 @@ def _warn_undated(df: pd.DataFrame, what: str) -> None:
 
 
 def _own_master_frame() -> pd.DataFrame | None:
-    """This host's master as (job_posting_id, extracted_date) rows, or None when it
-    is missing, unreadable or not a master (the reason is printed). An empty but
-    valid master is an empty frame."""
+    """This host's master as (job_posting_id, extracted_date, job_title) rows (the
+    title when the master has one), or None when it is missing, unreadable or not
+    a master (the reason is printed). An empty but valid master is an empty frame."""
     if not MASTER_CSV.exists():
         return None
     try:
-        df = pd.read_csv(MASTER_CSV, usecols=lambda c: c in _ID_DATE_COLUMNS, dtype=str)
+        df = pd.read_csv(MASTER_CSV, usecols=lambda c: c in _KNOWN_COLUMNS, dtype=str)
     except _READ_ERRORS as e:
         warn(f"could not read {MASTER_CSV.name} for the skip list ({e}). Using the job "
              f"ids from the last run instead, so jobs collected before that may be "
@@ -749,7 +764,7 @@ def _truthy_env(name: str) -> bool:
 
 def _extra_master_frame() -> pd.DataFrame | None:
     """The additional master named by $LINKEDIN_EXTRA_MASTER as (job_posting_id,
-    extracted_date) rows, or None when the var is unset, the file is missing or
+    extracted_date, job_title) rows, or None when the var is unset, the file is missing or
     unreadable, or it holds no ids. Accepts a plain or gzipped CSV.
 
     Never raises: the Drive master is a synced copy this host does not write, and
@@ -771,7 +786,7 @@ def _extra_master_frame() -> pd.DataFrame | None:
         return None
     try:
         comp = "gzip" if path.suffix == ".gz" else "infer"
-        df = pd.read_csv(path, usecols=lambda c: c in _ID_DATE_COLUMNS,
+        df = pd.read_csv(path, usecols=lambda c: c in _KNOWN_COLUMNS,
                          dtype=str, compression=comp)
     except _READ_ERRORS as e:
         warn(f"could not read the Google Drive master {path.name} "
@@ -841,6 +856,27 @@ def _keyword_set(value) -> set[str]:
 
 def _join_keywords(keywords: set[str]) -> str:
     return _KEYWORD_SEP.join(sorted(keywords))
+
+
+def title_matches(keyword, title) -> bool:
+    """Whether a search for `keyword` can return a job titled `title`, the rule
+    the skip list per keyword uses to decide which known jobs a search needs.
+
+    Both sides go through _norm_text, then the keyword must appear in the title as
+    a plain SUBSTRING, or as one once every space is removed from both, so "GenAI"
+    and "Gen AI" find each other. No word boundaries on purpose: "quant" has to
+    match "quantitative" and "llm" "llms". Measured on 5,440 real (job, keyword)
+    pairs from ten snapshots, this missed none; a whole-word rule missed 320. A
+    looser match only puts more ids on a list, which is the safe side.
+
+    A blank keyword restricts nothing, so it matches every title; an empty title
+    matches no keyword (exclude_ids_per_keyword puts an id with no title and no
+    recorded keyword on every list instead)."""
+    kw = _norm_text(keyword)
+    if not kw:
+        return True
+    text = _norm_text(title)
+    return kw in text or kw.replace(" ", "") in text.replace(" ", "")
 
 
 def _ledger_keep_days() -> int:
@@ -1058,7 +1094,17 @@ def load_exclude_ids() -> list[str]:
     where the pushed external file routinely carries more ids than the cap, the
     foreign undated ids are evicted before any of this host's own.
     """
-    window = exclude_window_days()
+    return _load_known()[0]
+
+
+_DRIVE_SOURCE = "the Google Drive master"
+
+
+def _known_sources() -> list[tuple[str, pd.DataFrame | None]]:
+    """(name, frame) for every source of known job ids, in the order
+    load_exclude_ids combines them (Drive, external, ours, the ledger): the order
+    undated ids keep at the front of the list. A source that is absent or
+    unreadable is None or an empty frame (the readers say why)."""
     own = _own_master_frame()
     if own is None or own.empty:
         previous = load_previous_ids()
@@ -1072,13 +1118,20 @@ def load_exclude_ids() -> list[str]:
                  f"before that may be collected and billed again. Restore the master "
                  f"from a backup if it was moved, deleted or emptied.")
         own = pd.DataFrame({"job_posting_id": previous}, dtype=str)
-    sources = [
-        ("the Google Drive master", _extra_master_frame()),
+    return [
+        (_DRIVE_SOURCE, _extra_master_frame()),
         (EXTERNAL_EXCLUDE_FILE.name,
          pd.DataFrame({"job_posting_id": load_external_exclude_ids()}, dtype=str)),
         (MASTER_CSV.name, own),
         (LEDGER_CSV.name, _ledger_frame()),
     ]
+
+
+def _load_known() -> tuple[list[str], list[tuple[str, pd.DataFrame | None]]]:
+    """(the windowed ids, oldest first, as load_exclude_ids documents them; the
+    sources they came from, for load_known_jobs to read titles off)."""
+    window = exclude_window_days()
+    sources = _known_sources()
     parts = []
     for name, df in sources:
         if df is None or df.empty or "job_posting_id" not in df.columns:
@@ -1094,16 +1147,67 @@ def load_exclude_ids() -> list[str]:
                  f"Report this if it repeats.")
             parts.append(_parse_dates(df.drop(columns=["extracted_date"], errors="ignore")))
     if not parts:
-        return []
+        return [], sources
     dated = pd.concat(parts, ignore_index=True)
     try:
-        return _window_dated(dated, window)
+        return _window_dated(dated, window), sources
     except (TypeError, ValueError) as e:
         warn(f"could not compare the dates on the skip list ({e}), so every known "
              f"job id is kept on it, however old. That bills nothing again by itself, "
              f"but the list is longer than it needs to be and the cap may leave "
              f"recent jobs off it. Report this if it repeats.")
-        return dated["job_posting_id"].unique().tolist()
+        return dated["job_posting_id"].unique().tolist(), sources
+
+
+_KNOWN_JOB_COLUMNS = ["job_posting_id", "job_title", "keywords"]
+
+
+def _titles_of(df: pd.DataFrame | None) -> pd.Series:
+    """id -> its title in one source (the last non-empty one, which in a master is
+    the newest row), as a Series indexed by unique id. Empty when the source has
+    no job_title column."""
+    if (df is None or df.empty or "job_title" not in df.columns
+            or "job_posting_id" not in df.columns):
+        return pd.Series(dtype=object)
+    t = df[["job_posting_id", "job_title"]].dropna()
+    t = pd.DataFrame({"job_posting_id": t["job_posting_id"].astype(str),
+                      "job_title": t["job_title"].astype(str).str.strip()})
+    t = t[t["job_title"] != ""].drop_duplicates("job_posting_id", keep="last")
+    return t.set_index("job_posting_id")["job_title"]
+
+
+def load_known_jobs() -> pd.DataFrame:
+    """The ids load_exclude_ids returns, in the same order (oldest first by the
+    newest date any source knows), with each id's job_title and its ledger
+    keywords: the input to the skip list per search keyword (see
+    exclude_ids_per_keyword and build_inputs).
+
+    job_title comes from whichever source has one, the ledger first (it holds the
+    newest title), then this host's master, then the Google Drive master; "" when
+    none does (the external file and the last-run JSON carry no titles).
+    keywords is the ledger's |-joined, normalized keywords of the searches that
+    returned the id ("" when none is on record). Never raises more than
+    load_exclude_ids does."""
+    ids, sources = _load_known()
+    if not ids:
+        return pd.DataFrame(columns=_KNOWN_JOB_COLUMNS, dtype=object)
+    frames = dict(sources)
+    id_series = pd.Series(ids, dtype=object)
+    titles = pd.Series("", index=id_series.index, dtype=object)
+    for name in (LEDGER_CSV.name, MASTER_CSV.name, _DRIVE_SOURCE):
+        found = id_series.map(_titles_of(frames.get(name)))
+        titles = titles.where(titles != "", found.fillna(""))
+    ledger = frames.get(LEDGER_CSV.name)
+    keywords = pd.Series("", index=id_series.index, dtype=object)
+    if ledger is not None and not ledger.empty and "keywords" in ledger.columns:
+        led = ledger[["job_posting_id", "keywords"]].dropna(subset=["job_posting_id"])
+        led = led.assign(job_posting_id=led["job_posting_id"].astype(str))
+        cells = led.drop_duplicates("job_posting_id", keep="last").set_index(
+            "job_posting_id")["keywords"]
+        keywords = id_series.map(cells).map(
+            lambda c: _join_keywords(_keyword_set(c)) if isinstance(c, str) else "")
+    return pd.DataFrame({"job_posting_id": id_series, "job_title": titles,
+                         "keywords": keywords}, columns=_KNOWN_JOB_COLUMNS)
 
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -1262,6 +1366,58 @@ def append_to_master(df: pd.DataFrame) -> int:
     return total
 
 
+class _Trim(NamedTuple):
+    """What _cap_ids did to one list: kept `kept` of `total` ids. `room` is how
+    many the byte budget and max_exclude_ids allowed (it can be 0), `budget` what
+    the byte budget alone allowed, `cap` max_exclude_ids(). `floor` is True when
+    room fell under MIN_EXCLUDE_IDS, the one case that warns."""
+    kept: int
+    total: int
+    room: int
+    budget: int
+    cap: int
+    floor: bool
+
+
+def _cap_ids(exclude_ids: list[str], limit: int) -> tuple[list[str], _Trim | None]:
+    """`exclude_ids` trimmed to what one search input may carry at fan-out `limit`,
+    newest kept, and what the trim did (None when the list went through whole and
+    above the floor). Prints nothing: cap_exclude_ids reports its one list, and
+    _cap_per_keyword one line for every keyword's list together.
+
+    The per-id width is measured off the list, then the tail actually kept is
+    measured again and shrunk until it fits: ids grow over time, so the newest
+    (the ones kept) can be wider than the list's average, and what has to fit is
+    the payload as sent."""
+    if not exclude_ids:
+        return exclude_ids, None
+    per_id = max(1, len(json.dumps(exclude_ids)) // len(exclude_ids))
+    budget = MAX_EXCLUDE_PAYLOAD_BYTES // (per_id * limit)
+    cap = max_exclude_ids()
+    room = min(budget, cap)
+    keep = max(1, min(room, len(exclude_ids)))
+    kept = exclude_ids[-keep:]
+    size = len(json.dumps(kept))
+    if keep > 1 and size * limit > MAX_EXCLUDE_PAYLOAD_BYTES:
+        while keep > 1 and size * limit > MAX_EXCLUDE_PAYLOAD_BYTES:
+            width = -(-size // keep)                   # ceil: never under-measure
+            keep = max(1, min(keep - 1, MAX_EXCLUDE_PAYLOAD_BYTES // (width * limit)))
+            kept = exclude_ids[-keep:]
+            size = len(json.dumps(kept))
+        budget = room = keep            # the bytes bound, whatever the average said
+    floor = room < MIN_EXCLUDE_IDS
+    if not floor and keep == len(exclude_ids):
+        return exclude_ids, None
+    return kept, _Trim(keep, len(exclude_ids), room, budget, cap, floor)
+
+
+def _floor_warning(limit: int, room: int) -> str:
+    return (f"limit_per_input={limit} leaves room for only {room} skip-list ids, "
+            f"under the {MIN_EXCLUDE_IDS}-id floor, so this run will collect and "
+            f"bill again jobs it already has. Lower limit_per_input in "
+            f"search_config.json.")
+
+
 def cap_exclude_ids(exclude_ids: list[str], limit_per_input: int) -> list[str]:
     """Trim `exclude_ids` to what Bright Data will actually accept in one input.
 
@@ -1269,12 +1425,15 @@ def cap_exclude_ids(exclude_ids: list[str], limit_per_input: int) -> list[str]:
     carry a copy of this array, so the budget is spent len(ids) x limit_per_input
     times over (see MAX_EXCLUDE_PAYLOAD_BYTES). Over budget, Bright Data rejects
     every child with `child_input_size_validation` and the collection returns zero
-    rows without raising anything.
+    rows without raising anything. The budget is per INPUT, since every search
+    carries its own copy: this caps one list, the one every search shares when
+    build_inputs is handed a plain list. main() hands it the known jobs instead,
+    and each keyword's own list is capped on its own (_cap_per_keyword).
 
-    Keeps the TAIL, which load_exclude_ids() guarantees is this host's own master,
-    oldest first (see its docstring and _window_dated). With a
-    time_range="Past 24 hours" search those are the only ids that can resurface,
-    so trimming the head instead would keep precisely the ids that cannot recur.
+    Keeps the TAIL, which load_exclude_ids() guarantees is the newest, oldest
+    first (see its docstring and _window_dated). With a time_range="Past 24 hours"
+    search those are the only ids that can resurface, so trimming the head
+    instead would keep precisely the ids that cannot recur.
 
     The per-id width is MEASURED off the ids in hand, not assumed: the
     BYTES_PER_EXCLUDE_ID constant bakes in a 10-digit LinkedIn posting id, ids are
@@ -1282,45 +1441,110 @@ def cap_exclude_ids(exclude_ids: list[str], limit_per_input: int) -> list[str]:
     past the cap with nothing noticing.
 
     Every id that reaches here is a known job inside the window, so a trim is a
-    cost, and it is reported as a WARNING naming the setting that would avoid it.
+    cost: it goes to the log with the setting that would avoid it. Not a WARNING,
+    since both limits are the user's own settings; only a list squeezed under
+    MIN_EXCLUDE_IDS warns.
     """
     limit = _positive_int(limit_per_input, LIMIT_PER_INPUT)
-    if not exclude_ids:
-        return exclude_ids
-    per_id = max(1, len(json.dumps(exclude_ids)) // len(exclude_ids))
-    budget = MAX_EXCLUDE_PAYLOAD_BYTES // (per_id * limit)
-    cap = max_exclude_ids()
-    keep = min(budget, cap)
-    if keep < MIN_EXCLUDE_IDS:
+    kept, trim = _cap_ids(exclude_ids, limit)
+    if trim is None:
+        return kept
+    if trim.floor:
         # The budget, not the floor, wins here. An exclude set below the floor
         # re-bills postings we already hold, which is bad; a payload over the cap
         # gets the collection REJECTED, which costs the whole run and still burns
         # the trigger. The floor is worth having, but not at the price of the
         # failure the cap exists to prevent -- so say plainly what to change.
-        warn(f"limit_per_input={limit} leaves room for only {keep} skip-list ids, "
-             f"under the {MIN_EXCLUDE_IDS}-id floor, so this run will collect and "
-             f"bill again jobs it already has. Lower limit_per_input in "
-             f"search_config.json.")
-        keep = max(keep, 1)
-        return exclude_ids[-keep:]
-    if len(exclude_ids) <= keep:
-        return exclude_ids
-    trimmed = (f"skip list capped at {keep} of {len(exclude_ids)} known jobs. "
-               f"The {len(exclude_ids) - keep} oldest are left off it, so they may be "
+        warn(_floor_warning(limit, trim.room))
+        return kept
+    trimmed = (f"skip list capped at {trim.kept} of {trim.total} known jobs. "
+               f"The {trim.total - trim.kept} oldest are left off it, so they may be "
                f"collected and billed again.")
     # Both limits are the user's own settings (a window wider than the cap, a high
     # limit_per_input), so a trim goes to the log only: a WARNING would open the
     # dashboard's problems box on every run. Below the floor (above) still warns.
-    if budget > cap:
+    if trim.budget > trim.cap:
         print(f"{trimmed} Raise {max_exclude_ids_where()} if Bright Data accepts "
               f"a longer list.")
     else:
-        print(f"{trimmed} limit_per_input={limit} leaves room for only {budget}; "
+        print(f"{trimmed} limit_per_input={limit} leaves room for only {trim.budget}; "
               f"lower limit_per_input in search_config.json to fit more.")
-    return exclude_ids[-keep:]
+    return kept
 
 
-def build_inputs(exclude_ids: list[str], max_keywords: int | None = None,
+def exclude_ids_per_keyword(known: pd.DataFrame, keywords) -> dict[str, list[str]]:
+    """keyword -> the known ids its search has to skip, each list in the order of
+    `known` (load_known_jobs: oldest first, so a trim keeps the newest).
+
+    With selective_search on, a search only returns jobs whose title holds its
+    keyword, so it only needs the known jobs it could return. An id goes on
+    keyword K's list when its title matches K (title_matches), or when the ledger
+    records a search for K returning it (LinkedIn matches in its own way, and a
+    job it returned once it can return again). An id with no title AND no
+    recorded keyword goes on every list: nothing proves it irrelevant. A blank
+    keyword is not title-restricted and gets the whole list.
+
+    Built for the real window (~20,000 ids x ~20 keywords): every title is
+    normalized once, then each keyword is one plain substring scan over the titles
+    with their spaces removed. That one scan is all of title_matches: a keyword
+    found in a title is still found once the spaces go from both."""
+    ids = known["job_posting_id"].astype(object).astype(str)
+    titles = known["job_title"].astype(object).map(_norm_text).str.replace(
+        " ", "", regex=False)
+    recorded = known["keywords"].astype(object).map(
+        lambda c: _KEYWORD_SEP + _join_keywords(_keyword_set(c)) + _KEYWORD_SEP)
+    blank = (titles == "") & (recorded == _KEYWORD_SEP * 2)
+    lists: dict[str, list[str]] = {}
+    for kw in keywords:
+        if kw in lists:
+            continue
+        norm = _norm_text(kw)
+        if not norm:
+            lists[kw] = ids.tolist()
+            continue
+        mask = (blank
+                | titles.str.contains(norm.replace(" ", ""), regex=False)
+                | recorded.str.contains(f"{_KEYWORD_SEP}{norm}{_KEYWORD_SEP}",
+                                        regex=False))
+        lists[kw] = ids[mask].tolist()
+    return lists
+
+
+def _cap_per_keyword(lists: dict[str, list[str]], limit: int) -> dict[str, list[str]]:
+    """Each keyword's list capped on its own (_cap_ids), with ONE log line for the
+    run summing up every trim, and at most one WARNING, when the fan-out squeezes
+    the lists under MIN_EXCLUDE_IDS."""
+    capped: dict[str, list[str]] = {}
+    trims: list[tuple[str, _Trim]] = []
+    for kw, ids in lists.items():
+        capped[kw], trim = _cap_ids(ids, limit)
+        if trim is not None:
+            trims.append((kw, trim))
+    floors = [t for _, t in trims if t.floor]
+    if floors:
+        warn(_floor_warning(limit, min(t.room for t in floors)))
+    trims = [(kw, t) for kw, t in trims if not t.floor]
+    if not trims:
+        return capped
+    each = ", ".join(f"{kw} kept {t.kept:,} of {t.total:,} known jobs" for kw, t in trims)
+    left = sum(t.total - t.kept for _, t in trims)
+    cost = (f"the {left:,} oldest may be collected and billed again" if len(trims) == 1
+            else f"the oldest left off ({left:,} across these lists) may be collected "
+                 f"and billed again")
+    hints = []
+    by_budget = [t.budget for _, t in trims if t.budget <= t.cap]
+    if by_budget:
+        hints.append(f"limit_per_input={limit} leaves room for {min(by_budget):,}; "
+                     f"lower limit_per_input in search_config.json to fit more.")
+    if len(by_budget) < len(trims):
+        hints.append(f"Raise {max_exclude_ids_where()} if Bright Data accepts a "
+                     f"longer list.")
+    print(f"skip list capped for {len(trims)} of {len(lists)} keywords: {each}; "
+          f"{cost}. {' '.join(hints)}")
+    return capped
+
+
+def build_inputs(exclude: list[str] | pd.DataFrame, max_keywords: int | None = None,
                  limit_per_input: int | None = None) -> list[dict]:
     """One search input per (keyword x remote type); one per keyword when every
     type is wanted (see remote_filters).
@@ -1330,6 +1554,12 @@ def build_inputs(exclude_ids: list[str], max_keywords: int | None = None,
     `max_keywords` caps how many keywords are used (the first N) — a spend guard
     for verification runs so a single scrape can't fan out to every keyword.
     None (the default, used by the VM cron) keeps the full keyword list.
+
+    `exclude` is the known jobs from load_known_jobs (what main() passes) or a
+    plain list of ids. Known jobs give each keyword its own skip list
+    (exclude_ids_per_keyword), capped on its own, and every input of that keyword
+    (one per remote type) carries it. A plain list is one list every search
+    carries alike, capped once (cap_exclude_ids).
 
     `limit_per_input` is the same value that goes into the trigger URL; it is taken
     here only to size the jobs_to_not_include cap, which scales with the fan-out.
@@ -1342,7 +1572,12 @@ def build_inputs(exclude_ids: list[str], max_keywords: int | None = None,
     remote_types = remote_filters(cfg["remote_types"])
     if limit_per_input is None:
         limit_per_input = cfg["limit_per_input"]
-    exclude_ids = cap_exclude_ids(exclude_ids, limit_per_input)
+    if isinstance(exclude, pd.DataFrame):
+        limit = _positive_int(limit_per_input, LIMIT_PER_INPUT)
+        per_keyword = _cap_per_keyword(exclude_ids_per_keyword(exclude, keywords), limit)
+    else:
+        shared = cap_exclude_ids(exclude, limit_per_input)
+        per_keyword = {kw: shared for kw in keywords}
     base_filters = {
         "location": cfg["location"],
         "country": cfg["country"],
@@ -1352,10 +1587,24 @@ def build_inputs(exclude_ids: list[str], max_keywords: int | None = None,
         "selective_search": BASE_FILTERS["selective_search"],
     }
     return [
-        {**base_filters, "keyword": kw, "remote": remote, "jobs_to_not_include": exclude_ids}
+        {**base_filters, "keyword": kw, "remote": remote,
+         "jobs_to_not_include": per_keyword[kw]}
         for kw in keywords
         for remote in remote_types
     ]
+
+
+def _skip_list_summary(run_label: str, known: int, inputs: list[dict]) -> str:
+    """The run log's "Run: <label> | ..." line: how many known jobs the window
+    holds and the shortest and longest skip list a search carries."""
+    days = exclude_window_days()
+    if not known:
+        return f"Run: {run_label} | no known jobs from the last {days} days to skip"
+    sizes = [len(i["jobs_to_not_include"]) for i in inputs] or [0]
+    low, high = min(sizes), max(sizes)
+    span = f"{low:,}" if low == high else f"{low:,} to {high:,}"
+    return (f"Run: {run_label} | {known:,} known jobs from the last {days} days; "
+            f"each search skips the ones its keyword can return ({span} ids per search)")
 
 
 async def preflight(session: aiohttp.ClientSession) -> None:
@@ -1885,10 +2134,13 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
                 # below is deliberately NOT gated: that snapshot is already paid for,
                 # and a fail-open probe must never block collecting what you own.
                 await preflight(session)
-                exclude_ids = load_exclude_ids()
-                print(f"Run: {run_label} | Excluding {len(exclude_ids)} already-scraped job IDs")
-                inputs = build_inputs(exclude_ids, max_keywords=max_keywords,
+                # Each search skips only the known jobs its keyword can return
+                # (exclude_ids_per_keyword), so a 30-day window fits where one
+                # shared list could hold only a few days at a high limit_per_input.
+                known = load_known_jobs()
+                inputs = build_inputs(known, max_keywords=max_keywords,
                                       limit_per_input=limit_per_input)
+                print(_skip_list_summary(run_label, len(known), inputs))
                 payload = {"input": inputs}
                 # Derived from `inputs`, not from the raw flag: build_inputs coerces
                 # the flag, and a run log naming a cap the run did not apply is worse

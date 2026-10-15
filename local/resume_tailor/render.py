@@ -23,6 +23,16 @@ from .latexutil import clean_bullet, escape_url, fmt_dates, to_latex
 _LINK_FIELDS = ("linkedin", "github")
 
 
+def _shown_dates(entry: dict) -> str:
+    """The dates printed on the PDF: an entry's optional `resume_dates` (free text,
+    e.g. "Summer 2025" for an 8-week internship that "June 2025 -- July 2025"
+    undersells), else its `dates`. Only the PDF reads resume_dates; application
+    forms and the cover letter keep the exact `dates`, so a form asking for start
+    and end months still gets the real ones. Projects print no dates at all."""
+    shown = str(entry.get("resume_dates") or "").strip()
+    return shown or str(entry.get("dates") or "").strip()
+
+
 def _header(basics: dict) -> str:
     """The PDF info dictionary plus the centered name + contact line, from yaml
     `basics`. Missing fields are simply omitted so the line stays clean for any
@@ -118,7 +128,7 @@ def _education(edu: List[dict]) -> str:
         row = (
             "\\resumeSubheading\n"
             f"{{{school}}}{{{', ' + location if location else ''}}}"
-            f"{{{fmt_dates(str(e.get('dates', '') or ''))}}}\n"
+            f"{{{fmt_dates(_shown_dates(e))}}}\n"
             f"{{{_degree_line(e)}}}\\vspace{{2pt}}"
         )
         bits: List[str] = []
@@ -174,7 +184,7 @@ def _experience(sel: dict, bullets: Dict[str, str]) -> str:
         out.append(
             f"\\resumeSubheadingOneLine\n"
             f"{{{to_latex(b.get('title') or '')}}}{{{to_latex(b.get('name') or '')}}}"
-            f"{{{to_latex(b.get('location') or '')}}}{{{fmt_dates(b.get('dates') or '')}}}\n"
+            f"{{{to_latex(b.get('location') or '')}}}{{{fmt_dates(_shown_dates(b))}}}\n"
             + _bullet_list(items)
         )
     if not out:
@@ -248,7 +258,7 @@ def _leadership(sel: dict, bullets: Dict[str, str]) -> str:
         out.append(
             f"\\resumeProjectHeading\n"
             f"{{\\textbf{{{to_latex(b.get('name') or '')}}}}}"
-            f"{{{fmt_dates(b.get('dates') or '')}}}\n"
+            f"{{{fmt_dates(_shown_dates(b))}}}\n"
             + _bullet_list(items)
         )
     if not out:

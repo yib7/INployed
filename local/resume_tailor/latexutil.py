@@ -165,11 +165,29 @@ def _ascii_fallback(text: str) -> str:
     return "".join(ch if ch.isascii() else _fold_char(ch) for ch in text)
 
 
+# A straight quote that OPENS a quotation: at the start, or after whitespace or an
+# opening bracket. TeX prints a straight ' as a closing quote, so 'mimeosomes'
+# came out with two closing quotes; the opener has to be ` (and `` for "). A '
+# before a digit stays an apostrophe ('90s), and one inside a word (don't) is
+# never at an opening position.
+_OPEN_SINGLE = re.compile(r"(^|(?<=[\s(\[{]))'(?!\d)")
+_OPEN_DOUBLE = re.compile(r"(^|(?<=[\s(\[{]))\"")
+
+
+def _smart_quotes(text: str) -> str:
+    """Straight quotes as TeX quotes: openers become ` / ``, a closing " becomes ''.
+    A closing ' is already right. Runs before escaping (no quote is a special)."""
+    text = _OPEN_DOUBLE.sub("``", text)
+    text = text.replace('"', "''")
+    return _OPEN_SINGLE.sub("`", text)
+
+
 def to_latex(text: str) -> str:
     """The single safe transform for any model-emitted text (bullets, skills):
     escape LaTeX specials, render known unicode math glyphs, then ASCII-fold the
-    rest so an unlisted character can never kill the compile."""
-    return _ascii_fallback(_math_to_latex(escape_latex(str(text))))
+    rest so an unlisted character can never kill the compile. Straight quotes
+    become TeX quotes first (_smart_quotes)."""
+    return _ascii_fallback(_math_to_latex(escape_latex(_smart_quotes(str(text)))))
 
 
 def clean_bullet(text: str) -> str:
@@ -183,12 +201,17 @@ def clean_bullet(text: str) -> str:
 
 
 _MONTHS = {f"{i:02d}": calendar.month_name[i] for i in range(1, 13)}
+# YYYY, YYYY-MM or YYYY-MM-DD. Anything else is free text ("Summer 2025") and
+# prints as written; splitting it on "-" cut "2024 -- 2026" down to "2024".
+_ISO_DATE = re.compile(r"^\d{4}(?:-\d{2}(?:-\d{2})?)?$")
 
 
 def _fmt_one(token: str) -> str:
     token = token.strip()
     if not token or token.lower() in {"present", "current"}:
         return "Present"
+    if not _ISO_DATE.match(token):
+        return token
     parts = token.split("-")
     year = parts[0]
     if len(parts) >= 2 and parts[1] in _MONTHS:

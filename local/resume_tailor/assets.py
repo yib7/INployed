@@ -324,7 +324,7 @@ def blocks() -> Dict[str, List[Dict[str, Any]]]:
     for e in master.get("experience", []):
         out["experience"].append({
             "name": e.get("org"), "title": e.get("title"), "location": e.get("location"),
-            "dates": e.get("dates"),
+            "dates": e.get("dates"), "resume_dates": e.get("resume_dates"),
             "atoms": [a["id"] for a in e.get("achievements", []) if a.get("id")],
         })
     for p in master.get("projects", []):
@@ -336,6 +336,7 @@ def blocks() -> Dict[str, List[Dict[str, Any]]]:
     for ld in master.get("leadership", []):
         out["leadership"].append({
             "name": ld.get("org"), "dates": ld.get("dates"),
+            "resume_dates": ld.get("resume_dates"),
             "atoms": [a["id"] for a in ld.get("achievements", []) if a.get("id")],
         })
     return out

@@ -862,7 +862,8 @@ def _join_keywords(keywords: set[str]) -> str:
 
 # A keyword LinkedIn reads as a boolean search: OR / AND / NOT as whole words in
 # capitals, or a parenthesis. What such a search can return is not a title match
-# we can predict, so its search skips every known job (see _keyword_rule).
+# we can predict, so its search skips every known job (see _keyword_rule), except
+# the one shape we can: `BASE NOT a NOT "b c"` (see _split_not_keyword).
 _BOOLEAN_KEYWORD = re.compile(r"\b(?:OR|AND|NOT)\b|[()]")
 # Straight and curly double quotes, written as escapes so the line stays ASCII.
 _DOUBLE_QUOTES = "\"\u201c\u201d"
@@ -878,16 +879,70 @@ def _keyword_key(keyword) -> str:
     return f"<{type(keyword).__name__} {keyword!r}>"
 
 
-def _keyword_rule(keyword) -> tuple[str, list[str] | None] | None:
-    """How a search keyword matches titles, or None when its search must skip
-    every known job: a keyword that is not text, blank, or boolean (OR, AND, NOT,
-    parentheses), none of which title_matches can predict.
+# A NOT keyword, `BASE NOT a NOT "b c"` (see _split_not_keyword): the base, then
+# one or more " NOT term", where a term is one double-quoted phrase or one bare
+# word (no spaces, parentheses or double quotes). The base is lazy, so the terms
+# take every trailing NOT; NOT is case-sensitive, LinkedIn's capital operator.
+_QUOTED_PHRASE = f"[{_DOUBLE_QUOTES}][^{_DOUBLE_QUOTES}]*[{_DOUBLE_QUOTES}]"
+_NOT_TERM = re.compile(rf"\s+NOT\s+({_QUOTED_PHRASE}|[^\s(){_DOUBLE_QUOTES}]+)")
+_NOT_KEYWORD = re.compile(rf"(?P<base>.*?)(?P<terms>(?:{_NOT_TERM.pattern})+)", re.DOTALL)
+_OPERATORS = frozenset({"OR", "AND", "NOT"})
 
-    Otherwise (the keyword normalized with its spaces removed, its words or None).
-    The words are given for an UNQUOTED keyword of two or more words: LinkedIn
-    searches those as separate words (Settings tells the user to quote a phrase),
-    so a title holding every word, in any order, can come back. A keyword wrapped
-    in one pair of double quotes is a phrase and has no words rule."""
+
+def _split_not_keyword(keyword) -> tuple[str, list[str]] | None:
+    """A NOT keyword split into (its base, its banned terms), or None for every
+    other keyword: plain ones (no NOT to split) and every other boolean shape.
+
+    The shape is `BASE NOT a NOT "b c"`, the one the experience level setting
+    builds: LinkedIn's NOT reads TITLES only, so `"Data Engineer" NOT Senior`
+    returns the "Data Engineer" jobs whose title has no Senior in it, which is a
+    title rule we can predict (title_matches, exclude_ids_per_keyword). BASE has
+    no OR, AND, NOT or parenthesis; it is a quoted phrase or unquoted words, the
+    same as a plain keyword, and one wrapping pair of parentheses around it is
+    allowed and dropped ("(Data Scientist) NOT Lead"). Each term is one bare
+    word or one double-quoted phrase. NOT must be the capital operator: a
+    lower-case "not" is one more word of a plain search, as LinkedIn reads it.
+
+    The base comes back as written (trimmed, the parentheses gone), so
+    _keyword_rule still tells a quoted phrase from unquoted words; the terms come
+    back normalized (_norm_text), in order: "Sr." is "sr", "Tech Lead" is "tech
+    lead". Anything else (an OR or AND anywhere, a term in parentheses, an
+    unclosed quote, a base or a term that normalizes to nothing, a lone
+    operator as a term) is None, and its search keeps the whole known-id list,
+    as every boolean keyword did before."""
+    if not isinstance(keyword, str):
+        return None
+    match = _NOT_KEYWORD.fullmatch(keyword.strip())
+    if match is None:
+        return None
+    base = match["base"].strip()
+    if base.startswith("(") and base.endswith(")"):
+        base = base[1:-1].strip()
+    if _BOOLEAN_KEYWORD.search(base) or not _norm_text(base):
+        return None
+    terms = _NOT_TERM.findall(match["terms"])
+    banned = [_norm_text(t) for t in terms]
+    if any(t in _OPERATORS for t in terms) or not all(banned):
+        return None
+    return base, banned
+
+
+def _keyword_rule(keyword) -> tuple[str, list[str] | None, list[str]] | None:
+    """How a search keyword matches titles, or None when its search must skip
+    every known job: a keyword that is not text, blank, or boolean (OR, AND,
+    parentheses, a NOT outside the NOT-keyword shape), none of which
+    title_matches can predict.
+
+    Otherwise (the keyword normalized with its spaces removed, its words or None,
+    its banned terms). The words are given for an UNQUOTED keyword of two or more
+    words: LinkedIn searches those as separate words (Settings tells the user to
+    quote a phrase), so a title holding every word, in any order, can come back.
+    A keyword wrapped in one pair of double quotes is a phrase and has no words
+    rule. A NOT keyword (_split_not_keyword) takes the first two from its base,
+    and its banned terms (normalized, possibly several words each) are what its
+    title must not hold as whole words; a plain keyword has none."""
+    split = _split_not_keyword(keyword)
+    keyword, banned = split if split is not None else (keyword, [])
     if not isinstance(keyword, str) or _BOOLEAN_KEYWORD.search(keyword):
         return None
     norm = _norm_text(keyword)
@@ -897,7 +952,15 @@ def _keyword_rule(keyword) -> tuple[str, list[str] | None] | None:
     quoted = (len(raw) >= 2 and raw[0] in _DOUBLE_QUOTES and raw[-1] in _DOUBLE_QUOTES
               and not any(c in _DOUBLE_QUOTES for c in raw[1:-1]))
     words = norm.split(" ")
-    return norm.replace(" ", ""), (None if quoted or len(words) < 2 else words)
+    return norm.replace(" ", ""), (None if quoted or len(words) < 2 else words), banned
+
+
+def _has_banned_word(text: str, banned: list[str]) -> bool:
+    """Whether a NORMALIZED title holds any banned term as whole word(s): both are
+    padded with a space, so "lead" bans "lead engineer" but not "leadership", and
+    "tech lead" bans "senior tech lead" but not "tech team lead"."""
+    padded = f" {text} "
+    return any(f" {term} " in padded for term in banned)
 
 
 def title_matches(keyword, title) -> bool:
@@ -917,12 +980,22 @@ def title_matches(keyword, title) -> bool:
     unquoted matches "Scientist, Data Platform"). A keyword with no title rule
     (blank, boolean, not text; see _keyword_rule) matches every title. An empty
     title matches no keyword (exclude_ids_per_keyword puts an id with no title
-    and no recorded keyword on every list instead)."""
+    and no recorded keyword on every list instead).
+
+    A NOT keyword (`"Data Engineer" NOT Senior NOT Sr`, see _split_not_keyword)
+    matches a title its base matches, unless the title holds a banned term as
+    WHOLE word(s) after _norm_text: "Sr. Data Engineer" is out ("sr"), but
+    "Data Engineer, Leadership" stays for NOT Lead and "Seniors" for NOT Senior.
+    Whole words, unlike the base's substring rule, because here the strict side
+    is the safe one: an id left off a list that LinkedIn would still return is
+    collected and billed again, and LinkedIn's own NOT is not a substring ban."""
     rule = _keyword_rule(keyword)
     if rule is None:
         return True
-    phrase, words = rule
+    phrase, words, banned = rule
     text = _norm_text(title)
+    if _has_banned_word(text, banned):
+        return False
     if phrase in text.replace(" ", ""):
         return True
     return bool(words) and all(w in text for w in words)
@@ -1539,12 +1612,23 @@ def exclude_ids_per_keyword(known: pd.DataFrame, keywords) -> dict[str, list[str
     irrelevant. A keyword with no title rule (blank, boolean, not text; see
     _keyword_rule) gets the whole list.
 
-    Built for the real window (~20,000 ids x ~20 keywords): every title is
+    A NOT keyword (`"Data Engineer" NOT Senior`, see _split_not_keyword) does all
+    of that for its BASE (its title match, a recorded search for the base, the
+    untitled and unrecorded ids), then drops every id whose title holds one of
+    its banned terms as whole word(s), which is what LinkedIn's NOT leaves out
+    (the rule title_matches follows). A recorded keyword is the base for a NOT
+    search too (_keywords_by_id), so a job found by `"Data Engineer" NOT Senior`
+    counts for "Data Engineer" and the other way round. An id with no title has
+    no banned word, so it stays.
+
+    Built for the real window (~38,000 ids x ~16 keywords): every title is
     normalized once, then each keyword is one plain substring scan over the titles
-    with their spaces removed (plus one scan per word for an unquoted phrase)."""
+    with their spaces removed (plus one scan per word for an unquoted phrase, and
+    one per banned term over the titles padded with a space at each end)."""
     ids = known["job_posting_id"].astype(object).astype(str)
     spaced = known["job_title"].astype(object).map(_norm_text)
     titles = spaced.str.replace(" ", "", regex=False)
+    padded = " " + spaced + " "
     recorded = known["keywords"].astype(object).map(
         lambda c: _KEYWORD_SEP + _KEYWORD_SEP.join(
             sorted({k.replace(" ", "") for k in _keyword_set(c)})) + _KEYWORD_SEP)
@@ -1558,7 +1642,7 @@ def exclude_ids_per_keyword(known: pd.DataFrame, keywords) -> dict[str, list[str
         if rule is None:
             lists[key] = ids.tolist()
             continue
-        phrase, words = rule
+        phrase, words, banned = rule
         mask = (blank
                 | titles.str.contains(phrase, regex=False)
                 | recorded.str.contains(f"{_KEYWORD_SEP}{phrase}{_KEYWORD_SEP}",
@@ -1568,6 +1652,8 @@ def exclude_ids_per_keyword(known: pd.DataFrame, keywords) -> dict[str, list[str
             for word in words[1:]:
                 every &= spaced.str.contains(word, regex=False)
             mask |= every
+        for term in banned:
+            mask &= ~padded.str.contains(f" {term} ", regex=False)
         lists[key] = ids[mask].tolist()
     return lists
 
@@ -2365,7 +2451,13 @@ def _keywords_by_id(df: pd.DataFrame) -> dict[str, set[str]]:
     """id -> the normalized keywords of every search that returned it, read from
     the raw rows of a run (BEFORE the dedupe: one job found by three searches is
     three rows, one per keyword, and the dedupe keeps only the first). Ids with
-    no keyword on any row are left out."""
+    no keyword on any row are left out.
+
+    A NOT keyword is recorded as its BASE (_split_not_keyword), normalized: the
+    banned terms only narrow which titles come back, and every job the NOT search
+    returned the base search can return too, so `"Data Engineer" NOT Senior` and
+    "Data Engineer" share one record (exclude_ids_per_keyword reads it for both).
+    Any other keyword, boolean ones included, is recorded whole, as before."""
     if "job_posting_id" not in df.columns:
         return {}
     ids = df["job_posting_id"].astype(str)
@@ -2373,7 +2465,8 @@ def _keywords_by_id(df: pd.DataFrame) -> dict[str, set[str]]:
 
     def add(values) -> None:
         for jid, kw in zip(ids, values):
-            norm = _norm_text(kw)
+            split = _split_not_keyword(kw)
+            norm = _norm_text(split[0] if split is not None else kw)
             if norm:
                 found.setdefault(jid, set()).add(norm)
 

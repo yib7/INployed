@@ -451,7 +451,7 @@ def test_the_lists_follow_the_unquoted_rule():
     assert lists['"Data Scientist"'] == ["phrase"]
 
 
-@pytest.mark.parametrize("keyword", ['"A" OR "B"', "Data AND Science", "AI NOT Sales",
+@pytest.mark.parametrize("keyword", ['"A" OR "B"', "Data AND Science", "AI NOT (Sales)",
                                      "(Data Scientist)", '"ML" OR ("AI" AND "LLM")'])
 def test_a_boolean_keyword_gets_the_whole_list(keyword):
     lists = scraper.exclude_ids_per_keyword(KNOWN, [keyword])

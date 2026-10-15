@@ -414,7 +414,9 @@ def _cap_projects(clean: Dict[str, Any]) -> None:
     each to its bullet count. Per-project count precedence:
 
       1. explicit name-keyed layout (config.project_targets) -> EXACTLY len(targets);
-      2. else tiered by rank (config.project_rank_bullets) -> that many groups;
+      2. else tiered by rank (config.project_rank_bullets) -> that many groups
+         (a tier with per-bullet `lines` counts its list; bullet_line_targets
+         sizes them);
       3. else the global PROJECT_BULLETS_MAX.
 
     For (1) and (2) the project is resized via _resize_to_count — padded UP from its OWN
@@ -492,8 +494,9 @@ def _resize_to_count(entry: Dict[str, Any], section: str, name: str, n: int,
 def bullet_line_targets(sel: Dict[str, Any]) -> Dict[str, int]:
     """{gkey: target_printed_lines} for EVERY bullet. Constant blocks (experience +
     leadership) use config.block_targets; projects use their per-project
-    config.project_targets line targets when configured, else fall back to
-    config.PROJECT_BULLET_LINES.
+    config.project_targets line targets when configured, else their strength
+    rank's tier lines (config.project_rank_lines; sel's projects are strongest
+    first), else config.PROJECT_BULLET_LINES.
     Feeds the rephrase soft hint and the deterministic trim cap."""
     out: Dict[str, int] = {}
     for sec in ("experience", "leadership"):
@@ -501,8 +504,8 @@ def bullet_line_targets(sel: Dict[str, Any]) -> Dict[str, int]:
             targets = config.block_targets(e["name"])
             for i, ids in enumerate(e["groups"]):
                 out[_gkey(ids)] = targets[i] if i < len(targets) else targets[-1]
-    for e in sel.get("projects", []):
-        targets = config.project_targets(e["name"])
+    for rank, e in enumerate(sel.get("projects", [])):
+        targets = config.project_targets(e["name"]) or config.project_rank_lines(rank)
         for i, ids in enumerate(e["groups"]):
             if targets:
                 out[_gkey(ids)] = targets[i] if i < len(targets) else targets[-1]

@@ -576,26 +576,48 @@ def project_bullet_tiers() -> list[int] | None:
     project_targets list-length range); a tier missing/garbling either key is skipped.
     The expanded list is capped at PROJECTS_MAX_LIMIT. Returns None when absent/bad or
     when the resume_layout master toggle is off, so this is opt-in and gated like
-    project_layout / resume_layout."""
-    if not resume_layout_enabled():
-        return None
-    raw = _config_json().get("project_bullet_tiers")
+    project_layout / resume_layout.
+
+    A tier may also carry `lines`, each bullet's printed-line target ([2, 2, 1]); its
+    length is then the bullet count, whatever `bullets` says. project_rank_lines
+    reads it."""
+    ranks = _tier_ranks()
+    return [len(lines) if lines else bullets for bullets, lines in ranks] or None
+
+
+def _tier_lines(raw) -> list[int] | None:
+    """A tier's `lines` list sanitized like project_targets (each 1-3, at most 5),
+    or None when absent or not all integers."""
     if not isinstance(raw, (list, tuple)) or not raw:
         return None
-    out: list[int] = []
+    try:
+        return [max(1, min(3, int(t))) for t in raw[:5]]
+    except (TypeError, ValueError):
+        return None
+
+
+def _tier_ranks() -> list[tuple[int, list[int] | None]]:
+    """The tiers expanded per strength rank as (bullets, lines-or-None), capped at
+    PROJECTS_MAX_LIMIT; [] when off, absent or bad."""
+    if not resume_layout_enabled():
+        return []
+    raw = _config_json().get("project_bullet_tiers")
+    if not isinstance(raw, (list, tuple)) or not raw:
+        return []
+    out: list[tuple[int, list[int] | None]] = []
     for tier in raw:
         if not isinstance(tier, dict):
             continue
+        lines = _tier_lines(tier.get("lines"))
         try:
             count = max(1, int(tier["projects"]))
-            bullets = max(1, min(5, int(tier["bullets"])))
+            bullets = len(lines) if lines else max(1, min(5, int(tier["bullets"])))
         except (KeyError, TypeError, ValueError):
             continue
-        out.extend([bullets] * count)
+        out.extend([(bullets, lines)] * count)
         if len(out) >= PROJECTS_MAX_LIMIT:
             break
-    out = out[:PROJECTS_MAX_LIMIT]
-    return out or None
+    return out[:PROJECTS_MAX_LIMIT]
 
 
 def project_rank_bullets(rank: int) -> int | None:
@@ -606,6 +628,16 @@ def project_rank_bullets(rank: int) -> int | None:
     if not tiers or rank < 0 or rank >= len(tiers):
         return None
     return tiers[rank]
+
+
+def project_rank_lines(rank: int) -> list[int] | None:
+    """Per-bullet line targets for the project at 0-based strength `rank`, from its
+    tier's `lines`; None when that tier gives only a count (each bullet then aims for
+    PROJECT_BULLET_LINES), when no tiers are set, or past the last tier."""
+    ranks = _tier_ranks()
+    if rank < 0 or rank >= len(ranks):
+        return None
+    return ranks[rank][1]
 
 
 def gemini_auth() -> str:

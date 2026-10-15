@@ -984,22 +984,34 @@ def load_project_bullet_tiers() -> list[dict]:
     val = _load_cfg().get("project_bullet_tiers")
     if not isinstance(val, list):
         return []
-    return [{"projects": t["projects"], "bullets": t["bullets"]}
-            for t in val if isinstance(t, dict) and "projects" in t and "bullets" in t]
+    out: list[dict] = []
+    for t in val:
+        if isinstance(t, dict) and "projects" in t and "bullets" in t:
+            tier = {"projects": t["projects"], "bullets": t["bullets"]}
+            if isinstance(t.get("lines"), list) and t["lines"]:
+                tier["lines"] = list(t["lines"])
+            out.append(tier)
+    return out
 
 
 def save_project_bullet_tiers(tiers: list) -> None:
     """Persist tiered project bullet counts (merged into config.json, so it never wipes
     the per-name project_layout). Each tier is sanitized to {'projects': N>=1,
-    'bullets': 1..5}; malformed rows are dropped. An empty list disables tiering."""
+    'bullets': 1..5}, plus 'lines' (each bullet's printed lines, 1..3, at most 5)
+    when given, which then sets 'bullets' to its length; malformed rows are
+    dropped. An empty list disables tiering."""
     out: list[dict] = []
     for t in tiers or []:
         try:
             p = max(1, int(t["projects"]))
-            b = max(1, min(5, int(t["bullets"])))
-        except (KeyError, TypeError, ValueError):
+            lines = [max(1, min(3, int(n))) for n in (t.get("lines") or [])][:5]
+            b = len(lines) if lines else max(1, min(5, int(t["bullets"])))
+        except (KeyError, TypeError, ValueError, AttributeError):
             continue
-        out.append({"projects": p, "bullets": b})
+        tier = {"projects": p, "bullets": b}
+        if lines:
+            tier["lines"] = lines
+        out.append(tier)
     _save_cfg({"project_bullet_tiers": out})
 
 

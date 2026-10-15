@@ -56,22 +56,37 @@ def _parse_targets(text: str) -> list[int]:
 def _parse_tiers(text: str) -> list[dict]:
     """Parse a 'Bullets by strength' box ('2:3, 2:2, 1:1') into tier dicts
     [{'projects': 2, 'bullets': 3}, ...]. Each token is projects:bullets; tokens that
-    aren't two integers are dropped (jobsdata/engine clamp on save/read)."""
+    aren't two integers are dropped (jobsdata/engine clamp on save/read).
+
+    The right side may instead be each bullet's printed lines, joined by '-' or
+    spaces: '1:2-2-1' is one project with three bullets of 2, 2 and 1 lines
+    ({'projects': 1, 'bullets': 3, 'lines': [2, 2, 1]})."""
     out: list[dict] = []
     for tok in text.replace(";", ",").split(","):
         parts = tok.strip().split(":")
         if len(parts) != 2:
             continue
         try:
-            out.append({"projects": int(parts[0]), "bullets": int(parts[1])})
+            projects = int(parts[0])
+            sizes = [int(n) for n in parts[1].replace("-", " ").replace("/", " ").split()]
         except ValueError:
             continue
+        if len(sizes) == 1:
+            out.append({"projects": projects, "bullets": sizes[0]})
+        elif sizes:
+            out.append({"projects": projects, "bullets": len(sizes), "lines": sizes})
     return out
 
 
 def _tiers_to_text(tiers: list) -> str:
-    """Render saved tier dicts back into the 'projects:bullets, ...' box text."""
-    return ", ".join(f"{t['projects']}:{t['bullets']}" for t in (tiers or [])
+    """Render saved tier dicts back into the 'projects:bullets, ...' box text
+    ('projects:2-2-1' for a tier with per-bullet lines)."""
+    def right(t: dict) -> str:
+        lines = t.get("lines")
+        if isinstance(lines, list) and len(lines) > 1:
+            return "-".join(str(n) for n in lines)
+        return str(t["bullets"])
+    return ", ".join(f"{t['projects']}:{right(t)}" for t in (tiers or [])
                      if isinstance(t, dict) and "projects" in t and "bullets" in t)
 
 
@@ -535,9 +550,12 @@ class ResumeDataEditor(QtWidgets.QWidget):
         tiers_help = Label(
             'Optional tiers (projects:bullets, strongest first): "2:3, 2:2, 1:1" gives your '
             "2 strongest projects 3 bullets each, the next 2 get 2, the 5th gets 1. Projects "
-            "past the last tier use the bullet count above. Leave blank for a flat count. The "
-            "strongest project is whichever best fits each job, so this re-tiers per posting; a "
-            "per-project box below (if set) overrides its tier.")
+            "past the last tier use the bullet count above. Leave blank for a flat count. To "
+            'size each bullet too, list its printed lines: "1:2-2-2, 1:2-2-1, 1:2-2" gives the '
+            "strongest project three 2-line bullets, the second three with a 1-line last "
+            "bullet, the third two. The strongest project is whichever best fits each job, so "
+            "this re-tiers per posting; a per-project box below (if set) overrides its tier, "
+            "so leave those blank to let the tiers decide.")
         tiers_help.setWordWrap(True)
         tiers_help.setProperty("muted", True)
         form.addRow(tiers_help)

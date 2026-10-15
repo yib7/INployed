@@ -259,7 +259,7 @@ def test_every_input_fits_the_byte_budget(sandbox):
 
 def test_a_trimmed_keyword_keeps_its_newest_and_others_are_whole(sandbox):
     _config(sandbox, keywords=['"Software Engineer"', '"Data Scientist"'],
-            remote_types=[], limit_per_input=300)
+            remote_types=[], limit_per_input=300, title_exclude_terms="none")
     known = _big_known()
     inputs = {i["keyword"]: i["jobs_to_not_include"] for i in scraper.build_inputs(known)}
     se = inputs['"Software Engineer"']
@@ -317,7 +317,8 @@ def test_below_the_floor_warns_once_per_run(sandbox, capsys):
 
 def test_split_remote_types_share_the_keywords_list(sandbox):
     _config(sandbox, keywords=['"Software Engineer"', '"Data Scientist"'],
-            remote_types=["Hybrid", "On-site"], limit_per_input=300)
+            remote_types=["Hybrid", "On-site"], limit_per_input=300,
+            title_exclude_terms="none")
     inputs = scraper.build_inputs(_big_known())
     assert [(i["keyword"], i["remote"]) for i in inputs] == [
         ('"Software Engineer"', "Hybrid"), ('"Software Engineer"', "On-site"),
@@ -329,7 +330,7 @@ def test_split_remote_types_share_the_keywords_list(sandbox):
 
 def test_max_keywords_still_caps_the_searches(sandbox):
     _config(sandbox, keywords=['"Software Engineer"', '"Data Scientist"', '"Quant"'],
-            remote_types=[], limit_per_input=300)
+            remote_types=[], limit_per_input=300, title_exclude_terms="none")
     inputs = scraper.build_inputs(_big_known(), max_keywords=1)
     assert [i["keyword"] for i in inputs] == ['"Software Engineer"']
 
@@ -365,7 +366,7 @@ def test_cap_exclude_ids_keeps_its_message(capsys):
 def test_main_sends_each_search_its_own_list_and_says_so(sandbox, monkeypatch, capsys):
     label = scraper.RUN_LABELS[0]
     _config(sandbox, keywords=['"Data Scientist"', '"Quant"'], remote_types=[],
-            limit_per_input=300, exclude_window_days=30)
+            limit_per_input=300, exclude_window_days=30, title_exclude_terms="none")
     _master(sandbox, [("ds", _days_ago(3), "Data Scientist"),
                       ("q1", _days_ago(2), "Quant Researcher"),
                       ("q2", _days_ago(1), "Quantitative Analyst"),
@@ -469,7 +470,7 @@ def test_lowercase_or_inside_a_word_is_not_boolean():
 @pytest.mark.parametrize("keyword", [["Data", "Scientist"], 7, None, {"k": "v"}])
 def test_an_odd_keyword_does_not_raise_and_gets_the_whole_list(sandbox, keyword):
     _config(sandbox, keywords=[keyword, '"Quant"'], remote_types=["Hybrid", "On-site"],
-            limit_per_input=300)
+            limit_per_input=300, title_exclude_terms="none")
     inputs = scraper.build_inputs(KNOWN)
     assert [i["keyword"] for i in inputs] == [keyword, keyword, '"Quant"', '"Quant"']
     assert inputs[0]["jobs_to_not_include"] == KNOWN["job_posting_id"].tolist()

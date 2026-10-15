@@ -439,6 +439,28 @@ BASE_FILTERS = {
     "selective_search": True,
 }
 
+# The title words every search leaves out (a NOT in its keyword, see
+# with_title_excludes), by experience level. The experience_level filter itself
+# does nothing: LinkedIn's logged-out search ignores it (proven 2026-10-14:
+# "Software Engineer" with Entry level, Director and no filter returned 24-25 of
+# the same 25 jobs, 13 senior titles each), while `"Software Engineer" NOT Senior
+# NOT Sr NOT Lead NOT Staff NOT Principal` came back with no senior titles at all.
+# About half the rows collected have a senior title word and the scorer drops
+# nearly every one, so they are Bright Data billing for nothing.
+# "Staff" is left out on purpose: "Member of Technical Staff" was the one
+# senior-word title among the user's 86 apply jobs on 2026-10-14.
+# A level not listed here leaves nothing out (the safe side: more results, never
+# fewer). search_config.json can redefine a level (title_exclude_by_level) or name
+# the words outright (title_exclude_terms); see title_exclude_terms_for.
+TITLE_EXCLUDE_BY_LEVEL: dict[str, list[str]] = {
+    "Internship": ["Senior", "Sr", "Lead", "Principal"],
+    "Entry level": ["Senior", "Sr", "Lead", "Principal"],
+    "Associate": [],
+    "Mid-Senior level": [],
+    "Director": [],
+    "Executive": [],
+}
+
 # Root-level search_config.json lets a local user (or the dashboard's Settings
 # tab) override the search inputs without editing this file. The VM runs with NO
 # such file, so the loader MUST fall back to the constants above byte-for-byte.
@@ -509,6 +531,8 @@ def load_search_config() -> dict:
                       f"built-in search settings (keywords, filters, limit_per_input "
                       f"and the skip-list size) instead of yours. Fix the file or save "
                       f"Settings again.", key=f"search_config:{path}:{e}")
+    levels = _experience_levels(raw.get("experience_level"))
+    by_level = raw.get("title_exclude_by_level")
     return {
         "keywords": raw.get("keywords", KEYWORDS),
         "remote_types": raw.get("remote_types", REMOTE_TYPES),
@@ -517,11 +541,151 @@ def load_search_config() -> dict:
         "country": raw.get("country", BASE_FILTERS["country"]),
         "time_range": raw.get("time_range", BASE_FILTERS["time_range"]),
         "job_type": raw.get("job_type", BASE_FILTERS["job_type"]),
-        "experience_level": raw.get("experience_level", BASE_FILTERS["experience_level"]),
+        # What Bright Data's experience_level input gets: the level when exactly
+        # one is chosen, else "" (no filter). LinkedIn ignores the filter anyway
+        # (see TITLE_EXCLUDE_BY_LEVEL), and "" is the honest superset of several.
+        "experience_level": levels[0] if len(levels) == 1 else "",
+        "experience_levels": levels,
+        "title_exclude_terms": raw.get("title_exclude_terms"),
+        "title_exclude_by_level": by_level if isinstance(by_level, dict) else {},
         "exclude_window_days": _positive_int(raw.get("exclude_window_days"),
                                              DEFAULT_EXCLUDE_WINDOW_DAYS),
         "max_exclude_ids": _positive_int(raw.get("max_exclude_ids"), MAX_EXCLUDE_IDS),
     }
+
+
+def _experience_levels(value) -> list[str]:
+    """search_config.json's experience_level as a list of levels.
+
+    The Settings tab saves a plain string when one level is ticked (what every
+    older scraper reads) and a list when several are. Absent or null is the
+    built-in "Entry level", as on the VM, which runs with no file. "" or [] is no
+    level. Each level is trimmed; blanks, non-text items and repeats are dropped.
+    Any other type (a number, a dict) is a broken hand edit: it warns once and
+    falls back to the built-in level, which is what the run used before."""
+    if value is None:
+        return [BASE_FILTERS["experience_level"]]
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        warn_once(f"experience_level in {SEARCH_CONFIG_FILE} is {value!r}, which is not "
+                  f"a level or a list of levels, so this run uses "
+                  f"{BASE_FILTERS['experience_level']}. Save Settings again to fix it.",
+                  key="search_config:experience_level")
+        return [BASE_FILTERS["experience_level"]]
+    levels: list[str] = []
+    for item in value:
+        if isinstance(item, str) and item.strip() and item.strip() not in levels:
+            levels.append(item.strip())
+    return levels
+
+
+# A title_exclude_terms (or title_exclude_by_level) string is split on these.
+_TERM_SEPARATORS = re.compile(r"[,;]")
+
+
+def _parse_terms(value) -> list[str] | None:
+    """A title-words value as a list of terms, or None for "automatic".
+
+    None, "" (or only separators and spaces) and "auto" in any case are
+    automatic. "none" in any case and [] are no words at all. Otherwise a list,
+    or a string split on commas or semicolons (a list's items are split too, so
+    ["Senior, Lead"] is two words): each piece trimmed, empties dropped, repeats
+    dropped ignoring case, the first spelling kept. A non-text item in a list is
+    dropped. Any other type raises TypeError; the caller decides what that means."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        word = value.strip().casefold()
+        if word in ("", "auto"):
+            return None
+        if word == "none":
+            return []
+        pieces = [value]
+    elif isinstance(value, list):
+        if not value:
+            return []
+        pieces = [v for v in value if isinstance(v, str)]
+    else:
+        raise TypeError(type(value).__name__)
+    terms: list[str] = []
+    seen: set[str] = set()
+    for piece in pieces:
+        for term in _TERM_SEPARATORS.split(piece):
+            term = term.strip()
+            if term and term.casefold() not in seen:
+                seen.add(term.casefold())
+                terms.append(term)
+    if not terms and isinstance(value, str):
+        return None                 # only commas and spaces: as blank as ""
+    return terms
+
+
+def _level_key(level) -> str:
+    """A level name compared ignoring case and spacing ("entry  Level")."""
+    return " ".join(str(level).split()).casefold()
+
+
+def _levels_in(cfg: dict) -> list[str]:
+    """The chosen levels of a load_search_config() dict. A caller's own narrowed
+    dict (tests patch load_search_config) may hold only experience_level, or
+    neither key, which is no level."""
+    levels = cfg.get("experience_levels")
+    if isinstance(levels, list):
+        return [lv for lv in levels if isinstance(lv, str)]
+    if "experience_level" in cfg:
+        return _experience_levels(cfg["experience_level"])
+    return []
+
+
+def _resolve_title_excludes(cfg: dict) -> tuple[list[str], bool]:
+    """(the title words every search leaves out, whether they came from the
+    levels). title_exclude_terms_for explains the rules."""
+    try:
+        own = _parse_terms(cfg.get("title_exclude_terms"))
+    except TypeError:
+        warn_once(f"title_exclude_terms in {SEARCH_CONFIG_FILE} is "
+                  f"{cfg.get('title_exclude_terms')!r}, which is not a list of words, so "
+                  f"this run leaves out the title words your experience level picks. "
+                  f"Fix it in Settings > Leave out job titles with.",
+                  key="search_config:title_exclude_terms")
+        own = None
+    if own is not None:
+        return own, False
+    by_level = {_level_key(k): list(v) for k, v in TITLE_EXCLUDE_BY_LEVEL.items()}
+    hand = cfg.get("title_exclude_by_level")
+    for level, value in (hand.items() if isinstance(hand, dict) else ()):
+        try:
+            terms = _parse_terms(value)
+        except TypeError:
+            terms = None            # a broken entry keeps the built-in list
+        if terms is not None:
+            by_level[_level_key(level)] = terms
+    levels = _levels_in(cfg)
+    if not levels:
+        return [], True
+    first, *rest = (by_level.get(_level_key(lv), []) for lv in levels)
+    others = [{_norm_text(t) for t in terms} for terms in rest]
+    return [t for t in first if all(_norm_text(t) in o for o in others)], True
+
+
+def title_exclude_terms_for(cfg: dict) -> list[str]:
+    """The title words every search leaves out, for a load_search_config() dict.
+
+    title_exclude_terms decides first. Absent, null, "" or "auto" (any case) is
+    automatic: the words the chosen experience levels leave out, from
+    TITLE_EXCLUDE_BY_LEVEL with title_exclude_by_level (a hand-edited
+    {level: [words]} map) laid over it. With several levels a word is left out
+    only when EVERY level leaves it out, so Entry level + Mid-Senior level leaves
+    nothing out; the order is the first level's. A level nobody defined leaves
+    nothing out, and so does no level at all. "none" (any case) or [] leaves
+    nothing out. Any other list, or a string split on commas or semicolons, is the
+    user's own words, whatever the levels: trimmed, blanks and repeats (ignoring
+    case) dropped, the first spelling kept. A value of any other type is a broken
+    hand edit: it warns once and is treated as automatic.
+
+    with_title_excludes turns these into each keyword's NOT terms."""
+    return _resolve_title_excludes(cfg)[0]
 
 
 def get_run_label() -> str:
@@ -999,6 +1163,98 @@ def title_matches(keyword, title) -> bool:
     if phrase in text.replace(" ", ""):
         return True
     return bool(words) and all(w in text for w in words)
+
+
+_QUOTED_PHRASE_RE = re.compile(_QUOTED_PHRASE)
+_TERM_JUNK = re.compile(f"[(){_DOUBLE_QUOTES}]")
+
+
+def _clean_title_term(term) -> str | None:
+    """One title word or phrase as it can go after a NOT, or None when it cannot.
+
+    Double quotes and parentheses are removed (with_title_excludes adds the quotes
+    a phrase needs, and a parenthesis would make the keyword a boolean search no
+    skip list can follow) and runs of spaces become one. None for a term that is
+    not text, a lone OR / AND / NOT (any case: an operator is not a word to leave
+    out), or one that normalizes to nothing ("---"), so no keyword ever ends in a
+    NOT with nothing to match."""
+    if not isinstance(term, str):
+        return None
+    text = " ".join(_TERM_JUNK.sub("", term).split())
+    if text.upper() in _OPERATORS or not _norm_text(text):
+        return None
+    return text
+
+
+def _wrapped_once(text: str) -> bool:
+    """Whether `text` is one pair of parentheses around everything in it
+    (parentheses inside double quotes do not count): "(A OR B)" is, "(A) OR (B)"
+    is not."""
+    if not (text.startswith("(") and text.endswith(")")):
+        return False
+    bare = _QUOTED_PHRASE_RE.sub(lambda m: " " * len(m.group()), text)
+    depth = 0
+    for i, ch in enumerate(bare):
+        depth += (ch == "(") - (ch == ")")
+        if depth == 0 and i < len(bare) - 1:
+            return False
+    return depth == 0
+
+
+def with_title_excludes(keyword, terms) -> object:
+    """`keyword` with ` NOT term` appended for each title word it should leave out.
+
+    LinkedIn's NOT reads job TITLES, so `"Data Engineer" NOT Senior NOT Sr` returns
+    the Data Engineer jobs without Senior or Sr in the title, and the skip list for
+    that keyword follows the same rule (_split_not_keyword, exclude_ids_per_keyword).
+    Pure: no config, no I/O.
+
+    - A keyword that is not text, or is blank, comes back unchanged, and so does
+      one with an unclosed double quote (a NOT after it would be read as more words
+      of the phrase). No usable terms: unchanged too.
+    - Each term is cleaned (_clean_title_term): quotes and parentheses removed, a
+      lone OR / AND / NOT or a term with nothing left dropped. A term with a space
+      is double-quoted ("Tech Lead"), any other goes in bare.
+    - A term the keyword already holds as whole word(s) is dropped, so a
+      "Senior Data Engineer" search keeps its Senior ("Leadership" does not hold
+      "Lead", so that search still leaves Lead out). A term the keyword already
+      NOTs is dropped, and so is a second spelling of one term ("Sr" and "Sr.").
+    - A plain keyword, or one already in the `BASE NOT a` shape, gets the NOTs
+      appended as is, so the result still parses (_split_not_keyword) and keeps a
+      skip list of its own. Any other boolean keyword (OR or AND outside quotes, a
+      parenthesis, a stray NOT) is first wrapped in one pair of parentheses unless
+      it already is one, `("A" OR "B") NOT Senior`, so the NOTs apply to all of
+      it; its search keeps the whole known-id list, as every such keyword did."""
+    if not isinstance(keyword, str) or not keyword.strip() or not terms:
+        return keyword
+    text = keyword.strip()
+    if sum(text.count(q) for q in _DOUBLE_QUOTES) % 2:
+        return keyword
+    split = _split_not_keyword(text)
+    if split is not None:
+        base, taken = split
+        held = _norm_text(base)
+        wrap = False
+    else:
+        taken = []
+        held = _norm_text(text)
+        wrap = (bool(_BOOLEAN_KEYWORD.search(_QUOTED_PHRASE_RE.sub(" ", text)))
+                and not _wrapped_once(text))
+    taken = list(taken)
+    added: list[str] = []
+    for term in terms:
+        clean = _clean_title_term(term)
+        if clean is None:
+            continue
+        norm = _norm_text(clean)
+        if norm in taken or _has_banned_word(held, [norm]):
+            continue
+        taken.append(norm)
+        added.append(f'"{clean}"' if " " in clean else clean)
+    if not added:
+        return keyword
+    head = f"({text})" if wrap else text
+    return head + "".join(f" NOT {t}" for t in added)
 
 
 def _ledger_keep_days() -> int:
@@ -1713,10 +1969,30 @@ def build_inputs(exclude: list[str] | pd.DataFrame, max_keywords: int | None = N
     here only to size the jobs_to_not_include cap, which scales with the fan-out.
     None falls back to the config value, so the cap applies even to a caller that
     doesn't thread it through.
+
+    Every keyword is sent with the title words the experience level leaves out
+    NOT-ed onto it (title_exclude_terms_for, with_title_excludes): LinkedIn
+    ignores the experience_level filter but honours a NOT on titles. The skip
+    lists are computed on those expanded keywords, so a known "Senior Data
+    Engineer" job is not on the list of a search that can no longer return it.
+    `max_keywords` caps the config keywords before they are expanded. Two
+    keywords that expand to the same search ('"Data Engineer" NOT Senior' and
+    '"Data Engineer"' both become '"Data Engineer" NOT Senior NOT Sr ...') are
+    sent once: the same search twice returns the same jobs and is billed twice.
+    The experience_level sent is the single chosen level, or "" (no filter)
+    when none or several are chosen (see load_search_config).
     """
     cfg = load_search_config()
-    keywords = (cfg["keywords"] if max_keywords is None
-                else cfg["keywords"][:_keyword_cap(max_keywords)])
+    chosen = (cfg["keywords"] if max_keywords is None
+              else cfg["keywords"][:_keyword_cap(max_keywords)])
+    terms = title_exclude_terms_for(cfg)
+    keywords: list = []
+    sent: set[str] = set()
+    for kw in chosen:
+        kw = with_title_excludes(kw, terms)
+        if _keyword_key(kw) not in sent:
+            sent.add(_keyword_key(kw))
+            keywords.append(kw)
     remote_types = remote_filters(cfg["remote_types"])
     if limit_per_input is None:
         limit_per_input = cfg["limit_per_input"]
@@ -1753,6 +2029,30 @@ def _skip_list_summary(run_label: str, known: int, inputs: list[dict]) -> str:
     span = f"{low:,}" if low == high else f"{low:,} to {high:,}"
     return (f"Run: {run_label} | {known:,} known jobs from the last {days} days; "
             f"each search skips the ones its keyword can return ({span} ids per search)")
+
+
+def _title_excludes_line(cfg: dict) -> str | None:
+    """The run log's one line naming the title words every search leaves out, or
+    None when it leaves none out (no line then: nothing changed for the user).
+    It names the experience level(s) when the words came from them, so a user who
+    wonders where the senior jobs went finds the setting that did it."""
+    terms, auto = _resolve_title_excludes(cfg)
+    shown: list[str] = []
+    for term in terms:
+        clean = _clean_title_term(term)
+        if clean is not None and _norm_text(clean) not in {_norm_text(s) for s in shown}:
+            shown.append(clean)
+    if not shown:
+        return None
+    words = shown[0] if len(shown) == 1 else f"{', '.join(shown[:-1])} or {shown[-1]}"
+    tail = (f"leaves out job titles with {words} "
+            f"(change this in Settings > Leave out job titles with).")
+    if not auto:
+        return f"Every search {tail}"
+    levels = _levels_in(cfg)
+    named = levels[0] if len(levels) == 1 else (
+        f"{', '.join(levels[:-1])} and {levels[-1]}")
+    return f"Experience level{'s' if len(levels) > 1 else ''} {named}: every search {tail}"
 
 
 async def preflight(session: aiohttp.ClientSession) -> None:
@@ -2289,6 +2589,9 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
                 inputs = build_inputs(known, max_keywords=max_keywords,
                                       limit_per_input=limit_per_input)
                 _print_line(_skip_list_summary(run_label, len(known), inputs))
+                excludes = _title_excludes_line(cfg)
+                if excludes:
+                    _print_line(excludes)
                 payload = {"input": inputs}
                 # Derived from `inputs`, not from the raw flag: build_inputs coerces
                 # the flag, and a run log naming a cap the run did not apply is worse

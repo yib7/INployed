@@ -36,6 +36,9 @@ def test_absent_file_uses_builtin_defaults(monkeypatch, tmp_path):
     assert cfg["time_range"] == "Past 24 hours"
     assert cfg["job_type"] == "Full-time"
     assert cfg["experience_level"] == "Entry level"
+    assert cfg["experience_levels"] == ["Entry level"]
+    assert cfg["title_exclude_terms"] is None
+    assert cfg["title_exclude_by_level"] == {}
 
 
 def test_file_overrides_keywords_and_limit(monkeypatch, tmp_path):
@@ -54,7 +57,9 @@ def test_build_inputs_uses_config_keywords(monkeypatch, tmp_path):
     # config keywords drive the fan-out
     inputs = scraper.build_inputs([])
     kws = {i["keyword"] for i in inputs}
-    assert kws == {'"One"', '"Two"', '"Three"'}
+    # the built-in Entry level leaves the senior title words out of every search
+    tail = " NOT Senior NOT Sr NOT Lead NOT Principal"
+    assert kws == {'"One"' + tail, '"Two"' + tail, '"Three"' + tail}
     assert len(inputs) == 3 * len(scraper.REMOTE_TYPES)
     # max_keywords still caps the config list
     capped = scraper.build_inputs([], max_keywords=1)

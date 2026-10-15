@@ -814,7 +814,8 @@ def test_a_trim_forced_by_the_fan_out_names_limit_per_input(capsys):
 
 
 def _remote_config(monkeypatch, remote_types):
-    cfg = dict(scraper.load_search_config(), keywords=["k1", "k2"], remote_types=remote_types)
+    cfg = dict(scraper.load_search_config(), keywords=["k1", "k2"], remote_types=remote_types,
+               title_exclude_terms="none")   # plain keywords: this is about remote types
     monkeypatch.setattr(scraper, "load_search_config", lambda: cfg)
 
 

@@ -8,11 +8,9 @@ All notable changes to INployed are recorded here. The format follows
 
 ### Changed
 
-- **Experience level now leaves senior titles out of the search.** LinkedIn ignores the
-  experience level filter in the search Bright Data runs, so about half of the collected
-  jobs had senior titles that the scorer then dropped, each one billed. A NOT in the
-  keyword works on titles, so the level now picks the title words every search leaves
-  out: with *Internship* or *Entry level* (the default), `"Data Engineer"` is sent as
+- **Experience level now leaves senior titles out of the search.** About half of the
+  collected jobs had senior titles that the scorer then dropped, each one billed. The
+  level now picks the title words every search leaves out: with *Internship* or *Entry level* (the default), `"Data Engineer"` is sent as
   `"Data Engineer" NOT Senior NOT Sr NOT Lead NOT Principal`. The other levels leave out
   nothing. **Experience level** in Settings takes several levels (a word is left out only
   when every ticked level leaves it out), and the new **Leave out job titles with** row

@@ -254,11 +254,9 @@ too large, lower `max_exclude_ids` and run again. A lower number lets more known
 billed again, so lower it only as far as you need. The `MAX_EXCLUDE_IDS` environment
 variable, when set, wins over the file.
 
-**Experience level and Leave out job titles with.** LinkedIn ignores the experience level
-filter in the search Bright Data runs (on 2026-10-14, *Entry level*, *Director* and no
-filter returned the same jobs). A NOT in a keyword does work, on job titles, so
-**Experience level** (Settings → Job discovery) picks the title words every search leaves
-out. With *Internship* or *Entry level*, a `"Data Engineer"` search is sent as
+**Experience level and Leave out job titles with.** **Experience level**
+(Settings → Job discovery) sets the seniority of the jobs you collect by picking the
+title words every search leaves out. With *Internship* or *Entry level*, a `"Data Engineer"` search is sent as
 `"Data Engineer" NOT Senior NOT Sr NOT Lead NOT Principal`; the other levels leave out
 nothing. You can tick several levels, and a word is then left out only when every ticked
 level leaves it out, so *Entry level* with *Mid-Senior level* leaves out nothing.

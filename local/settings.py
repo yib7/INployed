@@ -543,10 +543,10 @@ SETTINGS_SCHEMA: list[Field] = [
     # that as no level, so nothing is left out.
     Field("experience_level", "Experience level", "multichoice", ["Entry level"],
           "Scraper", "search",
-          help="LinkedIn ignores this filter in the search Bright Data runs (tested "
-               "2026-10-14). What it does now: it picks the job-title words every search "
-               "leaves out (see Leave out job titles with). Tick several levels to widen: "
-               "a word is then left out only if every ticked level leaves it out.",
+          help="Sets the seniority of the jobs you collect by picking the job-title "
+               "words every search leaves out (see Leave out job titles with). Tick "
+               "several levels to widen: a word is then left out only if every ticked "
+               "level leaves it out.",
           choices=("Internship", "Entry level", "Associate",
                    "Mid-Senior level", "Director", "Executive"),
           file_form=FORM_ONE_AS_TEXT),

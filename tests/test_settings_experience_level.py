@@ -86,7 +86,7 @@ def test_the_automatic_words_in_the_help_are_the_scrapers():
 
 def test_experience_level_help_says_what_it_does_now():
     help_ = BY_KEY["experience_level"].help
-    assert "LinkedIn ignores" in help_
+    assert "seniority" in help_
     assert "Leave out job titles with" in help_
     assert "every ticked level" in help_
 

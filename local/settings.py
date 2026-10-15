@@ -136,6 +136,51 @@ class Field:
     # default (settings_tab._match_choice). Pinned by
     # test_a_blank_entry_is_declared_only_on_a_choice_field_and_names_no_choice.
     blank_label: str = ""
+    # How the backing file may hold this value when that differs from the form's
+    # own type: FORM_ONE_AS_TEXT or FORM_WORDS (see those constants). Schema
+    # DATA like `choices`; `load()` reads the stored value through `_from_file`
+    # and `save()` writes through `_to_file`, so the form, validate() and every
+    # settings.load() caller see only the field's own type. Left empty, the file
+    # holds exactly the form's value. Pinned by
+    # test_file_form_is_declared_only_where_it_means_something.
+    file_form: str = ""
+
+
+# Field.file_form values.
+# A multichoice whose file readers came first as ONE string (search_config.json's
+# experience_level: the paused VM's older scraper.py hands it to Bright Data
+# as-is). A stored string reads as a one-item list (blank = none ticked); Save
+# writes one ticked item back as that plain string, none as "", several as a list.
+FORM_ONE_AS_TEXT = "one-as-text"
+# A text box of comma-separated words whose readers also take a list
+# (scraper._parse_terms: blank = automatic, "none" = no words). A stored list
+# reads as its words joined by ", ", an empty one as "none" (what [] means there);
+# Save writes the text as typed.
+FORM_WORDS = "words"
+
+
+def _from_file(f: Field, raw: Any) -> Any:
+    """A stored value as the form's type, per `f.file_form`. A value of any other
+    shape comes back untouched, so validate() still names it."""
+    if f.file_form == FORM_ONE_AS_TEXT and isinstance(raw, str):
+        return [raw.strip()] if raw.strip() else []
+    if f.file_form == FORM_WORDS:
+        if raw is None:
+            return ""
+        if isinstance(raw, list):
+            words = [w for w in raw if isinstance(w, str) and w.strip()]
+            return ", ".join(w.strip() for w in words) if words else "none"
+    return raw
+
+
+def _to_file(f: Field, value: Any) -> Any:
+    """A form value as the backing file holds it, per `f.file_form`."""
+    value = _from_file(f, value)        # a caller may hold the file's own form
+    if f.file_form == FORM_ONE_AS_TEXT and isinstance(value, list):
+        if not value:
+            return ""
+        return value[0] if len(value) == 1 else list(value)
+    return value
 
 
 # Targets whose backing file is a .env (key=value), not JSON. Their Field.key is
@@ -492,10 +537,28 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Employment type to search for.",
           choices=("Full-time", "Part-time", "Contract", "Temporary",
                    "Internship", "Volunteer", "Other")),
-    Field("experience_level", "Experience level", "choice", "Entry level", "Scraper", "search",
-          help="Seniority filter.",
+    # A multichoice that Save writes as a plain string when one level is ticked
+    # (FORM_ONE_AS_TEXT): the paused VM's older scraper.py sends the value to
+    # Bright Data as-is. None ticked is allowed and saves "": the scraper reads
+    # that as no level, so nothing is left out.
+    Field("experience_level", "Experience level", "multichoice", ["Entry level"],
+          "Scraper", "search",
+          help="LinkedIn ignores this filter in the search Bright Data runs (tested "
+               "2026-10-14). What it does now: it picks the job-title words every search "
+               "leaves out (see Leave out job titles with). Tick several levels to widen: "
+               "a word is then left out only if every ticked level leaves it out.",
           choices=("Internship", "Entry level", "Associate",
-                   "Mid-Senior level", "Director", "Executive")),
+                   "Mid-Senior level", "Director", "Executive"),
+          file_form=FORM_ONE_AS_TEXT),
+    # The label is the name scraper.py's run-log line points at
+    # ("change this in Settings > Leave out job titles with").
+    Field("title_exclude_terms", "Leave out job titles with", "str", "", "Scraper", "search",
+          help="Blank = automatic: Internship and Entry level leave out Senior, Sr, Lead "
+               "and Principal; other levels leave out nothing. Or type your own words, "
+               "comma-separated (e.g. Senior, Sr, Lead, Staff), or none to leave nothing "
+               "out. Matches job titles only. A search whose keyword holds a word keeps "
+               "it. Staff is not automatic, so Member of Technical Staff jobs come through.",
+          optional=True, file_form=FORM_WORDS),
     Field("drop_easy_apply", "Drop Easy Apply jobs before scoring", "bool", False,
           "Scraper", "scoring",
           help="When on, Easy Apply jobs are filtered out before AI scoring (saves "
@@ -1304,7 +1367,7 @@ def load(targets: dict[str, Path] | None = None) -> dict[str, Any]:
             cache[f.target] = _read_target(f.target, targets.get(f.target))
         store = cache[f.target]
         if f.key in store:
-            values[f.key] = store[f.key]
+            values[f.key] = _from_file(f, store[f.key])
             continue
         derive = DERIVED_WHEN_ABSENT.get(f.key)
         values[f.key] = f.default if derive is None else derive(store)
@@ -1416,6 +1479,7 @@ def field_problem(f: Field, value: Any) -> str | None:
     as the user edits) gets the exact same message Save would: one shared source
     for the rules, so the two can never drift apart.
     """
+    value = _from_file(f, value)    # the file's own form (Field.file_form) is fine too
     if not _coerce_ok(f, value):
         return f"Expected {f.type}, got {type(value).__name__}."
     if f.type == "choice" and value not in f.choices and not (f.blank_label and value == ""):
@@ -1604,7 +1668,7 @@ def save(values: dict[str, Any], targets: dict[str, Path] | None = None, *,
         f = by_key.get(key)
         if f is None:
             continue
-        grouped.setdefault(f.target, {})[key] = value
+        grouped.setdefault(f.target, {})[key] = _to_file(f, value)
 
     for target_id, updates in grouped.items():
         path = targets.get(target_id)

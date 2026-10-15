@@ -3089,10 +3089,13 @@ def test_every_field_whose_help_gives_a_blank_a_meaning_keeps_it_through_a_save(
 
     graduation_month is also exempt. It is an .env-free
     scoring_config.json row, and its blank round trip (saved as "", read by the
-    scorer as no date) is pinned in tests/test_candidate_settings.py."""
+    scorer as no date) is pinned in tests/test_candidate_settings.py. So is
+    title_exclude_terms, a search_config.json row whose blank (saved as "", read
+    by the scraper as automatic) is pinned in tests/test_settings_experience_level.py
+    and by test_the_title_words_row_is_a_text_box_that_round_trips."""
     mentions = {f.key for f in settings.SETTINGS_SCHEMA
                 if re.search(r"\bblank\b", f.help, re.IGNORECASE)}
-    assert (mentions - {"auto_apply_generate", "graduation_month"}
+    assert (mentions - {"auto_apply_generate", "graduation_month", "title_exclude_terms"}
             == set(_BLANK_MEANS_SOMETHING))
     env = _targets(tmp_path)["env"]
     env.write_text("".join(f"{key}=\n" for key in _BLANK_MEANS_SOMETHING), encoding="utf-8")
@@ -3321,3 +3324,55 @@ def test_naming_a_model_in_the_rate_limit_rows_clears_its_warning(qtbot, tmp_pat
     assert "gemini-4.0-flash" in _note(form, "stage2_models")
     form._lists["model_limits"].setPlainText("gemini-4.0-flash 5 20")
     assert _note(form, "stage2_models") == ""
+
+
+# --- experience level (several levels) + Leave out job titles with (cycle 29) ------
+
+def test_a_stored_plain_level_opens_as_one_ticked_box_and_clean(qtbot, tmp_path):
+    """Every existing search_config.json holds the level as a plain string.
+    It opens as exactly that box ticked, with nothing to save."""
+    targets = _targets(tmp_path)
+    targets["search"].write_text(json.dumps({"experience_level": "Entry level"}),
+                                 encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    boxes = form._multi["experience_level"]
+    assert list(boxes) == list(settings.SETTINGS_SCHEMA[
+        [f.key for f in settings.SETTINGS_SCHEMA].index("experience_level")].choices)
+    assert [c for c, cb in boxes.items() if cb.isChecked()] == ["Entry level"]
+    assert "experience_level" not in form._dirty
+    assert "title_exclude_terms" not in form._dirty
+
+
+def test_ticking_levels_saves_a_list_and_one_level_a_string(qtbot, tmp_path, monkeypatch):
+    targets = _targets(tmp_path)
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    _no_modals(monkeypatch)
+    boxes = form._multi["experience_level"]
+    boxes["Internship"].setChecked(True)
+    assert form.save() is True
+    stored = json.loads(targets["search"].read_text("utf-8"))
+    assert stored["experience_level"] == ["Internship", "Entry level"]
+    boxes["Internship"].setChecked(False)
+    assert form.save() is True
+    stored = json.loads(targets["search"].read_text("utf-8"))
+    assert stored["experience_level"] == "Entry level"
+    assert stored["title_exclude_terms"] == ""          # blank stays automatic
+
+
+@pytest.mark.parametrize("typed", ["none", "Senior, Staff", ""])
+def test_the_title_words_row_is_a_text_box_that_round_trips(qtbot, tmp_path,
+                                                             monkeypatch, typed):
+    targets = _targets(tmp_path)
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    _no_modals(monkeypatch)
+    assert isinstance(form._widgets["title_exclude_terms"], QtWidgets.QLineEdit)
+    form._setters["title_exclude_terms"](typed)
+    assert form.save() is True
+    stored = json.loads(targets["search"].read_text("utf-8"))
+    assert stored["title_exclude_terms"] == typed
+    reopened = _form(tmp_path)
+    qtbot.addWidget(reopened)
+    assert reopened._getters["title_exclude_terms"]() == typed

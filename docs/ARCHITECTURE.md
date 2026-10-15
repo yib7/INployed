@@ -147,6 +147,40 @@ appends to a cumulative master CSV. Five cost-aware details:
   keyword with no title rule (blank, not text, or boolean: OR, AND, NOT or parentheses;
   see `_keyword_rule()`) carries the whole list. Each list keeps the `load_known_jobs()`
   order, oldest first.
+- **The experience level becomes NOT words on every keyword.** LinkedIn's logged-out search
+  ignores Bright Data's `experience_level` input (a 2026-10-14 A/B returned 24-25 of the
+  same 25 jobs for Entry level, Director and no filter). A NOT in the keyword works on
+  titles. `title_exclude_terms_for(cfg)` resolves the words: `title_exclude_terms` from
+  `search_config.json` when set (a list, or a string split on commas or semicolons;
+  `"none"` or `[]` = nothing), else the chosen `experience_level` levels (a string or a
+  list) through `TITLE_EXCLUDE_BY_LEVEL` (Internship and Entry level: Senior, Sr, Lead,
+  Principal; the rest none) with the hand-edit `title_exclude_by_level` map laid over it.
+  Several levels intersect, and an unknown level leaves nothing out, so more levels never
+  mean fewer results. `with_title_excludes()` appends ` NOT <term>` per term (a phrase
+  double-quoted), skips a term the keyword already holds as whole words or already NOTs,
+  and wraps a keyword with OR or AND in parentheses first. `build_inputs()` expands the
+  keywords after `max_keywords` caps them, sends each distinct expanded search once, and
+  gives Bright Data the single chosen level or `""` for none or several.
+- **Skip lists follow NOT keywords.** `_split_not_keyword()` parses `BASE NOT a NOT "b c"`
+  (BASE free of OR, AND, NOT and parentheses, or plain inside one pair of parentheses;
+  capital NOT only) into the base and its banned terms. `exclude_ids_per_keyword()`
+  builds the base's list as above, then drops every id whose normalized title holds a
+  banned term as whole words (`_has_banned_word()`, space-padded): "lead" leaves out
+  "Lead Engineer" and keeps "Leadership", the strict side, since dropping an id LinkedIn
+  would still return re-bills it. `title_matches()` follows the same rule. Other boolean
+  keywords keep the whole list. The ledger records the normalized BASE for a NOT search
+  (`_keywords_by_id()`), so `"Data Engineer" NOT Senior` and `"Data Engineer"` share
+  records. On the real data on 2026-10-15 (120-day window of 38,455 known ids,
+  `limit_per_input` 300, the user's 16 quoted keywords at Entry level), the NOT words
+  shrank the lists from 29,251 ids to 24,208 in all, and the trigger body from 409,541
+  bytes to 338,939. Four of the six keywords the 47,000-byte input budget trimmed now fit
+  whole; "Software Engineer" (5,493) and "Data Engineer" (3,595) still keep their newest
+  ~3,355. The cap leaves off 2,376 ids instead of 11,991, so 90.8% of the ids the searches
+  can return are on a list, up from 71.0%. None of the 2,155 jobs scored apply has a
+  banned word in its title. **The VM** runs its own `scraper.py`: an older copy sends the
+  plain keywords and ignores `title_exclude_terms`, so it needs the new file if it is
+  ever resumed. Settings writes `experience_level` as a plain string for one level, which
+  the older copy still reads.
 - **Each keyword's list is capped on its own.** `_cap_per_keyword()` runs `_cap_ids()` on
   every list: the newest k ids whose `json.dumps` size times `limit_per_input` fits
   `MAX_EXCLUDE_PAYLOAD_BYTES`, sized exactly (brackets, each id's JSON width and the
@@ -1057,7 +1091,7 @@ Tests: `tests/test_atom_audit.py` (census + gate) and `tests/test_atom_slop.py` 
 whose pins are mostly negative: the technical words that must stay quiet).
 
 ## Settings & customization (`local/settings.py` + dashboard Settings tab)
-`settings.py` is one schema (`SETTINGS_SCHEMA`) of 97 `Field` rows describing every
+`settings.py` is one schema (`SETTINGS_SCHEMA`) of 99 `Field` rows describing every
 user-editable option (key, type, default, validation, backing file). The dashboard's
 **Settings** tab auto-renders it grouped by collapsible section, inside a scrollable canvas.
 `SECTION_ORDER` (`local/qt/settings_tab.py`) is Jev / Credentials / Connection & paths / Engine /
@@ -1077,6 +1111,15 @@ git-ignored `.env` and
 `scoring_config.json` (read by `score_jobs.py`). The VM-standalone scraper/scorer never
 import `local/`; they read their own JSON with **env-override > file > built-in-default**
 precedence, so an absent file reproduces the built-in defaults exactly.
+
+`Field.file_form` covers a value the backing file holds in another shape than the form.
+`load()` reads the stored value through `_from_file()`, and `save()` writes through
+`_to_file()`, so the form, `validate()` and every `settings.load()` caller see only the
+field's own type. `FORM_ONE_AS_TEXT` (`experience_level`, a multichoice): a stored string
+reads as a one-item list, and Save writes one ticked level as a plain string (the older
+VM `scraper.py` sends it to Bright Data as-is), none as `""` and several as a list.
+`FORM_WORDS` (`title_exclude_terms`, a text box): a stored list reads as its words joined
+by `, `, an empty list as `none`, and Save writes the text as typed.
 
 ### Rendering flags vs. validation, on the same dataclass
 Four optional `Field` attributes carry the Settings tab's whole disclosure story as

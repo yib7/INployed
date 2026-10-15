@@ -8,6 +8,30 @@ All notable changes to INployed are recorded here. The format follows
 
 ### Changed
 
+- **Experience level now leaves senior titles out of the search.** LinkedIn ignores the
+  experience level filter in the search Bright Data runs, so about half of the collected
+  jobs had senior titles that the scorer then dropped, each one billed. A NOT in the
+  keyword works on titles, so the level now picks the title words every search leaves
+  out: with *Internship* or *Entry level* (the default), `"Data Engineer"` is sent as
+  `"Data Engineer" NOT Senior NOT Sr NOT Lead NOT Principal`. The other levels leave out
+  nothing. **Experience level** in Settings takes several levels (a word is left out only
+  when every ticked level leaves it out), and the new **Leave out job titles with** row
+  sets your own words, or `none`; blank is automatic. A keyword that holds a word keeps
+  it, and Staff is not automatic, so "Member of Technical Staff" jobs still come in. The
+  run log names the words left out. `title_exclude_by_level` in `search_config.json` (no
+  Settings row) changes what a level leaves out.
+- **Skip lists understand NOT keywords.** A keyword such as `"Data Engineer" NOT Senior`
+  carried the whole known-job list, like any keyword with OR, AND or NOT. Its list now
+  holds the jobs its base keyword can return minus those whose title holds a NOT word as
+  whole words, and the ledger records the base keyword, so both forms share records.
+  Measured on the real data on 2026-10-15 at `limit_per_input` 300 with the 120-day window:
+  the lists hold 24,208 ids instead of 29,251, 4 of the 6 keywords the size limit trimmed
+  now fit whole ("Software Engineer" and "Data Engineer" still keep their newest ~3,355),
+  and 90.8% of the known jobs a search can return are on its list, up from 71.0%. None of
+  the 2,155 jobs scored Apply has a left-out word in its title. **Upgrading:** the VM's
+  older `pipeline/scraper.py` still sends the plain keywords and ignores **Leave out job
+  titles with**; copy the new file to the VM before you resume it. With one level ticked,
+  Settings still saves `experience_level` as plain text, which the older file reads.
 - **Check difficulty reads one job at a time, up to 30 per click.** Ten browser windows at
   once was heavy on the PC and looked like a bot. Now each job opens in a fresh browser
   window on the auto-apply profile, the window closes once its job is read, and the next

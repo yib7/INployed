@@ -254,6 +254,28 @@ too large, lower `max_exclude_ids` and run again. A lower number lets more known
 billed again, so lower it only as far as you need. The `MAX_EXCLUDE_IDS` environment
 variable, when set, wins over the file.
 
+**Experience level and Leave out job titles with.** LinkedIn ignores the experience level
+filter in the search Bright Data runs (on 2026-10-14, *Entry level*, *Director* and no
+filter returned the same jobs). A NOT in a keyword does work, on job titles, so
+**Experience level** (Settings → Job discovery) picks the title words every search leaves
+out. With *Internship* or *Entry level*, a `"Data Engineer"` search is sent as
+`"Data Engineer" NOT Senior NOT Sr NOT Lead NOT Principal`; the other levels leave out
+nothing. You can tick several levels, and a word is then left out only when every ticked
+level leaves it out, so *Entry level* with *Mid-Senior level* leaves out nothing.
+**Leave out job titles with** overrides the automatic words: blank is automatic, your own
+comma-separated words (for example `Senior, Sr, Lead, Staff`) replace them, and `none`
+leaves nothing out. A word matches whole words of the title only ("Lead" keeps
+"Leadership"), and a keyword that holds a word keeps it: `"Senior Data Engineer"` is sent
+without `NOT Senior`. A keyword with OR or AND is wrapped in parentheses first. Staff is
+not automatic, so "Member of Technical Staff" jobs still come in. Each search's skip list
+leaves out the known jobs its NOT words exclude, so more of the jobs it can return fit. The
+run log names the words left out. To change what a level leaves out, add
+`"title_exclude_by_level": {"Entry level": ["Senior", "Sr"]}` to `search_config.json` by
+hand; there is no Settings row. **On the VM:** an older copy of `pipeline/scraper.py` sends
+the plain keywords and ignores **Leave out job titles with**, so copy the new file to the VM
+before you resume it. With one level ticked, Settings saves `experience_level` as plain
+text, which the older copy still reads.
+
 **Run files.** Each run saves its jobs to `linkedin_jobs_<date>_<label>.csv` in its
 run-label folder. A second run with the same label on the same day writes
 `linkedin_jobs_<date>_<label>-2.csv` (then `-3`), so it keeps the earlier run's file. The
@@ -587,8 +609,9 @@ Candidate: In school: undergraduate (expected May 2027); clearance: Secret, open
   **Finished** and **In school: undergraduate** keep the filter.
 - The scraper's defaults are Job type *Full-time* and Experience level *Entry level*, so it
   collects few internships, whatever the scorer keeps. To collect them, choose *Internship*
-  under Settings → Job discovery → **Job type** and **Experience level**. Each of the two settings
-  holds one value, so this replaces *Full-time* and *Entry level* until you change them back.
+  under Settings → Job discovery → **Job type**. It holds one value, so this replaces
+  *Full-time* until you change it back. **Experience level** only picks the title words
+  searches leave out (see *Experience level and Leave out job titles with* above).
 
 For every status, Jev's not-eligible check applies only when the posting carries a student
 or graduate cue, such as *student*, *enrolled* or *graduation*.

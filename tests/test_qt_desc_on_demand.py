@@ -135,3 +135,31 @@ def test_a_row_that_did_not_come_from_a_file_reads_no_cache(win, monkeypatch):
     assert win._job_payload("9")["job_summary"] == ""
     win._show_preview("9")
     assert win.preview.desc_toggle.isHidden()
+
+
+def test_a_manual_jobs_cached_summary_still_sends_the_tailor_to_the_master(
+        win, tmp_path, monkeypatch):
+    # A hand-added job's source row holds only the 1000-character job_summary.
+    # Filling the payload from the cache must not make it look described: the
+    # tailor still reads the full text from the master.
+    from qt import mw_tailor
+    mid = "manual-20261016-acme"
+    assert jobsdata.is_manual_job_id(mid)
+    manual = _write(tmp_path / "drive" / "manual" / "manual_jobs_scored.csv.gz", [
+        {"job_posting_id": mid, "job_title": "Data Analyst", "company_name": "Acme",
+         "url": "https://x/m", "is_seen": "no", "job_summary": "S" * 1000},
+    ])
+    _install(win, [manual])
+    payload = win._job_payload(mid)
+    assert payload["job_summary"] == "S" * 1000
+    asked = []
+
+    def master_row(jid, **k):
+        asked.append(jid)
+        return {"job_description_formatted": "<p>the whole posting</p>",
+                "job_description": "the whole posting"}
+    monkeypatch.setattr(mw_tailor.jobsdata, "master_row", master_row)
+    job = mw_tailor._with_master_jd(payload)
+    assert asked == [mid]
+    assert job["job_description_formatted"] == "<p>the whole posting</p>"
+    assert job["job_summary"] == "S" * 1000

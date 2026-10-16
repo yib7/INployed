@@ -939,7 +939,7 @@ def test_a_portfolio_box_takes_the_github_fact_when_no_website_is_stored(tmp_pat
     state, questions = apply_judge.page_questions(digest, cat, _JOB)
     p = apply_judge.plan(digest, cat, jev.FakeJev().judge(state, questions))
     assert (p.fields[0].action, p.fields[0].fact_key, p.fields[0].value) == (
-        "fill", "github_url", "https://github.com/janedoe")
+        "fill", "github_url", "https://www.github.com/janedoe")
     assert p.park_reason == ""
 
 

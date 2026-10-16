@@ -191,24 +191,24 @@ def _header_of(**basics) -> str:
 
 def test_header_linkedin_is_a_clickable_href():
     tex = _header_of(name="Jane Doe", linkedin="linkedin.com/in/janedoe")
-    assert "\\href{https://linkedin.com/in/janedoe}" in tex
+    assert "\\href{https://www.linkedin.com/in/janedoe}" in tex
 
 
 def test_header_github_is_a_clickable_href():
     tex = _header_of(name="Jane Doe", github="github.com/janedoe")
-    assert "\\href{https://github.com/janedoe}" in tex
+    assert "\\href{https://www.github.com/janedoe}" in tex
 
 
 def test_header_link_stored_as_full_url_does_not_double_the_scheme():
     tex = _header_of(github="https://github.com/janedoe")
-    assert "\\href{https://github.com/janedoe}" in tex
+    assert "\\href{https://www.github.com/janedoe}" in tex
     assert "https://https://" not in tex
 
 
 def test_header_href_target_keeps_underscores_unescaped():
     """escape_url, not escape_latex: a backslash in the target breaks the address."""
     tex = _header_of(github="github.com/foo_bar")
-    assert "\\href{https://github.com/foo_bar}" in tex
+    assert "\\href{https://www.github.com/foo_bar}" in tex
 
 
 def test_header_link_display_text_is_unchanged():

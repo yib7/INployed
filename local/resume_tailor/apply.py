@@ -124,8 +124,8 @@ def build_apply_context(generated_dir: Path) -> Dict[str, Any]:
     }
     basics = (assets.load_master() or {}).get("basics") or {}
     links = {
-        "LinkedIn": assets.full_url(basics.get("linkedin", "")),
-        "GitHub": assets.full_url(basics.get("github", "")),
+        "LinkedIn": assets.profile_url(basics.get("linkedin", "")),
+        "GitHub": assets.profile_url(basics.get("github", "")),
     }
     return {
         "generated_dir": str(generated_dir),

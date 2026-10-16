@@ -86,7 +86,7 @@ def _contact_bit(field: str, value: str) -> str:
     text = to_latex(value)
     if field not in _LINK_FIELDS:
         return text
-    href = escape_url(assets.full_url(value))
+    href = escape_url(assets.profile_url(value))
     return f"\\href{{{href}}}{{{text}}}" if href else text
 
 

@@ -80,8 +80,8 @@ def test_build_apply_context_returns_linkedin_and_github_links(tmp_path, monkeyp
     ctx = apply_mod.build_apply_context(resolved)
 
     assert ctx["links"] == {
-        "LinkedIn": "https://linkedin.com/in/testuser",
-        "GitHub": "https://github.com/testuser",
+        "LinkedIn": "https://www.linkedin.com/in/testuser",
+        "GitHub": "https://www.github.com/testuser",
     }
 
 

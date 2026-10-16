@@ -272,6 +272,21 @@ def test_full_url_prepends_https_to_bare_values():
     assert assets.full_url("  github.com/t  ") == "https://github.com/t"  # stripped first
 
 
+@pytest.mark.parametrize("raw, want", [
+    ("linkedin.com/in/t", "https://www.linkedin.com/in/t"),
+    ("github.com/t", "https://www.github.com/t"),
+    ("https://linkedin.com/in/t", "https://www.linkedin.com/in/t"),
+    ("https://www.linkedin.com/in/t", "https://www.linkedin.com/in/t"),
+    ("www.github.com/t", "https://www.github.com/t"),
+    ("t.dev", "https://t.dev"),                       # not a profile host: untouched
+    ("uk.linkedin.com/in/t", "https://uk.linkedin.com/in/t"),
+    ("", ""),
+])
+def test_profile_url_adds_www_to_linkedin_and_github(raw, want):
+    # Some application forms mark a LinkedIn/GitHub URL wrong without "www."
+    assert assets.profile_url(raw) == want
+
+
 def test_full_url_empty_values_stay_blank():
     assert assets.full_url("") == ""
     assert assets.full_url(None) == ""

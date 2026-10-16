@@ -444,8 +444,8 @@ def build_markdown(master: Dict[str, Any], job: Dict[str, str],
     parts.append(_kv("Email", basics.get("email", ""), always=True))
     parts.append(_kv("Phone", basics.get("phone", "")))
     parts.append(_kv("Location", basics.get("location", "")))
-    parts.append(_kv("LinkedIn", assets.full_url(basics.get("linkedin", ""))))
-    parts.append(_kv("GitHub / Portfolio", assets.full_url(basics.get("github", ""))))
+    parts.append(_kv("LinkedIn", assets.profile_url(basics.get("linkedin", ""))))
+    parts.append(_kv("GitHub / Portfolio", assets.profile_url(basics.get("github", ""))))
 
     parts.append("\n" + _address_lines(answers))
     parts.append("\n" + _education_lines(education))

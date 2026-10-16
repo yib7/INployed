@@ -369,6 +369,23 @@ def full_url(value) -> str:
     return f"https://{text}"
 
 
+# Profile hosts written with "www." in apply sheets and links: some application
+# forms reject a LinkedIn or GitHub URL without it.
+_WWW_HOSTS = ("linkedin.com", "github.com")
+
+
+def profile_url(value) -> str:
+    """full_url for a LinkedIn or GitHub profile, with "www." added to a bare
+    linkedin.com / github.com host (https://www.linkedin.com/in/x). Any other
+    host, or one that already has a subdomain, is left as full_url gives it."""
+    url = full_url(value)
+    scheme, sep, rest = url.partition("://")
+    host, slash, path = rest.partition("/")
+    if sep and host.lower() in _WWW_HOSTS:
+        return f"{scheme}://www.{host}{slash}{path}"
+    return url
+
+
 def _pdf_text(path) -> str:
     from pypdf import PdfReader
 

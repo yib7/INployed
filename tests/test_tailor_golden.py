@@ -615,7 +615,7 @@ _GOLDEN_TEX = r"""%%GOLDEN TEMPLATE PREAMBLE%%
 
 \begin{center}
 \textbf{\Huge \scshape Alex Rivera} \\ \vspace{1pt}
-\small{Austin, TX} $|$ \small{555-0142} $|$ \small{alex@example.com} $|$ \small{\href{https://linkedin.com/in/alexrivera}{linkedin.com/in/alexrivera}}
+\small{Austin, TX} $|$ \small{555-0142} $|$ \small{alex@example.com} $|$ \small{\href{https://www.linkedin.com/in/alexrivera}{linkedin.com/in/alexrivera}}
 \end{center}
 \vspace{-12.5pt}
 

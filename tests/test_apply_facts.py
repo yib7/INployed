@@ -120,8 +120,8 @@ def test_build_splits_the_name(folder):
     assert cat.value("email") == "jane.doe@example.com"
     assert cat.value("phone") == "555-555-0100"
     assert cat.value("location") == "Anytown, CA"
-    assert cat.value("linkedin_url") == "https://linkedin.com/in/janedoe"
-    assert cat.value("github_url") == "https://github.com/janedoe"
+    assert cat.value("linkedin_url") == "https://www.linkedin.com/in/janedoe"
+    assert cat.value("github_url") == "https://www.github.com/janedoe"
 
 
 def test_build_points_resume_and_cover_at_the_folder_pdfs(folder):

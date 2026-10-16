@@ -498,6 +498,17 @@ running the master's folder is gone, so `load_files` reads the local copy in
 after every clean read of a source outside the repo, keyed by folder and file name) and
 keeps ids mapped to the Drive path; `MainWindow` shows an amber banner until Drive is back.
 
+The dashboard's frame carries no description text. `MainWindow._load_frames` calls
+`load_files(..., descriptions_cached=True)`, which keeps the four description columns
+(`desc_cache.DESC_COLS`, about 90% of a full frame's memory) in
+`%LOCALAPPDATA%\linkedin_watcher\descriptions.db` (`local/desc_cache.py`), keyed by
+(source path, job id) and stamped with the file's size and mtime. A source whose stamp is
+stored is read without those columns; any other source is read in full once, stored and
+trimmed. The detail card and the tailor payload read one job back with
+`jobsdata.job_description(job_id, row["_source"])`. The db is a rebuildable cache (rollback
+journal, deleted and recreated when damaged), and if it cannot be written the load keeps the
+full frame. Every other `load_files` caller still gets the columns.
+
 ### VM cron pipeline: merge, scrape, score, prune, and retention
 The VM's `run_scraper.sh` (invoked by cron, on the schedule you set) orchestrates the job discovery and scoring
 pipeline. After pulling the company blocklist, it merges any incoming rows from the dashboard

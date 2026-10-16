@@ -30,7 +30,7 @@ def db(tmp_path, monkeypatch):
 
 def _src(tmp_path, name="run.csv.gz", text="x") -> Path:
     p = tmp_path / name
-    p.write_text(text)
+    p.write_text(text, encoding="utf-8")
     return p
 
 
@@ -80,7 +80,7 @@ def test_a_restore_replaces_the_sources_old_rows(db, tmp_path):
     src = _src(tmp_path)
     desc_cache.store(str(src), src.stat(), _frame(job_posting_id=["1", "2"],
                                                   job_summary=["old one", "old two"]))
-    src.write_text("changed contents")
+    src.write_text("changed contents", encoding="utf-8")
     desc_cache.store(str(src), src.stat(), _frame(job_posting_id=["1"],
                                                   job_summary=["new one"]))
     assert desc_cache.is_current(str(src), src) is True

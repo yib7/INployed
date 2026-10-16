@@ -749,10 +749,12 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         merge the source files, drop blocklisted rows, and read run_stats.csv +
         the staleness threshold (a synchronous Drive read here would run on
         every UI-thread repaint). Touches neither Qt nor the SQLite registry
-        (both thread-affine) — those wait for _apply_frames."""
+        (both thread-affine) — those wait for _apply_frames. The description
+        cache load_files writes opens its own connection per operation."""
         problems: list[tuple[Path, str]] = []
         offline: list[tuple[Path, float | None, int]] = []
-        df, id_to_path = load_files(self.csv_paths, problems=problems, offline=offline)
+        df, id_to_path = load_files(self.csv_paths, problems=problems, offline=offline,
+                                    descriptions_cached=True)
         df = drop_blocklisted(df, load_local_blocklist(self.csv_paths))
         stats_df = None
         root = gdrive_root_dir(self.csv_paths)
@@ -1108,8 +1110,25 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         v = row.get(col, "")
         return "" if pd.isna(v) else str(v)
 
+    @staticmethod
+    def _with_description(jid: str, row):
+        """`row` with the description columns the loaded frame leaves out
+        (load_files' descriptions_cached mode) read back from the cache for this
+        one job. A row that carries the columns, or did not come from a source
+        file (no `_source`), is returned as it is."""
+        if row is None or "_source" not in row.index:
+            return row
+        missing = [c for c in jobsdata.DESC_COLS if c not in row.index]
+        if not missing:
+            return row
+        found = jobsdata.job_description(jid, row["_source"])
+        row = row.copy()
+        for col in missing:
+            row[col] = found.get(col, "")
+        return row
+
     def _job_payload(self, jid: str) -> dict | None:
-        row = self._row_for(jid)
+        row = self._with_description(jid, self._row_for(jid))
         if row is None:
             return None
         return {
@@ -1225,7 +1244,8 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         if not jid:
             self.preview.set_empty()
             return
-        fields = jobsdata.job_detail_fields(self._row_for(jid), self._tracked.get(jid))
+        fields = jobsdata.job_detail_fields(self._with_description(jid, self._row_for(jid)),
+                                            self._tracked.get(jid))
         tracker = (self._tracker_card_info(jid)
                    if self.tabs.currentWidget() is self.tracker_tab else None)
         self.preview.set_fields(fields, jid=jid, tracker=tracker)

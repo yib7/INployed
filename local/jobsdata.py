@@ -412,6 +412,10 @@ def load_files(paths: list[Path], *,
     return _load_files(paths, _read_source, problems, offline)
 
 
+# The four description columns a `descriptions_cached` load leaves out of the frame.
+DESC_COLS = desc_cache.DESC_COLS
+
+
 def job_description(job_id: str, source: str) -> dict:
     """One job's description fields ({column: text}, non-empty only) from the
     cache a `descriptions_cached` load filled; `source` is the row's `_source`.

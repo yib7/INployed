@@ -505,9 +505,12 @@ The dashboard's frame carries no description text. `MainWindow._load_frames` cal
 (source path, job id) and stamped with the file's size and mtime. A source whose stamp is
 stored is read without those columns; any other source is read in full once, stored and
 trimmed. The detail card and the tailor payload read one job back with
-`jobsdata.job_description(job_id, row["_source"])`. The db is a rebuildable cache (rollback
-journal, deleted and recreated when damaged), and if it cannot be written the load keeps the
-full frame. Every other `load_files` caller still gets the columns.
+`jobsdata.job_description(job_id, row["_source"])`. The db is a rebuildable cache (WAL, so
+a lookup never waits on a store; deleted and recreated when damaged). If it cannot be written
+the load keeps the full frame, and so does every later load until the dashboard restarts.
+Marking jobs seen rewrites the master, so `mw_tracker._write_is_seen` moves the stored stamp
+to the rewritten file (`desc_cache.restamp`, compare-and-set) rather than let the next load
+re-store it. Every other `load_files` caller still gets the columns.
 
 ### VM cron pipeline: merge, scrape, score, prune, and retention
 The VM's `run_scraper.sh` (invoked by cron, on the schedule you set) orchestrates the job discovery and scoring

@@ -433,8 +433,11 @@ def _hermetic_description_cache(tmp_path):
     by job id (ids like "1" repeat across tests). Same private-MonkeyPatch
     pattern as _hermetic_apply_queue."""
     import desc_cache
+    import jobsdata
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(desc_cache, "DB_PATH", tmp_path / "hermetic_descriptions.db")
+        # one test's unwritable cache must not switch the cache off for the rest
+        mp.setattr(jobsdata, "_desc_cache_failed", False)
         yield
 
 

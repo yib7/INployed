@@ -347,7 +347,8 @@ class _CachedDescriptionReader:
     stamp is the copy's. A source whose stamp is stored is read without the text
     columns at all. Otherwise it is read in full, stored, and the columns are
     dropped. If the cache cannot be written, `broken` is set and later reads
-    keep their columns; load_files then redoes the load in default mode."""
+    keep their columns; load_files then redoes the load in default mode, once
+    per process (see _desc_cache_failed)."""
 
     def __init__(self) -> None:
         self.broken = False
@@ -367,6 +368,12 @@ class _CachedDescriptionReader:
             self.broken = True
             return df
         return df.drop(columns=[c for c in desc_cache.DESC_COLS if c in df.columns])
+
+
+# Set the first time a descriptions_cached load cannot write desc_cache. That load
+# is redone in default mode; every later one goes straight to default mode, so an
+# unwritable cache costs one extra load per process, not one per reload.
+_desc_cache_failed = False
 
 
 def load_files(paths: list[Path], *,
@@ -393,9 +400,11 @@ def load_files(paths: list[Path], *,
     (desc_cache.DESC_COLS, ~90% of the frame's memory) out of the frame and keeps
     their text in desc_cache, read back one job at a time with
     `job_description(job_id, row["_source"])`. If that cache cannot be written,
-    the load falls back to the default full frame, columns and all.
+    the load falls back to the default full frame, columns and all, and so does
+    every later load in this process.
     """
-    if descriptions_cached:
+    global _desc_cache_failed
+    if descriptions_cached and not _desc_cache_failed:
         reader = _CachedDescriptionReader()
         found_problems: list[tuple[Path, str]] = []
         found_offline: list[tuple[Path, float | None, int]] = []
@@ -407,8 +416,9 @@ def load_files(paths: list[Path], *,
             if offline is not None:
                 offline.extend(found_offline)
             return out
+        _desc_cache_failed = True
         log.warning("description cache %s is unusable; loading descriptions into "
-                    "the frame instead", desc_cache.DB_PATH)
+                    "the frame instead until the dashboard restarts", desc_cache.DB_PATH)
     return _load_files(paths, _read_source, problems, offline)
 
 

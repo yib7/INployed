@@ -224,3 +224,25 @@ def test_sources_no_longer_loaded_are_pruned(env):
 
 def test_job_description_is_empty_for_an_unknown_job(env):
     assert jobsdata.job_description("nope", "nowhere") == {}
+
+
+def test_an_unusable_cache_is_tried_once_per_process_not_every_reload(env, monkeypatch):
+    # A failed store used to redo the whole load in default mode on EVERY
+    # reload: two full reads of every source for as long as the app ran.
+    master, run = _master(env), _run(env)
+    stores: list = []
+
+    def failing_store(*a, **k):
+        stores.append(a[0])
+        return False
+    monkeypatch.setattr(desc_cache, "store", failing_store)
+    jobsdata.load_files([master, run], descriptions_cached=True)
+    assert len(stores) == 1
+
+    monkeypatch.setattr(desc_cache, "is_current",
+                        lambda *a: pytest.fail("cache consulted after it failed"))
+    calls = _count_reads(monkeypatch)
+    df, _ = jobsdata.load_files([master, run], descriptions_cached=True)
+    assert len(stores) == 1
+    assert sorted(_full_reads(calls)) == sorted([master.name, run.name])   # once each
+    assert df.set_index("job_posting_id").loc["3", "job_description_md"] == "## run md three"

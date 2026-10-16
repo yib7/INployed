@@ -412,12 +412,25 @@ def load_files(paths: list[Path], *,
         combined["applicants"] = ""
     # Precomputed lowercase search haystack so per-keystroke filtering matches
     # against one ready column instead of rebuilding it across the whole frame.
-    scols = [c for c in ("job_title", "company_name", "url") if c in combined.columns]
-    combined["_search"] = (
-        combined[scols].fillna("").astype(str).agg(" ".join, axis=1).str.lower()
-        if scols else ""
-    )
+    combined["_search"] = _search_haystack(combined)
     return combined, id_to_path
+
+
+def _search_haystack(df: pd.DataFrame) -> pd.Series | str:
+    """Lowercase "title company url" per row, or "" when none of those columns exist.
+
+    Built column-wise: a row-wise `.agg(" ".join, axis=1)` was about half of a
+    40K-row dashboard load. Each column is filled and stringified first, so a
+    blank, NaN or numeric cell joins exactly as the row-wise build joined it.
+    """
+    scols = [c for c in ("job_title", "company_name", "url") if c in df.columns]
+    if not scols:
+        return ""
+    parts = [df[c].fillna("").astype(str) for c in scols]
+    out = parts[0]
+    for part in parts[1:]:
+        out = out + " " + part
+    return out.str.lower()
 
 
 # The canonical cumulative store scraper.py / score_jobs.py own. The manual-add

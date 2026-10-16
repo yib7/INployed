@@ -504,3 +504,57 @@ def test_the_repost_window_counts_days_on_the_utc_clock_its_marks_use(monkeypatc
     out, hidden = jobsdata.suppress_reposts(df, marked_at, 1)
     assert list(out["job_posting_id"]) == ["A"] and hidden == 1
     assert jobsdata.blocked_repost_keys(df, marked_at, 1) != set()
+
+
+# --- the precomputed _search haystack load_files builds ---
+
+def _old_haystack(df, scols):
+    """The row-wise build _search_haystack replaced; kept here as the oracle."""
+    return df[scols].fillna("").astype(str).agg(" ".join, axis=1).str.lower()
+
+
+def _mixed_df():
+    return pd.DataFrame({
+        "job_title": ["Data ANALYST", None, "", float("nan"), "Ingénieur ÉCOLE", pd.NA],
+        "company_name": [123, 4.5, float("nan"), 0, -7, 8],
+        "url": ["HTTPS://X/1", pd.NA, "", "u4", None, "ẞtraße"],
+        "job_location": ["Seattle", "Austin", "", "", "", ""],
+    }, index=[10, 3, 7, 0, 99, 5])
+
+
+@pytest.mark.parametrize("scols", [
+    ["job_title", "company_name", "url"],
+    ["job_title", "url"],
+    ["company_name", "url"],
+    ["url"],
+    ["company_name"],
+])
+def test_search_haystack_matches_the_row_wise_join(scols):
+    full = _mixed_df()
+    df = full[scols + ["job_location"]]          # only these search columns exist
+    new = jobsdata._search_haystack(df)
+    old = _old_haystack(full, scols)
+    assert new.tolist() == old.tolist()
+    assert list(new.index) == list(full.index)
+
+
+def test_search_haystack_is_blank_without_search_columns():
+    assert jobsdata._search_haystack(_mixed_df()[["job_location"]]) == ""
+
+
+def test_load_files_builds_the_search_column(tmp_path):
+    import gzip
+    p = tmp_path / "linkedin_jobs_master.csv.gz"
+    df = pd.DataFrame({
+        "job_posting_id": ["1", "2", "3"],
+        "job_title": ["Data ANALYST", "", "Ingénieur"],
+        "company_name": ["Acme", "Globex", ""],
+        "url": ["HTTPS://A/1", "u2", ""],
+    })
+    with gzip.open(p, "wt", encoding="utf-8", newline="") as fh:
+        df.to_csv(fh, index=False)
+    out, _ = jobsdata.load_files([p])
+    by_id = dict(zip(out["job_posting_id"], out["_search"]))
+    assert by_id == {"1": "data analyst acme https://a/1",
+                     "2": " globex u2",
+                     "3": "ingénieur  "}

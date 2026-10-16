@@ -89,3 +89,38 @@ def test_load_files_skips_run_scan_when_master_rows_are_dated(tmp_path, monkeypa
 
     assert called == []  # no Drive/per-run walk when every row already has a date
     assert set(df["job_posting_id"]) == {"a", "b"}
+
+
+def test_run_scan_reads_only_the_id_column(tmp_path, monkeypatch):
+    # The scan only needs which ids each run file holds; reading every column
+    # (descriptions included) of every historical run file was the cost.
+    master = tmp_path / "linkedin_jobs_master.csv.gz"
+    _write_gz(master, pd.DataFrame({"job_posting_id": ["a"]}))
+    run = tmp_path / "morning" / "linkedin_jobs_2026-07-03_morning_scored.csv.gz"
+    _write_gz(run, pd.DataFrame({"job_posting_id": ["a", "b"],
+                                 "job_description_formatted": ["x" * 50, "y" * 50],
+                                 "job_summary": ["s", "t"]}))
+    monkeypatch.setattr(jobsdata, "_RUN_FILE_IDS", {})
+    widths = []
+    real = jobsdata.read_csv_gz
+
+    def spy(path, *a, **k):
+        df = real(path, *a, **k)
+        widths.append(set(df.columns) - {"is_seen"})
+        return df
+    monkeypatch.setattr(jobsdata, "read_csv_gz", spy)
+
+    assert jobsdata.extraction_dates_from_runs([master]) == {"a": "2026-07-03",
+                                                             "b": "2026-07-03"}
+    assert widths == [{"job_posting_id"}]
+
+
+def test_run_scan_skips_a_run_file_without_ids(tmp_path, monkeypatch):
+    master = tmp_path / "linkedin_jobs_master.csv.gz"
+    _write_gz(master, pd.DataFrame({"job_posting_id": ["a"]}))
+    _write_gz(tmp_path / "evening" / "linkedin_jobs_2026-07-04_evening_scored.csv.gz",
+              pd.DataFrame({"something_else": ["z"]}))
+    _write_gz(tmp_path / "morning" / "linkedin_jobs_2026-07-05_morning_scored.csv.gz",
+              pd.DataFrame({"job_posting_id": ["a"]}))
+    monkeypatch.setattr(jobsdata, "_RUN_FILE_IDS", {})
+    assert jobsdata.extraction_dates_from_runs([master]) == {"a": "2026-07-05"}

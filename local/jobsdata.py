@@ -148,6 +148,10 @@ _RUN_FILE_IDS: dict[str, list[str]] = {}
 _UILock = SingleInstance
 
 
+def _is_id_column(col: str) -> bool:
+    return col == "job_posting_id"
+
+
 def extraction_dates_from_runs(paths: list[Path]) -> dict[str, str]:
     """Map job_posting_id -> the day it was scraped, read from the per-run files.
 
@@ -174,7 +178,9 @@ def extraction_dates_from_runs(paths: list[Path]) -> dict[str, str]:
                 ids = _RUN_FILE_IDS.get(key)
                 if ids is None:
                     try:
-                        rdf = read_csv_gz(f)
+                        # only the ids: every other column (the description
+                        # text above all) was read and thrown away
+                        rdf = read_csv_gz(f, usecols=_is_id_column)
                     except (OSError, ValueError):
                         continue
                     if "job_posting_id" not in rdf.columns:

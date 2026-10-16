@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Dict, List
 
-from . import assets
+from . import assets, config
 from .latexutil import clean_bullet, escape_url, fmt_dates, to_latex
 
 
@@ -33,10 +33,15 @@ def _shown_dates(entry: dict) -> str:
     return shown or str(entry.get("dates") or "").strip()
 
 
-def _header(basics: dict) -> str:
+# Printed last on the contact line when Settings > Resume opts in
+# (config.show_citizenship).
+CITIZENSHIP_TEXT = "U.S. Citizen"
+
+
+def _header(basics: dict, citizenship: bool = False) -> str:
     """The PDF info dictionary plus the centered name + contact line, from yaml
     `basics`. Missing fields are simply omitted so the line stays clean for any
-    user.
+    user. `citizenship` adds CITIZENSHIP_TEXT as the line's last entry.
 
     The \\hypersetup goes here rather than in the template because the title and
     author are the candidate's name, and the preamble is kept free of personal
@@ -51,6 +56,8 @@ def _header(basics: dict) -> str:
         for k in ("location", "phone", "email", "linkedin", "github")
         if basics.get(k)
     ]
+    if citizenship:
+        contact_bits.append(CITIZENSHIP_TEXT)
     contact = " $|$ ".join(f"\\small{{{b}}}" for b in contact_bits)
     info = (
         f"\\hypersetup{{pdftitle={{{name} Resume}},pdfauthor={{{name}}},"
@@ -286,7 +293,7 @@ def render(sel: dict, bullets: Dict[str, str], skill_lines: List[Dict[str, str]]
     """Build the complete tailored resume .tex."""
     master = assets.load_master()
     body = (
-        _header(master.get("basics", {}) or {})
+        _header(master.get("basics", {}) or {}, config.show_citizenship())
         + _education(master.get("education", []) or [])
         + _experience(sel, bullets)
         + _projects(sel, bullets)

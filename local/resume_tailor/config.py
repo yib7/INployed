@@ -460,6 +460,13 @@ def parallel_jobs() -> int:
     return max(1, min(PARALLEL_JOBS_MAX, number))
 
 
+def show_citizenship() -> bool:
+    """Whether the résumé's contact line ends with "U.S. Citizen" (Settings >
+    Resume, config.json 'resume_show_citizenship'). Off by default and read with
+    `is True`, so only a deliberate opt-in prints a claim about the candidate."""
+    return _config_json().get("resume_show_citizenship") is True
+
+
 # ── Jev options for the tailor ───────────────────────────────────────────────
 # Three Settings > Resume toggles, on screen while Jev runs for the résumé tailor
 # (settings.py gates them on `jev_tailor`). Each defaults OFF and each spends more

@@ -682,6 +682,12 @@ SETTINGS_SCHEMA: list[Field] = [
                "the model's rate limit: the jobs then wait and retry, and one that runs "
                "out of retries fails. 4 is a safe default. A change "
                "applies to the next batch."),
+    # Read by resume_tailor/config.py show_citizenship() at each render.
+    Field("resume_show_citizenship", "Show \"U.S. Citizen\" on the résumé", "bool", False,
+          "Resume", "config",
+          help="When on, \"U.S. Citizen\" is added to the end of the résumé's contact line, "
+               "under your name. Turn it on only if you are a U.S. citizen. It applies to "
+               "the next résumé you tailor."),
     Field("tailor_ats_report", "Write ATS report", "bool", True, "Resume", "config",
           help="Write ats_report.txt (keyword coverage) for each tailored résumé."),
     Field("tailor_prep_sheet", "Generate interview-prep sheet", "bool", False, "Resume", "config",

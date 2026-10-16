@@ -8,6 +8,7 @@ Split out of `qt.main_window`.
 """
 from __future__ import annotations
 
+import os
 from collections import Counter
 from datetime import date, datetime
 from pathlib import Path
@@ -16,6 +17,7 @@ import pandas as pd
 from PySide6 import QtWidgets
 
 import chrome_launch
+import desc_cache
 import errmsg
 import jobsdata
 import osopen
@@ -25,6 +27,26 @@ from qt import workers
 from qt.stats_tab import _human_age
 from qt.plaintext import literal
 from qt.mw_tailor import _with_master_jd
+
+
+def _stamp(st: os.stat_result) -> tuple[int, int]:
+    return st.st_size, st.st_mtime_ns
+
+
+def _restamp_descriptions(path: Path, pre: os.stat_result) -> None:
+    """Tell the description cache the file at `path` (keyed as load_files keys
+    it, `str(path)`; `path` comes from id_to_path, which holds load_files' own
+    path objects) changed only is_seen since `pre`, so the next load does not
+    read and store the whole master again. Compare-and-set in desc_cache: a
+    stamp that was not `pre` stays as it is. Any failure is skipped; the next
+    load then just stores the file afresh.
+
+    Only this writer gets that: every other rewrite of a source (prune_master
+    blanking descriptions, update_manual_job's new text) must re-store it."""
+    try:
+        desc_cache.restamp(str(path), pre, os.stat(path))
+    except Exception:  # noqa: BLE001 - an optimisation; the write itself succeeded
+        pass
 
 
 class _TrackerActions:
@@ -41,12 +63,16 @@ class _TrackerActions:
             paths = {self.id_to_path[i] for i in ids if i in self.id_to_path}
         for path in paths:
             try:
+                pre = os.stat(path)
                 df = read_csv_gz(path)
+                untouched = _stamp(os.stat(path)) == _stamp(pre)
                 df["job_posting_id"] = df["job_posting_id"].astype(str)
                 mask = df["job_posting_id"].isin(idset)
                 if mask.any():
                     df.loc[mask, "is_seen"] = value
                     write_csv_gz_atomic(df, path)
+                    if untouched:
+                        _restamp_descriptions(path, pre)
             except (OSError, ValueError):
                 pass
 

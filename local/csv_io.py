@@ -19,8 +19,15 @@ from seen_db import SeenRegistry
 log = logging.getLogger(__name__)
 
 
-def read_csv_gz(path: Path) -> pd.DataFrame:
-    df = pd.read_csv(path, compression="gzip", dtype={"job_posting_id": str})
+def read_csv_gz(path: Path, usecols=None) -> pd.DataFrame:
+    """Read a .csv.gz with `job_posting_id` as text and is_seen normalised.
+
+    `usecols` (pandas' own: a list or a column predicate) defaults to EVERY
+    column. Keep that default: mw_tracker's is_seen writer rewrites whole source
+    files through this reader, so a narrower default would blank stored data.
+    """
+    df = pd.read_csv(path, compression="gzip", dtype={"job_posting_id": str},
+                     usecols=usecols)
     if "is_seen" not in df.columns:
         df["is_seen"] = "no"
     else:

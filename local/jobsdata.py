@@ -39,6 +39,7 @@ from jsonutil import (  # noqa: E402  (needs HERE on sys.path)
     read_json_dict, replace_with_retry, update_json_locked,
 )
 from csv_io import read_csv_gz, write_csv_gz_atomic  # noqa: E402
+import desc_cache  # noqa: E402  (on-disk job description text; see load_files)
 from locks import FileLockTimeout, SingleInstance  # noqa: E402  (shared file locks)
 from vm_schedule import RUN_LABELS  # noqa: E402  (shared run-label set)
 
@@ -283,19 +284,21 @@ def _refresh_mirror(p: Path, before: os.stat_result) -> None:
                 pass
 
 
-def _read_offline_copy(p: Path, offline: list | None) -> pd.DataFrame | None:
+def _read_offline_copy(p: Path, offline: list | None,
+                       reader: Callable | None = None) -> pd.DataFrame | None:
     """The saved copy of source `p` when its folder is gone (Drive not running).
 
     Only when the FOLDER is missing: a folder that exists without the file is a
     fresh setup, or a master the user removed, and the copy must not bring it
     back. Each fallback is noted in `offline` as (path, copy mtime or None, rows)
-    so the dashboard can say what it is showing."""
+    so the dashboard can say what it is showing. `reader(path, source)` reads
+    the copy on behalf of source `p` (load_files' description-cache reader)."""
     if not _outside_repo(p) or p.parent.exists():
         return None
     copy = mirror_path(p)
     try:
         saved_at = copy.stat().st_mtime
-        df = read_csv_gz(copy)
+        df = reader(copy, str(p)) if reader is not None else read_csv_gz(copy)
         if "job_posting_id" not in df.columns:
             raise ValueError("no job_posting_id column")
     except Exception:  # noqa: BLE001 - a copy that cannot be read is no copy
@@ -326,9 +329,50 @@ def find_google_drive_app() -> Path | None:
     return max(found, key=version) if found else None
 
 
+def _read_source(path: Path, source: str) -> pd.DataFrame:
+    """Default-mode read of one source: every column."""
+    return read_csv_gz(path)
+
+
+def _not_description(col: str) -> bool:
+    return col not in desc_cache.DESC_COLS
+
+
+class _CachedDescriptionReader:
+    """load_files' reader in `descriptions_cached` mode: hands back a source's
+    frame WITHOUT the description columns, its text kept in desc_cache.
+
+    `source` is the cache key (the `_source` the rows get); `path` is the file
+    actually read, which for an offline Drive source is its local copy, so the
+    stamp is the copy's. A source whose stamp is stored is read without the text
+    columns at all. Otherwise it is read in full, stored, and the columns are
+    dropped. If the cache cannot be written, `broken` is set and later reads
+    keep their columns; load_files then redoes the load in default mode."""
+
+    def __init__(self) -> None:
+        self.broken = False
+
+    def __call__(self, path: Path, source: str) -> pd.DataFrame:
+        if self.broken:
+            return read_csv_gz(path)
+        before = os.stat(path)
+        if desc_cache.is_current(source, path):
+            df = read_csv_gz(path, usecols=_not_description)
+            after = os.stat(path)
+            if (after.st_size, after.st_mtime_ns) == (before.st_size, before.st_mtime_ns):
+                return df
+            before = after          # rewritten mid-read: read it again in full
+        df = read_csv_gz(path)
+        if not desc_cache.store(source, before, df):
+            self.broken = True
+            return df
+        return df.drop(columns=[c for c in desc_cache.DESC_COLS if c in df.columns])
+
+
 def load_files(paths: list[Path], *,
                problems: list[tuple[Path, str]] | None = None,
                offline: list[tuple[Path, float | None, int]] | None = None,
+               descriptions_cached: bool = False,
                ) -> tuple[pd.DataFrame, dict[str, Path]]:
     """Load and concatenate CSVs; return (df, id_to_source_path).
 
@@ -344,19 +388,53 @@ def load_files(paths: list[Path], *,
     A source outside the repo whose folder is gone (Google Drive not running)
     loads from its saved copy instead, with ids still mapped to the Drive path so
     is_seen writes keep targeting it. Pass `offline` to collect those sources.
+
+    `descriptions_cached=True` (the dashboard) leaves the description columns
+    (desc_cache.DESC_COLS, ~90% of the frame's memory) out of the frame and keeps
+    their text in desc_cache, read back one job at a time with
+    `job_description(job_id, row["_source"])`. If that cache cannot be written,
+    the load falls back to the default full frame, columns and all.
     """
+    if descriptions_cached:
+        reader = _CachedDescriptionReader()
+        found_problems: list[tuple[Path, str]] = []
+        found_offline: list[tuple[Path, float | None, int]] = []
+        out = _load_files(paths, reader, found_problems, found_offline)
+        if not reader.broken:
+            desc_cache.prune(str(p) for p in paths)
+            if problems is not None:
+                problems.extend(found_problems)
+            if offline is not None:
+                offline.extend(found_offline)
+            return out
+        log.warning("description cache %s is unusable; loading descriptions into "
+                    "the frame instead", desc_cache.DB_PATH)
+    return _load_files(paths, _read_source, problems, offline)
+
+
+def job_description(job_id: str, source: str) -> dict:
+    """One job's description fields ({column: text}, non-empty only) from the
+    cache a `descriptions_cached` load filled; `source` is the row's `_source`.
+    {} when nothing is stored for it."""
+    return desc_cache.lookup(str(job_id), str(source or ""))
+
+
+def _load_files(paths: list[Path], reader: Callable,
+                problems: list[tuple[Path, str]] | None,
+                offline: list[tuple[Path, float | None, int]] | None,
+                ) -> tuple[pd.DataFrame, dict[str, Path]]:
     frames: list[pd.DataFrame] = []
     id_to_path: dict[str, Path] = {}
     for p in paths:
         before = None
         if not p.exists():
-            df = _read_offline_copy(p, offline)
+            df = _read_offline_copy(p, offline, reader)
             if df is None:
                 continue
         else:
             try:
                 before = p.stat()
-                df = read_csv_gz(p)
+                df = reader(p, str(p))
             except Exception as exc:  # noqa: BLE001 - see below; one bad file, not all of them
                 # Deliberately broad. `(OSError, ValueError)` misses the two
                 # commonest ways a synced .csv.gz breaks: a half-written gzip raises

@@ -426,6 +426,19 @@ def _hermetic_outbox_and_vm(tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_description_cache(tmp_path):
+    """A fresh description cache (desc_cache.DB_PATH) per test. The session-wide
+    LOCALAPPDATA redirect already keeps it off the real profile, but one shared
+    file per worker would let a test's cached text answer another test's lookup
+    by job id (ids like "1" repeat across tests). Same private-MonkeyPatch
+    pattern as _hermetic_apply_queue."""
+    import desc_cache
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(desc_cache, "DB_PATH", tmp_path / "hermetic_descriptions.db")
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _hermetic_claude_cli(request):
     """No test may start the real `claude` CLI, and no model swap may leak.
 

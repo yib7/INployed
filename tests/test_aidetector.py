@@ -130,7 +130,7 @@ def test_the_text_goes_on_stdin_with_the_pinned_context(monkeypatch):
 
 def test_resume_tailor_node_names_an_explicit_executable(monkeypatch, tmp_path):
     exe = tmp_path / "node.exe"
-    exe.write_text("")
+    exe.write_text("", encoding="utf-8")
     monkeypatch.setenv("RESUME_TAILOR_NODE", str(exe))
     assert aidetector.find_node() == str(exe)
     monkeypatch.setenv("RESUME_TAILOR_NODE", str(tmp_path / "missing.exe"))
@@ -151,7 +151,7 @@ def test_every_allowlisted_type_is_one_the_engine_reports():
          "process.stdout.write(JSON.stringify(Object.keys("
          "require(process.argv[1]).TYPE_LABELS)))",
          str(aidetector.VENDOR_DIR / "detector" / "patterns.js")],
-        capture_output=True, text=True, timeout=30)
+        capture_output=True, text=True, encoding="utf-8", timeout=30)
     engine_types = set(json.loads(proc.stdout))
     assert set(aidetector.ALLOWED_TYPES) <= engine_types
 

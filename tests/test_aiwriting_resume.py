@@ -34,7 +34,7 @@ CLEAN_BULLET = "Built a scraper that cut per-run cost 65%."
 def test_module_docstring_still_credits_the_skill():
     """Adding the résumé arm must not push the vendor credit out of the docstring."""
     doc = aiwriting.__doc__ or ""
-    for token in ("avoid-ai-writing", "3.18.0", "MIT", "Conor Bronsdon", "SKILL.md"):
+    for token in ("avoid-ai-writing", "3.38.0", "MIT", "Conor Bronsdon", "SKILL.md"):
         assert token in doc, token
 
 
@@ -47,12 +47,13 @@ def test_the_letter_arm_is_untouched():
         "confidence calibration", "generic conclusion"]
     assert aiwriting.violations(
         "I want to delve into your compiler work.") == ["tier-1 vocabulary"]
-    assert "avoid-ai-writing v3.18.0" in aiwriting.RULES_PROMPT
+    assert "avoid-ai-writing v3.38.0" in aiwriting.RULES_PROMPT
 
 
 # ── (a) the résumé tolerance profile ─────────────────────────────────────────
 # The upstream tolerance matrix has six columns (linkedin / blog / technical-blog /
-# investor-email / docs / casual) and 22 rows. The résumé profile is a seventh
+# investor-email / docs / casual) and 24 rows at v3.38.0 (v3.19.0 added the
+# moral-adjective and contrast-pair rows). The résumé profile is a seventh
 # column over those same rows, plus one row the matrix does not carry
 # ("missing first-person perspective", which lives under Rhythm and uniformity).
 UPSTREAM_MATRIX_ROWS = (
@@ -77,6 +78,8 @@ UPSTREAM_MATRIX_ROWS = (
     "social endorsement closers",
     "hedge-stacked predictions",
     "real/actual inflation",
+    "moral-adjective category errors",
+    "invented contrast-pair mirroring",
     "subjectless fragments and agentless passives",
 )
 
@@ -179,7 +182,7 @@ def test_profile_level_defaults_to_strict_for_an_unlisted_rule():
 def test_rules_prompt_is_a_substantial_block_and_names_its_source():
     prompt = aiwriting.RESUME_RULES_PROMPT
     assert isinstance(prompt, str) and len(prompt) > 800
-    for token in ("avoid-ai-writing", "3.18.0", "MIT", "Conor Bronsdon"):
+    for token in ("avoid-ai-writing", "3.38.0", "MIT", "Conor Bronsdon"):
         assert token in prompt, token
 
 
@@ -197,6 +200,8 @@ PROMPT_ANCHORS = {
     "formulaic openings": ("Responsible for", "Tasked with"),
     "hedging": ("potentially", "could potentially"),
     "real/actual inflation": ("real-time", "actual"),
+    "moral adjectives": ("honest metrics", "a faithful port"),
+    "invented contrast pairs": ("phantom opposite", "false precision"),
     "bare-noun bullets": ("finite verb",),
     "chatbot artifacts": ("Certainly", "I hope this helps"),
     "vague attribution": ("experts believe", "studies show"),

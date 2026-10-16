@@ -24,7 +24,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
 
-from . import aiwriting, assets, compose, config, jev_assist, verify
+from . import aidetector, aiwriting, assets, compose, config, jev_assist, verify
 from .common import defuse_fence, split_sentences
 from .llm import LLMError
 from .compile import CompileResult, compile_tex
@@ -263,12 +263,16 @@ def _with_ai_writing_rules(system: str) -> str:
 def _body_violations(body: str, bullets: Dict[str, str]) -> list:
     """The letter's violation names, one list so the gate keeps its single repair
     call AND its strict-improvement rule counts every set: compose's phrasing
-    bans always; aiwriting's extra bans when the toggle is on; and the two
-    structural checks (a bullet echoed word for word, a metronomic rhythm)
-    always, since those are wrong under any vocabulary policy."""
+    bans always; aiwriting's extra bans when the toggle is on, plus the upstream
+    engine's findings (aidetector) when its own opt-in toggle is on too, minus any
+    name aiwriting already reported; and the two structural checks (a bullet
+    echoed word for word, a metronomic rhythm) always, since those are wrong
+    under any vocabulary policy."""
     names = compose.style_violations(body)
     if config.avoid_ai_writing_enabled():
         names += aiwriting.violations(body)
+        if config.aiwriting_detector_enabled():
+            names += [n for n in aidetector.violations(body) if n not in names]
     names += aiwriting.bullet_echo(body, bullets)
     names += aiwriting.uniform_rhythm(body)
     return names

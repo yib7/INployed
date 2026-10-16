@@ -13,10 +13,18 @@ This project stands on a lot of other people's work.
 
 ## Avoid-AI-writing rules
 - `local/resume_tailor/aiwriting.py` vendors a bounded extract of the
-  **avoid-ai-writing** skill, version 3.18.0, by **Conor Bronsdon**,
-  MIT-licensed, read from the local Claude skill at
-  `~/.claude/skills/avoid-ai-writing/SKILL.md`. Two features use it, through one
-  arm each, and the skill itself is not bundled.
+  **avoid-ai-writing** skill, version 3.38.0 (first vendored at 3.18.0), by
+  **Conor Bronsdon**, MIT-licensed, read from the local Claude skill at
+  `~/.claude/skills/avoid-ai-writing/` (`SKILL.md` and `references/patterns.md`).
+  Two features use it, through one arm each, and the skill's rule text itself is
+  not bundled.
+- `local/resume_tailor/vendor/avoid_ai_writing/` bundles two files of the same
+  project unmodified, the detector engine (`detector/patterns.js`) and its CLI
+  (`bin/avoid-ai-writing.js`), at version 3.38.0, with the project's MIT `LICENSE`
+  and `NOTICE.md` beside them. `local/resume_tailor/aidetector.py` runs them through
+  Node.js for the opt-in cover-letter check (Settings → Resume → "Run the upstream
+  AI-writing detector on the cover letter", off by default). Node.js is not
+  bundled.
 - The optional cover-letter style pass (Settings → Resume → "Strip AI writing
   patterns from the cover letter", on by default) uses the letter arm: the
   prompt rules and the deterministic ban list, as a letter-relevant subset of

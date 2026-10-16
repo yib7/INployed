@@ -697,6 +697,14 @@ SETTINGS_SCHEMA: list[Field] = [
                "call when one slips through (résumé bullets have their own pass). The "
                "letter prompts carry these rules either way; this decides whether the "
                "check enforces them. docs/USER_GUIDE.md lists exactly what it catches."),
+    Field("cover_letter_aiwriting_detector",
+          "Run the upstream AI-writing detector on the cover letter",
+          "bool", False, "Resume", "config",
+          help="Adds the avoid-ai-writing skill's own detector to the cover-letter check, "
+               "catching sentence shapes such as 'It's not X, it's Y' and 'the real "
+               "story was'. Needs Node.js installed; without it the check is skipped. "
+               "Works only while \"Strip AI writing patterns from the cover letter\" "
+               "is on."),
     Field("resume_aiwriting_sweep", "Strip AI writing patterns from the résumé bullets",
           "bool", True, "Resume", "config", choices=("True", "False"),
           help="Sends each résumé entry to the model as a whole to clear the tells that "

@@ -1,10 +1,19 @@
 """The vendored avoid-ai-writing extract: one arm for the letter, one for bullets.
 
-A bounded extract of the **avoid-ai-writing** skill (v3.18.0, MIT licence,
+A bounded extract of the **avoid-ai-writing** skill (v3.38.0, MIT licence,
 author **Conor Bronsdon**), vendored from
-``~/.claude/skills/avoid-ai-writing/SKILL.md``. The upstream SKILL.md is ~714
-lines: far too large to ship inside a per-call prompt, and most of it covers
-registers this pipeline never enters (hashtags, headings, chat replies).
+``~/.claude/skills/avoid-ai-writing/SKILL.md`` and the pattern catalog it loads,
+``references/patterns.md``. Together they run to ~140 KB: far too large to ship
+inside a per-call prompt, and most of it covers registers this pipeline never
+enters (hashtags, headings, chat replies). First vendored at v3.18.0; refreshed
+to v3.38.0 with the letter-relevant rules added since (narrated candor,
+lingering-attention and performed-insight framing, the crowd contrast, negation
+chains, moral-adjective category errors, invented contrast pairs, the
+never-inject guardrail) and the two tolerance-matrix rows upstream added.
+
+The skill's own deterministic engine is not re-implemented here. It runs as an
+optional extra check through Node, in ``aidetector`` (kept out of this module
+so ``scripts/atom_audit.py`` can still load it with ``common`` alone).
 
 Two arms live here, kept visibly separate below. They share ONE module on
 purpose: the vendored attribution and the tier-1 vocabulary regex are common to
@@ -78,7 +87,7 @@ from .common import split_sentences
 # to one block so callers can append it after compose.BANNED_PHRASING verbatim.
 # Deliberately free of em dashes, since it is telling the model to avoid them.
 RULES_PROMPT = (
-    "ALSO STRIP THESE AI-WRITING PATTERNS (avoid-ai-writing v3.18.0, MIT, Conor Bronsdon):\n"
+    "ALSO STRIP THESE AI-WRITING PATTERNS (avoid-ai-writing v3.38.0, MIT, Conor Bronsdon):\n"
     "1. Tier-1 vocabulary, replaced on sight with the plain word: delve (explore), "
     "landscape (field), tapestry, realm (area), paradigm (model), embark (start), beacon, "
     "testament to (shows), pivotal (key), underscores (highlights), meticulous (careful), "
@@ -91,9 +100,12 @@ RULES_PROMPT = (
     "2. No 'not X, it's Y' contrast. That includes the split-sentence form ('The headline "
     "is not the speed. The real story is the tooling.'), the stacked version that negates "
     "two or three options before the reveal, and a bare negation tacked onto the end ('the "
-    "options come from the record, no guessing'). State the positive claim once.\n"
+    "options come from the record, no guessing'). The same goes for negation chains: 'no "
+    "fluff, no filler, no jargon', or a run of 'I didn't ...' clauses before the point. "
+    "State the positive claim once.\n"
     "3. No hollow intensifiers: genuine, genuinely, truly, real (as in 'a real "
-    "improvement'), to be honest, quite frankly, let's be clear, worth a look. State the "
+    "improvement'), to be honest, quite frankly, let's be clear, worth a look, and "
+    "'actually' when it only adds emphasis ('this actually cut the run time'). State the "
     "fact instead.\n"
     "4. No hedging: perhaps, could potentially, may eventually, might ultimately, it is "
     "important to note that, to be clear. Make the point directly.\n"
@@ -108,7 +120,8 @@ RULES_PROMPT = (
     "opener used as a transition.\n"
     "8. No sycophancy and no acknowledgment loops: 'Great question', 'You are absolutely "
     "right', 'To answer your question', or restating the posting back at the reader before "
-    "answering it. The reader wrote the posting; go straight to the answer.\n"
+    "answering it, and no outreach flattery ('I'd value your take', 'I'd love to pick your "
+    "brain'). The reader wrote the posting; go straight to the answer.\n"
     "9. No rhetorical-question openers: 'So why does this matter?', 'What does this mean "
     "for your team?'. If you know the answer, write the answer.\n"
     "10. No generic conclusion: 'In conclusion', 'In summary', 'The future looks bright', "
@@ -121,7 +134,24 @@ RULES_PROMPT = (
     "is usually better.\n"
     "13. Vary the rhythm, which is the strongest AI tell of all. Mix sentence length: some "
     "under eight words, some over twenty, never a whole letter of 15-to-25-word sentences. "
-    "Vary paragraph length the same way, so one paragraph is clearly shorter than the rest."
+    "Vary paragraph length the same way, so one paragraph is clearly shorter than the rest.\n"
+    "14. No narrated candor: 'I want to be upfront', 'To be transparent', 'rather than bury "
+    "this', 'I could have left this out, but'. Give the fact itself and let it carry the "
+    "honesty.\n"
+    "15. No lingering-attention or performed-insight framing: 'the project I keep coming "
+    "back to', 'I can't stop thinking about', 'that's not nothing', 'sit with that', 'Turns "
+    "out', 'the real story was', 'turned out to be the most interesting part'. Say what the "
+    "thing is and why it matters to this role.\n"
+    "16. No dramatized crowd contrast or launch copy: 'while everyone else was still "
+    "debating', 'while others play catch-up', 'Meet X, your new favorite'. Describe the "
+    "company's work without ranking it against an imagined crowd.\n"
+    "17. No moral adjectives on things that cannot have morals ('an honest number', 'a "
+    "faithful dataset', 'described honestly'), and no invented opposite added for balance "
+    "('false precision rather than genuine accuracy' when nothing in the sources mentions "
+    "the first).\n"
+    "18. When you put a human voice back, add nothing the sources do not hold: no invented "
+    "anecdote, feeling, stakes, confession or contrarian opinion. Cutting and sharpening "
+    "are allowed; adding a personality the candidate never showed is not."
 )
 
 # ── the deterministic arm ─────────────────────────────────────────────────────
@@ -307,8 +337,9 @@ class Tolerance(NamedTuple):
     why: str
 
 
-# The seventh column of the skill's tolerance matrix, over that matrix's own 22
-# rows, plus one row the matrix does not carry ("missing first-person
+# The seventh column of the skill's tolerance matrix, over that matrix's own 24
+# rows (22 at v3.18.0; v3.19.0 added the moral-adjective and contrast-pair rows),
+# plus one row the matrix does not carry ("missing first-person
 # perspective", which the skill files under Rhythm and uniformity). The upstream
 # convention holds: a rule absent from this table applies at full strength, which
 # is what ``resume_profile_level`` returns for anything unlisted.
@@ -379,6 +410,20 @@ RESUME_PROFILE: Dict[str, Tolerance] = {
         "actual runtime of a query' are ordinary engineering usage, and the "
         "skill's own named-contrast carve-out needs context to apply, so a regex "
         "here would fire on grounded text."),
+    "moral-adjective category errors": Tolerance(
+        STRICT,
+        "Prompt arm only, under rule 5 beside real/actual inflation, the same "
+        "family of adjective propping up a thing. 'honest metrics' grades a "
+        "number that cannot be honest; but 'a faithful port' and 'true positives' "
+        "are ordinary engineering terms, so no regex can tell the two apart. "
+        "Upstream relaxes it only for technical-blog and docs."),
+    "invented contrast-pair mirroring": Tolerance(
+        STRICT,
+        "Prompt arm only, under rule 5. A bullet that pairs a real result with a "
+        "phantom opposite ('replaced false precision with genuine accuracy') "
+        "claims a before-state the atom never recorded, which breaks the select "
+        "and re-phrase rule as well as the style. Spotting the phantom half needs "
+        "the atom, so it cannot be a regex."),
 
     # ---- rules the format makes unreachable ---------------------------------
     "copula avoidance": Tolerance(
@@ -491,7 +536,7 @@ def resume_profile_level(rule: str) -> str:
 # it is shown; tests/test_prompt_hygiene.py holds that line package-wide, and
 # tests/test_aiwriting_resume.py runs the same scan directly over this constant.
 RESUME_RULES_PROMPT = (
-    "ALSO STRIP THESE AI-WRITING PATTERNS (avoid-ai-writing v3.18.0, MIT, Conor "
+    "ALSO STRIP THESE AI-WRITING PATTERNS (avoid-ai-writing v3.38.0, MIT, Conor "
     "Bronsdon; resume profile, P0 and P1 tiers only):\n"
     "REGISTER: a resume bullet is a subjectless fragment that opens with a past-tense "
     "action verb ('Built a scraper that cut per-run cost 65%'). That form is correct "
@@ -530,7 +575,12 @@ RESUME_RULES_PROMPT = (
     "genuine or true ('real business value', 'actual production traffic', 'genuine "
     "user impact'). Either name what the weak version was, or drop the adjective and "
     "give the measurement. Literal uses stay: real-time streaming, a real user "
-    "session, the actual runtime of a query.\n"
+    "session, the actual runtime of a query. The same family covers 'actually' used "
+    "only for emphasis ('actually reduced latency'), a moral adjective on a thing that "
+    "cannot have morals ('honest metrics', 'a truthful dashboard'), and a phantom "
+    "opposite paired with a real result for balance ('replaced false precision with "
+    "genuine accuracy' when the source never mentions the first). Engineering terms "
+    "stay: a faithful port, true positives.\n"
     "6. BARE-NOUN BULLETS. Every bullet needs a finite verb and something checkable. "
     "A verbless label ('Stable pipeline throughput', 'Reliable data quality', "
     "'Effective team collaboration') asserts nothing and reads as a marketing "

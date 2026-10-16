@@ -1,7 +1,7 @@
 """The avoid-AI-writing pass on the cover-letter body (default ON).
 
 `resume_tailor.aiwriting` vendors a bounded extract of the avoid-ai-writing
-skill (v3.18.0, MIT, Conor Bronsdon): a prompt block for the judgment calls and
+skill (v3.38.0, MIT, Conor Bronsdon): a prompt block for the judgment calls and
 a small deterministic ban list for the patterns that are ALWAYS slop. It extends
 the existing two-arm gate. The prompt block rides in every letter
 prompt whatever the toggle says, and the toggle decides one thing only: whether
@@ -103,7 +103,7 @@ def _fake_master(monkeypatch):
 # ── attribution ───────────────────────────────────────────────────────────────
 def test_module_docstring_credits_the_skill():
     doc = aiwriting.__doc__ or ""
-    for token in ("avoid-ai-writing", "3.18.0", "MIT", "Conor Bronsdon", "SKILL.md"):
+    for token in ("avoid-ai-writing", "3.38.0", "MIT", "Conor Bronsdon", "SKILL.md"):
         assert token in doc, token
 
 
@@ -190,6 +190,23 @@ def test_rules_prompt_covers_the_judgment_calls():
     # The context-sensitive patterns live here, not in the regex arm.
     for anchor in ("rule of three", "rhetorical", "hedg", "sentence length"):
         assert anchor.lower() in rules.lower(), anchor
+
+
+@pytest.mark.parametrize("anchor", [
+    # The letter-relevant rules upstream added between v3.18.0 and v3.38.0.
+    "negation chains",              # 3.28 negation-chain
+    "'actually'",                   # 3.25 hollow intensifier
+    "I'd value your take",          # 3.37 outreach flattery under sycophancy
+    "narrated candor",              # 3.21
+    "I keep coming",                # 3.20 lingering attention
+    "the real story was",           # 3.28 / 3.37 performed insight, staged discovery
+    "crowd contrast",               # 3.29
+    "moral adjectives",             # 3.19
+    "invented opposite",            # 3.19 contrast-pair mirroring
+    "add nothing the sources do not hold",  # 3.22 never-inject guardrail
+])
+def test_rules_prompt_carries_the_rules_added_since_3_18(anchor):
+    assert anchor.lower() in aiwriting.RULES_PROMPT.lower(), anchor
 
 
 # ── the accessor: env > config.json > True ────────────────────────────────────
@@ -375,3 +392,102 @@ def test_grounding_gate_still_runs_last_with_the_toggle_on(monkeypatch, toggle):
                         lambda *a, **k: "I led the Zorblatt migration for 12 teams.")
     with pytest.raises(coverletter.LLMError, match="ungrounded"):
         coverletter.generate_body("jd", "Engineer", "Acme", BULLETS)
+
+
+# ── the upstream detector (aidetector), an opt-in extra check ─────────────────
+# aidetector.violations is stubbed here, so these run without Node. The real
+# engine is exercised in tests/test_aidetector.py.
+@pytest.fixture
+def detector(monkeypatch):
+    """Drive both toggles through the real accessors and stub the engine."""
+    def _set(letter_on: bool, detector_on: bool, finds=("negative parallelism",)):
+        monkeypatch.delenv("RESUME_TAILOR_AVOID_AI_WRITING", raising=False)
+        monkeypatch.delenv("RESUME_TAILOR_AIWRITING_DETECTOR", raising=False)
+        monkeypatch.setattr(config, "_config_json", lambda: {
+            "cover_letter_avoid_ai_writing": letter_on,
+            "cover_letter_aiwriting_detector": detector_on})
+        seen = []
+        monkeypatch.setattr(coverletter.aidetector, "violations",
+                            lambda text: seen.append(text) or list(finds))
+        return seen
+    return _set
+
+
+def test_aiwriting_detector_defaults_to_off(monkeypatch):
+    monkeypatch.delenv("RESUME_TAILOR_AIWRITING_DETECTOR", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    assert config.aiwriting_detector_enabled() is False
+
+
+def test_aiwriting_detector_needs_an_explicit_true(monkeypatch):
+    """The OFF-by-default spelling: only a real True turns it on, so a stray
+    string cannot opt a user into a Node subprocess they never chose."""
+    monkeypatch.delenv("RESUME_TAILOR_AIWRITING_DETECTOR", raising=False)
+    monkeypatch.setattr(config, "_config_json",
+                        lambda: {"cover_letter_aiwriting_detector": "true"})
+    assert config.aiwriting_detector_enabled() is False
+    monkeypatch.setattr(config, "_config_json",
+                        lambda: {"cover_letter_aiwriting_detector": True})
+    assert config.aiwriting_detector_enabled() is True
+
+
+def test_aiwriting_detector_env_beats_config(monkeypatch):
+    monkeypatch.setattr(config, "_config_json",
+                        lambda: {"cover_letter_aiwriting_detector": True})
+    monkeypatch.setenv("RESUME_TAILOR_AIWRITING_DETECTOR", "off")
+    assert config.aiwriting_detector_enabled() is False
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    monkeypatch.setenv("RESUME_TAILOR_AIWRITING_DETECTOR", "1")
+    assert config.aiwriting_detector_enabled() is True
+
+
+def test_settings_schema_exposes_the_detector_toggle_defaulting_off():
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "local"))
+    import settings  # noqa: PLC0415
+
+    field = next(f for f in settings.SETTINGS_SCHEMA
+                 if f.key == "cover_letter_aiwriting_detector")
+    assert (field.type, field.default, field.section, field.target) == (
+        "bool", False, "Resume", "config")
+    assert "Node" in field.help
+
+
+_CLEAN_BODY = "I shipped the viewer with 178 tests.\n\nI cut per-run cost by 65%."
+
+
+def test_detector_findings_join_the_gate_when_both_toggles_are_on(monkeypatch, detector):
+    seen = detector(True, True)
+    assert coverletter._body_violations(_CLEAN_BODY, BULLETS) == ["negative parallelism"]
+    assert seen == [_CLEAN_BODY]
+
+
+@pytest.mark.parametrize("letter_on, detector_on", [(True, False), (False, True), (False, False)])
+def test_detector_does_not_run_unless_both_toggles_are_on(monkeypatch, detector,
+                                                          letter_on, detector_on):
+    """It extends the letter's AI-writing check, so turning that check off turns
+    the detector off too, and its own toggle is an opt-in."""
+    seen = detector(letter_on, detector_on)
+    assert coverletter._body_violations(_CLEAN_BODY, BULLETS) == []
+    assert seen == []
+
+
+def test_a_name_aiwriting_already_reported_is_not_counted_twice(monkeypatch, detector):
+    """Both arms can name "chatbot artifact"; one finding must count once, or the
+    strict-improvement rule would weigh it double."""
+    detector(True, True, finds=("chatbot artifact", "performed insight"))
+    names = coverletter._body_violations("I hope this helps.", BULLETS)
+    assert names.count("chatbot artifact") == 1
+    assert "performed insight" in names
+
+
+def test_a_detector_finding_buys_the_repair_and_reaches_its_prompt(monkeypatch, detector):
+    detector(True, True)
+    seen = {}
+
+    def fake_call(system, user, *a, **k):
+        seen["user"] = user
+        return "a repair"
+
+    monkeypatch.setattr(compose, "call", fake_call)
+    coverletter.enforce_body_style("Engineer", "Acme", _CLEAN_BODY, BULLETS)
+    assert "negative parallelism" in seen["user"]

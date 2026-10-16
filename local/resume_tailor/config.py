@@ -336,6 +336,22 @@ def avoid_ai_writing_enabled() -> bool:
     return _config_json().get("cover_letter_avoid_ai_writing", True) is not False
 
 
+def aiwriting_detector_enabled() -> bool:
+    """Whether aidetector.violations (the upstream avoid-ai-writing engine, run through
+    Node) joins the cover letter's style gate beside aiwriting.violations. It adds the
+    sentence shapes the Python ban list cannot carry (negative parallelism, performed
+    insight, the crowd contrast, ...); a hit buys the same single repair call. Applies
+    only while avoid_ai_writing_enabled() is on, since it extends that check, and is
+    skipped silently when Node is not installed. Letter only. Defaults OFF, an opt-in:
+    it needs Node, and each run spawns a short Node process. Precedence:
+    RESUME_TAILOR_AIWRITING_DETECTOR env > config.json 'cover_letter_aiwriting_detector'
+    > False."""
+    env = os.getenv("RESUME_TAILOR_AIWRITING_DETECTOR")
+    if env is not None and str(env).strip():
+        return str(env).strip().lower() not in ("0", "false", "no", "off")
+    return _config_json().get("cover_letter_aiwriting_detector", False) is True
+
+
 def aiwriting_sweep_enabled() -> bool:
     """Whether the item-level AI-writing sweep runs over the résumé bullets
     (sweep.sweep_items): each Experience / Projects / Leadership entry goes to the model

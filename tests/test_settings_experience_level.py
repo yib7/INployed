@@ -73,6 +73,15 @@ def test_title_help_names_the_automatic_words_and_the_off_switch():
     assert "Staff" in help_
 
 
+def test_title_help_warns_that_left_out_words_widen_keyword_matching():
+    """With a NOT in the keyword, Bright Data stops matching it to titles only
+    (seen on the 2026-10-16 run); the help must say so and name the way back."""
+    help_ = BY_KEY["title_exclude_terms"].help
+    assert "description" in help_
+    assert "title-only" in help_
+    assert "billed" in help_
+
+
 def test_the_automatic_words_in_the_help_are_the_scrapers():
     """The help lists the words; the scraper's map is what runs. Pin them equal
     so a change to the map cannot leave the help naming the old words."""

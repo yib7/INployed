@@ -267,8 +267,13 @@ leaves nothing out. A word matches whole words of the title only ("Lead" keeps
 without `NOT Senior`. A keyword with OR or AND is wrapped in parentheses first. Staff is
 not automatic, so "Member of Technical Staff" jobs still come in. Each search's skip list
 leaves out the known jobs its NOT words exclude, so more of the jobs it can return fit. The
-run log names the words left out. To change what a level leaves out, add
-`"title_exclude_by_level": {"Entry level": ["Senior", "Sr"]}` to `search_config.json` by
+run log names the words left out. **Heads-up:** leaving out any word also changes how
+keywords match. A plain keyword is matched to job titles only, but Bright Data matches a
+keyword with NOT anywhere in the posting, description included. On the 2026-10-16 run
+only 16% of results had their keyword in the title, against 100% before. Expect about
+twice the jobs (more good ones among them), the same job found by several keywords, and
+more postings billed. Type `none` to go back to title-only matching. To change what a
+level leaves out, add `"title_exclude_by_level": {"Entry level": ["Senior", "Sr"]}` to `search_config.json` by
 hand; there is no Settings row. **On the VM:** an older copy of `pipeline/scraper.py` sends
 the plain keywords and ignores **Leave out job titles with**, so copy the new file to the VM
 before you resume it. With one level ticked, Settings saves `experience_level` as plain

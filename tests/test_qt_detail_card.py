@@ -639,3 +639,57 @@ def test_card_header_labels_are_plain_text_not_auto_rich(qtbot):
              company_name="Acme <i>Corp</i>")), jid="1")
     assert card.title_label.text() == "Senior <b>Engineer</b>"
     assert "Acme <i>Corp</i>" in card.meta_label.text()
+
+
+def _strength_rects(card):
+    col = card._strengths_col
+    return [col.itemAt(i).widget().geometry() for i in range(col.count())
+            if col.itemAt(i).widget() is not None]
+
+
+def test_the_scoring_column_asks_for_the_height_its_text_needs(qtbot):
+    # QWidget's hint measures word-wrapped labels at a guessed narrow width;
+    # shown at the card's real width the column asks only for what its text
+    # fills there, so a short window no longer squeezes the card below a
+    # floor it could never honour.
+    card = JobDetailCard()
+    _show(qtbot, card, w=1200, h=460)
+    card.set_fields(jobsdata.job_detail_fields(_row()), jid="1")
+    _flush()
+    pane = card._left_pane
+    needed = pane.layout().totalHeightForWidth(pane.width())
+    assert pane.sizeHint().height() == needed
+    assert needed < QtWidgets.QWidget.sizeHint(pane).height()
+
+
+def test_a_card_shorter_than_its_content_scrolls_instead_of_overlapping(qtbot):
+    # A child placed by hand, as a splitter places it: a top-level window
+    # would be held at its minimum height instead.
+    host = QtWidgets.QWidget()
+    qtbot.addWidget(host)
+    host.resize(1200, 150)
+    card = JobDetailCard()
+    card.setParent(host)
+    card.setGeometry(0, 0, 1200, 150)
+    host.show()
+    _flush()
+    card.set_fields(jobsdata.job_detail_fields(
+        _row(strengths="LLM pipeline|Python depth|Schema-grounded prompting")), jid="1")
+    for _ in range(3):      # the pane re-hints at its width, then the area re-fits
+        _flush()
+    assert card._scroll.verticalScrollBar().maximum() > 0
+    rects = _strength_rects(card)
+    assert len(rects) >= 3
+    for upper, lower in zip(rects, rects[1:]):
+        assert upper.bottom() < lower.top()          # stacked, never drawn over
+
+
+def test_a_card_with_room_shows_everything_without_a_scroll_bar(qtbot):
+    card = JobDetailCard()
+    _show(qtbot, card, w=1200, h=460)
+    card.set_fields(jobsdata.job_detail_fields(_row()), jid="1")
+    _flush()
+    assert card._scroll.verticalScrollBar().maximum() == 0
+    toggle = card.desc_toggle
+    bottom = toggle.mapTo(card._scroll.viewport(), QtCore.QPoint(0, toggle.height())).y()
+    assert bottom <= card._scroll.viewport().height()   # "Show description" in view

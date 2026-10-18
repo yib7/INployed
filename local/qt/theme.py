@@ -477,12 +477,12 @@ def _qss() -> str:
     QWidget[chipbar="true"] {{ background: transparent; }}
     /* The global `QWidget {{ background: WINDOW }}` rule would paint WINDOW
        patches over PANEL cards — plain containers/labels inside a card (or a
-       warning callout) go transparent instead. A splitter is a QFrame,
-       which `.QWidget` does not match, so it is named. Inputs and
+       warning callout) go transparent instead. A splitter or a scroll
+       area is a QFrame, which `.QWidget` does not match, so they are named. Inputs and
        buttons keep their own surfaces (their type rules stay untouched). */
     QFrame[card="true"] QLabel, QFrame[card="true"] QCheckBox,
     QFrame[card="true"] QSlider, QFrame[card="true"] .QWidget,
-    QFrame[card="true"] QSplitter,
+    QFrame[card="true"] QSplitter, QFrame[card="true"] QScrollArea,
     QFrame[callout="warning"] QLabel, QFrame[callout="warning"] .QWidget,
     QFrame[callout="warning"] QCheckBox, QFrame[callout="warning"] QRadioButton {{
         background: transparent; }}

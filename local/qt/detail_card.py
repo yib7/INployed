@@ -124,6 +124,35 @@ class _DeepChip(QtWidgets.QWidget):
         p.end()
 
 
+class _ScoringPane(QtWidgets.QWidget):
+    """The scoring column (REASON / STRENGTHS / GAPS / toggle). Once shown, it
+    asks for the height its text needs at the width it has.
+
+    QWidget's own hint measures each word-wrapped label at a guessed width, far
+    narrower than the card gives it (325px tall at 100% and 493px at 150% for
+    text that fills about 220px). The pane is vertically Minimum, so that guess
+    became the card's floor; a short window could not honour it, the splitter
+    squeezed the card anyway and the STRENGTHS lines were drawn over each
+    other. Unshown, it keeps QWidget's hint."""
+
+    def _needed_height(self) -> int | None:
+        lay = self.layout()
+        if (lay is None or not self.isVisible() or self.width() <= 0
+                or not lay.hasHeightForWidth()):
+            return None
+        return lay.totalHeightForWidth(self.width())
+
+    def sizeHint(self) -> QtCore.QSize:  # noqa: N802 (Qt naming)
+        hint = super().sizeHint()
+        needed = self._needed_height()
+        return hint if needed is None else QtCore.QSize(hint.width(), needed)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        super().resizeEvent(event)
+        if event.oldSize().width() != event.size().width():
+            self.updateGeometry()     # a new width means a new height
+
+
 def _clear_layout(lay) -> None:
     while lay.count():
         item = lay.takeAt(0)
@@ -176,8 +205,19 @@ class JobDetailCard(QtWidgets.QFrame):
         self._empty.setStyleSheet(f"color: {theme.FAINT};")
         outer.addWidget(self._empty, 1)
 
+        # The content scrolls when the card is shorter than it (150% interface
+        # in a window under about 800px high), so its lines never overlap.
+        self._scroll = QtWidgets.QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._content = QtWidgets.QWidget()
-        outer.addWidget(self._content, 1)
+        self._scroll.setWidget(self._content)
+        # A new job's longer text changes the content's minimum without
+        # resizing it, and the scroll area only re-fits on its own layout
+        # request, so forward the content's.
+        self._content.installEventFilter(self)
+        outer.addWidget(self._scroll, 1)
         v = QtWidgets.QVBoxLayout(self._content)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(8)
@@ -247,7 +287,7 @@ class JobDetailCard(QtWidgets.QFrame):
         # column and the card keeps exactly its previous compact shape.
         self._split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         self._split.setChildrenCollapsible(False)   # no drag-to-zero pane
-        self._left_pane = QtWidgets.QWidget()
+        self._left_pane = _ScoringPane()
         # Vertically Minimum (no ShrinkFlag), so qSmartMinSize floors the pane
         # at its preferred height and the scoring column keeps the "cannot be
         # squeezed" property the flat layout gave it. Horizontally Preferred —
@@ -375,6 +415,7 @@ class JobDetailCard(QtWidgets.QFrame):
         self.desc_view.clear()
         self._apply_desc_state()
         self._content.setVisible(False)
+        self._scroll.setVisible(False)
         self._empty.setVisible(True)
 
     def set_fields(self, fields: dict, *, jid: str = "",
@@ -388,6 +429,7 @@ class JobDetailCard(QtWidgets.QFrame):
         self._jid = jid
         self._empty.setVisible(False)
         self._content.setVisible(True)
+        self._scroll.setVisible(True)
         is_tracker = tracker is not None
         plain: list[str] = []
 
@@ -500,6 +542,12 @@ class JobDetailCard(QtWidgets.QFrame):
         if fields.get("url"):
             plain.append(fields["url"])
         self._plain = "\n".join(p for p in plain if p)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt naming)
+        if obj is self._content and event.type() == QtCore.QEvent.Type.LayoutRequest:
+            QtWidgets.QApplication.postEvent(
+                self._scroll, QtCore.QEvent(QtCore.QEvent.Type.LayoutRequest))
+        return super().eventFilter(obj, event)
 
     @staticmethod
     def _meta_pill(value: str, label: str, value_last: bool = True) -> Pill:

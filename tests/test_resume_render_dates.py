@@ -3,6 +3,8 @@ in place of its exact `dates`, which application forms keep using."""
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
@@ -74,3 +76,23 @@ def test_blocks_carries_resume_dates_from_the_master(monkeypatch):
         assert "2024 -- 2026" in render._leadership(_SEL, _BULLETS)
     finally:
         render.assets.blocks.cache_clear()
+
+
+# The dates box is free text with no validation, so the shapes people type by
+# hand have to print as dates, not as raw ISO text or a range from 06 to 2025.
+
+@pytest.mark.parametrize("typed, printed", [
+    ("2025-6", "June 2025"),                                  # one-digit month
+    ("2025-6 / 2025-8", "June 2025 -- August 2025"),
+    ("2025-06 – 2025-08", "June 2025 -- August 2025"),  # an en dash range
+    ("2025-06 - 2025-08", "June 2025 -- August 2025"),
+    ("2025-06--2025-08", "June 2025 -- August 2025"),
+    ("06/2025", "June 2025"),                                 # MM/YYYY is one month
+    ("6/2025", "June 2025"),
+    ("2023 - Present", "2023 -- Present"),
+    ("Summer 2025", "Summer 2025"),
+    ("2024 -- 2026", "2024 -- 2026"),
+])
+def test_hand_typed_dates_print_as_dates(typed, printed):
+    from resume_tailor.latexutil import fmt_dates
+    assert fmt_dates(typed) == printed

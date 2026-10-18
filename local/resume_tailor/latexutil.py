@@ -203,9 +203,16 @@ def clean_bullet(text: str) -> str:
 
 
 _MONTHS = {f"{i:02d}": calendar.month_name[i] for i in range(1, 13)}
-# YYYY, YYYY-MM or YYYY-MM-DD. Anything else is free text ("Summer 2025") and
-# prints as written; splitting it on "-" cut "2024 -- 2026" down to "2024".
-_ISO_DATE = re.compile(r"^\d{4}(?:-\d{2}(?:-\d{2})?)?$")
+# YYYY, YYYY-MM or YYYY-MM-DD (a one-digit month or day too: "2025-6"). Anything
+# else is free text ("Summer 2025") and prints as written; splitting it on "-"
+# cut "2024 -- 2026" down to "2024".
+_ISO_DATE = re.compile(r"^\d{4}(?:-\d{1,2}(?:-\d{1,2})?)?$")
+# MM/YYYY, the US way to write a month: one date, not a range from 06 to 2025.
+_MONTH_YEAR = re.compile(r"^\s*(\d{1,2})\s*/\s*(\d{4})\s*$")
+# What joins the two ends of a range: "/" (the Resume Data form's), or a dash
+# with spaces round it ("2025-06 - 2025-08", an en or em dash, "--"), or "--"
+# between two dates.
+_RANGE_SEP = re.compile(r"\s*/\s*|\s+(?:-{1,3}|\u2013|\u2014)\s+|(?<=\d)--(?=\d)")
 
 
 def _fmt_one(token: str) -> str:
@@ -216,8 +223,9 @@ def _fmt_one(token: str) -> str:
         return token
     parts = token.split("-")
     year = parts[0]
-    if len(parts) >= 2 and parts[1] in _MONTHS:
-        return f"{_MONTHS[parts[1]]} {year}"
+    month = parts[1].zfill(2) if len(parts) >= 2 else ""
+    if month in _MONTHS:
+        return f"{_MONTHS[month]} {year}"
     return year
 
 
@@ -231,7 +239,10 @@ def fmt_dates(dates: str) -> str:
     """
     if not dates:
         return ""
-    if "/" in dates:
-        a, b = dates.split("/", 1)
-        return to_latex(f"{_fmt_one(a)} -- {_fmt_one(b)}")
+    month_year = _MONTH_YEAR.match(dates)
+    if month_year and month_year.group(1).zfill(2) in _MONTHS:
+        return to_latex(_fmt_one(f"{month_year.group(2)}-{month_year.group(1)}"))
+    ends = _RANGE_SEP.split(dates, maxsplit=1)
+    if len(ends) == 2:
+        return to_latex(f"{_fmt_one(ends[0])} -- {_fmt_one(ends[1])}")
     return to_latex(_fmt_one(dates))

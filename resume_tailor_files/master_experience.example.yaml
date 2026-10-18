@@ -80,6 +80,8 @@ experience:
     title: Software Engineering Intern
     location: City, ST
     dates: "2024-06 / 2024-08"
+    # Optional: resume_dates prints on the PDF in place of dates (forms keep
+    # dates), e.g. resume_dates: "Summer 2024".
     context:
       team: "4-person platform team"
       stack: "Python, PostgreSQL, AWS"

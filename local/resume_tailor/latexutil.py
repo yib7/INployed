@@ -24,7 +24,7 @@ _LATEX_SPECIALS = {
     "}": r"\}",
     "~": r"\textasciitilde{}",
     "^": r"\textasciicircum{}",
-    # Raw < > render as inverted punctuation in OT1; the template is T1 now, where
+    # Raw < > render as inverted punctuation in OT1; the template is T1, where
     # they are fine, but the text commands are correct in both encodings.
     "<": r"\textless{}",
     ">": r"\textgreater{}",
@@ -37,7 +37,7 @@ def escape_latex(text: str) -> str:
 
 
 # The only characters hyperref needs backslashed inside \href's target argument.
-# Deliberately much smaller than _LATEX_SPECIALS: see escape_url. Just the two --
+# Deliberately much smaller than _LATEX_SPECIALS: see escape_url. Just `%` and `#`.
 # `{` and `}` are not listed because they never reach this map: they are absent
 # from _URL_SAFE below, so quote() has already turned them into %7B / %7D.
 _URL_SPECIALS = {"%": r"\%", "#": r"\#"}
@@ -57,7 +57,7 @@ _URL_SAFE = "/:?#[]@!$'()*+,;=~%"
 def escape_url(url: str) -> str:
     """Escape a URL for the *target* argument of \\href.
 
-    Not the same job as escape_latex, and using that one here is a real bug: it turns
+    Not the same job as escape_latex, and using that one here is a bug: it turns
     `_` into `\\_` and `~` into `\\textasciitilde{}`, which is right for printed text
     and wrong for an address, so `github.com/foo_bar` links to a URL with a literal
     backslash in it. hyperref reads the target nearly verbatim, so only `%`, `#`, `{`
@@ -104,7 +104,7 @@ _MATH_GLYPHS = {chr(cp): tex for cp, tex in _MATH_PAIRS}
 def _math_to_latex(text: str) -> str:
     text = text.replace(r"\textasciitilde{}", r"$\sim$")  # '~' (approximately)
     # The ASCII digraphs the rephrase prompt asks the model to write ('>=', '<='),
-    # already escaped by escape_latex — the promised math-notation conversion.
+    # already escaped by escape_latex: the math-notation conversion that prompt promises.
     text = text.replace(r"\textgreater{}=", r"$\ge$")
     text = text.replace(r"\textless{}=", r"$\le$")
     for glyph, tex in _MATH_GLYPHS.items():
@@ -114,7 +114,7 @@ def _math_to_latex(text: str) -> str:
 
 
 # Common non-ASCII punctuation a model emits, mapped to ASCII/LaTeX equivalents.
-# These MUST be substituted explicitly (not dropped) so meaning survives -- e.g.
+# These MUST be substituted explicitly (not dropped) so meaning survives. E.g.
 # U+2212 MINUS SIGN must become '-', or a coefficient like 'minus 0.158' would
 # silently lose its sign. Applied before the NFKD ASCII-fold below.
 _PUNCT_PAIRS = [
@@ -140,7 +140,7 @@ def _fold_char(ch: str) -> str:
     (U+FF3C) and SMALL REVERSE SOLIDUS (U+FE68) both decompose to a backslash,
     the fullwidth and small-form braces to braces, and so on for %, #, $, &, _,
     ^, ~. This fold runs AFTER escape_latex, so without its own escaping a
-    bullet written in those glyphs arrived at pdflatex as a live command --
+    bullet written in those glyphs would reach pdflatex as a live command:
     the exact injection the escaper exists to stop, with text that a job
     posting steers. Applied per character so the ASCII the escaper already
     produced is never touched."""
@@ -154,7 +154,7 @@ def _ascii_fallback(text: str) -> str:
     fontenc changes the output glyph set, not what the input may carry).
     Map known punctuation to ASCII, decompose accents (e-acute -> e), then drop
     anything still non-ASCII. Runs LAST, after the math-glyph pass, so intentional
-    LaTeX (which is already ASCII) is untouched -- and only the non-ASCII
+    LaTeX (which is already ASCII) is untouched, and only the non-ASCII
     characters are folded, each through _fold_char, so a fold can never
     produce an unescaped special."""
     for u, a in _PUNCT_MAP.items():
@@ -168,7 +168,7 @@ def _ascii_fallback(text: str) -> str:
 # A straight quote that OPENS a quotation: at the start, or after whitespace, an
 # opening bracket, a colon, a slash or a dash (said:"hi", A/"B", an em dash
 # before a quote). TeX prints a straight ' as a closing quote, so 'mimeosomes'
-# came out with two closing quotes; the opener has to be ` (and `` for "). A '
+# would print with two closing quotes; the opener has to be ` (and `` for "). A '
 # right after an opener opens too ("'inner'" nests). A ' before a digit stays an
 # apostrophe ('90s), and one inside a word (don't) is never at an opening position.
 _OPENS_AFTER = r"-\s(\[{:/\u2013\u2014"
@@ -220,7 +220,7 @@ def clean_bullet(text: str) -> str:
 _MONTHS = {f"{i:02d}": calendar.month_name[i] for i in range(1, 13)}
 # YYYY, YYYY-MM or YYYY-MM-DD (a one-digit month or day too: "2025-6"). Anything
 # else is free text ("Summer 2025") and prints as written; splitting it on "-"
-# cut "2024 -- 2026" down to "2024".
+# would cut `2024 -- 2026` down to "2024".
 _ISO_DATE = re.compile(r"^\d{4}(?:-\d{1,2}(?:-\d{1,2})?)?$")
 # MM/YYYY, the US way to write a month: one date, not a range from 06 to 2025.
 _MONTH_YEAR = re.compile(r"^\s*(\d{1,2})\s*/\s*(\d{4})\s*$")
@@ -245,7 +245,7 @@ def _fmt_one(token: str) -> str:
 
 
 def fmt_dates(dates: str) -> str:
-    """'2025-06 / 2025-07' -> 'June 2025 -- July 2025'.
+    """`'2025-06 / 2025-07'` -> `'June 2025 -- July 2025'`.
 
     Escaped on the way out like every other field: the dates box is free text
     in the Resume Data tab, and a token that is not a year or a month name is

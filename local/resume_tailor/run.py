@@ -33,9 +33,9 @@ REPORT_NAME = "tailor_report.txt"
 
 # The warning taxonomy. Every collected warning carries its kind as a prefix, so a
 # line stays self-describing once it is out of the report and in a Qt dialog.
-#   GROUNDING — the grounding gate reverted or dropped a bullet (with the tokens).
-#   PAGE_LIMIT — the PDF shipped over config.PAGE_LIMIT pages.
-#   ADVISORY  — one of the optional artifacts failed; the résumé itself is fine.
+#   GROUNDING: the grounding gate reverted or dropped a bullet (with the tokens).
+#   PAGE_LIMIT: the PDF shipped over config.PAGE_LIMIT pages.
+#   ADVISORY: one of the optional artifacts failed; the résumé itself is fine.
 KIND_GROUNDING = "grounding"
 KIND_PAGE_LIMIT = "page limit"
 KIND_ADVISORY = "advisory"
@@ -44,21 +44,21 @@ KIND_ADVISORY = "advisory"
 # the swap, a note on every later run (_report_model_swaps).
 KIND_MODEL = "model"
 
-# The NOTE taxonomy — same line shape ("<kind>: <message>"), one severity down.
+# The NOTE taxonomy: same line shape ("<kind>: <message>"), one severity down.
 # A note records something the run could not fully deliver but that leaves a
 # correct, shippable résumé, so it is written to the report and NOT streamed to
 # `on_warning`. That callback is what the dashboard's batch summary calls a
 # degraded run; putting cosmetic findings on it would make "finished with
 # warnings" mean nothing (see DECISIONS).
-#   UNDERFULL — a bullet the underfull fill rewrote is still underfull after the
+#   UNDERFULL: a bullet the underfull fill rewrote is still underfull after the
 #               re-trim: the fill was paid for and the trim took it back.
-#   AI WRITING — what the item-level AI-writing sweep did and did not do: how many
+#   AI WRITING: what the item-level AI-writing sweep did and did not do: how many
 #               bullets it rewrote, which rewrites it refused and why, and the P2
 #               findings it left alone ON PURPOSE. Every one of those leaves text that
 #               is grounded, clean and fitting, because a refused rewrite keeps the
 #               original, so none of them is a degradation. A sweep call that RAISED is
 #               the one thing here that is, and it goes out as a warning instead.
-#   GROUNDING — a first-draft drop the re-ask then recovered, where the outcome
+#   GROUNDING: a first-draft drop the re-ask then recovered, where the outcome
 #               decides the severity; the rejected text behind every gate finding,
 #               reverted or dropped; and an underfull fill the pass refused outright.
 KIND_UNDERFULL = "underfull"
@@ -71,7 +71,7 @@ def _noop(_msg: str) -> None:
 
 @dataclass
 class RunLog:
-    """What actually happened during one tailor run.
+    """What happened during one tailor run.
 
     `log` (the status callback) goes to a transient Qt status line and is gone the
     moment the next message replaces it, which on its own lets a half-worked run
@@ -173,7 +173,7 @@ def _report_text(rep: RunLog, *, job: Dict[str, str], company: str, job_title: s
                  out_dir: Path) -> str:
     """Render `tailor_report.txt`: the run's stages, its warnings, its notes, its
     page count. Notes sit directly under warnings, one severity down: same
-    `<kind>: <message>` line shape, but a note never made the run degraded. A run
+    `<kind>: <message>` line shape, but a note never makes the run degraded. A run
     that used Jev ends with a `jev` section, one usage line per step."""
     def section(title: str, body: List[str], empty: str) -> List[str]:
         return ["", title, "-" * len(title)] + ([f"  {b}" for b in body] or [f"  {empty}"])
@@ -198,7 +198,7 @@ def _report_text(rep: RunLog, *, job: Dict[str, str], company: str, job_title: s
 
 def _write_report(rep: RunLog, out_dir: Path, *, job: Dict[str, str], company: str,
                   job_title: str, log: Callable[[str], None]) -> None:
-    """Write the run report into the output folder. Never sinks the run — but a
+    """Write the run report into the output folder. Never sinks the run, but a
     failure to write the record of failures is itself said out loud."""
     try:
         (Path(out_dir) / REPORT_NAME).write_text(
@@ -307,8 +307,8 @@ def _line_field(job: Dict[str, str], key: str) -> str:
 
     `TARGET JOB: {job_title}` opens each tailor prompt, and the company name
     heads the cover letter's; neither is fenced the way the description is
-    (fence_jd), because a title is a line, not a document. A scraped value
-    carrying a newline therefore forged a fresh prompt line of its own, the
+    (fence_jd), because a title is one line. A scraped value
+    carrying a newline would therefore forge a fresh prompt line of its own, the
     same route apply_data._one_line closes for apply.md. Whitespace runs
     collapse to one space, so the field stays the one line the prompt reads
     it as. Not truncated: the same two values name the output folder, and
@@ -426,7 +426,7 @@ def _resolve_best_of(jd: str, job_title: str, sel: dict, log: Callable[[str], No
     return bullets
 
 
-# Words that must never be the LAST word of a trimmed bullet — they leave the
+# Words that must never be the LAST word of a trimmed bullet: they leave the
 # sentence dangling (e.g. "...utilizing Gemini Flash to.").
 _TRAILING_STOPWORDS = frozenset((
     "a", "an", "the", "to", "of", "for", "and", "or", "but", "with", "by",
@@ -474,7 +474,7 @@ def _prep_fragment(words: list) -> int:
     return 0
 
 
-# A trailing BARE number/range with no unit ('took 1', 'took 1-2') — what a chopped
+# A trailing BARE number/range with no unit ('took 1', 'took 1-2'): what a chopped
 # quantity leaves behind. '95%', '40,000+', '7.4x' carry a unit and are NOT bare.
 _BARE_NUM = re.compile(r"\d+([.,]\d+)*([–\-]\d+([.,]\d+)*)?$")
 
@@ -523,22 +523,22 @@ def _strip_dangling(text: str) -> str:
 
 # How full a clause cut has to leave the line before `_word_trim` will take one.
 #
-# This is a PERMISSION threshold, not a target: the loop below takes the RIGHTMOST
+# This is a PERMISSION threshold: the loop below takes the RIGHTMOST
 # ';'/',' in the over-budget prefix, and this constant only decides whether that
 # separator is high enough to use. So the fraction is a floor on how much text
-# survives, and every separator above it is equally acceptable — there is no
+# survives, and every separator above it is equally acceptable; there is no
 # preference for the one nearest the budget, because there is only ever one candidate
 # (the rightmost).
 #
-# It was 0.6, which reads like "keep the line reasonably full" but actually means
-# "accept a cut that throws away up to 40% of the bullet". When a bullet's only
-# separator sits low — say at 62% of budget — the clause cut fired and the bullet lost
+# A floor of 0.6 reads like "keep the line reasonably full" but means "accept a
+# cut that throws away up to 40% of the bullet". When a bullet's only separator
+# sits low (say at 62% of budget), that clause cut fires and the bullet loses
 # more than a third of its text in one step, with nothing downstream to grow it back:
 # the underfull fill runs BEFORE the trim in `_BULLET_PASSES`, never after, and
 # `compile.enforce_one_page` only drops whole bullets, it never re-lengthens one.
 #
-# At 0.85 a clause cut is taken only when it barely shortens (<= 15% lost) — which is
-# the case it was actually for, ending on a real clause boundary instead of mid-phrase.
+# At 0.85 a clause cut is taken only when it barely shortens (<= 15% lost), which is
+# the case it exists for: ending on a clause boundary instead of mid-phrase.
 # Below that we fall through to the word cut, which sheds one or two words and is
 # grammar-protected by `_strip_dangling`.
 _CLAUSE_CUT_FLOOR = 0.85
@@ -561,7 +561,7 @@ def _word_trim(text: str, max_visible: int) -> str:
     for sep in (";", ","):
         idx = cut.rfind(sep)
         while idx >= floor:
-            # Skip a thousands-separator comma (digit,digit) — not a clause break.
+            # Skip a thousands-separator comma (digit,digit), which is no clause break.
             if (sep == "," and 0 < idx < len(cut) - 1
                     and cut[idx - 1].isdigit() and cut[idx + 1].isdigit()):
                 idx = cut.rfind(sep, 0, idx)
@@ -574,8 +574,8 @@ def _word_trim(text: str, max_visible: int) -> str:
 
 def _fit_to_lines(text: str, target_lines: int) -> str:
     """Width-aware trim: shorten a bullet until it renders within `target_lines` printed
-    lines, measured by real glyph widths (measure.line_count) — not a flat char count, so
-    a wide-word bullet that the char cap missed ('...cross-encoder reranking...') is caught.
+    lines, measured by rendered glyph widths (measure.line_count), so a wide-word
+    bullet that a flat char cap would miss ('...cross-encoder reranking...') is caught.
     Numbers are front-loaded, so the overflow tail trims safely; under-length is left as-is
     (never padded). The clean cut reuses _word_trim's clause/word-boundary + dangling
     handling, so we never end mid-clause on a connective."""
@@ -597,9 +597,9 @@ def _fit_to_lines(text: str, target_lines: int) -> str:
 def _trim_to_caps(sel: Dict[str, str], bullets: Dict[str, str]) -> None:
     """Deterministically trim each bullet to its per-bullet printed-line target
     (config.block_targets / project_targets, else config.PROJECT_BULLET_LINES), measured
-    by real rendered width (measure.line_count). Over-length is trimmed at a word boundary
-    (numbers are front-loaded, so the tail trims safely); under-length is left as-is — we
-    never pad, which would mean inventing facts."""
+    by rendered width (measure.line_count). Over-length is trimmed at a word boundary
+    (numbers are front-loaded, so the tail trims safely); under-length is left as-is:
+    padding would mean inventing facts."""
     targets = compose.bullet_line_targets(sel)
     for gk, text in list(bullets.items()):
         if compose.is_verbatim_gkey(gk):
@@ -664,7 +664,7 @@ class Pass:
               `compose.fill_underfull` does), because this snapshot is keyed by the OLD gkey
               and cannot revert a key it does not hold; the driver's gate here is then only
               the backstop.
-    recheck_fill — after the bracketing above, re-measure every bullet this pass
+    recheck_fill : after the bracketing above, re-measure every bullet this pass
               actually changed and note the ones that are STILL underfull. Only
               meaningful on a pass whose job is to lengthen (see
               `_note_still_underfull` for why the re-check has to be last).
@@ -696,20 +696,20 @@ def _gate(ctx: PassCtx, *, stage: str = "rephrase",
     prologue passes it (see `_prologue_gate`), and only because a prologue drop is not
     yet the run's last word on the bullet: reground is about to either overturn it (the
     bullet comes back, recovered, nothing left to warn about) or confirm it (a second
-    `_gate` call, flag off, warns for real). So it is the RE-ASK's outcome that decides
-    the severity, not this call. A REVERTED bullet always warns regardless of the
-    flag — the pass that produced it already ran to completion and wrote ungrounded
+    `_gate` call, flag off, warns for real). So the RE-ASK's outcome decides
+    the severity. A REVERTED bullet always warns regardless of the
+    flag: the pass that produced it already ran to completion and wrote ungrounded
     text, and there is no second attempt coming to change that verdict.
 
-    Every finding handled here — reverted or dropped, flagged or not — also gets one
+    Every finding handled here (reverted or dropped, flagged or not) also gets one
     note recording the REJECTED text verbatim, captured before `enforce_grounded` runs
     (a drop deletes the key outright, so the text has to be captured first). The
     offending token alone cannot tell a fabricated fact from a tokenizer false
     positive (a version string, a number spelled two ways); the rejected text is what
     lets that call be made after the run, from the report alone.
 
-    `enforce_grounded` itself is deliberately untouched — the suite pins its exact
-    signature `(sel, bullets, *, fallback=None, log=None)` — so this reads the return
+    `enforce_grounded` itself is deliberately untouched (the suite pins its exact
+    signature `(sel, bullets, *, fallback=None, log=None)`), so this reads the return
     value rather than taking a callback.
     """
     before = dict(ctx.bullets)
@@ -735,8 +735,8 @@ def _prologue_gate(ctx: PassCtx) -> None:
     The prologue is the only fallback-less gate (see `_gate`): a drop here has no
     earlier grounded text to revert to. That makes every prologue drop PROVISIONAL
     while a re-ask can still overturn it, so it is filed as a note rather than a
-    warning (`drops_as_notes=True`) — the outcome of `_recover_dropped`, not this
-    call, is what decides whether the run actually lost the bullet. With reground OFF
+    warning (`drops_as_notes=True`): the outcome of `_recover_dropped` decides
+    whether the run lost the bullet. With reground OFF
     there is no re-ask coming, so the drop is not provisional at all and this warns
     immediately, the same as any other stage's drop.
 
@@ -765,7 +765,7 @@ def _recover_dropped(ctx: PassCtx, handled: Dict[str, List[str]]) -> None:
     A gkey in `handled` that is no longer in `ctx.bullets` was deleted rather than
     reverted, because the prologue runs on rephrase's first output and has no earlier
     grounded text to fall back to. That deletion is usually one stray label away from a
-    perfectly grounded line, and it lands hardest on a block's opening bullet — an entry
+    perfectly grounded line, and it lands hardest on a block's opening bullet: an entry
     that loses its overview leads with a detail bullet and stops explaining itself.
 
     `compose.reground` re-asks from the same atoms with the offending tokens banned. The
@@ -776,11 +776,11 @@ def _recover_dropped(ctx: PassCtx, handled: Dict[str, List[str]]) -> None:
     passes run, so they are trimmed and re-verified exactly like the rest.
 
     Fires only on a run that already lost a bullet; a clean run costs nothing. Advisory,
-    never fatal — on any failure the deletions simply stand.
+    never fatal: on any failure the deletions stand.
 
     The caller (`_prologue_gate`) files the prologue's drop as a note on the bet that
-    this function is about to undo it. This function is what has to make that bet
-    honest: exactly one warning for every bullet still missing once it returns, named
+    this function is about to undo it. This function is what has to make good
+    on that bet: exactly one warning for every bullet still missing once it returns, named
     here on a failed re-ask, an empty re-ask, or a re-ask that answered only some of
     the dropped bullets, or by the second `_gate` call below on a re-ask that is still
     ungrounded, and none at all for a bullet it recovers.
@@ -834,12 +834,12 @@ def _note_still_underfull(ctx: PassCtx, before: Dict[str, str], *,
     """Re-measure the bullets `stage` actually changed and note the ones that are STILL
     underfull. Returns their gkeys (empty = every fill stuck).
 
-    The underfull fill runs *measure -> ask the model to lengthen -> trim back*, and
-    until now nothing re-measured after that trim. `_fit_to_lines` can hand back
-    exactly the text the fill was paid to grow — a filled bullet whose extra material
+    The underfull fill runs *measure -> ask the model to lengthen -> trim back*, so
+    the trim can undo the fill. `_fit_to_lines` can hand back
+    exactly the text the fill was paid to grow: a filled bullet whose extra material
     pushes it onto one more printed line is binary-searched back to the longest prefix
     that fits, and when the added material is one wide token that prefix IS the
-    original. The run then reported a fill that did not happen.
+    original. Without this re-measure the run would report a fill that did not happen.
 
     Three things about the shape of this check matter:
 
@@ -849,9 +849,9 @@ def _note_still_underfull(ctx: PassCtx, before: Dict[str, str], *,
         the bullet onto its borrowed atom, so it is not in `before` at all). A bullet
         left underfull because its block had no spare atom was never filled, is a
         documented no-op, and reporting it would be noise.
-      * It is a NOTE, not a warning. Nothing is re-called: a second billed model call
+      * It is a NOTE. Nothing is re-called: a second billed model call
         per bullet to recover a part-empty last line is not worth it, and with the
-        user's two-line layout a short last line is a cosmetic blemish, not a broken
+        user's two-line layout a short last line is a cosmetic blemish on a working
         résumé. The report says so; the run does not claim to be degraded over it.
     """
     targets = compose.bullet_line_targets(ctx.sel)
@@ -883,7 +883,7 @@ def _jev_kw(ctx: PassCtx) -> Dict[str, Any]:
 
 
 def _pass_dedupe_verbs(ctx: PassCtx) -> None:
-    """Guarantee every tailored bullet opens with a DISTINCT action verb — none reused,
+    """Guarantee every tailored bullet opens with a DISTINCT action verb: none reused,
     none colliding with a verbatim block's opener (verbatim text is reserved, never
     modified). With Jev on, Jev picks each repeated opener's new verb first
     (`jev_assist.pick_verb`)."""
@@ -905,13 +905,13 @@ def _pass_merge_verbatim(ctx: PassCtx) -> None:
 
 def _pass_fill_underfull(ctx: PassCtx) -> None:
     """Grow any bullet that rendered shorter than its configured line target by folding in
-    one detail from an unused SAME-block atom (never fabricates — a no-op when there's no
+    one detail from an unused SAME-block atom (never fabricates: a no-op when there's no
     spare material). `retrim=True` re-trims the (over)filled bullets back to a clean line
     boundary before the gate re-checks them, and `recheck_fill=True` re-measures the result
     (the trim can hand back exactly what the fill was paid to grow).
 
     The fill gates itself: a committed fill re-keys the bullet onto its augmented gkey, and
-    this driver's own snapshot — taken before the pass runs, keyed by the OLD gkey — cannot
+    this driver's own snapshot (taken before the pass runs, keyed by the OLD gkey) cannot
     revert a fill it rejects. `on_reject` is what still gets a refusal into the run report, as
     a NOTE rather than a warning: the bullet that ships is the grounded original, which is
     correct and shippable.
@@ -934,9 +934,9 @@ def _pass_enforce_style(ctx: PassCtx) -> None:
     buzzword verbs, ...) never reaches the page.
 
     `retrim=True` because the repair REWRITES a bullet: the prompt asks it to stay
-    within `max_chars`, but nothing verified that, and this is the LAST bullet pass —
-    downstream `compile.enforce_one_page` only drops whole bullets, it never re-trims
-    text. Without it, a repair that came back longer than the text it replaced would
+    within `max_chars`, but nothing verifies that, and this is the LAST bullet pass:
+    downstream `compile.enforce_one_page` only drops whole bullets and never re-trims
+    text. Without it, a repair that comes back longer than the text it replaced would
     ship over its line budget and silently wrap onto an extra line."""
     fixed = compose.enforce_style(ctx.jd, ctx.job_title, ctx.sel, ctx.bullets)
     if fixed:
@@ -1031,8 +1031,8 @@ def _report_sweep(ctx: PassCtx, result: sweep.SweepResult, *, stage: str) -> Non
         # correct text was kept; a P2 finding is a policy choice this stage made on
         # purpose. This one is the stage failing at the job it was paid for: the rule
         # fired, the bullet went to the model naming it, and the tell is still on the
-        # page. Silence here is what made the first production run read as a clean
-        # 8-call no-op, so it gets the severity that reaches a reader.
+        # page. Left silent, this case reads as a clean 8-call no-op (the first
+        # production run did), so it gets the severity that reaches a reader.
         rep.warn(KIND_AIWRITING,
                  f"[{stage}] bullet '{lingering.gkey}' in '{lingering.item}' still "
                  f"reads as {', '.join(lingering.names)} after the sweep: it was "
@@ -1051,8 +1051,8 @@ def _pass_aiwriting_sweep(ctx: PassCtx) -> None:
     every committed bullet already fits and `_trim_to_caps` has nothing to cut
     (`tests/test_sweep_layout_invariant.py` asserts exactly that). The flag is set
     anyway because the alternative is trusting one check with the page-fit guarantee
-    and nothing behind it. So a trim FIRING here is not
-    the backstop working, it is the report that the acceptance check has a hole: the
+    and nothing behind it. So a trim FIRING here
+    reports that the acceptance check has a hole: the
     whole design is fit-or-revert, and a silent trim would quietly convert a rejected
     rewrite into a mid-sentence bullet, which is the exact outcome the fit-or-revert rule
     exists to prevent.
@@ -1078,7 +1078,7 @@ def _pass_aiwriting_sweep(ctx: PassCtx) -> None:
         # defect rather than a flaky transport. It is still caught: by the time this pass
         # runs, every bullet is grounded, style-gated and inside its line budget, and
         # losing that résumé over the stage that only polishes phrasing is the worse
-        # outcome. Warned, not noted, because the stage really did not run.
+        # outcome. It goes out as a warning because the stage did not run.
         ctx.log(f"AI-writing sweep skipped ({exc})")
         if ctx.report is not None:
             ctx.report.warn(KIND_AIWRITING,
@@ -1455,12 +1455,12 @@ def tailor(
     """Tailor one job end to end; returns the output folder.
 
     `on_status` is the live progress line (transient). `on_warning` is the DEGRADED
-    channel: it fires once per warning — a grounding-gate revert or drop, a résumé
+    channel: it fires once per warning: a grounding-gate revert or drop, a résumé
     that shipped over `config.PAGE_LIMIT` pages, or any of the optional artifacts
     (ATS report, company research, cover letter body/compile/text, prep sheet,
     apply.md) failing, and the first run in a process after the claude CLI refused
-    the chosen Claude model (`_report_model_swaps`). Optional, defaulting to None, so no existing call site
-    changes; the same warnings are written to `tailor_report.txt` in the output
+    the chosen Claude model (`_report_model_swaps`). Optional, defaulting to None, so a call site may leave
+    it out; the same warnings are written to `tailor_report.txt` in the output
     folder either way, which is the copy that outlives a status bar.
 
     A finding that leaves a correct, shippable résumé, such as a bullet the underfull
@@ -1551,12 +1551,12 @@ def tailor(
         log=log, report=report, judge=judge,
     )
     # Deterministic grounding gate: every bullet's distinctive tokens
-    # must trace to its own group's atoms — a hallucinated or JD-injected fact is
-    # dropped here, never printed. This first call is the prologue and the only
+    # must trace to its own group's atoms: a hallucinated or JD-injected fact is
+    # dropped here and never printed. This first call is the prologue and the only
     # fallback-less one: there is no earlier grounded text to revert to yet. Every
     # later bullet-mutating pass re-runs it against its own snapshot, reverting
     # instead of dropping when it can (see _run_bullet_passes). A prologue drop is
-    # provisional, not final, while reground can still recover it — see
+    # provisional while reground can still recover it; see
     # _prologue_gate for how that changes its severity.
     _prologue_gate(ctx)
     # The faithfulness check, with Jev on: the judge reads every surviving bullet
@@ -1600,9 +1600,9 @@ def tailor(
 
         # enforce_one_page returns ok=True on an OVER-LENGTH pdf when it ran out of
         # project bullets to drop (overflow that originates elsewhere is not something
-        # it can fix). The PDF still ships — a two-page résumé beats no résumé — but
-        # the run stops claiming it was clean. getattr, because the field is new and a
-        # stubbed enforce_one_page may return a result without it; 0 means "never
+        # it can fix). The PDF still ships (a two-page résumé beats no résumé), but
+        # the run stops claiming it was clean. getattr, because a stubbed
+        # enforce_one_page may return a result without the field; 0 means "never
         # measured", which is not evidence of overflow.
         report.pages = int(getattr(result, "pages", 0) or 0)
         if report.pages > config.PAGE_LIMIT:
@@ -1724,7 +1724,7 @@ def generate_cover_letter(
 
     Mirrors tailor()'s cover-letter block step for step, but sources the résumé
     bullets from the folder's existing apply.md (written on every tailor,
-    deterministic) instead of the in-flight tailoring state — so no re-tailor and
+    deterministic) instead of the in-flight tailoring state, so no re-tailor and
     no extra selection/rephrase calls. Unlike inside tailor() (where the letter is
     an optional extra and failures only log), here the letter IS the job, so
     failures raise. Returns the path of the PDF copied into `out_dir`.
@@ -1807,7 +1807,7 @@ def _default_csv() -> Optional[str]:
     """Resolve the master CSV without baking in a machine-specific drive letter.
 
     Preference order: the synced Drive root jobsdata discovers from config.json's
-    ``gdrive_root`` (machine-independent — the same lookup the dashboard uses),
+    ``gdrive_root`` (machine-independent: the same lookup the dashboard uses),
     then the repo-root master scraper.py writes. Returns None when neither
     resolves, so the CLI can require an explicit ``--csv`` with a clear message
     instead of a confusing file-not-found on a hardcoded path.

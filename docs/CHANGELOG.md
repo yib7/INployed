@@ -10,14 +10,14 @@ All notable changes to INployed are recorded here. The format follows
 
 Find new jobs stops paying again for jobs it already has: each search carries its own skip
 list of the known jobs its keyword can return, dated by the last day any run collected them,
-and **Experience level** leaves senior titles out of the search. The scorer drops jobs outside
-the US before it reads them, and the dashboard keeps job descriptions in an on-disk cache, so
-it loads in about 2.4 seconds and holds about a quarter of the memory. The résumé gains
-per-bullet line lengths and an optional U.S. Citizen line, and a signed-out Claude CLI now
-says so and offers **Sign in to Claude**. A release review fixed bugs across the scraper,
-scorer, dashboard and résumé engine, closed six security gaps in auto-apply and the
-dashboard, pinned every installed package, and redrew the dashboard's arrows, check marks
-and low-contrast text.
+and **Experience level** leaves senior titles out of the search. The scorer drops jobs
+outside the US before it reads them, and the dashboard keeps job descriptions in the
+description cache, so it loads in about 2.4 seconds and holds about a quarter of the memory.
+The résumé gains per-bullet line lengths and an optional U.S. Citizen line, and a signed-out
+Claude CLI now says so and offers **Sign in to Claude**. A release review fixed bugs across
+the scraper, scorer, dashboard and résumé engine, closed six security gaps in auto-apply and
+the dashboard, pinned every installed package, and redrew the dashboard's arrows, check
+marks and low-contrast text.
 
 It is a minor release, and a v2.0.0 setup keeps working. After upgrading: run
 `pip install -r requirements.txt` again; copy `pipeline/scraper.py`, `pipeline/score_jobs.py`
@@ -27,22 +27,22 @@ command-line change is `apply_assess.py --parallel`, which is gone (see Removed)
 
 ### Added
 
-- **Sign in to Claude from the dashboard.** When the Claude Code CLI is signed out, a tailor
+- Sign in to Claude from the dashboard. When the Claude Code CLI is signed out, a tailor
   run failed with a bare "claude exited 1". It now says the CLI is signed out, and the
   dialog's **Sign in to Claude** button opens a console running `claude auth login`, which
   finishes in the browser. No credential passes through the dashboard.
-- **"U.S. Citizen" on the résumé, if you want it.** Settings → Resume → **Show "U.S.
+- "U.S. Citizen" on the résumé, if you want it. Settings → Resume → **Show "U.S.
   Citizen" on the résumé**, off by default, ends the contact line under your name with
   "U.S. Citizen".
-- **Per-bullet line lengths in Bullets by strength.** A tier can list each bullet's printed
+- Per-bullet line lengths in Bullets by strength. A tier can list each bullet's printed
   lines: `1:2-2-2, 1:2-2-1, 1:2-2` gives the strongest project three 2-line bullets, the
   second three bullets with a 1-line last one, and the third two. The list length is the
   bullet count. Plain `2:3` tiers work as before, and a per-project layout box still
   overrides its tier.
-- **`resume_dates` for dates the PDF prints as written.** Experience, leadership and
+- `resume_dates` for dates the PDF prints as written. Experience, leadership and
   education entries may carry an optional `resume_dates` that the PDF prints in place of
   `dates` (see `master_experience.example.yaml`).
-- **An opt-in upstream AI-writing detector for the cover letter.** Settings → Resume → **Run
+- An opt-in upstream AI-writing detector for the cover letter. Settings → Resume → **Run
   the upstream AI-writing detector on the cover letter**, off by default, runs the
   avoid-ai-writing project's own detector (v3.38.0, bundled unmodified with its MIT license)
   through Node.js while the letter's AI-writing check is on. Without Node.js it reports
@@ -50,9 +50,10 @@ command-line change is `apply_assess.py --parallel`, which is gone (see Removed)
 
 ### Changed
 
-- **Experience level now leaves senior titles out of the search.** About half of the
+- Experience level now leaves senior titles out of the search. About half of the
   collected jobs had senior titles that the scorer then dropped, each one billed. The
-  level now picks the title words every search leaves out: with *Internship* or *Entry level* (the default), `"Data Engineer"` is sent as
+  level now picks the title words every search leaves out: with *Internship* or *Entry
+  level* (the default), `"Data Engineer"` is sent as
   `"Data Engineer" NOT Senior NOT Sr NOT Lead NOT Principal`. The other levels leave out
   nothing. **Experience level** in Settings takes several levels (a word is left out only
   when every ticked level leaves it out), and the new **Leave out job titles with** row
@@ -60,7 +61,7 @@ command-line change is `apply_assess.py --parallel`, which is gone (see Removed)
   it, and Staff is not automatic, so "Member of Technical Staff" jobs still come in. The
   run log names the words left out. `title_exclude_by_level` in `search_config.json` (no
   Settings row) changes what a level leaves out.
-- **Skip lists understand NOT keywords.** A keyword such as `"Data Engineer" NOT Senior`
+- Skip lists understand NOT keywords. A keyword such as `"Data Engineer" NOT Senior`
   carried the whole known-job list, like any keyword with OR, AND or NOT. Its list now
   holds the jobs its base keyword can return minus those whose title holds a NOT word as
   whole words, and the ledger records the base keyword, so both forms share records.
@@ -72,15 +73,15 @@ command-line change is `apply_assess.py --parallel`, which is gone (see Removed)
   older `pipeline/scraper.py` still sends the plain keywords and ignores **Leave out job
   titles with**; copy the new file to the VM before you resume it. With one level ticked,
   Settings still saves `experience_level` as plain text, which the older file reads.
-- **Check difficulty reads one job at a time, up to 30 per click.** Ten browser windows at
+- Check difficulty reads one job at a time, up to 30 per click. Ten browser windows at
   once was heavy on the PC and looked like a bot. Now each job opens in a fresh browser
   window on the auto-apply profile, the window closes once its job is read, and the next
   job opens after a random pause of 5 to 10 seconds. A click takes at most 30 jobs, in the
   order selected (or queued); the terminal and the panel say how many were left, so you
   can select those and click again. The profile stays held for the whole run, pauses
-  included, so a run or a sign-in refuses to start until it ends. A Jev outage, a window you close
-  mid-job, a browser that will not start and Ctrl+C stop the run as before.
-- **Claude Haiku 5.5 is the fast Claude model.** `claude-haiku-5-5` (released 2026-10-07)
+  included, so a run or a sign-in refuses to start until it ends. A Jev outage, a window
+  you close mid-job, a browser that will not start and Ctrl+C stop the run as before.
+- Claude Haiku 5.5 is the fast Claude model. `claude-haiku-5-5` (released 2026-10-07)
   is now the default for the résumé tailor's fast tier
   (`RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE`) and the Claude scorer's stage 1
   (`SCORE_STAGE1_MODEL_CLAUDE`), and it is listed in every Claude model dropdown. It lists at
@@ -89,12 +90,12 @@ command-line change is `apply_assess.py --parallel`, which is gone (see Removed)
   `claude update` brings 5.5 back. Settings saves every field, so if you have saved it
   before, your file still names Haiku 4.5: pick `claude-haiku-5-5` in **Claude model: fast
   (briefs)** and **Stage-1 model (Claude)** (both under Show advanced settings) to switch.
-- **Choose how many résumés tailor at once.** A multi-job tailor ran 4 résumés at the
+- Choose how many résumés tailor at once. A multi-job tailor ran 4 résumés at the
   same time with no way to change it. **Résumés tailored at once** in Settings → Resume
   (`tailor_parallel_jobs`, `RESUME_TAILOR_PARALLEL_JOBS`) sets it from 1 to 10, default 4,
   and applies to the next batch without a restart. Higher is faster but can hit the
   model's rate limit.
-- **The résumé's AI-writing sweep calls the model only for an entry something flags.** An
+- The résumé's AI-writing sweep calls the model only for an entry something flags. An
   entry gets its repair call when the free checks find something in it, when Jev flags one
   of its bullets while Jev runs for the tailor, or when the optional résumé scan does. A
   résumé none of them flags costs nothing; sending every entry anyway cost 80 calls on ten
@@ -103,37 +104,36 @@ command-line change is `apply_assess.py --parallel`, which is gone (see Removed)
   `RESUME_TAILOR_SWEEP_SCAN`) is a new opt-in quality check, off by default. One model call
   reads every bullet for the patterns you ban outright and the worst AI-writing tells, by a
   fixed list of names, and each entry it flags gets its repair call. On ten real résumés it
-  flagged about a quarter of the bullets and caught real contrast framing, but most of its
+  flagged about a quarter of the bullets and caught contrast framing, but most of its
   rewrites were small word swaps. With Jev on, Jev's own read still gates the sweep and no
   scan runs.
-- **Dependencies moved to current stable releases.** `pypdf` 6.21.1 (four releases of
+- Dependencies moved to current stable releases. `pypdf` 6.21.1 (four releases of
   input bounds on crafted PDFs), `aiohttp` 3.14.5 (cookie, request-target and WebSocket
   parsing hardened in 3.14.4), `google-genai` 2.31.0, `PySide6` 6.12.0, `typesafe-sdk`
   0.7.5 and `ruff` 0.17.1; the VM pin set takes the same `aiohttp` and `google-genai`.
   The pinned interpreter is Python 3.14.8, a security release (six CVEs in `ssl`,
   `zipfile`, `tarfile` and `urllib`).
-- **`requirements.txt` pins every package it installs.** It pinned only the 19 direct
+- `requirements.txt` pins every package it installs. It pinned only the 19 direct
   dependencies, so the 54 packages under them (`numpy`, `pydantic` and `cryptography`
-  among them) resolved to whatever was newest on install day. A block at the end now pins all of them
-  to the set CI tests (two lines carry a Windows marker, two a Linux one).
-- **A fresh `.env` leaves the keys blank.** `scripts/setup.ps1` seeded
+  among them) resolved to whatever was newest on install day. A block at the end now pins
+  all of them to the set CI tests (two lines carry a Windows marker, two a Linux one).
+- A fresh `.env` leaves the keys blank. `scripts/setup.ps1` seeded
   `your-bright-data-api-token`, `your-bright-data-dataset-id` and `your-gcp-project-id`
   from `.env.example`, so a new install's Settings tab showed the Bright Data token as set,
   **Check setup** sent the placeholder token to Bright Data and reported it rejected, and
   the tailor took the placeholder for a Google Cloud project instead of saying none is set.
   The three lines are now empty.
-
-- **The dashboard loads faster and holds far less memory.** Job descriptions now live in an
+- The dashboard loads faster and holds far less memory. Job descriptions now live in an
   on-disk cache, `%LOCALAPPDATA%\linkedin_watcher\descriptions.db`, and a job's description
   is read when you open it, so the job table no longer carries every description. On 43,235
   real rows a warm load takes about 2.4 s (5.7 s on v2.0.0), and the dashboard stays near
   650 MB after a dozen reloads, where v2.0.0 passed 2.5 GB after three. The first start
   after upgrading builds the cache, about 8 s. Marking jobs seen keeps it, and a damaged
   cache rebuilds itself.
-- **LinkedIn and GitHub links carry `www.`** in `apply.md`, the apply panel and the
+- LinkedIn and GitHub links carry `www.` in `apply.md`, the apply panel and the
   résumé's link targets, since some application forms mark a profile URL without it as
   wrong. The printed résumé text stays short.
-- **One search per keyword when every workplace type is wanted.** Bright Data mostly ignores
+- One search per keyword when every workplace type is wanted. Bright Data mostly ignores
   the remote filter: on 2026-10-13 a keyword's On-site and Hybrid searches returned 85% the
   same jobs, and each copy was billed. Ticking all three types (or none) now runs one
   unfiltered search per keyword, which cost 1.02 collected records per unique job in a test
@@ -141,7 +141,7 @@ command-line change is `apply_assess.py --parallel`, which is gone (see Removed)
 
 ### Removed
 
-- **The Difficulty checks at once setting and the parallel check.** `apply_assess.py`
+- The Difficulty checks at once setting and the parallel check. `apply_assess.py`
   drops `--parallel` and `--worker`, and `local/assess_pool.py` is gone. A saved
   `auto_apply_check_parallel` in `config.json` is ignored. The profile copies an older
   parallel check left under `%LOCALAPPDATA%\linkedin_watcher\assess_profiles` (they hold
@@ -151,7 +151,7 @@ command-line change is `apply_assess.py --parallel`, which is gone (see Removed)
 
 ### Fixed
 
-- **Find new jobs stops paying again for jobs it already has.** The skip list sent to
+- Find new jobs stops paying again for jobs it already has. The skip list sent to
   Bright Data (`jobs_to_not_include`) was dated by the day a job was first found, so a job
   first found three weeks ago and collected again yesterday fell off the list and was
   collected and billed on every run. Each run now writes every job id Bright Data returns,
@@ -162,15 +162,15 @@ command-line change is `apply_assess.py --parallel`, which is gone (see Removed)
   the old list skipped 0 of the 181 that an earlier run had collected the same day.
   **Upgrading:** the VM runs `pipeline/scraper.py` too, so copy the new file there to get
   these scraper fixes on the VM.
-- **A skip list holds up to 10,000 jobs, up from 2,000.** On 2026-10-13 Bright Data
+- A skip list holds up to 10,000 jobs, up from 2,000. On 2026-10-13 Bright Data
   accepted a test search carrying 10,000 ids at `limit_per_input` 100 (about 14 MB once the
   list is copied onto each of the search's child fetches), well past the August rejection
   that set the old cap. Change it with `max_exclude_ids` in `search_config.json` or the
   `MAX_EXCLUDE_IDS` environment variable; there is no Settings row. The cap applies to
   each search's list. A higher `limit_per_input` fits fewer ids (about 6,700 at 150).
   When the cap leaves known jobs off, the run says how many may be billed again.
-- **Each search skips only the known jobs its keyword can return, so far more of them
-  fit.** Every search carried the same skip list, and at `limit_per_input` 300 Bright
+- Each search skips only the known jobs its keyword can return, so far more of them
+  fit. Every search carried the same skip list, and at `limit_per_input` 300 Bright
   Data's size limit let it hold only the newest 3,357 known jobs, about five days. A
   search only returns jobs whose title holds its keyword, so each search now carries its
   own list: the known jobs whose title matches its keyword, or that the ledger says that
@@ -187,7 +187,7 @@ command-line change is `apply_assess.py --parallel`, which is gone (see Removed)
   fits. The run log's `Run:` line now reads `Run: <label> | N known jobs from the last D
   days; each search skips the ones its keyword can return (a to b ids per search)`, and
   one more line names any keyword whose list was trimmed.
-- **The scraper says what went wrong, why it matters and what to do.** A problem the run
+- The scraper says what went wrong, why it matters and what to do. A problem the run
   survives prints one `WARNING:` line: a missing or unreadable Google Drive master (a
   truncated one used to crash the run), an unreadable `search_config.json`, a skip list
   cut short. A run that fails ends on one `ERROR:` line with the reason: a refused token,
@@ -200,46 +200,46 @@ command-line change is `apply_assess.py --parallel`, which is gone (see Removed)
   again, such as `python pipeline/scraper.py --snapshot <id> --label <label>`. Jobs
   that come back with the request itself are kept in a `_raw_<time>.json` file until
   they are saved.
-- **A run Bright Data partly rejects keeps the jobs it paid for.** When some searches were
+- A run Bright Data partly rejects keeps the jobs it paid for. When some searches were
   rejected and others returned jobs, the whole collection was thrown away. Those jobs are
   now saved to the run file, the master and the ledger, a `WARNING:` names the rejected
   searches and the fix, and the run goes on to scoring. A run with every search rejected
   still fails, with an `ERROR:` line naming the setting to change.
-- **The dashboard shows a run's problems.** After **Find new jobs**, a run that printed
+- The dashboard shows a run's problems. After **Find new jobs**, a run that printed
   warnings opens a "The job search finished, with problems" box listing them, with the
   log path, and the status bar counts them. A failed run's box leads with the scraper's
   `ERROR:` reason. When a Google Drive folder or the VM is set up, a dashboard run with no
   Google Drive master to read (Drive offline, or no file) warns that known jobs may be
   collected and billed again.
-- **A second same-day run of a label gets its own file.** It wrote over
+- A second same-day run of a label gets its own file. It wrote over
   `linkedin_jobs_<date>_<label>.csv`, and since the first run's scored file already
   existed, the scorer skipped the new jobs: 185 jobs from 2026-10-12 were never scored.
   The second run now writes `linkedin_jobs_<date>_<label>-2.csv` (then `-3`, and so on),
   which the scorer, the dashboard and the VM sync already read. A `--snapshot` rerun of
   the same jobs reuses the earlier file instead, so they are never scored twice.
-- **Settings warns about a fallback model it does not know.** The six fallback model lists
+- Settings warns about a fallback model it does not know. The six fallback model lists
   (Stage-1 and Stage-2 fallback models and the four tailor fallback lists) took any text, so
   a typo such as `gemini-3.0-flash` saved with nothing said, and the request failed once the
   app reached it. Settings now shows a yellow note naming any model it does not know (one
   you name under **Per-model rate limits** counts as known), and one naming a lite model in
   **Fallbacks: deep (writing)**, where it lowers the quality of your bullets and cover
   letter. The note never blocks Save, and custom model ids still save.
-- **The Time range help no longer names a 90-day window.** It said a wider range re-pays
+- The Time range help no longer names a 90-day window. It said a wider range re-pays
   for postings older than "the 90-day exclude window", but that window is
   `exclude_window_days` in `search_config.json` and can be shorter. The help now names the
   setting instead of a number.
-- **The Resume Data tab's resume.md model box no longer looks live on Claude.** With the
+- The Resume Data tab's resume.md model box no longer looks live on Claude. With the
   tailor provider set to claude, Generate from my data uses your Claude standard model and
   ignores the Gemini model in the box. The box is now greyed out there, a note next to it
   names the Claude model that runs, and the confirm box names that model too. It updates
   when you save Settings or open the tab.
-- **The dashboard no longer pops open to an empty High Score tab.** The watcher opened it
+- The dashboard no longer pops open to an empty High Score tab. The watcher opened it
   for any unseen job at or above your minimum score, while High Score also hides a repost of
   a job you marked seen or applied within the repost window, and counts a job marked in the
   seen list as seen. The watcher now checks with the same High Score filter before it opens
   the dashboard, so a run whose only new high scorers are such reposts stays quiet. If that
   check cannot run, the watcher opens the dashboard as before.
-- **The mechanical filter no longer drops jobs for text that is not a requirement.** It
+- The mechanical filter no longer drops jobs for text that is not a requirement. It
   reads each trigger in context now, and these reach the scorer instead of being dropped:
   - Years figures under a Preferred, Desired, Nice to have or "We'd love" heading, or inside
     a clause that marks them preferred. Also age rules ("18 years of age"), company history
@@ -256,26 +256,26 @@ command-line change is `apply_assess.py --parallel`, which is gone (see Removed)
   saved jobs, 448 more reach the scorer. In an audit, 67 of 69 confirmed wrongly dropped
   jobs now pass, and 6 of 3,230 correctly dropped jobs now pass too (the scorer still rates
   them). **Upgrading:** the VM runs `pipeline/score_jobs.py`, so copy the new file to the VM.
-- **A model that corrects its own answer no longer costs a retry.** On the Claude CLI
+- A model that corrects its own answer no longer costs a retry. On the Claude CLI
   backend a repair reply often held a first answer, a note such as "Wait, correcting the
   format", and a corrected answer. The tailor could not read that reply and asked again,
   and an entry that failed twice lost its repair. The tailor now reads the corrected
   answer: a live run of 45 calls needed no retry, where 11 of its replies had that shape.
   The scorer reads such a reply the same way.
-- **The Apply panel opens right away again.** It no longer reads the full job master
+- The Apply panel opens right away again. It no longer reads the full job master
   before showing a job's apply sheet, which took a few seconds per click for most
   scraped jobs.
-- **Tailor, cover letter, interview prep and Ask AI start faster on scraped jobs.** A job
+- Tailor, cover letter, interview prep and Ask AI start faster on scraped jobs. A job
   that already carries its description no longer waits a second or two while the dashboard
   searches the full job master for it.
-- **Jobs outside the US no longer reach the apply list.** The scrape asks Bright Data for
+- Jobs outside the US no longer reach the apply list. The scrape asks Bright Data for
   United States jobs, but some runs return whole inputs with a worldwide mix (the 2026-10-06
   afternoon run had 95 jobs from Jakarta, London, Singapore and elsewhere, several scored
   Apply). `pipeline/us_location.py` reads LinkedIn's location string, and `score_jobs.py` now
   drops those jobs before scoring as `filter_non_us`. The High Score list hides foreign jobs
   scored before the filter existed. Hand-added jobs are never hidden. On the VM, copy
   `pipeline/us_location.py` next to `score_jobs.py`.
-- **Dashboard rough edges.** Drop-down, date and number boxes show their arrows again,
+- Dashboard rough edges. Drop-down, date and number boxes show their arrows again,
   ticked boxes and chosen options carry a mark, and table headings no longer lose letters
   after you change the interface size. Greyed-out text, selected text in a box, score
   badges and the table's Open links are easier to read. At the 1000px minimum width, or at
@@ -283,74 +283,73 @@ command-line change is `apply_assess.py --parallel`, which is gone (see Removed)
   cutting it off, and the Tracker buttons read **Export…** and **Import…**. The auto-apply
   queue's Updated column shows `2026-10-18 10:11` instead of a cut-off timestamp. In the
   signed-out dialog, **Sign in to Claude** is the main button.
-
-- **Opening quotes and typed dates print right on the PDF.** A straight `'` or `"` that
+- Opening quotes and typed dates print right on the PDF. A straight `'` or `"` that
   opens a quotation, including one after a colon, a slash or a dash, reaches LaTeX as an
   opening quote, so 'mimeosomes' no longer prints with two closing quotes, and a single
   quote inside a double one opens. Dates that are not `YYYY`, `YYYY-MM` or `YYYY-MM-DD`
   print as written ("2024 -- 2026" printed as "2024"), and `2025-6`, `06/2025` and a range
   joined by a dash read as dates.
-- **Find new jobs keeps the jobs it paid for when a reply is odd.** A reply holding a
+- Find new jobs keeps the jobs it paid for when a reply is odd. A reply holding a
   Unicode line separator inside a description or one bad UTF-8 byte, a progress or download
   reply that is not JSON, and a job with no id no longer cost the collection, and the Ctrl+C
   line names the file that holds the collected rows. A hand-edited
   `"remote_types": "Remote"` (one string) ran six billed searches, one per letter, and
   `"keywords": null` crashed the run; both now read as lists, and a config with no searches
   stops before it sends anything.
-- **The US filter keeps US jobs it read as abroad:** "Washington, D.C.", "Cincinnati, OH
+- The US filter keeps US jobs it read as abroad: "Washington, D.C.", "Cincinnati, OH
   Metropolitan Area", "St. Louis, MO-IL", "New York, NY (Hybrid)", "Chicago, IL 60601" and
   "Portland-Vancouver Area".
-- **A contract clause no longer waives a clearance the job needs now.** "Must hold an active
+- A contract clause no longer waives a clearance the job needs now. "Must hold an active
   TS/SCI clearance ... if required by the program" read as contract-conditional, so a
   candidate with no clearance had the job kept and scored.
-- **Sign in to Claude opens the sign-in under PowerShell's default policy.** The console ran
+- Sign in to Claude opens the sign-in under PowerShell's default policy. The console ran
   `claude` by name, which PowerShell resolves to npm's `claude.ps1`, a script the default
   execution policy refuses; it now runs the CLI by its path.
-- **A Claude reply that corrects itself keeps the whole answer.** A last object that was a
+- A Claude reply that corrects itself keeps the whole answer. A last object that was a
   one-item note or an empty echo of the schema replaced the full answer; a correction now
   has to draw its keys from the longest answer. A reply that is valid JSON but not an object
   is a bad reply instead of a crash.
-- **Dashboard and watcher.** A half-synced run file no longer fails the whole load. Marking
+- Dashboard and watcher. A half-synced run file no longer fails the whole load. Marking
   jobs seen no longer writes an older read of the master over a newer one that Google Drive
   pulled in during the read. A run's problems note shows on that run's reload only. The
   watcher also leaves out deleted jobs, blocked companies and jobs abroad before it opens
   the dashboard. The job card's STRENGTHS lines no longer overlap in a short window at a
   large interface size.
-- **Résumé.** A one-bullet tier with a line count (`1:2-`) can be typed and keeps its lines
+- Résumé. A one-bullet tier with a line count (`1:2-`) can be typed and keeps its lines
   through Save. The AI-writing repair call now reads every flag the résumé scan can raise,
-  so an entry flagged by a rule name, an "other" note or an unnamed tell gets a real repair.
+  so an entry flagged by a rule name, an "other" note or an unnamed tell gets a repair call.
   A detector reply whose issues are not a list counts as a failed check, and a
   `config.json` that is not a JSON object reads as empty instead of breaking every setting
   it holds.
-- **Settings and Check difficulty.** A hand-edited level such as `Entry Level` now ticks its
+- Settings and Check difficulty. A hand-edited level such as `Entry Level` now ticks its
   box, where the next Save wrote a blank level that left no title words out. Past the 30-job
   cap, Check difficulty sent every selected id on the command line, which fails to start
   past about 900; it now passes only the jobs it takes, and a check that stops early says
   how many it never reached.
-- **Dated backup copies stay out of git.** `.gitignore` matched `*.bak` only, so a
+- Dated backup copies stay out of git. `.gitignore` matched `*.bak` only, so a
   hand-made `master_experience.yaml.bak-2026-10-05` sat untracked and unignored;
   `*.bak-*` and `*.bak.*` are now ignored too.
 
 ### Security
 
-- **The master password goes only into a form that posts to the application's site in the
-  same window.** A sign-in or sign-up form whose action, or a submit button's `formaction`,
+- The master password goes only into a form that posts to the application's site in the
+  same window. A sign-in or sign-up form whose action, or a submit button's `formaction`,
   points at another host stops the job with "the account form posts to ..." (or "the password
   box's form posts to ..."), and one that sends into a new window (`target`, `formtarget`,
   `<base target>`) stops it with "the password box's form sends it into a new window". Nothing
   is typed in either case.
-- **A drafted reply never sees your EEO answers or street address.** The free-text drafts and
+- A drafted reply never sees your EEO answers or street address. The free-text drafts and
   their grounding check get your city, state and country and the rest of the apply sheet, but
   not the gender, race, veteran and disability answers or the street and ZIP lines, which only
   fill their own fields. An essay box that asks for them gets nothing to restate.
-- **The apply sheet and the Ask AI window load no images.** A Markdown image link in scraped or
+- The apply sheet and the Ask AI window load no images. A Markdown image link in scraped or
   model text (`![](file://host/share/x.png)`) could make Windows connect to that host with your
   sign-in.
-- **Open buttons open only local folders and documents** (PDF, Markdown, text, TeX, Word). A
+- Open buttons open only local folders and documents (PDF, Markdown, text, TeX, Word). A
   path from an imported tracker backup or the queue that names a program, a shortcut or a
   network share is refused before Windows touches it.
-- **Loading a settings snapshot keeps the secret boxes masked.** It used to untick every Hide box.
-- **Postings per search is held at 500 by the scraper too**, the Settings maximum, so a
+- Loading a settings snapshot keeps the secret boxes masked. It used to untick every Hide box.
+- Postings per search is held at 500 by the scraper too, the Settings maximum, so a
   hand-edited `search_config.json` cannot bill more per search than the form allows.
 - Smaller fixes: a `.env` path ending in a backslash, or a UNC path, now reads back the same in
   the pipeline scripts (python-dotenv dropped the line); a company or job title named `NUL`,

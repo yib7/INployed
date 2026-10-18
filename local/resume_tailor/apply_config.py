@@ -39,7 +39,7 @@ DEFAULTS: Dict[str, Any] = {
     "veteran_status": "Decline to self-identify",
     "disability_status": "Decline to self-identify",
     "how_did_you_hear": "LinkedIn",
-    # Structured mailing address — most ATS forms ask for these individually. Blank
+    # Structured mailing address: most ATS forms ask for these individually. Blank
     # by default (personal); country defaults to the candidate's. The user fills the
     # rest in the Apply Answers tab; they flow into each apply.md sheet's address.
     "address_street": "",

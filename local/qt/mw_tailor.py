@@ -3,7 +3,7 @@ tailoring résumés for the selected jobs on a capped thread pool, writing a
 cover letter for a tailored job, and the per-job chat. `_TailorActions`
 is a base of `MainWindow`, and its methods run on a `MainWindow`.
 
-Split out of `qt.main_window`.
+`MainWindow` itself is defined in `qt.main_window`.
 """
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ def _with_master_jd(job: dict) -> dict:
 
 # How many warning lines one degraded job contributes to the batch dialog before the
 # rest are summarised. A grounding gate having a bad day can produce one per bullet,
-# and a message box that tall is a wall, not a report — the folder's tailor_report.txt
+# and a message box that tall buries the other jobs. The folder's tailor_report.txt
 # is the complete copy.
 MAX_TAILOR_WARNINGS_SHOWN = 5
 
@@ -105,7 +105,7 @@ class _TailorActions:
             return
         jid = ids[0]
         payload = self._job_payload(jid)
-        # Read the toggle HERE, on the UI thread — settings.load() touches the disk and
+        # Read the toggle HERE, on the UI thread: settings.load() touches the disk and
         # must not run inside the worker (same shape as _generate_cover_for's tone read).
         open_url = settings.load().get("apply_open_browser", True) is not False
         self._applying = True
@@ -118,9 +118,9 @@ class _TailorActions:
         """Build the apply context, and launch the posting only when `open_url`.
 
         `open_url` is resolved by the caller on the UI thread (the apply_open_browser
-        setting); it defaults True so the CLI-ish callers and older tests keep today's
-        behaviour. With it off the sheet still carries the posting URL, so nothing is
-        lost — the browser just doesn't take over the screen."""
+        setting); it defaults True, so CLI-style callers and tests that don't pass it
+        get the browser launch. With it off the sheet still carries the posting URL, so
+        nothing is lost; the browser just doesn't take over the screen."""
         from resume_tailor import apply as apply_mod
         folder = apply_mod.resolve_generated_dir(job_id=jid, job=payload)
         ctx = apply_mod.build_apply_context(folder)
@@ -138,14 +138,14 @@ class _TailorActions:
         self._apply_panel_job = job  # for the panel's "I applied to this job" button
         resume_pdf = ctx.get("resume_pdf", "")
         # Open the right-side Apply panel (copyable paths + the apply sheet) and hide
-        # the bottom score preview while it's up — the ✕ on the panel restores it.
+        # the bottom score preview while it's up; the ✕ on the panel restores it.
         self.apply_panel.show_application(ctx)
         self._apply_panel_open = True
         self.preview.setVisible(False)
         self._preview_shown = False
         self.apply_panel.show()
         sizes = self.hsplit.sizes()
-        if len(sizes) >= 2 and sizes[-1] < 50:  # first open — carve out room for the panel
+        if len(sizes) >= 2 and sizes[-1] < 50:  # first open: carve out room for the panel
             total = sum(sizes) or 1000
             self.hsplit.setSizes([max(420, total - 380), 380])
         if resume_pdf:
@@ -162,8 +162,8 @@ class _TailorActions:
     def _mark_applied_from_panel(self) -> None:
         """The panel's "I applied to this job" button: confirm, record the job as
         applied in the tracker (using the panel's stored marker identity, so it works
-        even when the row isn't in the loaded data), mark it seen, and close the panel
-        — so the one button doubles as "added to tracker" and "exit"."""
+        even when the row isn't in the loaded data), mark it seen, and close the panel,
+        so the one button doubles as "added to tracker" and "exit"."""
         job = getattr(self, "_apply_panel_job", None) or {}
         jid = str(job.get("job_posting_id") or "").strip()
         if not jid:
@@ -225,13 +225,13 @@ class _TailorActions:
         self._start_tailor(jobs, opts)
 
     def _start_tailor(self, jobs: list[dict], opts: dict, on_finished=None) -> bool:
-        """Launch the tailor worker — the ONE shared path both the Tailor button
+        """Launch the tailor worker: the ONE shared path both the Tailor button
         (`_tailor_selected`) and auto-apply queueing (`_queue_for_auto_apply`)
         come through, so queue-chaining never duplicates the worker plumbing.
 
         Returns False WITHOUT launching when a run is already in flight (the
-        `_tailoring` guard). `on_finished(results, exc)` — exactly one of the
-        two is None — fires on the UI thread AFTER the standard `_finish_tailor`
+        `_tailoring` guard). `on_finished(results, exc)` (exactly one of the
+        two is None) fires on the UI thread AFTER the standard `_finish_tailor`
         / `_finish_tailor_error` handling, so a chained step already sees the
         registry's resume paths recorded."""
         if getattr(self, "_tailoring", False):
@@ -260,7 +260,7 @@ class _TailorActions:
             self._tailoring = False  # the re-entry guard so Tailor isn't dead-locked
             self.btn_tailor.setEnabled(True)  # (same shape as _generate_cover_for's)
             if on_finished is not None:  # park queue-chained "tailoring" entries as
-                on_finished(None, RuntimeError(  # failed — orphans are unclaimable
+                on_finished(None, RuntimeError(  # failed; orphans are unclaimable
                     f"tailor launch failed: {errmsg.for_user(exc)}"))
             # Surface in the status bar instead of re-raising into the Qt event
             # loop, where the exception would just be printed and swallowed.
@@ -270,7 +270,7 @@ class _TailorActions:
 
     def _tailor_work(self, jobs: list[dict], opts: dict) -> list[dict]:
         """Tailor the selected jobs concurrently on a thread pool, up to
-        `_tailor_pool_size` at a time, and return a per-job outcome list. No registry/SQLite writes happen here — those
+        `_tailor_pool_size` at a time, and return a per-job outcome list. No registry/SQLite writes happen here; those
         are done back on the UI thread in `_finish_tailor` (the registry connection is
         thread-affine and concurrent writes would contend). Per-job exceptions are
         captured so one failure never sinks the rest of the batch."""
@@ -336,7 +336,7 @@ class _TailorActions:
     def _record_tailor_result(self, result: dict) -> bool:
         """Write ONE job's outcome to the registry (UI thread only): success
         records the resume folder (clearing any old red flag), failure records
-        the red 'tailor failed — re-run' flag the unseen tab shows. True when
+        the red 'Tailor failed: re-run' flag the unseen tab shows. True when
         the write landed."""
         jid = (result or {}).get("id")
         if not jid:
@@ -353,9 +353,9 @@ class _TailorActions:
 
     def _on_tailor_job_done(self, result: dict) -> None:
         """Bookkeep ONE finished tailor job (queued here, the UI thread, from a
-        pool thread the moment the job ends). Incremental on purpose — a batch
-        interrupted at job 12 of 14 must keep those 12 results; the July 8 crash
-        lost all of them because bookkeeping waited for the whole batch."""
+        pool thread the moment the job ends). Incremental on purpose: a batch
+        interrupted at job 12 of 14 must keep those 12 results, and bookkeeping
+        that waits for the whole batch loses all of them in a crash."""
         if self._record_tailor_result(result):
             rec = getattr(self, "_tailor_recorded", None)
             if rec is not None:
@@ -368,7 +368,7 @@ class _TailorActions:
         oks = [r for r in results if r.get("dir")]
         fails = [r for r in results if not r.get("dir")]
         # Normally every result was already bookkept per job (the queued
-        # _on_tailor_job_done deliveries precede this callback — same FIFO
+        # _on_tailor_job_done deliveries precede this callback in the same FIFO
         # event queue). Catch up on any that weren't, e.g. a registry hiccup
         # mid-batch or a test driving this callback directly.
         recorded = getattr(self, "_tailor_recorded", set())
@@ -377,9 +377,9 @@ class _TailorActions:
                 self._record_tailor_result(r)
         total = len(results)
         # A job that produced a PDF but warned on the way (a two-page résumé, a
-        # grounding-gate drop, a skipped ATS report) is still a SUCCESS — the registry
-        # contract stays binary and it keeps its recorded resume folder. It just no
-        # longer gets reported as a clean one. Full detail lives in the folder's
+        # grounding-gate drop, a skipped ATS report) is still a SUCCESS: the registry
+        # contract stays binary and it keeps its recorded resume folder. The dialog
+        # lists it with its warnings. Full detail lives in the folder's
         # tailor_report.txt; the dialog carries enough to know to go look.
         degraded = [r for r in oks if r.get("warnings")]
         if fails:
@@ -409,7 +409,7 @@ class _TailorActions:
         elif oks:
             self._set_status(f"Resume(s) ready ({len(oks)}).")
         last = oks[-1]["dir"] if oks else None
-        # Only open the file manager when the user opted in — off by default so a
+        # Only open the file manager when the user opted in. Off by default so a
         # multi-job batch doesn't spawn a window per résumé (Settings → Dashboard).
         if last and settings.load().get("tailor_open_folder", False):
             try:
@@ -433,7 +433,7 @@ class _TailorActions:
 
     def _cover_state(self, jid: str) -> str | None:
         """Drives the right-click menu item: None when the job isn't tailored
-        (no folder / resume PDF / apply.md — same readiness as Apply), else
+        (no folder / resume PDF / apply.md, the same readiness as Apply), else
         "exists"/"missing" by whether the cover-letter PDF is on disk."""
         ready, folder = self._apply_ready(jid)
         if not ready or folder is None:
@@ -504,7 +504,7 @@ class _TailorActions:
 
     def _payload_with_master_fallback(self, jid: str) -> dict | None:
         """The job's row payload, rebuilt from the master CSV when the row isn't
-        in the loaded frames (e.g. a tracker-only job) — the same fallback the
+        in the loaded frames (e.g. a tracker-only job), the same fallback the
         edit dialog uses. None when the id is unknown everywhere."""
         payload = self._job_payload(jid)
         if payload is not None:
@@ -543,7 +543,7 @@ class _TailorActions:
             return
         payload = self._payload_with_master_fallback(jid) or {"job_posting_id": jid}
         self._apply_auth_env()        # the chat calls the engine, same as tailor/cover
-        # Parented to this window and self-removing on close — see qt/chat_dialog.py.
+        # Parented to this window and self-removing on close (see qt/chat_dialog.py).
         # `prepare` runs on the chat's worker: a hand-added job's full
         # description from the master
         dlg = JobChatDialog(payload, parent=self,

@@ -4,7 +4,7 @@ The dashboard and the watcher both read local/config.json. This module
 describes WHICH keys are user-tunable (SETTINGS_SCHEMA) and provides safe
 load/validate/save that:
 
-  * fall back to a Field's default when a key is absent — or, for a key that
+  * fall back to a Field's default when a key is absent, or, for a key that
     replaced older ones, to a pure migration function (DERIVED_WHEN_ABSENT),
   * validate types and min/max ranges before writing,
   * MERGE into the existing backing file so keys not in the schema
@@ -13,11 +13,11 @@ load/validate/save that:
     config.json.
 
 The schema is a flat list of Field rows grouped by `section`, backing onto
-four target files (config / search / scoring / env — see TARGET_FILES), so the
+four target files (config / search / scoring / env; see TARGET_FILES), so the
 Qt Settings tab can render one labelled input per row. A Field may also declare
-`show_if` — a gate that keeps it off screen until it can actually do something
-(is_visible / visible_keys) — `advanced`, which folds a power-user knob behind
-the tab's disclosure checkbox, and `restart`, which says a running dashboard
+`show_if`, a gate that keeps it off screen until it can do something
+(is_visible / visible_keys); `advanced`, which folds a power-user knob behind
+the tab's disclosure checkbox; and `restart`, which says a running dashboard
 cannot see a new value until it is relaunched. All three are RENDERING decisions
 only: load/validate/save never consult any of them, so a hidden field keeps its
 value on disk. `pattern` is the exception that proves it: a format rule
@@ -67,15 +67,15 @@ class Field:
     optional: bool = False      # UI hint: blank is fine (no value needed to run)
     slider: bool = False        # UI hint: render a bounded int as a drag slider (needs min+max)
     # UI hint: show this field only while another field holds one of these values,
-    # e.g. ("provider", ("gemini",)). Declarative DATA, not a callable — Field is
+    # e.g. ("provider", ("gemini",)). Declarative DATA, not a callable: Field is
     # frozen, and a tuple is comparable and printable, so the whole gate graph is
     # testable without building a form (see is_visible / visible_keys).
     # PURELY a rendering decision: load(), save() and validate() never consult it,
     # so a hidden field keeps round-tripping its stored value to disk.
     show_if: tuple[str, tuple[str, ...]] | None = None
     # UI hint: a power-user knob, folded away behind the Settings tab's "Show
-    # advanced settings" checkbox. Same contract as `show_if` — purely a rendering
-    # decision, never consulted by load/save/validate — and the two COMPOSE rather
+    # advanced settings" checkbox. Same contract as `show_if` (purely a rendering
+    # decision, never consulted by load/save/validate), and the two COMPOSE rather
     # than override: a field is on screen iff
     #   (not advanced or the toggle is on) AND is_visible(field, gate_values)
     # which settings_tab._field_visible is the single place that decides.
@@ -85,14 +85,14 @@ class Field:
     # A format rule for a free-text field, as schema DATA (like `choices`) rather
     # than a branch inside validate(). Matched against the WHOLE value with
     # `re.fullmatch`, so a rule can't be satisfied by a prefix. Unlike `show_if`
-    # and `advanced` this is NOT a rendering hint — validate() enforces it, which
+    # and `advanced` this is NOT a rendering hint: validate() enforces it, which
     # is what stops the Settings tab writing a value its consumer would silently
     # discard. `pattern_help` is the sentence the user reads, so it must name the
     # shape ("Use comma-separated whole numbers, e.g. 30,50,70") rather than echo
     # the regex.
     #
     # THE RULE A PATTERN MUST OBEY: reject only what the consumer would silently
-    # DISCARD — never a value it honours. This repo is public and others run it,
+    # DISCARD, never a value it honours. This repo is public and others run it,
     # so a rule stricter than the runtime is a lock-out: validate()
     # runs over EVERY collected field, so one already-saved value the editor has
     # newly decided it dislikes blocks every future Save of every OTHER setting,
@@ -103,20 +103,19 @@ class Field:
     pattern_help: str = ""
     # UI hint: a running dashboard will not see a new value for this key until it
     # is restarted, so the Settings tab chips the row and says so again after the
-    # Save. Same contract as `show_if` / `advanced` — a rendering decision that
+    # Save. Same contract as `show_if` / `advanced`: a rendering decision that
     # load/save/validate never consult.
     #
-    # WHY IT IS TRUE OF (NEARLY) EVERY .env FIELD, which is not obvious and is
-    # what made the first cut of this badge cover 3 rows instead of 16:
+    # WHY IT IS TRUE OF (NEARLY) EVERY .env FIELD, which is not obvious:
     # `local/app.py` calls `load_dotenv()` at startup, so this process's
     # `os.environ` is a snapshot of `.env` taken once per launch. Nothing writes
-    # it back — `save()` and `envfile` touch the FILE only — and `python-dotenv`
+    # it back (`save()` and `envfile` touch the FILE only), and `python-dotenv`
     # defaults to `override=False`, so a later `load_dotenv()` cannot beat a value
     # that is already set. That closes both routes at once: a consumer freezing
     # the value in a module constant at import (`resume_tailor/config.py`,
     # `chrome_launch.CHROME_ACCOUNT`, `scraper.API_TOKEN`) and one reading `os.environ`
     # live on every call (`keypool.KeyPool.from_env`, `llm.py`) get the same stale
-    # snapshot — and so does every SUBPROCESS, which inherits a copy of it and
+    # snapshot, and so does every SUBPROCESS, which inherits a copy of it and
     # then cannot override it from `.env` either. The six VM keys are the one
     # exception: `vm_sync.VMTarget.from_env` reads the file through
     # `settings.load`. Pinned by
@@ -124,10 +123,10 @@ class Field:
     #
     # It over-warns in exactly one case, deliberately: a key ABSENT from `.env` at
     # launch is absent from `os.environ` too, so there is nothing for
-    # `override=False` to protect and a subprocess started afterwards really does
-    # pick the new value up. That is first-run setup, where the user is about to
-    # restart anyway — and the flag is per-Field, not per-value, so the honest
-    # choice is the one that cannot leave someone staring at a stale model id.
+    # `override=False` to protect and a subprocess started afterwards does pick
+    # the new value up. That is first-run setup, where the user is about to
+    # restart anyway. The flag is per-Field, not per-value, so it takes the side
+    # that cannot leave someone staring at a stale model id.
     restart: bool = False
     # For a `choice` field whose readers give a blank a meaning of its own: the
     # dropdown entry that stands for the blank. The Settings tab lists it after
@@ -162,8 +161,9 @@ FORM_WORDS = "words"
 def _as_choice(f: Field, item: Any) -> Any:
     """`item` as the listed choice it names ignoring case and spaces
     ("entry  Level" -> "Entry level"), else unchanged. The scraper reads a
-    hand-edited level in any case; the boxes tick only an exact choice, so an
-    unmatched one opened with none ticked and the next Save wrote ""."""
+    hand-edited level in any case; the boxes tick only an exact choice, so
+    without this an unmatched one would open with none ticked and the next Save
+    would write ""."""
     if not isinstance(item, str):
         return item
     key = " ".join(item.split()).casefold()
@@ -202,7 +202,7 @@ def _to_file(f: Field, value: Any) -> Any:
 ENV_TARGETS = {"env"}
 
 # Same character class envfile._CONTROL_RE refuses on write; see validate().
-# It is everything `str.splitlines()` breaks on -- the C0 controls plus U+0085,
+# It is everything `str.splitlines()` breaks on: the C0 controls plus U+0085,
 # U+2028 and U+2029, which sit outside \x00-\x1f and still split a line.
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f\x85\u2028\u2029]")
 
@@ -214,28 +214,28 @@ TEXT_TYPES = ("str", "path", "editable_choice")
 
 # Gemini model ids offered in the model dropdowns (the recent 3.x family). These
 # are EDITABLE dropdowns ("editable_choice"): pick one or type a custom id, so a
-# new model id is never blocked — and a wrong pick can't silently break scoring.
+# new model id is never blocked, and a wrong pick can't silently break scoring.
 # The pro tier is the "-preview" id on purpose: Google has not shipped a stable
 # GA gemini-3.1-pro (and gemini-3.5-pro doesn't resolve on Vertex projects), so
-# the preview id is the only pro-tier option. It is never a default — only an
-# opt-in "max quality" choice. Re-verified against Google's deprecation table on
-# 2026-09-04: no GA 3.1-pro/3.5-pro exists, and the preview id is still active.
+# the preview id is the only pro-tier option. It is never a default, only an
+# opt-in "max quality" choice. Checked against Google's deprecation table on
+# 2026-09-04: no GA 3.1-pro/3.5-pro exists, and the preview id is active.
 # Every other id here is on Google's Stable list.
 #
 # gemini-3.1-flash-lite is the one id in this tuple carrying a shutdown date:
 # Google's lifecycle table reads `gemini-3.1-flash-lite | May 7, 2026 | May 7, 2027 |
 # gemini-3.5-flash-lite` (re-read 2026-09-15; the date is the earliest possible
 # retirement and the model is still on the Stable list). It stays in the tuple as
-# an opt-in so stored configs that name it keep resolving, but since v1.12.0
-# (2026-09-18, the author's call) the stage-1 scoring default and the tailor's
-# flash-lite tier both sit on gemini-3.5-flash-lite, its named replacement.
-# keypool.LIMITS carries a 15/500 row for it (read from the account's AI Studio
-# dashboard), the same gate the old default had, so the swap costs no throughput.
+# an opt-in so stored configs that name it keep resolving. The stage-1 scoring
+# default and the tailor's flash-lite tier both sit on gemini-3.5-flash-lite, its
+# named replacement (the author's call, in v1.12.0). keypool.LIMITS carries a
+# 15/500 row for it (read from the account's AI Studio dashboard), the same gate
+# gemini-3.1-flash-lite has, so the newer default costs no throughput.
 #
-# Re-read 2026-10-18. Vertex's lifecycle table gives gemini-3.5-flash,
+# Checked 2026-10-18: Vertex's lifecycle table gives gemini-3.5-flash,
 # 3.5-flash-lite, 3.1-flash-lite and 3.8-flash at least twelve months (no
 # retirement before May 19, 2027 for 3.5-flash), so both defaults stay. The Gemini
-# API's deprecation table now routes the gemini-3.5-flash endpoint to
+# API's deprecation table routes the gemini-3.5-flash endpoint to
 # gemini-3.6-flash with no shutdown date, so a free-tier call keeps working under
 # the same id. gemini-3.6-flash and gemini-3.7-flash are the short-lived ones:
 # Vertex retires them November 19, 2026 and January 28, 2027, replacement
@@ -248,9 +248,9 @@ TEXT_TYPES = ("str", "path", "editable_choice")
 # stage-2 default off 3.5-flash, since 3.6/3.7/3.8-flash list at $0.75/$3.75 per
 # 1M through 2026-12-31 against 3.5-flash's $1.50/$9.00. Two reasons it stays
 # anyway: scoring normally runs on the free-tier key pool rather than paid credit,
-# so list price is not what this pipeline pays; and a 2026-06-11 downgrade of
-# exactly these two defaults was reversed eight days later on quality grounds.
-# Changing the pair is a re-tune with a scoring run behind it, not a version bump.
+# so list price is not what this pipeline pays; and when these two defaults were
+# downgraded on 2026-06-11, the downgrade was reversed eight days later on
+# quality grounds. Changing the pair is a re-tune with a scoring run behind it.
 # keypool.LIMITS has a free-tier rpm/rpd row for every Flash id in this tuple
 # (test_every_gemini_models_choice_has_a_real_limits_row pins that); only the pro
 # preview falls to keypool.DEFAULT_LIMITS, on purpose.
@@ -263,14 +263,15 @@ GEMINI_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-f
 # the API-side deprecation of temperature/top_p/top_k on Opus 4.7 and later does
 # not reach this project: llm._call_claude accepts those arguments for signature
 # parity with _call_gemini and drops them, because print-mode exposes neither.
-# The three ids the tuple held then (haiku 4.5, sonnet 5, opus 5) were re-checked
-# against Anthropic's model-deprecation table on 2026-09-04: state Active, none
-# deprecated, none retired. The tier map (haiku fast, sonnet standard, opus deep)
-# still matches what each tier is for. The nearest horizon in the whole model
-# set, Gemini included, is claude-haiku-4-5-20251001's tentative retirement "not
-# sooner than October 15, 2026"; Anthropic gives at least 60 days' notice and
-# there is no newer haiku to move to, so the id stays and this comment is the
-# reminder to re-check it.
+# The tier map (haiku fast, sonnet standard, opus deep) matches what each tier
+# is for.
+#
+# claude-haiku-5-5 (released 2026-10-07, Active, retirement not sooner than
+# October 7, 2027; $0.10 / $0.50 per million input / output tokens, a tenth of
+# Haiku 4.5's list price) is the fast tier's default and the Claude scorer's
+# stage 1 default. claude-haiku-4-5 stays in the tuple so a stored config naming
+# it keeps resolving, and pipeline/claude_cli.MODEL_FALLBACKS swaps 5.5 back to
+# it on a CLI too old to run 5.5 (Claude Code 2.1.293 runs it).
 #
 # claude-opus-5-5 is the deep tier's default
 # (RESUME_TAILOR_CLAUDE_MODEL_PRO here and resume_tailor/config.py's tier map).
@@ -280,33 +281,26 @@ GEMINI_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-f
 # claude-sonnet-5-5 is an option in all six Claude dropdowns and no tier's
 # default.
 #
-# Re-checked 2026-10-18 against the same table: all six ids are Active, none
-# deprecated. claude-haiku-4-5-20251001 has passed its "not sooner than October
-# 15, 2026" date and is still Active with no deprecation notice; it is no tier's
-# default now, only the fallback for a CLI too old for claude-haiku-5-5.
-#
-# Re-checked 2026-10-03 against the same table: all five ids are Active, none
-# deprecated. claude-haiku-4-5-20251001 still reads "Not sooner than October 15,
-# 2026" with no newer haiku listed, so it stays the fast tier's default.
-#
-# claude-haiku-5-5 (released 2026-10-07, Active, retirement not sooner than
-# October 7, 2027; $0.10 / $0.50 per million input / output tokens, a tenth of
-# Haiku 4.5's list price) is the fast tier's default and the Claude scorer's
-# stage 1 default. claude-haiku-4-5 stays in the tuple so a stored config naming
-# it keeps resolving, and pipeline/claude_cli.MODEL_FALLBACKS swaps 5.5 back to
-# it on a CLI too old to run 5.5 (Claude Code 2.1.293 runs it).
+# Checked against Anthropic's model-deprecation table on 2026-09-04, 2026-10-03
+# and 2026-10-18. On the last check all six ids are Active and none is
+# deprecated. claude-haiku-4-5-20251001 carries a tentative retirement "not
+# sooner than October 15, 2026", the nearest horizon in the whole model set,
+# Gemini included; that date has passed and the id is still Active with no
+# deprecation notice. It is no tier's default, only the fallback for a CLI too
+# old for claude-haiku-5-5. Anthropic gives at least 60 days' notice, and this
+# comment is the reminder to re-check it.
 CLAUDE_MODELS = ("claude-haiku-4-5", "claude-haiku-5-5", "claude-sonnet-5", "claude-sonnet-5-5",
                  "claude-opus-5", "claude-opus-5-5")
 
 # How the résumé tailor picks a model for each stage, per provider. The strings
 # are the ones `local/resume_tailor/config.py` compares against
-# (config.MODEL_MODE_TIERS / MODEL_MODE_SIMPLE) — the coupling that makes the
-# dropdown mean anything — and this is a plain `choice`, not `editable_choice`,
+# (config.MODEL_MODE_TIERS / MODEL_MODE_SIMPLE), the coupling that makes the
+# dropdown mean anything. This is a plain `choice`, not `editable_choice`,
 # because a value outside the pair is a typo the runtime would silently read
 # as 'tiers'.
 #
-# Index 0 is 'tiers', the default, because it is the mode that reproduces what
-# every install did before this setting existed. A stored value in another case
+# Index 0 is 'tiers', the default, because it is the mode a config saved before
+# this setting existed already runs. A stored value in another case
 # ('Simple') reads as its match and a blank one as 'tiers'; any other stored
 # value stays on screen as typed and Save flags it (settings_tab._set_combo).
 MODEL_MODE_TIERS = "tiers"
@@ -316,9 +310,9 @@ MODEL_MODES = (MODEL_MODE_TIERS, MODEL_MODE_SIMPLE)
 # Settings-snapshot retention: the choices of the archive_mode setting, which
 # replaced a four-key retention DSL (archive_enabled + archive_prune_mode +
 # archive_prune_keep + archive_prune_days). ARCHIVE_KEEP_ALL is deliberately the
-# SAME string as settings_archive.PRUNE_OFF, so the pruner's existing "unknown
-# mode deletes nothing" arm makes the default reproduce today's behaviour exactly.
-# The counted modes carry their count IN the string, which is what let
+# SAME string as settings_archive.PRUNE_OFF, so the pruner's "unknown mode
+# deletes nothing" arm makes the default delete nothing, as the old keys' default
+# did. The counted modes carry their count IN the string, which lets
 # settings_archive.prune() keep its signature (see _keep_from_mode there).
 ARCHIVE_KEEP_ALL = "Keep everything"
 ARCHIVE_KEEP_20 = "Keep newest 20"
@@ -553,7 +547,7 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Geographic location filter for searches."),
     # NOT advanced, deliberately: it sits beside `location` and is what a non-US
     # user must change. location="United Kingdom" with country="US" silently
-    # mis-searches — plausible results, no error — so nothing else tells them.
+    # mis-searches (plausible results, no error), so nothing else tells them.
     Field("country", "Country code", "str", "US", "Scraper", "search",
           help="Two-letter country code (e.g. US, GB, CA)."),
     Field("time_range", "Time range", "choice", "Past 24 hours", "Scraper", "search",
@@ -619,12 +613,12 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Deeper model for jobs that pass the Stage-2 threshold. Pick from "
                "the list or type a model ID your account can use (a wrong name silently "
                "breaks scoring)."),
-    # Free-tier quota is metered per (API key, MODEL), not per key -- one key
+    # Free-tier quota is metered per (API key, MODEL), not per key: one key
     # exhausted on gemini-3.8-flash still has its whole gemini-3.7-flash
     # allowance. So naming extra models multiplies the day's free calls
     # (models x keys) instead of splitting one allowance, and the pool only
-    # reaches the PAID Vertex backstop once every pair is spent. Empty = the
-    # single-model behaviour these lists replaced.
+    # reaches the PAID Vertex backstop once every pair is spent. Empty = one
+    # model per stage.
     Field("stage1_models", "Stage-1 fallback models", "list", [],
           "Scoring", "scoring", show_if=("provider", ("gemini",)), advanced=True,
           help="Extra models Stage 1 may use once 'Stage-1 model' runs out of free "
@@ -645,11 +639,11 @@ SETTINGS_SCHEMA: list[Field] = [
           "claude-sonnet-5", "Scoring", "scoring", choices=CLAUDE_MODELS,
           show_if=("provider", ("claude",)), advanced=True,
           help="Used only when Scoring provider is 'claude'."),
-    # The ONLY rate-limit control, keyed by model. It replaced a per-stage
-    # rpm/rpd pair per stage, which could describe a stage's PRIMARY model and
-    # nothing else -- not the ranked fallbacks, and not a model both stages name
-    # (those collapsed last-write-wins, which fired for real: two stages on
-    # gemini-3.5-flash-lite left it gated at stage 2's 5/20 instead of 15/500).
+    # The ONLY rate-limit control, keyed by model. A per-stage rpm/rpd pair can
+    # describe a stage's PRIMARY model and nothing else: not the ranked
+    # fallbacks, and not a model both stages name (those collapse
+    # last-write-wins; two stages on gemini-3.5-flash-lite left it gated at
+    # stage 2's 5/20 instead of 15/500).
     # Normally left empty; keypool.LIMITS covers every Flash model in the
     # dropdown (the pro preview is the one id gated at DEFAULT_LIMITS).
     Field("model_limits", "Per-model rate limits", "list", [],
@@ -678,7 +672,7 @@ SETTINGS_SCHEMA: list[Field] = [
     # NOT advanced, deliberately: this is the only ceiling on an LLM bill, so it
     # stays where a user worried about spend can find it without first learning
     # that a disclosure toggle exists. `rescore_cap` below reads like its twin but
-    # is retry-of-failures plumbing — advanced.
+    # is retry-of-failures plumbing, so it is advanced.
     Field("max_scored_per_run", "Max scored per run", "int", 800, "Scoring", "scoring",
           help="Spend guard: cap on LLM-scored jobs per run.", min=1, max=5000),
     Field("rescore_cap", "Rescore cap", "int", 200, "Scoring", "scoring", advanced=True,
@@ -785,15 +779,15 @@ SETTINGS_SCHEMA: list[Field] = [
                "auto-apply' action, and the most one drain works through. ~10 keeps a "
                "batch reviewable in one sitting: the run submits when 'Submit when "
                "verified' passes and parks the rest at their review page for you."),
-    # No auto_apply_inbox_url row: the single fallback URL duplicated the map
-    # below, firing only when the signup domain missed it — and the shipped
+    # No auto_apply_inbox_url row: a single fallback URL would duplicate the map
+    # below, firing only when the signup domain misses it, and the shipped
     # DEFAULT_INBOX_MAP already covers the common providers, so an unmapped domain
     # is one line in the map, exactly as easy as a fallback URL. apply_queue
     # .build_context() still HONOURS a saved auto_apply_inbox_url (it reads
-    # config.json directly and keeps its own DEFAULT_INBOX_URL), so nobody's
-    # existing configuration changed behaviour. The provider defaults below must
-    # stay in sync with apply_queue.DEFAULT_INBOX_MAP —
-    # test_inbox_map_default_matches_apply_queue pins that.
+    # config.json directly and keeps its own DEFAULT_INBOX_URL), so a config that
+    # sets one keeps working. The provider defaults below must stay in sync with
+    # apply_queue.DEFAULT_INBOX_MAP (test_inbox_map_default_matches_apply_queue
+    # pins that).
     Field("auto_apply_inbox_map", "Inbox by email domain", "list",
           ["gmail.com https://mail.google.com",
            "googlemail.com https://mail.google.com",
@@ -851,7 +845,7 @@ SETTINGS_SCHEMA: list[Field] = [
     # secret-bearing .env) into a git-ignored settings_archive/.
     #
     # ONE choice replaced four keys (archive_enabled + archive_prune_mode +
-    # archive_prune_keep + archive_prune_days) — a retention DSL for folders
+    # archive_prune_keep + archive_prune_days): a retention DSL for folders
     # holding a few KB of text, two of whose knobs were inert under the default
     # mode. Age-based retention is dropped. The default reproduces the old
     # effective behaviour, `_legacy_archive_mode` below migrates an older config,
@@ -867,13 +861,13 @@ SETTINGS_SCHEMA: list[Field] = [
 
     # Apply-form answers (work auth, sponsorship, EEO, "how did you hear") are NOT
     # configured here. They live in the richer Apply Answers tab (per-question,
-    # fixed/open-ended, needs-review), which writes apply_answers.json — the single
+    # fixed/open-ended, needs-review), which writes apply_answers.json, the single
     # source of truth the apply pipeline reads. apply_config.DEFAULTS only seeds
     # that store on first run.
 
     # --- Credentials: API keys / tokens, written to the git-ignored .env -------
     # secret=True fields show their saved value in the GUI (read straight from the
-    # local .env) and write whatever the box holds — clearing it removes the key.
+    # local .env) and write whatever the box holds; clearing it removes the key.
     # Field.key is the exact environment-variable name the pipeline reads.
     Field("BRIGHT_DATA_API_TOKEN", "Job-data API token", "str", "",
           "Credentials", "env", secret=True, optional=True, restart=True,
@@ -922,7 +916,7 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Where tailored resumes are saved. Blank = your Downloads/Generated_Resumes."),
     # NOT advanced, deliberately: this is the fix for "no PDF came out", i.e. what
     # someone hunts for when the tool is ALREADY broken. Hiding a repair knob
-    # behind a disclosure toggle is backwards — a user in that state has no reason
+    # behind a disclosure toggle is backwards: a user in that state has no reason
     # to suspect the setting exists.
     Field("PDFLATEX_PATH", "pdflatex path", "path", "pdflatex",
           "Connection & paths", "env", path_kind="file", optional=True, restart=True,
@@ -999,7 +993,7 @@ SETTINGS_SCHEMA: list[Field] = [
     # The MODE field is the gate for the rest, per provider, and the gate CHAIN is
     # what makes that work: a Field has exactly one `show_if`, so the tier rows
     # cannot carry both "provider is gemini" and "mode is tiers". They gate on the
-    # mode field, which gates on the provider — `is_visible` walks the chain, so a
+    # mode field, which gates on the provider; `is_visible` walks the chain, so a
     # tier row is hidden by EITHER the wrong provider or `simple` mode.
     #
     # Two mode fields rather than one shared: the user only ever sees the one their
@@ -1039,9 +1033,9 @@ SETTINGS_SCHEMA: list[Field] = [
                "defaults to the same model as 'Tailor model: standard (selection)' to "
                "keep costs down; set it to gemini-3.1-pro-preview yourself "
                "for the strongest writing (slower / pricier)."),
-    # Blank is a real value here: config._cover_or reads it as "no model of its
+    # A blank means something here: config._cover_or reads it as "no model of its
     # own", so the letter keeps the deep model for its draft and the standard one
-    # for its edits, exactly as before the row existed.
+    # for its edits, the same split a config without this row gets.
     Field("RESUME_TAILOR_MODEL_COVER", "Tailor model: cover letter",
           "editable_choice", "", "Engine", "env", choices=GEMINI_MODELS,
           show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
@@ -1104,9 +1098,9 @@ SETTINGS_SCHEMA: list[Field] = [
                "more considered letter and takes longer; its time limit grows with the "
                "level. It applies in 'simple' mode too."),
 
-    # --- VM (cloud scraper): NON-secret gcloud connection identifiers, in .env --
+    # --- VM (cloud scraper): NON-secret gcloud connection identifiers, in .env ---
     # The VM tab pushes config/schedule/pause via `gcloud compute`. Auth is your
-    # existing `gcloud auth login` — no SSH password or key is ever stored.
+    # existing `gcloud auth login`; no SSH password or key is ever stored.
     # vm_enabled is the section master switch (local, non-secret bool in config.json):
     # off (the default) hides the whole VM area in the GUI and silences push prompts.
     Field("vm_enabled", "Enable VM features", "bool", False, "VM (cloud scraper)", "config",
@@ -1127,7 +1121,7 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("VM_GCLOUD_PATH", "gcloud path", "path", "gcloud", "VM (cloud scraper)", "env",
           path_kind="file", optional=True, advanced=True,
           help="Path to the gcloud CLI. Leave as 'gcloud' if it's on your PATH."),
-    # --- Local watcher task: keep the LinkedInJobsWatcher scheduled task in step --
+    # --- Local watcher task: keep the LinkedInJobsWatcher scheduled task in step
     # with the VM schedule (local, non-secret; the VM tab's buttons use these too).
     Field("local_task_autosync", "Auto-sync local watcher task", "bool", False,
           "VM (cloud scraper)", "config",
@@ -1138,17 +1132,17 @@ SETTINGS_SCHEMA: list[Field] = [
     # The one free-text field a consumer has to PARSE, so the one that carries a
     # `pattern`. local_task.parse_offsets is deliberately junk-safe (it skips
     # unreadable entries and falls back to its own default, so a mangled value can
-    # never leave the watcher task trigger-less) — which is right for the consumer
+    # never leave the watcher task trigger-less), which is right for the consumer
     # and wrong for the editor: without this rule the Settings tab happily saves
     # "every half hour" and nothing ever says the pipeline threw it away.
     #
     # The rule is drawn exactly at what the consumer DISCARDS: every non-empty
     # comma-separated entry must be a non-negative whole number. Blank, a stray or
     # trailing comma, and surrounding spaces all pass, because parse_offsets
-    # honours each of them in full — blank means "use the built-in 30,50,70", and
-    # `30,,50` really is (30, 50). Rejecting those (the first cut did) would have
-    # locked anyone whose config already held one out of saving ANY setting, from
-    # a row the VM master switch can keep off screen.
+    # honours each of them in full: blank means "use the built-in 30,50,70", and
+    # `30,,50` is (30, 50). Rejecting those would lock anyone whose config
+    # already holds one out of saving ANY setting, from a row the VM master
+    # switch can keep off screen.
     # test_the_offsets_pattern_is_never_stricter_than_its_consumer is the guard.
     Field("local_task_offsets", "Watcher check offsets (minutes)", "str", "30,50,70",
           "VM (cloud scraper)", "config", advanced=True,
@@ -1184,7 +1178,7 @@ def is_visible(field: Field, values: Mapping[str, Any]) -> bool:
     `gemini_auth == "api_key"` would otherwise leave the Gemini API-key box on
     screen with nothing on the form governing it.
 
-    `values` may be PARTIAL — the Qt form only reads the gate widgets — so an
+    `values` may be PARTIAL (the Qt form only reads the gate widgets), so an
     absent gate key falls back to that Field's own default rather than reading as
     "hidden".
 
@@ -1199,8 +1193,8 @@ def is_visible(field: Field, values: Mapping[str, Any]) -> bool:
 
     Raises on a broken graph rather than degrading quietly, matching the posture
     of `settings_tab._set_field_visible` (KeyError) and `_connect_gate_signals`
-    (TypeError): KeyError for a gate key that is not a schema field — silently
-    hiding a field forever is the exact failure this check exists to prevent —
+    (TypeError): KeyError for a gate key that is not a schema field (silently
+    hiding a field forever is the exact failure this check exists to prevent),
     and ValueError for a cycle, which would otherwise be an infinite loop in
     front of a user. The cycle raise is value-DEPENDENT: a failing predicate
     returns False before the walk reaches the repeat, so a cyclic graph only
@@ -1351,8 +1345,8 @@ def _legacy_archive_mode(stored: Mapping[str, Any]) -> str:
     """Derive `archive_mode` from the four archive_* keys it replaced.
 
     Runs only for a config saved before that key existed (see
-    DERIVED_WHEN_ABSENT). Deliberately PURE — raw backing-store mapping in,
-    string out, no I/O — so every legacy combination is unit-testable without a
+    DERIVED_WHEN_ABSENT). Deliberately PURE (raw backing-store mapping in,
+    string out, no I/O), so every legacy combination is unit-testable without a
     filesystem.
 
     The governing invariant is NEVER PRUNE MORE AGGRESSIVELY THAN THE OLD POLICY.
@@ -1378,7 +1372,7 @@ def _legacy_archive_mode(stored: Mapping[str, Any]) -> str:
 
 
 # Keys whose value is DERIVED from older keys in the SAME backing file when the
-# key itself is absent — the migration hook `load()` consults BETWEEN the stored
+# key itself is absent: the migration hook `load()` consults BETWEEN the stored
 # value and the schema default. So a stored value always wins, a derivation only
 # ever runs for a config written before its key existed, and a fresh install
 # (empty store) still lands on the Field default. Every function here must be
@@ -1432,7 +1426,7 @@ def secret_status(targets: dict[str, Path] | None = None) -> dict[str, bool]:
     The config GUI uses this to show "configured / not set" next to each secret
     box. Note the boxes themselves DO hold the stored values (loaded masked by
     default, with a per-field Hide toggle, and revealed in plaintext when a
-    settings snapshot is loaded for review) — this helper is just the cheap
+    settings snapshot is loaded for review); this helper is just the cheap
     set/unset probe for status labels, not a no-secrets-in-widgets guarantee.
     """
     targets = _resolve_targets(targets)
@@ -1662,7 +1656,7 @@ def _atomic_write(path: Path, data: dict[str, Any]) -> None:
     The replace goes through jsonutil.replace_with_retry like every other
     atomic writer in the tree: CPython's open() on Windows does not grant
     FILE_SHARE_DELETE, so MoveFileEx fails with PermissionError for the
-    microseconds a lock-free reader holds the destination — and config.json is
+    microseconds a lock-free reader holds the destination, and config.json is
     read lock-free by jobsdata on the UI thread and by the watcher on a timer.
     The try/finally is what keeps a failed write from stranding a
     config.json.<pid>.tmp in a directory the user is told to look at.

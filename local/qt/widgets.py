@@ -1,7 +1,7 @@
 """Small shared widgets for the Qt dashboard.
 
-`CollapsibleSection` is a titled card whose body folds away on a header click —
-used to tame the long Settings form. `ColorLegend` is the thin row-color key
+`CollapsibleSection` is a titled card whose body folds away on a header click;
+the long Settings form uses it. `ColorLegend` is the thin row-color key
 shown under the tinted job tables.
 """
 from __future__ import annotations
@@ -15,10 +15,10 @@ from qt.plaintext import Label, literal
 
 
 class CollapsibleSection(QtWidgets.QFrame):
-    """A titled CARD whose body collapses/expands on a header click (restyle 3f).
+    """A titled CARD whose body collapses/expands on a header click.
 
     The card is a `QFrame[card="true"]` (panel surface, hairline border, r8).
-    The header row holds the ▾/▸ tool button (`_header` — its identity and the
+    The header row holds the ▾/▸ tool button (`_header`; its identity and the
     `is_collapsed()`/`set_collapsed()` API are test-coupled), the always-visible
     muted tagline, and a right-aligned tertiary Collapse/Expand button. A 1px
     soft divider separates the header from the body. Add the section's content
@@ -44,7 +44,7 @@ class CollapsibleSection(QtWidgets.QFrame):
         header_row.setContentsMargins(14, 8, 10, 8)
         header_row.setSpacing(10)
         self._header = QtWidgets.QToolButton()
-        # && — a literal ampersand ("Connection & paths"), not a mnemonic.
+        # && escapes the mnemonic marker, so "Connection & paths" shows its ampersand.
         self._header.setText(title.replace("&", "&&"))
         self._header.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._header.setAutoRaise(True)
@@ -85,18 +85,18 @@ class CollapsibleSection(QtWidgets.QFrame):
     def set_changed_count(self, n: int, hint: str = "") -> None:
         """Append "· N changed" to the header tagline (n == 0 removes it).
 
-        The tagline, not the body, because the header row is the part that stays
-        on screen when the section is FOLDED — which is the state that matters:
-        this repo's owner runs with 9 of the 10 sections closed, so before this a
-        collapsed section gave zero signal that it was holding unsaved edits. It
-        rides on the existing subtitle label rather than a second one so a section
-        with no tagline still gets the count, and it un-mutes itself (the
+        The count goes on the tagline because the header row is the part that
+        stays on screen when the section is FOLDED, and folded is the state that
+        matters: this repo's owner runs with 9 of the 10 sections closed, and
+        without the count a collapsed section gives no sign that it holds unsaved
+        edits. It rides on the existing subtitle label (no second label), so a
+        section with no tagline still gets the count, and it un-mutes itself (the
         `changed` property) so it stops reading as background text.
 
-        `hint` becomes the tooltip. The caller uses it to say so when some of what
-        it counted is not merely folded but off screen entirely — expanding the
-        section would then show fewer marks than the number promises, and a count
-        the user can audit and find wrong is worse than no count.
+        `hint` becomes the tooltip. The caller uses it when some of what it
+        counted is off screen entirely, beyond the fold: expanding the section
+        then shows fewer marks than the number promises, and a count the user
+        can audit and find wrong is worse than no count.
         """
         parts = [self._subtitle_text] if self._subtitle_text else []
         if n:
@@ -109,7 +109,7 @@ class CollapsibleSection(QtWidgets.QFrame):
         theme.repolish(self._subtitle)
 
     def is_collapsed(self) -> bool:
-        # isHidden() is the explicit fold flag — unlike isVisible() it does not also
+        # isHidden() is the explicit fold flag. Unlike isVisible(), it does not also
         # report False just because the form hasn't been shown yet (e.g. in tests).
         return self._body.isHidden()
 
@@ -128,8 +128,8 @@ class ElidedLabel(Label):
     """A caption that ELIDES instead of being sliced off at the layout's edge.
 
     Qt clips a QLabel that is given less width than it asked for, mid-glyph and
-    with no ellipsis: the bottom action bar's keyboard hint read a bare "Ct" at a
-    1100px window, and the Auto-apply counts caption cut inside "ready_to_sub".
+    with no ellipsis: the bottom action bar's keyboard hint reads a bare "Ct" at
+    a 1100px window, and the Auto-apply counts caption cuts inside "ready_to_sub".
     This keeps the full text as the widget's own value (and its tooltip, so it is
     still reachable) and paints an ElideRight rendering of it at the current
     width. Horizontal policy is Ignored, i.e. no minimum: the label is the thing
@@ -180,8 +180,8 @@ class SpinBox(QtWidgets.QSpinBox):
     """A QSpinBox whose number sits inset like every other input's text.
 
     The stylesheet's input padding never reaches a spin box's inner line edit
-    (Qt positions it at the frame's left edge), so the digit sat on the border
-    while a line edit beside it was inset by 8px. A text margin on that line
+    (Qt positions it at the frame's left edge), so the digit sits on the border
+    while a line edit beside it is inset by 8px. A text margin on that line
     edit puts it back in line."""
 
     def __init__(self, parent=None) -> None:
@@ -197,11 +197,11 @@ class _LegendSwatch(QtWidgets.QWidget):
     behind it, which makes the five High Score swatches five identical dark
     squares unless you put your face against the screen, so a key painted that
     way teaches nothing about the colour code it exists for. Drawing the stripe
-    too is both legible and honest: it is exactly what the row shows.
+    too makes the key legible, and it matches exactly what the row shows.
 
     Sized off `theme._current_scale` rather than a fixed 13px, and a plain
     QWidget rather than a QLabel so its minimum height is its own box and not
-    the font's line height (at 100% the QLabel wanted 19px for a 13px square).
+    the font's line height (at 100% a QLabel wants 19px for a 13px square).
     """
 
     BASE = 13          # px at 100%

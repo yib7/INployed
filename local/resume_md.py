@@ -2,12 +2,12 @@
 
 The job scorer (`score_jobs.py`) matches every posting against `resume.md`. When
 the user edits their Resume Data (the master YAML), this regenerates `resume.md`
-so the two stay in sync — **faithfully: select and re-phrase, never invent** (the
-project's résumé rule). Output mirrors the existing `resume.md` section layout.
+so the two stay in sync, under the project's résumé rule: select and re-phrase,
+never invent. Output mirrors the existing `resume.md` section layout.
 
-The Gemini call is **injected** (`llm_call`) so the build and tests never spend a
-real paid API credit — the dashboard supplies the real transport only on the
-user's explicit button click (the same posture as the VM operations).
+The Gemini call is injected (`llm_call`) so the build and tests never spend a
+paid API credit. The dashboard supplies the live transport only on the user's
+explicit button click (the same posture as the VM operations).
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from typing import Callable
 
 import yaml
 
-# resume.md lives at the repo root — exactly where score_jobs.py reads it
+# resume.md lives at the repo root, where score_jobs.py reads it
 # (OUTPUT_DIR / "resume.md", OUTPUT_DIR being the repo root). resume_md.py is in
 # local/, so the root is one level up.
 ROOT = Path(__file__).resolve().parent.parent
@@ -114,8 +114,8 @@ def claude_model_in_use() -> str | None:
 
 def _default_llm_call(system: str, user: str, model: str) -> str:
     """Real, provider-aware transport (paid). Only reached on the user's
-    runtime click — never from the build or tests, which inject a fake
-    `llm_call`. On the 'claude' provider the Gemini model id in `model` does
+    runtime click. The build and tests inject a fake `llm_call` and never
+    reach it. On the 'claude' provider the Gemini model id in `model` does
     not apply (it comes from the resume.md Settings dropdown, which only
     lists Gemini models); the flash-tier Claude model is used instead."""
     from resume_tailor import llm
@@ -138,7 +138,7 @@ def _concepts_pool(yaml_text: str) -> list[str]:
     """The master's `skills.concepts_and_methodologies` items (or [] if absent / unparsable).
 
     These are the concept keywords the scorer screens a posting against; we use them to
-    GUARANTEE they survive generation. Any parse failure is swallowed — a malformed master
+    GUARANTEE they survive generation. Any parse failure is swallowed: a malformed master
     must never break the build (the guarantee just no-ops)."""
     try:
         data = yaml.safe_load(yaml_text)
@@ -187,7 +187,7 @@ def generate_resume_md(
     if not isinstance(out, str) or not out.strip():
         raise ValueError("The model returned no resume text.")
     # De-fence first, then guarantee the concepts pool survived (append any item the model
-    # dropped) — so the scorer never under-scores a posting that screens for a concept the
+    # dropped), so the scorer never under-scores a posting that screens for a concept the
     # candidate owns.
     return _ensure_concepts(_clean(out), _concepts_pool(yaml_text))
 

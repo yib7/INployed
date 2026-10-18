@@ -133,7 +133,7 @@ def _analyze(text: str) -> Optional[tuple]:
     except (OSError, subprocess.SubprocessError, ValueError, AttributeError):
         return None
     if not isinstance(issues, list):
-        # {"issues": 5} raised TypeError out of the letter gate: a reply of the
+        # {"issues": 5} would raise TypeError out of the letter gate: a reply of the
         # wrong shape is a failed run, the same as one that is not JSON
         return None
     return tuple(str(i.get("type", "")) for i in issues if isinstance(i, dict))

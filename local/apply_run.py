@@ -221,8 +221,8 @@ def launch_profile(pw, profile_dir: Path, *, headless: bool, log=None, guard=Non
     takes the profile between two of them): it is not taken again, and the
     caller gives it back, not the context closing.
 
-    The old parallel difficulty check's leftover profile copies are deleted
-    first (`profile_lock.drop_old_check_copies`)."""
+    Profile copies an earlier version's parallel difficulty check left
+    behind are deleted first (`profile_lock.drop_old_check_copies`)."""
     log = log or logging.getLogger("apply_run")
     own = guard is None
     if own:
@@ -324,8 +324,7 @@ class NotConfigured:
 def hold_until_closed(ctx, *, sleep: Callable[[float], None] = time.sleep,
                       log: logging.Logger | None = None) -> None:
     """Keep the process alive until the user closes the window: every page
-    closed, or the context's close event (the idea the old Playwright
-    driver's parked-tab hold used)."""
+    closed, or the context's close event."""
     logger = log if log is not None else logging.getLogger("apply_run")
     closed: list[bool] = []
     try:

@@ -30,7 +30,7 @@ folder and shows the oldest request in the "Waiting for you" card at the top
 Add answer prefilled with the question (its help and options kept by the run),
 and once the answer is saved offers to Re-queue the job.
 
-Freshness: reads are lock-free (`apply_queue.load`, never quarantine=True — the
+Freshness: reads are lock-free (`apply_queue.load`, never quarantine=True: the
 panel must never rename a file a locked writer owns). A QFileSystemWatcher
 watches the queue file AND its directory, re-armed after every event because
 the atomic os.replace that lands each mutation drops the file watch (the same
@@ -40,8 +40,8 @@ events at all.
 
 Mutations never run on the UI thread here: they go through the injected
 `submit_write(fn, on_done=None, on_error=None)` callable. The main window
-routes that to its SerialTaskQueue (`self._writes`) — the PLAN's concurrency
-rule for dashboard queue writes — while standalone/tests fall back to a
+routes that to its SerialTaskQueue (`self._writes`), the PLAN's concurrency
+rule for dashboard queue writes; standalone use and tests fall back to a
 synchronous inline runner.
 """
 from __future__ import annotations
@@ -192,7 +192,7 @@ class _ShrinkableCaption(ElidedLabel):
     fixed cluster: with no stretch to claim, Ignored means Qt hands it zero width
     even on a 1920px window, so the caption disappears entirely. Preferred asks
     for the whole string; a zero minimum still lets a crowded row take it back a
-    character at a time, which is the point.
+    character at a time.
     """
 
     def __init__(self, text: str = "", parent=None) -> None:
@@ -204,7 +204,7 @@ class _ShrinkableCaption(ElidedLabel):
         """Width of the FULL caption, not of the elision currently painted.
 
         `ElidedLabel` elides by writing the shortened string into QLabel itself,
-        so QLabel's own sizeHint measures the truncated text — asking for less
+        so QLabel's own sizeHint measures the truncated text and asks for less
         room, which elides it further. Left alone it ratchets to nothing and
         never recovers when the window is widened again.
         """
@@ -296,9 +296,9 @@ FAILED_CELL = "check failed"
 
 def _updated_text(stamp: Any) -> str:
     """The Updated cell: "2026-10-18 10:11", the stored ISO stamp without its
-    "T" and seconds. The full stamp ran 19 characters of monospace and elided
+    "T" and seconds. The full stamp is 19 characters of monospace and elides
     to "2026-10-18T10:11:..." at every window width; the details panel under
-    the table still prints it whole."""
+    the table prints it whole."""
     text = str(stamp or "")
     return text[:16].replace("T", " ") if len(text) >= 16 and text[10:11] == "T" else text
 
@@ -551,7 +551,8 @@ class _DetailsPanel(QtWidgets.QFrame):
             "\n".join(f"{k}: {val}" for k, val in shown))
         self.artifacts_label.setVisible(bool(shown))
 
-        # Plain-text mirror — SAME composition the old QPlainTextEdit held.
+        # Plain-text mirror of the card: the line format toPlainText() returns
+        # and the tests read.
         lines = [f"{e.get('company', '')}: {e.get('title', '')}  [{status}]",
                  f"Apply URL: {e.get('apply_url', '')}"]
         if e.get("notes"):
@@ -566,7 +567,7 @@ class _DetailsPanel(QtWidgets.QFrame):
             lines.extend(f"  {k}: {val}" for k, val in shown)
         self._plain = "\n".join(lines)
 
-    def toPlainText(self) -> str:  # noqa: N802 (mirrors the old QPlainTextEdit API)
+    def toPlainText(self) -> str:  # noqa: N802 (QPlainTextEdit-style API name)
         return self._plain
 
 
@@ -636,9 +637,9 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         # The tab scrolls once it outgrows the window. With a pause waiting, the
-        # Jev notice and a parked job's details, it asked for 704px at 100% and
-        # 889px at 150%, and a 1100x700 window squeezed its buttons to a few
-        # pixels. Scrolling, each part keeps the height it asks for (every
+        # Jev notice and a parked job's details, it asks for 704px at 100% and
+        # 889px at 150%, and an unscrolled 1100x700 window would squeeze its
+        # buttons to a few pixels. Scrolling, each part keeps the height it asks for (every
         # question, a few queue rows, the whole Missing answers note); a window
         # with room to spare gives the spare to the queue table.
         self.scroll = QtWidgets.QScrollArea()
@@ -656,11 +657,10 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         v.addWidget(self.pause_card)
 
         # Header, two rows: what the queue is doing (chips + counts caption) over
-        # what you can do about it (master password, Start). One row held these
-        # four side by side and needed 1428px at 150%, so on anything narrower
-        # than a maximised window Qt took the deficit out of the status chips and
-        # they read "Ready to su" / "Needs revie". Splitting also groups the row
-        # by what it is rather than by what fit.
+        # what you can do about it (master password, Start). On one row these
+        # four need 1428px at 150%, so on anything narrower than a maximised
+        # window Qt takes the deficit out of the status chips and they read
+        # "Ready to su" / "Needs revie". Two rows also group the header by purpose.
         header = QtWidgets.QHBoxLayout()
         self.status_chips = ChipBar(
             [(s, STATUS_LABELS.get(s, s.capitalize()),
@@ -671,8 +671,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         # The per-status counts caption is the longest thing in this row and the
         # least informative (every count it names is already on a chip). It is
         # the one element with no minimum width, so at 1280 the status chips keep
-        # their labels ("Ready to submit", not "Ready to su") and the caption
-        # elides instead.
+        # their full labels ("Ready to submit") and the caption elides instead.
         self.counts_label = ElidedLabel("")
         self.counts_label.setProperty("muted", True)
         header.addWidget(self.counts_label, 1)
@@ -687,10 +686,10 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         ch.setSpacing(8)
         # Elides, for the same reason the counts caption does: at 125% and 150%
         # the header row wants more width than a 1100-1280px window has, and once
-        # the deficit outran the counts caption Qt took the rest out of the status
-        # chips, which read "Ready to su" / "Needs revie". This caption is the
-        # next-least informative thing in the row — the pill beside it says SET
-        # or NOT SET in words either way — so it gives ground next. `.text()`
+        # the deficit outruns the counts caption Qt takes the rest out of the
+        # status chips, which then read "Ready to su" / "Needs revie". This
+        # caption is the next-least informative thing in the row (the pill beside
+        # it says SET or NOT SET in words either way), so it gives ground next. `.text()`
         # still returns the full string, which is the cluster's accessible label.
         self.pw_label = _ShrinkableCaption("")
         self.pw_label.setProperty("muted", True)
@@ -772,7 +771,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self.table.setSelectionMode(
             QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
         # The delegate paints the cells (status tint from TAG_ROLE, pills,
-        # separators) — zebra/grid off so nothing repaints over its layers.
+        # separators); zebra/grid off so nothing repaints over its layers.
         self.table.setItemDelegate(JobRowDelegate(
             list(COLUMN_IDS), kind="apply", parent=self.table))
         self.table.setAlternatingRowColors(False)
@@ -790,8 +789,8 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         # ...except the two count columns, which size themselves. A header
         # section is the one piece of table text Qt clips instead of eliding, so
         # a column narrower than its own title silently loses the first and last
-        # letter: "Attempts" and "Missing" shipped at 70px and 60px with 18px of
-        # QSS padding inside them and read as "ttempt" and "lissin". A pinned
+        # letter: at 70px and 60px with 18px of QSS padding inside them,
+        # "Attempts" and "Missing" read as "ttempt" and "lissin". A pinned
         # width only moves that failure to another interface scale, and neither
         # column holds anything a user would want to drag wider than its own
         # heading, so let the header measure them instead.
@@ -886,7 +885,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
 
     def _rearm_watcher(self) -> None:
         """Re-point the watcher at the queue file + its dir and re-snapshot the
-        mtime signature. Called after EVERY event and refresh — the atomic
+        mtime signature. Called after EVERY event and refresh: the atomic
         os.replace each mutation lands with drops the old file watch."""
         w = self._watcher
         if w.files():
@@ -960,7 +959,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
     # ---- data ---------------------------------------------------------------------
 
     def refresh(self) -> None:
-        """Reload the queue file (lock-free — never quarantine from a reader)
+        """Reload the queue file (lock-free: never quarantine from a reader)
         and repaint the table, counts, and password state."""
         # Snapshot the poll baseline BEFORE the read: a write landing while we
         # load would otherwise hide in the load→snapshot window and (on a
@@ -1064,12 +1063,11 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             s = e.get("status")
             if s in counts:
                 counts[s] += 1
-        # The same words the chips beside this caption use, not the raw status
-        # ids: one row read "In progress 1 · Ready to submit 1 · Needs review 1"
-        # on the chips and "in_progress: 1 · ready_to_submit: 1 · needs_human: 1"
-        # in the caption immediately to their right — two vocabularies for one
-        # set of states, with the machine's spelling the more prominent of the
-        # two. Lower-cased because this is a caption, not a set of labels.
+        # The caption uses the chips' words for each status. Raw ids would put
+        # "in_progress: 1 · ready_to_submit: 1 · needs_human: 1" right beside
+        # chips reading "In progress 1 · Ready to submit 1 · Needs review 1":
+        # two vocabularies for one set of states, with the machine's spelling
+        # the more prominent of the two. Lower-cased because this is a caption.
         parts = [f"{STATUS_LABELS.get(s, s.replace('_', ' ')).lower()}: {n}"
                  for s, n in counts.items() if n]
         parts.append(f"total: {len(self._jobs)}")
@@ -1319,13 +1317,13 @@ class ApplyQueuePanel(QtWidgets.QWidget):
 
     def _queued_count(self) -> int:
         """The 'queued' status count from the same jobs list _update_counts
-        renders into counts_label — never re-parse that label's text."""
+        renders into counts_label; never re-parse that label's text."""
         return sum(1 for e in self._jobs if e.get("status") == "queued")
 
     def _batch_cap(self, queued: int) -> int:
         """N for the confirm dialog: min(queued, configured batch cap), read
-        tolerantly — any exception (bad config.json, missing master yaml,
-        etc.) falls back to just the queued count."""
+        tolerantly: any exception (bad config.json, missing master yaml,
+        etc.) falls back to the queued count."""
         try:
             cap = int(apply_queue.build_context()["batch_cap"])
             return min(queued, cap)
@@ -1384,8 +1382,8 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             # every queued job selected: `--all` keeps the command line short.
             # Past the check's cap only the first MAX_JOBS_PER_CHECK ids go, in
             # the table's order (not the queue file's): the check takes no more,
-            # and every id past it only lengthened a command line Windows caps
-            # near 32,767 characters (about 900 ids).
+            # and every id past it would only lengthen a command line Windows
+            # caps near 32,767 characters (about 900 ids).
             queued_ids = {str(e.get("job_posting_id") or "") for e in self._jobs
                           if e.get("status") == "queued"}
             cap = apply_assess.MAX_JOBS_PER_CHECK
@@ -1505,7 +1503,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         if queued == 0:
             QtWidgets.QMessageBox.information(
                 self, "Queue is empty",
-                "Queue is empty; queue jobs from the Jobs tab first.")
+                "Queue is empty. Right-click a job and pick Queue for auto-apply.")
             return
         n = self._batch_cap(queued)
         if not self._confirm_run(n):

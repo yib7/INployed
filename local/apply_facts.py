@@ -53,8 +53,8 @@ DESCRIPTIONS: dict[str, str] = {
     "address_country": "Country of the mailing address",
     "linkedin_url": "The candidate's LinkedIn profile URL",
     # the sheet's "GitHub / Portfolio" row: a form's Portfolio URL takes it
-    # (the live judge left "Portfolio URL" blank at 0.54 to 0.65 while this
-    # said "GitHub profile URL" only)
+    # (described as "GitHub profile URL" alone, the fact leaves a "Portfolio
+    # URL" field blank: the live judge mapped it at 0.54 to 0.65)
     "github_url": "The candidate's GitHub or portfolio URL",
     "website_url": "The candidate's personal website or portfolio URL",
     "work_authorized": "Whether the candidate is legally authorized to work in the "

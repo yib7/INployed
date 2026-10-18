@@ -3,7 +3,7 @@
 Everything here is pure Python / pandas with no Tk or Qt dependency, so any UI can
 build on it: loading and de-duplicating the scored run files, the per-table column
 metadata, config.json access, the local company blocklist, and the high-score
-filter. Extracted from the old `ui.py` so it survives the UI toolkit swap.
+filter. Nothing here imports a UI toolkit, so swapping the toolkit leaves it as is.
 """
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ from vm_schedule import RUN_LABELS  # noqa: E402  (shared run-label set)
 
 # Repo root: scraper.py / score_jobs.py write their outputs here (one level above
 # local/). A LOCAL "Run scraper" lands in <REPO_ROOT>/<label>/, NOT the synced
-# Drive folder the dashboard normally reads — local_run_files() bridges that.
+# Drive folder the dashboard normally reads; local_run_files() bridges that.
 REPO_ROOT = HERE.parent
 # pipeline/us_location.py is the one US-location rule the scorer filters with;
 # appended (not prepended) so no pipeline module can shadow a local/ one.
@@ -58,9 +58,8 @@ APPDATA.mkdir(parents=True, exist_ok=True)
 UI_LOCK = APPDATA / "ui.lock"
 
 
-# Human-friendly column headings (display only — the underlying column ids that
-# every filter/sort/populate path keys on are unchanged). Keeps the grid looking
-# polished instead of exposing raw snake_case field names.
+# Column headings the grid shows in place of raw snake_case field names. Display
+# only: every filter/sort/populate path keys on the underlying column ids.
 COLUMN_LABELS = {
     "score": "Score", "deep_score": "Deep", "recommendation": "Reco",
     "applicants": "Applicants", "is_seen": "Seen", "extracted_date": "Found",
@@ -79,7 +78,7 @@ LABEL_TO_COLUMN = {v: k for k, v in COLUMN_LABELS.items()}
 
 # Initial column widths @100% (JobsTab scales them by the live interface scale).
 # `recommendation` is 115 because the widest reco pill, "Don't consider", needs
-# 107px at 100% — at the old 100 it elided to "Don't consi…", which is the one
+# 107px at 100%. At 100 it elides to "Don't consi…", and the pill is the one
 # place the row's meaning is carried by text rather than by its colour.
 HIGH_SCORE_COLUMNS = [
     ("score", 50),
@@ -141,15 +140,14 @@ STATS_COLUMNS = [
 _DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
 
 # Which job ids a run file contains never changes (only its is_seen column gets
-# rewritten), so cache per path — reload_data fires on every refresh/mark-seen
+# rewritten), so cache per path: reload_data fires on every refresh/mark-seen
 # and rescanning every historical gz gets slow as runs accumulate.
 _RUN_FILE_IDS: dict[str, list[str]] = {}
 
 
-# Backwards-compatible alias: this was a jobsdata-local class (_UILock) before
-# it was extracted to locks.SingleInstance (shared with watcher.py) since the
-# two were byte-for-byte the same lock logic. Kept so local/app.py's `from
-# jobsdata import _UILock` and its test monkeypatches keep working unchanged.
+# Alias for locks.SingleInstance, the lock class this module shares with
+# watcher.py. local/app.py imports it as `from jobsdata import _UILock`, and
+# tests monkeypatch it under that name.
 _UILock = SingleInstance
 
 
@@ -184,7 +182,7 @@ def extraction_dates_from_runs(paths: list[Path]) -> dict[str, str]:
                 if ids is None:
                     try:
                         # only the ids: every other column (the description
-                        # text above all) was read and thrown away
+                        # text above all) would be read and thrown away
                         rdf = read_csv_gz(f, usecols=_is_id_column)
                     except Exception:  # noqa: BLE001 - one unreadable run file
                         # (a half-synced .gz raises EOFError) costs its dates,
@@ -206,7 +204,7 @@ def add_extracted_date(df: pd.DataFrame,
     """Ensure an 'extracted_date' column (the day a job was scraped).
 
     Priority, highest first:
-      1. a value already stored in the master (scraper.py now writes one),
+      1. a value already stored in the master (scraper.py writes one),
       2. the date parsed from the per-run filename it first appeared in,
       3. the date portion of job_posted_date (scrape filter is 'Past 24 hours',
          so the posting date is within ~a day of extraction),
@@ -217,8 +215,9 @@ def add_extracted_date(df: pd.DataFrame,
     stored date (priority 2 sits *below* the master's own value), so when every
     row already carries one we skip calling it. The provider walks + reads sibling
     run folders that may live on Google Drive File Stream, where the walk can block
-    for minutes on a cold mount -- and load_files runs on the UI thread during
-    window construction, so paying for it needlessly froze the dashboard on launch.
+    for minutes on a cold mount, and load_files runs on the UI thread during
+    window construction, so paying for it needlessly would freeze the dashboard
+    on launch.
     """
     if df.empty:
         return df
@@ -398,12 +397,12 @@ def load_files(paths: list[Path], *,
 
     Skipping a source must never stop the others loading, so a bad file is
     dropped rather than raised. But a silent drop is its own failure: a master
-    that Drive delivered half-synced, or a truncated .gz, produced an empty frame
-    indistinguishable from a fresh install, and the dashboard told a user with
-    15,700 collected jobs "No jobs yet" and offered to set them up from scratch.
+    that Drive delivered half-synced, or a truncated .gz, produces an empty frame
+    indistinguishable from a fresh install, and the dashboard would tell a user
+    with 15,700 collected jobs "No jobs yet" and offer to set them up from scratch.
     Pass `problems` to collect `(path, reason)` for every source that EXISTS and
     was skipped anyway, so the caller can say which file and why. A path that is
-    simply absent is not a problem — that is the normal first-run state.
+    simply absent is not a problem: that is the normal first-run state.
 
     A source outside the repo whose folder is gone (Google Drive not running)
     loads from its saved copy instead, with ids still mapped to the Drive path so
@@ -469,13 +468,13 @@ def _load_files(paths: list[Path], reader: Callable,
                 # an OSError or a ValueError. A narrower clause lets the exception
                 # escape the per-file skip, unwind the whole loop, and take every
                 # other source down with it, so one truncated Drive master would stop
-                # the local scrape files loading too. The entire point of this loop is
-                # that one unreadable source costs only that source.
+                # the local scrape files loading too. With the broad clause, one
+                # unreadable source costs only that source.
                 if problems is not None:
                     # errmsg.for_user, not str(exc): the caller renders this beside
                     # `Path(p).name` in the dashboard's empty panel, and an OSError
-                    # carries the offending path in its OWN message -- so the panel
-                    # carefully said "master.csv.gz" and then printed
+                    # carries the offending path in its OWN message, so str(exc)
+                    # would follow "master.csv.gz" with
                     # "[Errno 13] Permission denied: 'C:\\Users\\<name>\\...'" right
                     # after it. A locked master (Excel has it open, an AV scanner is
                     # mid-scan) is the ordinary way to see this, and the string ends
@@ -509,7 +508,7 @@ def _load_files(paths: list[Path], reader: Callable,
             _save_removed_jobs(removed - stale)
     combined = add_extracted_date(combined, lambda: extraction_dates_from_runs(paths))
     # Display-friendly applicant count (Bright Data's job_num_applicants): used
-    # to prioritize the apply window — fewer applicants = better odds.
+    # to prioritize the apply window (fewer applicants = better odds).
     if "job_num_applicants" in combined.columns:
         n = pd.to_numeric(combined["job_num_applicants"], errors="coerce")
         combined["applicants"] = [("" if pd.isna(v) else str(int(v))) for v in n]
@@ -524,9 +523,9 @@ def _load_files(paths: list[Path], reader: Callable,
 def _search_haystack(df: pd.DataFrame) -> pd.Series | str:
     """Lowercase "title company url" per row, or "" when none of those columns exist.
 
-    Built column-wise: a row-wise `.agg(" ".join, axis=1)` was about half of a
-    40K-row dashboard load. Each column is filled and stringified first, so a
-    blank, NaN or numeric cell joins exactly as the row-wise build joined it.
+    Built column-wise: a row-wise `.agg(" ".join, axis=1)` costs about half of
+    a 40K-row dashboard load. Each column is filled and stringified first, so a
+    blank, NaN or numeric cell joins exactly as a row-wise build would join it.
     """
     scols = [c for c in ("job_title", "company_name", "url") if c in df.columns]
     if not scols:
@@ -549,7 +548,7 @@ def local_run_files(base: Path | None = None) -> list[Path]:
     """Scored run files produced by a LOCAL scrape, newest-last per label.
 
     scraper.py / score_jobs.py write to the repo dir (`<root>/<label>/*_scored.csv.gz`),
-    not the synced Drive folder the dashboard reads — on the VM, rclone bridges that
+    not the synced Drive folder the dashboard reads. On the VM, rclone bridges that
     gap; locally nothing does. The dashboard merges these into its sources so a
     local "Run scraper" shows up immediately and survives a restart, with or
     without a VM/Drive setup. `load_files` dedupes by job_posting_id, so a job that
@@ -573,7 +572,7 @@ def unscored_run_csvs(base: Path | None = None) -> list[Path]:
 
     These are what an interrupted local scrape leaves behind: the scrape
     pipeline (scraper -> scorer -> refresh) runs inside the dashboard process,
-    so closing the dashboard mid-run orphans it — the collected `<label>/<run>.csv`
+    so closing the dashboard mid-run orphans it: the collected `<label>/<run>.csv`
     survives on disk but the scoring step never ran, and unscored CSVs are
     invisible to the dashboard. `MainWindow.offer_unscored_recovery()` uses this
     on startup to offer running the missed scoring step (score_jobs.py scores the
@@ -642,7 +641,7 @@ def _append_dedup_csv_locked(record: dict, jid: str, path: Path, compression) ->
     to a tempfile (dedup keep="first" on job_posting_id, columns unified with the
     new record), the new row lands at the end unless its id already exists, and
     the tempfile atomically replaces the master. Only an id set is held in
-    memory — never the master's ~90 MB of text columns."""
+    memory, never the master's ~90 MB of text columns."""
     new_df = pd.DataFrame([record])
     new_df["job_posting_id"] = new_df["job_posting_id"].astype(str)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -652,7 +651,7 @@ def _append_dedup_csv_locked(record: dict, jid: str, path: Path, compression) ->
     try:
         header = pd.read_csv(path, nrows=0, compression=compression)
     except (OSError, ValueError) as e:
-        # NEVER treat an unreadable-but-existing store as empty -- overwriting
+        # NEVER treat an unreadable-but-existing store as empty: overwriting
         # it would silently destroy the cumulative master.
         raise OSError(f"cannot append to {path.name}: existing file unreadable ({e})") from e
     unified = list(header.columns) + [c for c in new_df.columns
@@ -669,7 +668,7 @@ def _append_dedup_csv_locked(record: dict, jid: str, path: Path, compression) ->
                 wrote_header = False
                 # dtype=object + keep_default_na=False: with inferred
                 # per-chunk dtypes every manual add
-                # reformats untouched rows of the master -- score 5 comes back
+                # reformats untouched rows of the master: score 5 comes back
                 # as 5.0, and a chunk boundary can even infer two dtypes for one
                 # column. Reading every cell as the literal string keeps the
                 # rewrite byte-stable for rows we aren't changing.
@@ -708,7 +707,7 @@ def append_manual_job(record: dict, *, master_csv: Path | None = None) -> bool:
 
     Writes two places, both deduped on job_posting_id so re-adding the same job is a
     no-op:
-      1. the canonical master store (`linkedin_jobs_master.csv`) — the cumulative
+      1. the canonical master store (`linkedin_jobs_master.csv`), the cumulative
          record scraper.py / score_jobs.py own, so the manual job is a first-class
          master row marked source="manual";
       2. a dashboard-loadable `manual/manual_jobs_scored.csv.gz` (picked up by
@@ -731,7 +730,7 @@ def append_manual_job(record: dict, *, master_csv: Path | None = None) -> bool:
             _append_dedup_csv(gz_row, manual_gz, compression="gzip")
         except OSError as e:
             # The canonical master append is what matters, but a silently missing
-            # gz row makes the master and the dashboard bridge diverge — say so.
+            # gz row makes the master and the dashboard bridge diverge, so log it.
             log.warning("manual job %s: gz bridge append failed (%s); master and "
                         "manual/manual_jobs_scored.csv.gz now differ", row.get(
                             "job_posting_id", "?"), e)
@@ -829,7 +828,7 @@ def master_row(jid, *, master_csv: Path | None = None) -> dict | None:
 
     Callers sit on the UI thread, so this streams the master in bounded chunks and
     stops at the first hit (same idiom as score_jobs._load_rows_by_id) instead of
-    parsing the whole file — a full-column read of the master froze the window."""
+    parsing the whole file: a full-column read of the master freezes the window."""
     master = Path(master_csv) if master_csv is not None else MASTER_CSV
     if not master.exists():
         return None
@@ -853,7 +852,7 @@ def master_row(jid, *, master_csv: Path | None = None) -> dict | None:
 def update_manual_job(record: dict, *, old_id=None, master_csv: Path | None = None) -> bool:
     """Field-fix an existing manual job: drop the old row(s) everywhere, then
     re-append the edited record (since `_append_dedup_csv` keeps 'first'). Editing
-    also un-removes a previously-deleted id. Does NOT re-score/re-tailor — those stay
+    also un-removes a previously-deleted id. Does NOT re-score/re-tailor; those stay
     on the existing buttons. Returns append result (True when it lands fresh)."""
     master = Path(master_csv) if master_csv is not None else MASTER_CSV
     drop = {str(d).strip() for d in (old_id, record.get("job_posting_id")) if str(d or "").strip()}
@@ -883,7 +882,7 @@ def _save_cfg(updates: dict) -> None:
     SerialTaskQueue while every Settings save, column-hide and layout tweak
     runs on the UI thread, and the watcher writes gdrive_root from another
     process entirely. A lock-free read-modify-write there reverts whichever
-    writer read first — a deleted job comes back, or a page of settings does.
+    writer read first: a deleted job comes back, or a page of settings does.
     """
     try:
         update_json_locked(_cfg_path(), updates)
@@ -1053,7 +1052,7 @@ def save_project_layout(layout: dict) -> None:
 
 
 def load_verbatim_blocks() -> dict:
-    """{block_name: [bullet, ...]} from config.json — blocks the user marked
+    """{block_name: [bullet, ...]} from config.json: blocks the user marked
     'don't tailor; use my exact bullets'. A non-empty list means that block renders
     verbatim (the résumé engine bypasses the LLM for it). {} when absent/bad."""
     val = _load_cfg().get("verbatim_blocks")
@@ -1250,7 +1249,7 @@ def _repost_keys_pandas(df: pd.DataFrame) -> pd.Series:
     of a per-row Python call. Still loops in Python under the hood per string
     op, so it is a partial win (~90ms on a 30k-row frame vs. ~130ms per-row);
     `_repost_keys_pyarrow` below is the ~30ms version used when pyarrow is
-    importable. Must stay byte-for-byte equal to `repost_key` row by row --
+    importable. Must stay byte-for-byte equal to `repost_key` row by row,
     pinned by test_repost_keys_vectorized_matches_scalar_row_by_row and
     test_repost_keys_pandas_fallback_matches_scalar_row_by_row."""
     title = _repost_col(df, "job_title").fillna("").astype(str).str.normalize("NFKC")
@@ -1305,12 +1304,12 @@ def _repost_keys_pyarrow(df: pd.DataFrame) -> pd.Series:
 
 
 def _repost_keys_vectorized(df: pd.DataFrame) -> pd.Series:
-    """`repost_key`, run over a whole frame at once via a single batched call
-    -- pinned to match `repost_key` row by row by
+    """`repost_key`, run over a whole frame at once via a single batched call,
+    pinned to match `repost_key` row by row by
     test_repost_keys_vectorized_matches_scalar_row_by_row. Prefers pyarrow's
     compiled string kernels (`_repost_keys_pyarrow`) when pyarrow is
     importable, falling back to pandas' own `.str` accessor
-    (`_repost_keys_pandas`) when it is not -- jobsdata.py is also imported by
+    (`_repost_keys_pandas`) when it is not: jobsdata.py is also imported by
     the VM pipeline, where pyarrow is not a declared dependency."""
     if pa is not None:
         return _repost_keys_pyarrow(df)
@@ -1325,15 +1324,15 @@ def _id_sort_rank(ids: pd.Series) -> pd.Series:
 
 
 def _pick_repost_winners(candidates: pd.DataFrame) -> pd.Index:
-    """Vectorised replacement for a per-group Python loop: among rows sharing
-    a `key`, keep the one with the newest `extracted` (NaT always loses to a
-    real date; if a whole group is NaT the id tie-break still applies), ties
-    broken by the higher `id` (`_id_sort_rank`, digit-aware). A `groupby("key")`
-    + a Python-level winner pick per group was the actual cost on a realistic
-    30k-row frame with many small duplicate groups (~700ms, dwarfing the
-    string key computation): the cost sat entirely in pandas' per-group
-    iteration overhead. `sort_values` + `drop_duplicates` does the same
-    ranking as one pass over the whole frame with no Python-level loop.
+    """Vectorised winner pick: among rows sharing a `key`, keep the one with
+    the newest `extracted` (NaT always loses to a parsed date; if a whole group
+    is NaT the id tie-break still applies), ties broken by the higher `id`
+    (`_id_sort_rank`, digit-aware). A `groupby("key")` + a Python-level winner
+    pick per group costs ~700ms on a realistic 30k-row frame with many small
+    duplicate groups, dwarfing the string key computation, and all of it is
+    pandas' per-group iteration overhead. `sort_values` + `drop_duplicates`
+    does the same ranking as one pass over the whole frame with no
+    Python-level loop.
     """
     ranked = candidates.assign(__id_rank=_id_sort_rank(candidates["id"]))
     ordered = ranked.sort_values(
@@ -1347,7 +1346,7 @@ def _mixed_timestamps(values: pd.Series) -> pd.Series:
     """`values` (ISO strings of any shape: bare dates, naive timestamps, and
     timestamps carrying an offset) as tz-naive UTC datetimes, NaT where unparseable.
 
-    The real seen.db holds both `2026-07-27 14:03:11` and
+    A live seen.db holds both `2026-07-27 14:03:11` and
     `2026-09-19T20:11:04+00:00` in one column, and `pd.to_datetime(format=
     "mixed")` alone raises "Mixed timezones detected" on that (the live data
     mixes the shapes; a synthetic fixture with one shape does not show it). `utc=True`
@@ -1369,11 +1368,11 @@ def blocked_repost_keys(df: pd.DataFrame, marked_at: dict[str, str], window_days
     """Repost keys a mark blocks, over EVERY row of `df` whatever its score.
 
     A job marked seen or applied still blocks a higher-scored repost of
-    itself, so this always runs against the full frame -- see
+    itself, so this always runs against the full frame. See
     `filter_high_unseen_with_count`, which passes its own full input frame
     here as `suppress_reposts`'s `key_source`, before any `min_score` narrowing.
     `marked_at` is `job_posting_id -> ISO timestamp` (SeenRegistry.marked_at_all(),
-    a single-table scan over the whole `seen` table -- a few thousand rows in
+    a single-table scan over the whole `seen` table: a few thousand rows in
     practice, cheap on every refresh). Both that timestamp and `extracted_date`
     below go through `_mixed_timestamps`: `add_extracted_date` merges a bare
     date and a full ISO timestamp into the same column, seen.db mixes naive and
@@ -1388,7 +1387,7 @@ def blocked_repost_keys(df: pd.DataFrame, marked_at: dict[str, str], window_days
     # Only a MARKED row can ever block anything, and marked_at is typically a
     # small fraction of a full loaded frame (thousands of historic marks
     # against tens of thousands of rows), so computing repost keys for the
-    # unmarked majority would be pure waste -- narrow to marked rows first.
+    # unmarked majority would be pure waste. Narrow to marked rows first.
     marked_mask = ids.isin(marked_at.keys())
     if not marked_mask.any():
         return set()
@@ -1409,7 +1408,7 @@ def suppress_reposts(df: pd.DataFrame, marked_at: dict[str, str], window_days: i
     """Hide an unseen repost of a job already marked seen or applied recently.
 
     `key_source` supplies the rows `blocked_repost_keys` reads to decide which
-    keys a mark blocks -- the FULL frame, whatever its score -- when that
+    keys a mark blocks (the FULL frame, whatever its score) when that
     differs from `df`, the rows actually filtered and collapsed here (which the
     caller may already have narrowed by score). Defaults to `df` itself, so a
     caller working with one frame throughout needs nothing extra.
@@ -1522,7 +1521,7 @@ def filter_high_unseen_with_count(
     if marked_at is not None and window_days > 0:
         # key_source=df (the FULL frame, every score) so a job marked seen or
         # applied at ANY score still blocks a higher-scored repost of itself;
-        # `df` here (score-filtered, seen included) is only what gets actually
+        # `df` here (score-filtered, seen included) is only what gets
         # filtered/collapsed, then narrowed to unseen once suppression has run.
         scored = df.loc[score_mask].copy()
         try:
@@ -1597,8 +1596,8 @@ def filter_and_sort(base: pd.DataFrame, search: str, minscore: str, day: str,
     search_column: a column id to restrict the text search to; None/"All" = all.
     easy: "All" / "Easy Apply" / "Not Easy Apply" (legacy bools normalize to
     True -> "Easy Apply", False -> "All"). A NaN/blank is_easy_apply cell counts
-    as NOT easy apply — it survives "Not Easy Apply" and never matches "Easy Apply"."""
-    if isinstance(easy, bool):                     # pre-combo callers
+    as NOT easy apply: it survives "Not Easy Apply" and never matches "Easy Apply"."""
+    if isinstance(easy, bool):                     # legacy bool callers
         easy = "Easy Apply" if easy else "All"
     view = base
     if view.empty:
@@ -1650,12 +1649,12 @@ _ANY_TAG_RE = re.compile(r"<[^>]+>")
 # list. Plenty of postings give every bullet its OWN `<ul>`, and there the
 # `</ul>` and the next `<ul>` each break the line, so the blank line survives.
 # Closing it needs the RENDERED text: a blank run whose neighbours are both
-# bullet lines. A gap next to a paragraph is left alone — that is what sets a
-# list off from the prose around it.
+# bullet lines. A gap next to a paragraph is left alone, since that is what sets
+# a list off from the prose around it.
 _BULLET_GAP_RE = re.compile(r"^(• .*)\n\n+(?=• )", re.M)
 # An `<li>` whose content is wrapped in a block tag (`<li><p>text</p></li>`)
-# breaks the line right after the marker, orphaning it from its OWN text — 41
-# of the 59 stray markers in the master. Rejoin those; only then is a marker
+# breaks the line right after the marker, orphaning it from its OWN text (41
+# of the 59 stray markers in the master). Rejoin those; only then is a marker
 # with nothing after it an EMPTY `<li>`, which drops out entirely.
 # The gap is the tell: a block tag between the marker and the next text emits a
 # second newline, so an ADJACENT line is the item's own content, and only a
@@ -1663,14 +1662,14 @@ _BULLET_GAP_RE = re.compile(r"^(• .*)\n\n+(?=• )", re.M)
 _ORPHAN_BULLET_RE = re.compile(r"^•\n(?=[^\s•])", re.M)
 _BARE_BULLET_RE = re.compile(r"^•(?:\n|$)", re.M)
 
-# Elements that carry no posting prose — their TEXT goes with the tags. LinkedIn
+# Elements that carry no posting prose: their TEXT goes with the tags. LinkedIn
 # wraps every posting in `<section class="show-more-less-html">` whose "Show
 # more" / "Show less" buttons otherwise land at the bottom of the description.
 # Each alternative spans an opener to its OWN closing tag, and the span may not
 # contain another opener of the same name: `(?<!/)` rejects a self-closing
 # `<icon/>` and `(?!<tag\b)` stops an unclosed opener from reaching a later
 # sibling's closer. Both cases fall through to the `_ANY_TAG_RE` strip, which
-# leaks a word of chrome at worst — the alternative is silently deleting the
+# leaks a word of chrome at worst; the alternative would silently delete the
 # prose in between, which the reader cannot even notice.
 _DROP_ELEMENTS = ("script", "style", "button", "icon", "svg", "nav", "header",
                   "footer", "noscript", "form", "select")
@@ -1709,7 +1708,7 @@ def html_to_text(raw: str) -> str:
     text = html.unescape(text)
     # Strip both ends: HTML source indentation otherwise leaks through as a
     # gutter on every line the posting's markup happened to indent. A `<pre>`
-    # block would lose its own indentation with it — postings do not use one.
+    # block would lose its own indentation with it; postings do not use one.
     text = "\n".join(line.strip() for line in text.splitlines())
     # Now that the lines are final: reunite a marker with its own text, then
     # drop the markers that turn out to have no text at all.
@@ -1727,7 +1726,7 @@ def html_to_text(raw: str) -> str:
 # so `(?<!\\)` on every marker below earns its keep: it stops two escaped
 # literals ("full\_time ... part\_time") from pairing up as a fake emphasis
 # span once the backslash is ignored, which would corrupt everything between
-# them. Order matters too -- list markers are consumed BEFORE emphasis,
+# them. Order matters too: list markers are consumed BEFORE emphasis,
 # because markdownify's default top-level bullet is "*", the same character
 # `*em*` uses, and a bullet at line-start must not go hunting for a partner
 # "*" later in its own line ("* Requires *Python* experience").
@@ -1751,8 +1750,8 @@ def md_to_text(md: str) -> str:
     `#`-headings become their own line, with a blank line before them even
     when the source had none (marker stripped); `**bold**` / `__bold__` /
     `*em*` / `_em_` markers are stripped, keeping the words; `- ` / `* ` /
-    `+ ` list items become `• ` (a numbered list keeps its numbers -- it is
-    already the plain text a reader wants); escaped punctuation (`\\-`, `\\.`,
+    `+ ` list items become `• ` (a numbered list keeps its numbers, since it
+    is already the plain text a reader wants); escaped punctuation (`\\-`, `\\.`,
     `\\*`, ...) is unescaped; three or more newlines collapse to two; lines
     are stripped.
 
@@ -1813,7 +1812,7 @@ def job_detail_fields(row, snapshot: dict | None = None) -> dict:
         return {}
 
     posted = cell("job_posted_date").strip()
-    # Richest JD text first, summary last — same precedence (and same 40-char
+    # Richest JD text first, summary last: the same precedence (and same 40-char
     # bar) as resume_tailor.run._job_description_text: LinkedIn's job_summary is
     # frequently a truncated stub, so preferring it hides most of the posting.
     # job_description_md (score_jobs.py's markdownify output) is markdown, so

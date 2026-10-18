@@ -1,6 +1,6 @@
 """Shared headless-CLI transport for the optional Claude provider.
 
-In pipeline/ beside score_jobs.py, which lazy-imports it. NOT copied to the VM -- every
+In pipeline/ beside score_jobs.py, which lazy-imports it. NOT copied to the VM, so every
 import must stay behind a `provider == "claude"` check (the VM scores with
 Gemini unconditionally; see keypool.py / score_jobs.py). Consumers:
 
@@ -12,8 +12,8 @@ Gemini unconditionally; see keypool.py / score_jobs.py). Consumers:
 
 Caching note: the `claude` CLI marks a prompt-cache breakpoint on the system
 prompt (`--system-prompt-file`). Callers MUST put stable, byte-identical-across-calls
-content in `system` and volatile per-item content in `user` (stdin) --
-putting per-item data in the system prompt defeats caching and can even
+content in `system` and volatile per-item content in `user` (stdin).
+Putting per-item data in the system prompt defeats caching and can even
 increase cost (a changed system prompt is a fresh, uncached breakpoint).
 
 Stdlib only: no `google.genai`, no Qt, no third-party imports. This module
@@ -63,10 +63,10 @@ def _child_env() -> dict:
 class ClaudeCLIError(RuntimeError):
     """Raised for any failed `claude` CLI invocation.
 
-    `.kind` is one of: 'not_found' (CLI missing from PATH -- never retriable),
+    `.kind` is one of: 'not_found' (CLI missing from PATH, never retriable),
     'timeout' (subprocess exceeded timeout_s), 'rate_limit' (usage/rate limit
     text detected in stderr or the envelope), 'bad_json' (stdout wasn't a
-    parseable JSON envelope, or -- for extract_json_text callers -- the
+    parseable JSON envelope, or, for extract_json_text callers, the
     envelope's `result` text wasn't extractable JSON), 'cli_too_old' (the
     installed CLI refuses the model until it is updated; run_claude has already
     tried the model's MODEL_FALLBACKS entry, so never retriable),
@@ -234,7 +234,7 @@ def _refusal_kind(text: str | None, model: str) -> str | None:
 
 
 def _error_kind(text: str, model: str = "") -> str:
-    # Signed out comes first: 2.1.283 signed out also printed the
+    # Signed out comes first: 2.1.283 signed out also prints the
     # unrecognized_model marker, and swapping to a fallback cannot help.
     if is_signed_out_message(text):
         return "signed_out"
@@ -303,7 +303,7 @@ def run_claude(
     effort: str | None = None,
 ) -> CLIResult:
     """One `claude -p` invocation, no retry, except the one model fallback
-    (retry policy belongs to each caller -- `_call_claude` in llm.py,
+    (retry policy belongs to each caller: `_call_claude` in llm.py,
     `ClaudePool.generate` here).
 
     `effort` rides `--effort` (low / medium / high / xhigh / max); None or ''
@@ -314,7 +314,7 @@ def run_claude(
     Prompt rides stdin (`user`), the JSON envelope comes back on stdout.
     `--system-prompt-file` fully overrides the CLI's default system prompt (no
     repo CLAUDE.md / skills leak in) and is ALSO where the CLI marks its
-    prompt-cache breakpoint -- see the module docstring's caching note.
+    prompt-cache breakpoint; see the module docstring's caching note.
     Runs in a temp cwd so no project files are visible to the child process.
 
     The model fallback: when the installed CLI refuses `model` (a kind in
@@ -372,9 +372,9 @@ def _run_once(
     sys_path = _write_system_prompt(sys_prompt)
     # A bare completion: no built-in tools (WebSearch alone, and only on request),
     # no skills and no MCP servers. With the CLI's full toolset the cover letter's
-    # repair prompt, which credits its rules to "avoid-ai-writing v3.18.0", made
+    # repair prompt, which credits its rules to "avoid-ai-writing v3.18.0", makes
     # the model run the user's installed skill of that name, and the skill's audit
-    # text reached the letter. The tool schemas also cost ~30k
+    # text reaches the letter. The tool schemas also cost ~30k
     # cache-write tokens on every call. An empty `--tools` argument survives the
     # claude.CMD shim.
     argv = [
@@ -585,7 +585,7 @@ class ClaudePool:
     via `getattr` so hand-built fakes (SimpleNamespace) work in tests.
 
     Warm-up serialization: the FIRST `generate` call for a given
-    `(model, hash(system))` key runs alone -- concurrent calls sharing that
+    `(model, hash(system))` key runs alone: concurrent calls sharing that
     key block behind an `asyncio.Event` until the first call completes
     (success OR failure), then proceed at full concurrency. This lets the
     CLI's cold-start/cache-creation cost happen once per (model, system)
@@ -620,7 +620,7 @@ class ClaudePool:
         waits for the first call to finish, then returns False.
 
         Synchronous up to the first `await`, so two calls racing on the same
-        key can't both see "no event yet" -- whichever runs first in the
+        key can't both see "no event yet": whichever runs first in the
         event loop claims the slot before yielding control.
         """
         if key in self._warmed:
@@ -642,7 +642,7 @@ class ClaudePool:
         # `model` mirrors KeyPool.generate, which takes a single id OR a ranked
         # list of interchangeable ones. There is nothing to rank here: the list
         # exists to spend Gemini's per-(key, model) free allowance, and Claude
-        # has no such allowance to multiply -- every model is billed the same
+        # has no such allowance to multiply: every model is billed the same
         # subscription. So take the first and ignore the rest, rather than let a
         # list reach `--model` and the (model, system) warmup key as a repr.
         if isinstance(model, (list, tuple)):
@@ -674,7 +674,7 @@ class ClaudePool:
                         run_claude, system, contents, model,
                         json_mode=json_mode, timeout_s=self._timeout_s,
                     )
-                # The CLI call happened and burned real subscription tokens --
+                # The CLI call happened and used subscription tokens, so
                 # count them NOW, before JSON extraction can fail, so a
                 # bad_json attempt's tokens aren't dropped from stats().
                 self._cache_read_tokens += res.cache_read_tokens
@@ -687,7 +687,7 @@ class ClaudePool:
                     raise  # never retriable (run_claude already tried the fallback)
                 if exc.kind == "rate_limit":
                     if rl >= self.RATE_LIMIT_RETRIES:
-                        raise  # backoff budget spent -- no transient attempts
+                        raise  # backoff budget spent: no transient attempts
                     rl += 1
                     await asyncio.sleep(
                         min(30.0 * 2 ** (rl - 1), 300.0) + random.uniform(0, 5)

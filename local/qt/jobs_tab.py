@@ -1,11 +1,12 @@
 """A job-list tab: a filter bar over a sortable, virtualized QTableView.
 
 Shared by High Score, All Jobs, and Tracker (different column sets + persistence
-keys). Filtering reuses `jobsdata.filter_and_sort` for exact parity with the old
-dashboard; the table sorts on a header click via a numeric-aware proxy. Columns
-can be hidden via a checkbox dialog (persisted to config.json). Row actions —
-open URL, set status, block company, selection -> preview — are injected callbacks
-so the widget is decoupled and testable without the full app.
+keys). Filtering goes through `jobsdata.filter_and_sort`, the shared
+toolkit-agnostic filter; a header click sorts the frame in pandas, numeric-aware
+(`_sorted_view`). Columns can be hidden via a checkbox dialog (persisted to
+config.json). Row actions (open URL, set status, block company, selection ->
+preview) are injected callbacks so the widget is decoupled and testable without
+the full app.
 """
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ from seen_db import APP_STATUSES
 from vm_schedule import RUN_LABELS
 
 # Narrowest Title column worth showing, @100% (see `_update_stretch`). Roughly
-# "Senior Analytics Engineer" — under this the column stops being readable and
+# "Senior Analytics Engineer"; under this the column stops being readable and
 # the table is better off scrolling.
 TITLE_FLOOR_PX = 170
 
@@ -33,15 +34,14 @@ class SortAwareHeader(QtWidgets.QHeaderView):
 
     Under the stylesheet, Qt paints a section's sort indicator at the section's
     right edge and lays the label out over the FULL content rect, so a
-    right-aligned label (Applicants, Days, every count column) had the arrow
+    right-aligned label (Applicants, Days, every count column) gets the arrow
     drawn across its last letter at any width, and a centred one whenever the
-    column was near its floor. Declaring the arrow as a QSS subcontrol makes Qt
+    column is near its floor. Declaring the arrow as a QSS subcontrol makes Qt
     clip the label instead of moving it, which is worse. So the sorted section
     is painted in two passes: the section with its arrow and no text through
     the style, then the label by hand in the rect that stops short of the
     arrow, with the stylesheet's own colours (MUTED, TEXT on hover), font
-    weight and the model's alignment. Every other section is painted by Qt as
-    before.
+    weight and the model's alignment. Qt paints every other section itself.
     """
 
     def paintSection(self, painter, rect, logicalIndex):  # noqa: N802 - Qt override
@@ -106,20 +106,20 @@ class JobsTab(QtWidgets.QWidget):
         self._on_delete = on_delete or (lambda ids: None)
         self._on_edit = on_edit or (lambda jid: None)
         # "Queue for auto-apply (N)" menu item: fires with the FULL multi-selection.
-        # None (the default) means unwired — no menu item appears at all.
+        # None (the default) means unwired: no menu item appears at all.
         self._on_queue_apply = on_queue_apply
         # Cover-letter menu item: `cover_state(jid)` -> "missing" (offer Generate) /
-        # "exists" (offer Regenerate) / None (no item). Both default unwired — other
+        # "exists" (offer Regenerate) / None (no item). Both default unwired; other
         # callers construct JobsTab without them and see no menu item at all.
         self._on_generate_cover = on_generate_cover or (lambda jid: None)
         self._cover_state = cover_state or (lambda jid: None)
         # "Ask AI about this job": a chat scoped to ONE job, so it appears only on a
-        # single-row selection. None (the default) means unwired — no menu item.
+        # single-row selection. None (the default) means unwired: no menu item.
         self._on_ask_ai = on_ask_ai
         # Intersected with col_ids, not taken verbatim: a persisted id for a column
-        # that no longer exists would never be cleared (line 432 re-saves the set as
-        # is), and once len(_hidden) >= len(col_ids) the guard in set_column_hidden is
-        # permanently true -- the Columns dialog goes silently inert.
+        # that no longer exists would never be cleared (set_column_hidden re-saves the
+        # set as is), and once len(_hidden) >= len(col_ids) the guard in
+        # set_column_hidden is permanently true: the Columns dialog goes silently inert.
         _saved = (hidden_columns or {}).get(table_key, [])
         self._hidden: set[str] = {c for c in _saved if c in self.col_ids}
         self._save_hidden = save_hidden or (lambda key, hidden: None)
@@ -155,8 +155,8 @@ class JobsTab(QtWidgets.QWidget):
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._debounced_filter)
         # No "Search:" caption: the placeholder says what the box searches, and
-        # the caption's width was what pushed the Tracker bar (five extra
-        # buttons) past a 1280px window at 150% interface size.
+        # the caption's width would push the Tracker bar (five extra buttons)
+        # past a 1280px window at 150% interface size.
         self.search.setAccessibleName("Search title or company")
         bar.addWidget(self.search, 1)
 
@@ -170,7 +170,7 @@ class JobsTab(QtWidgets.QWidget):
 
         # The five discovery filters (Min score / Day / Time / Reco / Easy Apply)
         # live in a single "Filters" popup so the bar stays readable. The widgets
-        # and their signals are unchanged — only their parent moves into the popup.
+        # keep their own signals; the popup is only their parent.
         self.minscore = QtWidgets.QComboBox()
         self.minscore.setAccessibleName("Minimum score")
         self.minscore.addItems(["Any", "1", "2", "3", "4", "5"])
@@ -214,7 +214,7 @@ class JobsTab(QtWidgets.QWidget):
         self.table.setSelectionMode(
             QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
         # The delegate owns ALL cell painting (category tint + selection lines +
-        # stripes + badges/pills) — zebra and the native grid are off so nothing
+        # stripes + badges/pills); zebra and the native grid are off so nothing
         # paints over its layers; hover events reach it via WA_Hover.
         self.table.setItemDelegate(JobRowDelegate(
             self.col_ids,
@@ -232,8 +232,8 @@ class JobsTab(QtWidgets.QWidget):
         self.table.doubleClicked.connect(self._on_double_click)
         self.table.clicked.connect(self._on_click)
         self.table.selectionModel().selectionChanged.connect(self._on_select)
-        # Header-click sorting is driven by US, in pandas, not by the proxy's
-        # comparison sort. QSortFilterProxyModel.sort() calls back into data()
+        # Header-click sorting runs in pandas (`_sorted_view`); the proxy never
+        # sorts. QSortFilterProxyModel.sort() calls back into data()
         # once per comparison, so an n-log-n sort of a tens-of-thousands-row
         # master is ~600k Python round-trips: measured 1.8 s (score) to 3.5 s
         # (job_title) at 40k rows, all of it a frozen UI on the All Jobs tab.
@@ -304,7 +304,7 @@ class JobsTab(QtWidgets.QWidget):
         self._filters_popup.show()
 
     def _active_filter_count(self) -> int:
-        """How many filters are set away from their default — the five discovery
+        """How many filters are set away from their default: the five discovery
         filters plus any extra rows added via add_filter_row (e.g. Follow-up due)."""
         n = int(self.minscore.currentText() != "Any") + \
             int(self.day.currentText() != "All") + \
@@ -329,8 +329,8 @@ class JobsTab(QtWidgets.QWidget):
 
         A header section is the one piece of table text Qt CLIPS instead of
         eliding, and it centres what it clips, so an overrun eats both ends:
-        "Score" rendered as "core" in a 38px column at 75%. Applied as a floor
-        only -- a column already wide enough is left exactly as it is.
+        "Score" renders as "core" in a 38px column at 75%. Applied as a floor
+        only: a column already wide enough is left exactly as it is.
         """
         model = self.table.model()
         if model is None:
@@ -346,10 +346,10 @@ class JobsTab(QtWidgets.QWidget):
         """Initial widths, scaled by the live interface scale.
 
         The constants in `jobsdata` are @100%. The cells are painted by
-        `JobRowDelegate`, whose text and pills DO scale, so a user running at
-        125% or 150% opened every table with each column a third too narrow and
-        read "Don't consi…" / "2026-07-1…" everywhere. Columns stay Interactive:
-        this only sets where they start."""
+        `JobRowDelegate`, whose text and pills DO scale, so unscaled widths
+        would open every table at 125% or 150% with each column a third too
+        narrow, reading "Don't consi…" / "2026-07-1…" everywhere. Columns stay
+        Interactive: this only sets where they start."""
         scale = theme._current_scale
         for i, w in enumerate(widths):
             self.table.setColumnWidth(i, max(round(w * scale),
@@ -359,11 +359,11 @@ class JobsTab(QtWidgets.QWidget):
         """Re-scale the live column widths by `factor` after an interface-scale
         change, then re-decide the Title stretch.
 
-        `_set_column_widths` only runs at construction, so before this existed a
-        user who dragged the interface-size slider got bigger type inside columns
-        still sized for the old scale: at 150% the High Score header read "cor"
-        and "licants" (a header section is the one piece of table text Qt clips
-        instead of eliding) and the Found column showed "2026-0…". Multiplying
+        `_set_column_widths` only runs at construction, so without this,
+        dragging the interface-size slider puts bigger type inside columns still
+        sized for the old scale: at 150% the High Score header reads "cor" and
+        "licants" (a header section is the one piece of table text Qt clips
+        instead of eliding) and the Found column shows "2026-0…". Multiplying
         the CURRENT widths rather than re-applying the defaults is what keeps a
         column the user dragged wider proportionally wider afterwards.
         """
@@ -382,15 +382,15 @@ class JobsTab(QtWidgets.QWidget):
             self._legend.rescale()
 
     def _update_stretch(self) -> None:
-        """Spend the table's spare width on Title, not on the trailing Link
-        column. Link holds one fixed-width "Open" link, so stretching the last
-        section (Qt's default) left a dead gutter hundreds of pixels wide on a
-        normal window while job titles truncated. Falls back to the default when
-        Title is hidden.
+        """Spend the table's spare width on Title. The trailing Link column
+        holds one fixed-width "Open" link, so stretching the last section (Qt's
+        default) leaves a dead gutter hundreds of pixels wide on a normal window
+        while job titles truncate. Falls back to the default when Title is
+        hidden.
 
         A Stretch section has no floor: once the other columns no longer fit
         (150% interface size on a 1600px window, or a wide All Jobs set), Qt
-        shrank Title to a bare "…" — the one column the row is read by. So the
+        shrinks Title to a bare "…", and Title is the column the row is read by. So the
         stretch is dropped for a fixed floor width whenever the spare space falls
         under it, which lets the table scroll horizontally instead."""
         hh = self.table.horizontalHeader()
@@ -415,9 +415,9 @@ class JobsTab(QtWidgets.QWidget):
     def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt naming)
         # Re-decide stretch-vs-floor for Title whenever the table's viewport
         # changes width: widening the window past the point where Title fits must
-        # hand the spare width back to it. The filter is on the VIEWPORT, not on
-        # this widget — JobsTab.resizeEvent runs before the layout has resized
-        # the table, so it would decide against a stale width and stick.
+        # hand the spare width back to it. The filter sits on the VIEWPORT
+        # because JobsTab.resizeEvent runs before the layout has resized the
+        # table, so it would decide against a stale width and stick.
         if (obj is self.table.viewport()
                 and event.type() == QtCore.QEvent.Type.Resize
                 and not self._in_stretch):
@@ -439,7 +439,7 @@ class JobsTab(QtWidgets.QWidget):
 
     def set_empty_widget(self, widget) -> None:
         """Show `widget` (e.g. a first-run hint) in place of the table whenever
-        there is NO underlying data. Filters hiding every row do not count — the
+        there is NO underlying data. Filters hiding every row do not count: the
         table (with its '0 of N shown') stays visible then."""
         self._empty_widget = widget
         self.layout().addWidget(widget, 1)
@@ -471,7 +471,7 @@ class JobsTab(QtWidgets.QWidget):
         """Toggle asc/desc on the clicked column and re-sort in pandas.
 
         Cycles asc -> desc -> unsorted (back to filter_and_sort's default order),
-        matching what the proxy's own toggle used to feel like plus a way out."""
+        so the third click on a column is the way out."""
         if section == self._sort_col:
             if self._sort_order == QtCore.Qt.SortOrder.AscendingOrder:
                 self._sort_order = QtCore.Qt.SortOrder.DescendingOrder
@@ -570,7 +570,7 @@ class JobsTab(QtWidgets.QWidget):
         """Hide/show one column; never lets every column be hidden (blank table).
 
         Returns False when the request was refused, so a caller driving this from a
-        checkbox can put the checkbox back: silently ignoring the toggle used to
+        checkbox can put the checkbox back: silently ignoring the toggle would
         leave an unchecked box beside a still-visible column."""
         target = set(self._hidden)
         target.discard(cid)
@@ -638,8 +638,8 @@ class JobsTab(QtWidgets.QWidget):
             self._on_open_url(jid)
 
     def _on_click(self, index) -> None:
-        """A single click on the url column ("Open ↗") opens the job — the raw
-        URL is never shown; double-click anywhere still opens it too."""
+        """A single click on the url column ("Open ↗") opens the job. The raw
+        URL is never shown; double-click anywhere opens it too."""
         src = self.proxy.mapToSource(index)
         if self.model.column_id(src.column()) != "url":
             return
@@ -681,7 +681,7 @@ class JobsTab(QtWidgets.QWidget):
         open_act = menu.addAction("Open in browser")
         status_menu = menu.addMenu("Set status")
         status_acts = {status_menu.addAction(st): st for st in APP_STATUSES}
-        # Batch auto-apply queueing : only when the main window wired the
+        # Batch auto-apply queueing: only when the main window wired the
         # callback; fires with every selected id, not just the clicked row.
         queue_act = None
         if self._on_queue_apply is not None:
@@ -730,7 +730,7 @@ class JobsTab(QtWidgets.QWidget):
 def legend_items_for(table_key: str):
     """The row-color key for a tab, or None for a tab that isn't tinted.
 
-    - "all": None — a plain list to just scan every job.
+    - "all": None, a plain list to scan every job.
     - "tracker": application status + follow-up state.
     - "high"/unseen (default): recommendation + tailored-resume.
     """

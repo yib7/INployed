@@ -16,7 +16,7 @@ from pathlib import Path
 
 # The dashboard runs under pythonw with no console, so a print() from this
 # module goes nowhere. Both notices below are things the user is meant to be
-# able to find after the fact, which means the log, not stdout.
+# able to find after the fact, so they go to the log.
 log = logging.getLogger(__name__)
 
 # Open job links in Chrome under this Google account's profile (falls back to the
@@ -95,7 +95,7 @@ def open_in_chrome(url: str) -> None:
     running Chrome via CLI; the resolved-Default case is the one that matters here.
 
     `url` originates from scraped job data, so guard the subprocess: (1) only open
-    http(s) URLs — never file:/javascript:/etc. — and (2) pass the URL after a `--`
+    http(s) URLs (never file:, javascript: and the like), and (2) pass the URL after a `--`
     end-of-options marker so a value starting with '-' can't be misread as a Chrome
     switch (Chromium argument-injection class).
     """

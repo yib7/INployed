@@ -99,12 +99,12 @@ follow-up nudges, and run stats. A few behaviors to know:
   bullets`), so a multi-minute run is never a silent freeze.
 - The Step 4 get-started panel lists its three next actions (Open Settings · Find new jobs ·
   Set up Resume Data) and is replaced by the job table as soon as you have scored jobs.
-- The job list loads without description text: descriptions sit in an on-disk cache,
+- The job list loads without description text: descriptions sit in the description cache,
   `%LOCALAPPDATA%\linkedin_watcher\descriptions.db`, and a job's description is read when
   you select it. The cache rebuilds itself, so deleting the file only makes the next load
   slower.
 
-Each job tab keeps a tidy filter bar: a search box plus a **Filters** button that holds
+Each job tab has a filter bar: a search box plus a **Filters** button that holds
 min-score / day / time / recommendation / Easy-Apply (on the Tracker, also *Follow-up due
 only*), and shows how many are active. The Tracker adds a one-click **status chip bar**
 (All / Applied / Interviewing / Offer / Rejected / Follow-up due, each with a live count).
@@ -282,7 +282,7 @@ leaves out the known jobs its NOT words exclude, so more of the jobs it can retu
 run log names the words left out. **Heads-up:** leaving out any word also changes how
 keywords match. A plain keyword is matched to job titles only, but Bright Data matches a
 keyword with NOT anywhere in the posting, description included. On the 2026-10-16 run
-only 16% of results had their keyword in the title, against 100% before. Expect about
+only 16% of results had their keyword in the title, against 100% with plain keywords. Expect about
 twice the jobs (more good ones among them), the same job found by several keywords, and
 more postings billed. Type `none` to go back to title-only matching. To change what a
 level leaves out, add `"title_exclude_by_level": {"Entry level": ["Senior", "Sr"]}` to `search_config.json` by
@@ -323,7 +323,7 @@ one group at a time.
   Jev's three area switches, the Jev writer and the Auto-apply judge) and 26 once VM features
   are on, which
   adds the VM plumbing. The label counts what it is
-  currently withholding *for your configuration*, so ticking it really does reveal that many
+  currently withholding *for your configuration*, so ticking it reveals that many
   rows. Search ignores the fold: an advanced row still turns up in
   results, tagged `(advanced)`.
 - **Unsaved-change markers:** an accent dot appears beside every field you have edited, the
@@ -681,7 +681,7 @@ extra ones.
 **Jobs outside the US.** Every search asks Bright Data for US jobs, but some runs return
 postings from other countries. A posting whose location names another country is dropped
 before scoring (`filter_non_us`, from `pipeline/us_location.py`), and High Score hides the
-same rows for jobs scored before the filter existed. A blank or unrecognised location stays,
+same rows among jobs scored without the filter. A blank or unrecognised location stays,
 and a job you added by hand always shows.
 
 When you hold a clearance or tick the checkbox, the scoring prompts state it as well, which
@@ -824,8 +824,8 @@ traffic is the work you asked for, and each destination gets only what it needs:
 | Bright Data | you run job discovery | your search keywords and the dataset ID |
 | Google Gemini (Vertex or API key) | scoring, résumé tailoring, and auto-apply's free-text answers | the job description, your `resume.md` / `master_experience.yaml` content; in auto-apply, the form's question and an excerpt of your apply sheet for each free-text answer it drafts |
 | Anthropic (`claude` CLI) | only if you set a provider to `claude` | the same prompts, through your own CLI login |
-| the employer's application site | only when you run auto-apply or the difficulty check on a queued job | auto-apply: the answers from your apply sheet and answer bank, typed into the form by the auto-apply browser profile; your sign-up email and the ATS master password when the site asks you to sign in or create an account; your résumé PDF and cover letter as file uploads. It submits only when the gate in *Auto-apply (batch, Jev-judged)* passes. The difficulty check opens the posting and its Apply page and types nothing |
-| TypeSafe (the Jev judge) | only while **Use Jev** is on and a key is set | scoring: the job's text and your `resume.md`; the tailor: the job's text and the parts of your experience file, skills and drafted bullets it judges (and, with the Settings options on, the cover letter's sentences and the ATS keywords); the difficulty check and auto-apply: each form page's field labels, options and visible text, the names of your facts for the field mapping. In auto-apply the values stay on your machine until the verification and grounding checks, which receive the values it typed and an excerpt of your apply sheet. When a site emails a code or a link, auto-apply reads your webmail inbox and sends the sender, subject and preview of up to 15 of the newest messages that arrived since the job started (a message whose time cannot be read is kept, so the list can hold unrelated mail), then the opened message's body (up to 2,000 characters) with its link texts and hosts, so the judge can pick the right email and link |
+| the employer's application site | only when you run auto-apply or the difficulty check on a queued job | auto-apply: the answers from your apply sheet and answer bank, typed into the form by the auto-apply browser profile; your sign-up email and the ATS master password when the site asks you to sign in or create an account; your résumé PDF and cover letter as file uploads. It submits only when the submit gate in *Auto-apply (batch, Jev-judged)* passes. The difficulty check opens the posting and its Apply page and types nothing |
+| TypeSafe (Jev) | only while **Use Jev** is on and a key is set | scoring: the job's text and your `resume.md`; the tailor: the job's text and the parts of your experience file, skills and drafted bullets it judges (and, with the Settings options on, the cover letter's sentences and the ATS keywords); the difficulty check and auto-apply: each form page's field labels, options and visible text, the names of your facts for the field mapping. In auto-apply the values stay on your machine until the verification and grounding checks, which receive the values it typed and an excerpt of your apply sheet. When a site emails a code or a link, auto-apply reads your webmail inbox and sends the sender, subject and preview of up to 15 of the newest messages that arrived since the job started (a message whose time cannot be read is kept, so the list can hold unrelated mail), then the opened message's body (up to 2,000 characters) with its link texts and hosts, so Jev can pick the right email and link |
 | LinkedIn and the job board a posting links to | when you open a posting, run the difficulty check or auto-apply, or sign in from the auto-apply setup | the page requests a browser makes, from your own Chrome or the auto-apply browser profile, under the sign-in you gave it; nothing is typed there except on an application form |
 | your webmail site (Gmail, Outlook or the inbox you set) | only when auto-apply waits for an emailed code or link, or you sign in from the auto-apply setup | the page requests that read the inbox in the auto-apply browser profile, under your own sign-in |
 | Google Drive (through Drive for desktop) | when the master jobs file's folder is on Google Drive | the files the app writes to that folder; Drive for desktop syncs them, and INployed makes no Drive API call of its own |
@@ -1393,7 +1393,7 @@ question after something may already have been sent.
 the browser (up to 10 min)." The job's browser tab comes to the front with the fields it
 asks about outlined, and the dashboard's taskbar button flashes.
 
-**The Waiting-for-you card.** At the top of the **Auto-apply** tab a **Waiting for you**
+**The Waiting for you card.** At the top of the **Auto-apply** tab a **Waiting for you**
 card shows the job and each question it asks, in a control that fits it: a short list of
 options as buttons, a longer one as a dropdown, Yes or No for a tick box, a number box or a
 text box. A field only you should type shows "Type this one in the browser" in place of a

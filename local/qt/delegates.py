@@ -3,9 +3,9 @@
 `JobRowDelegate` paints EVERY cell itself and never calls `super().paint()`:
 under Fusion + a stylesheet, `CE_ItemViewItem` re-enters the QSS path and
 repaints the palette Highlight (solid accent) and alternate-base fills OVER
-whatever the delegate drew — that was the selection bug (a selected green
-"apply" row turned solid blue). Full custom paint means selection *adds* to
-the category color instead of replacing it:
+whatever the delegate drew, so a selected green "apply" row turns solid blue.
+Full custom paint means selection *adds* to the category color instead of
+replacing it:
 
   PANEL fill -> category tint (row-tint alpha; selected alpha when selected)
   -> 1px BORDER_SOFT bottom separator -> selected rows get 1px top+bottom
@@ -13,7 +13,7 @@ the category color instead of replacing it:
 
 Content renderers key on the table's column ids (score badge, deep-score
 mini-bar, recommendation/status pills, follow-up state, "Open ↗" links, mono
-numerics/dates). Pill labels are paint-time only — DisplayRole always keeps
+numerics/dates). Pill labels are paint-time only: DisplayRole always keeps
 the raw text (test-coupled: sorting, details panes, and the apply-queue tests
 all read the raw values).
 
@@ -193,8 +193,8 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
 
         # Selection deepens the row tint (sel_a, up to 0.22), and MUTED ink is
         # the tier with no headroom left: #8b949e measures 3.83-4.41:1 on the
-        # selected apply / consider / follow-up tints, i.e. the Found, Run and
-        # Posted dates on the row the user is actually looking at were the only
+        # selected apply / consider / follow-up tints, so in MUTED the Found, Run
+        # and Posted dates on the row the user is looking at would be the only
         # text in the app under 4.5:1. One tier up clears it everywhere (7.62:1
         # at worst, on the selected apply green).
         muted = theme.TEXT_SECONDARY if selected else theme.MUTED
@@ -218,7 +218,7 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
         elif cid == "url":
             if text.strip():
                 # The accent pill's ink, a step lighter than ACCENT: ACCENT itself
-                # measured 3.68 to 4.47:1 on the tinted rows it shares.
+                # measures 3.68 to 4.47:1 on the tinted rows it shares.
                 self._draw_text(painter, rect, "Open ↗", font,
                                 self._color(theme.SEMANTICS["accent"]["pill_fg"]))
         elif cid in _NUMERIC_RIGHT:
@@ -266,8 +266,8 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
         painter.setPen(QtCore.Qt.PenStyle.NoPen)
         r = theme.RADII["badge"] * s
         # The badge sits on PANEL whatever the row's tint, as a selected row's
-        # pills do: its own tint over a tinted row put the ink at 3.14 to
-        # 4.48:1 (score 1 on a selected Apply row was the worst).
+        # pills do: its own tint over a tinted row puts the ink at 3.14 to
+        # 4.48:1 (score 1 on a selected Apply row is the worst).
         painter.setBrush(self._color(theme.PANEL))
         painter.drawRoundedRect(box, r, r)
         painter.setBrush(self._color(color_hex, bg_a))
@@ -284,7 +284,7 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
             value = float("nan")
         if math.isnan(value):
             # No deep score (blank cell, or a NaN that slipped past the model):
-            # a dash, not a full bar under the word "nan".
+            # draw a dash in place of a bar labelled "nan".
             self._draw_text(painter, rect, "—", self._font(font, "mono"),
                             self._color(muted))
             return
@@ -293,12 +293,12 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
         num_w = QtGui.QFontMetrics(mono).horizontalAdvance(label)
         gap = round(6 * s)
         # The bar yields to the numeral in a narrow column (Deep is ~70px):
-        # the value must never be clipped away by the track. It reserved EXACTLY
-        # num_w and no more, so the numeral sat at the elide threshold at every
-        # scale (measured room == num_w at 75/100/125/150%) and one pixel of
-        # QRect rounding tipped it: the Deep column read "9…", "8…", "7…" while
-        # the whole numbers beside them were fine. Reserve a few pixels of slack,
-        # and clamp so the 16px bar floor can never re-take them.
+        # the value must never be clipped away by the track. Reserving EXACTLY
+        # num_w leaves the numeral at the elide threshold at every scale
+        # (measured room == num_w at 75/100/125/150%), and one pixel of QRect
+        # rounding tips it: the Deep column reads "9…", "8…", "7…" while the
+        # whole numbers beside them fit. So a few pixels of slack are reserved,
+        # clamped so the 16px bar floor can never re-take them.
         slack = round(3 * s)
         bw = max(round(16 * s),
                  min(round(56 * s), rect.width() - num_w - gap - slack))
@@ -332,7 +332,7 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
         bg = family.get("tint_base", family["base"])
         if selected:
             # A selected row's tint is lighter than PANEL, and the danger ink on
-            # its pill tint over that measured 4.06 to 4.40:1 (WCAG AA wants
+            # its pill tint over that measures 4.06 to 4.40:1 (WCAG AA wants
             # 4.5). The pill keeps the PANEL ground it has on a plain row.
             painter.setBrush(self._color(theme.PANEL))
             painter.drawRoundedRect(box, h / 2, h / 2)

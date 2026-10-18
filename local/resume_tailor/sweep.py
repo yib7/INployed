@@ -7,7 +7,7 @@ in each line, one noun cycling through all of them. ``itemcheck`` measures those
 This module is what acts on them, and its unit of work is therefore the ITEM: one
 Experience / Projects / Leadership entry together with all of its bullets,
 grouped by ``compose._blocks_in_order``. A per-bullet call could not see the
-signal at all, which is the whole argument for the feature.
+signal at all, which is why the feature exists.
 
 It lives in its own module rather than in ``compose``, which is already large
 enough that a reader looking for the per-bullet gate should not have to walk past
@@ -15,7 +15,7 @@ a second, differently-shaped one to find it.
 
 ── what runs, and when ──────────────────────────────────────────────────────
 
-**An item makes its repair call only when something gives the call work.** Three
+An item makes its repair call only when something gives the call work. Three
 things can: an ``itemcheck`` finding of a repaired tier, an ``aiwriting`` phrasing
 hit, and a tell named by a read of the bullets (Jev's, or the résumé scan's). The
 findings and the tells ride in the payload (a tell as the bullet's ``judge_flags``,
@@ -27,21 +27,21 @@ no tell, so a call for an item whose bullets carry none of the three can change 
 text, and the gate (``_gate_skips``) skips it. A P2 finding forces nothing while P2
 is only reported, because it never reaches the model.
 
-**With no read, the detectors decide.** Jev off or its read failed, and the scan
+With no read, the detectors decide. Jev off or its read failed, and the scan
 off or failed: every bullet reads as clean (``_unread_flags``), so an item is sent
-only for a finding or a phrasing hit. The sweep used to send every item here, on
-the argument that the detectors find only what they were written to find. A live
-measurement on ten real tailored résumés settled it: with no read the sweep made 80
-repair calls and committed 0 rewrites, because those résumés carried no repaired
+only for a finding or a phrasing hit. Sending every item here anyway, on the
+argument that the detectors find only what they were written to find, does not
+pay: measured live on ten tailored résumés, a sweep-everything gate with no read
+made 80 repair calls and committed 0 rewrites, because those résumés carried no repaired
 finding and no phrasing hit, and the SCOPE rule returns such an item unchanged by
 construction. The judgment-level tells are what the reads below exist to find.
 
-**With Jev on, Jev reads.** ``jev_assist.sweep_flags`` reads every bullet for the
+With Jev on, Jev reads. ``jev_assist.sweep_flags`` reads every bullet for the
 tells of the user's banned patterns (contrast framing, stacked adjectives, filler
 or vague impact, hype words, a list padded out to three), one request per item,
 and a bullet is flagged at ``jev_assist.SWEEP_FLAG`` or more.
 
-**With Jev off, or when its read fails, the résumé scan can read.** It is an
+With Jev off, or when its read fails, the résumé scan can read. It is an
 opt-in quality check, off by default (``config.sweep_scan_enabled()``,
 ``RESUME_TAILOR_SWEEP_SCAN``). ONE flash-tier call over every bullet, grouped by
 entry (``_SCAN_SYSTEM``), names tells and never rewrites; the atoms and the job stay
@@ -57,7 +57,7 @@ leaves out reads as clean; a cut-off answer does not parse and counts as a faile
 scan, and so does an answer with any malformed flag (``_parse_scan`` fails closed).
 
 Why it is off: on the same ten résumés the narrowed scan made 10 scan calls and
-bought 35 repair calls (45 in all, against 80 for the old sweep-everything gate and
+bought 35 repair calls (45 in all, against 80 for the sweep-everything gate and
 0 for the detectors alone). It caught the contrast framing the user bans ("selects
 and re-phrases without inventing" became "selects and re-phrases facts"), but it
 flagged 36 of the 150 bullets, 24%, and 28 of those flags fell on the same three
@@ -68,7 +68,7 @@ résumé is churn, so it is the user's call to turn on.
 The scan's call is counted in ``SweepResult.calls``, so a run's call count is what
 it paid for.
 
-**P0 and P1 are repaired. P2 is reported by default.** Only the repaired tiers
+P0 and P1 are repaired. P2 is reported by default. Only the repaired tiers
 reach the prompt, because a finding the model can see is a finding the model will
 fix; the rest comes back in the result for the run report to print. The P0
 material is lexical and rides in ``aiwriting.RESUME_RULES_PROMPT`` rather than in
@@ -224,7 +224,7 @@ class SweepResult(NamedTuple):
     ``changed`` and ``rejected`` are the outcome per bullet AFTER the re-ask, so a
     bullet that overflowed and was then shortened successfully appears in
     ``changed`` alone. ``unfixed_p2`` holds the P2 findings measured on the text
-    the sweep leaves behind, which is the honest list: a P1 repair occasionally
+    the sweep leaves behind, which is the accurate list: a P1 repair occasionally
     clears a P2 tell on its way past.
 
     ``skipped`` and ``judge_flags`` come from the gate: the items whose call it
@@ -299,7 +299,7 @@ _SWEEP_SYSTEM = (
 # item with no flag, and every item when no read ran, is sent the system prompt above
 # byte for byte. It is built below the scan's names, which it lists too: a flag from
 # the résumé scan can be a rule's tell, "other: ..." or "unnamed tell", and a rule
-# that named only Jev's tells left the call no way to read those.
+# that named only Jev's tells would leave the call no way to read those.
 
 # The re-ask. Its opening sentence is also what the transport stub in
 # tests/test_item_sweep.py dispatches on, and what a reader greps for.
@@ -413,7 +413,7 @@ def _fitting_prefix_len(text: str, target_lines: int) -> int:
     `target_lines` printed lines.
 
     ``measure.line_count`` is monotonic in length, so a binary search is exact.
-    The overage the re-ask quotes is ``len(text) - this``, which is a real number
+    The overage the re-ask quotes is ``len(text) - this``, which is the exact number
     of characters the model has to remove rather than a guess from a character
     cap that only approximates glyph widths. Same search ``run._fit_to_lines``
     runs before it trims; this one only measures, and never cuts.
@@ -454,9 +454,9 @@ class _Spec(NamedTuple):
     # `findings` because the two have different scope. A finding is measured
     # ACROSS the item and names its bullets through spans; a phrasing hit belongs
     # to one bullet on its own. Both have to reach the model. Carrying only the
-    # first is what let a bullet opening "Assisted with" ship: the rule caught it,
-    # the prompt said to repair only what the findings flagged, and that bullet
-    # arrived carrying none.
+    # first would let a bullet opening "Assisted with" ship: the rule catches it,
+    # the prompt says to repair only what the findings flag, and that bullet
+    # arrives carrying none.
     phrasing: Tuple[str, ...]
 
 
@@ -598,8 +598,8 @@ _REASK_CLOSING = (
 
 
 # The reply shape. On the Claude lane at low effort the model checks its work in the
-# reply itself, and it used to write an answer echoing a payload key ("max_chars"),
-# then a note and a corrected answer; `llm._extract_json` now reads the last one, and
+# reply itself, and can write an answer echoing a payload key ("max_chars"),
+# then a note and a corrected answer; `llm._extract_json` reads the last one, and
 # these two sentences ask for the check to come before the answer.
 _REPLY_SHAPE = (
     "Each bullet object holds only \"gkey\" and \"text\". Check every text against "
@@ -624,7 +624,7 @@ Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<bullet>"}}, ...]}}
 # `llm.call`, so a system prompt handed in as a parameter is invisible to it: the
 # trace has no way back from a parameter to the constant a caller passed. Naming
 # the constant at the call site is what keeps every prompt inside that scan, and
-# the scan passing vacuously is a real failure mode (aiwriting.RULES_PROMPT was
+# the scan passing vacuously is a known failure mode (aiwriting.RULES_PROMPT was
 # once invisible for the same reason). The judge gate's flag variants are
 # chosen inside the call's own arguments for the same reason, and the résumé
 # scan's call names _SCAN_SYSTEM at its own call site.

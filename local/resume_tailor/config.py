@@ -1,7 +1,7 @@
 """Paths, model tiers, and Vertex settings for the resume tailor.
 
 Everything is env-overridable so the flash-lite / flash / pro split can be
-re-tuned against the $300 credit without code changes — or dropped entirely:
+re-tuned against the $300 credit without code changes, or dropped entirely:
 RESUME_TAILOR_MODEL_MODE=simple points every stage at one model id (see
 MODEL_MODE_TIERS, and RESUME_TAILOR_CLAUDE_MODEL_MODE for the Claude side).
 """
@@ -28,15 +28,15 @@ ASSETS_DIR = SCRAPE_DIR / "resume_tailor_files"
 
 MASTER_YAML = ASSETS_DIR / "master_experience.yaml"
 TEMPLATE_TEX = ASSETS_DIR / "resume_template.tex"
-# Style exemplar fed (bounded) into the rephrase prompt — the voice, length and density
+# Style exemplar fed (bounded) into the rephrase prompt: the voice, length and density
 # the user's own bullets have. assets.example_text() resolves the two in this order:
 #
-#   1. style_exemplar.txt — a CURATED file the user writes: one bullet per line, blank
+#   1. style_exemplar.txt: a CURATED file the user writes: one bullet per line, blank
 #      lines and `#` comments ignored. Preferred, because it is already the shape the
 #      prompt wants (no name/contact/education header eating the budget, no glued-on
 #      section headings or column collisions from PDF extraction).
-#   2. resume_sample.pdf — the older hand-written résumé, text-extracted. The original
-#      source; kept so an install that never writes the .txt behaves exactly as before.
+#   2. resume_sample.pdf: a hand-written résumé, text-extracted. Kept so an install
+#      that never writes the .txt still has an exemplar.
 #
 # Both are personal and git-ignored; a fresh clone has neither and the exemplar is empty.
 STYLE_EXEMPLAR_TXT = ASSETS_DIR / "style_exemplar.txt"
@@ -75,9 +75,8 @@ TIER_FLASH = "flash"
 TIER_PRO = "pro"
 # The cover letter's own tiers: TIER_COVER drafts the letter, TIER_COVER_EDIT
 # runs its repair, humanizer and style-fix passes. Not in _TIER_ENV: in 'tiers'
-# mode both read one cover-letter model var and, left blank, resolve exactly as
-# before it existed (the draft on the deep tier, the edits on the standard one),
-# so an install that never sets it keeps today's letter. 'simple' mode sends them
+# mode both read one cover-letter model var and, left blank, put the draft on
+# the deep tier and the edits on the standard one. 'simple' mode sends them
 # to the one model like every other tier.
 TIER_COVER = "cover"
 TIER_COVER_EDIT = "cover_edit"
@@ -95,7 +94,7 @@ _TIER_ENV = {
 
 # ── One model for every step (the 'simple' mode) ──────────────────────────────
 # The tier split (flash_lite / flash / pro) is a cost-tuning knob, and a leaky
-# abstraction for someone who just wants ONE model everywhere: today that takes
+# abstraction for someone who just wants ONE model everywhere: without it that takes
 # setting three env vars consistently, per provider. `simple` mode collapses all
 # three tiers onto a single id.
 #
@@ -103,8 +102,8 @@ _TIER_ENV = {
 #   RESUME_TAILOR_CLAUDE_MODEL_MODE = tiers (default) | simple   -> claude_model_for()
 #   RESUME_TAILOR_MODEL_ALL / RESUME_TAILOR_CLAUDE_MODEL_ALL     the single id
 #
-# `tiers` is the default so an existing install keeps resolving exactly the model
-# it resolved before this switch existed. The two providers carry their OWN mode
+# `tiers` is the default, so an install that never sets the mode keeps one model
+# per tier. The two providers carry their OWN mode
 # so a Claude user's choice cannot silently re-point the Gemini side (and the
 # Settings tab only ever shows the one matching the active provider).
 MODEL_MODE_TIERS = "tiers"
@@ -122,8 +121,8 @@ def _model_mode(env: str) -> str:
 
     Read live from os.environ, like model_for() reads the tier vars. Normalised
     (strip + lower) the way tailor_provider() / projects_mode() normalise theirs;
-    anything ELSE — a typo, a blank, an unset var — reads as 'tiers', so a bad
-    value keeps today's per-stage behaviour instead of routing every step through
+    anything ELSE (a typo, a blank, an unset var) reads as 'tiers', so a bad
+    value keeps the per-stage behaviour instead of routing every step through
     a mode the user never asked for."""
     val = os.getenv(env, "")
     val = val.strip().lower() if isinstance(val, str) else ""
@@ -143,8 +142,8 @@ def claude_model_mode() -> str:
 def _one_model(mode_env: str, all_env: str) -> str:
     """The single model id every tier resolves to, or '' to let the tier map decide.
 
-    '' is returned both in 'tiers' mode and when 'simple' mode has no id to use —
-    an unset or blank/whitespace "all" var. Falling back to the tier map there is
+    '' is returned both in 'tiers' mode and when 'simple' mode has no id to use
+    (an unset or blank/whitespace "all" var). Falling back to the tier map there is
     deliberate: a blank model id reaching the API is an opaque runtime error two
     layers away from the setting that caused it, while quietly doing what the
     install already did is the safe failure."""
@@ -168,19 +167,19 @@ def _config_json() -> dict:
 # Editable from the dashboard; persisted in local/config.json under "resume_layout"
 # as {block_name: {"line_targets": [int, ...]}}. The list length is the bullet
 # count for that block; each int is that bullet's printed-line target. Both consumers of
-# that target are WIDTH-aware and live in measure.py — the prompt's soft length hint
+# that target are WIDTH-aware and live in measure.py: the prompt's soft length hint
 # (measure.char_budget, via compose._length_hint) and the deterministic trim
-# (measure.line_count, via run._fit_to_lines) — so there is no flat chars-per-line
-# constant here any more; the old MAX_LINE_CHARS was the last thing reading one.
+# (measure.line_count, via run._fit_to_lines). No flat chars-per-line constant
+# lives here.
 DEFAULT_LINE_TARGETS = [2, 2, 2]
 
 
 def _env_int(name: str, default: int, lo: int = 1) -> int:
     """A positive int from the environment, falling back to `default` for anything else.
 
-    These three run at IMPORT scope, so a bare `int(os.getenv(...))` turned a typo in a
+    These three run at IMPORT scope, so a bare `int(os.getenv(...))` would turn a typo in a
     .env (`RESUME_TAILOR_PROJECTS_MAX=three`) into a ValueError raised while importing
-    this module — taking down the dashboard's whole tailor path with a raw traceback,
+    this module, taking down the dashboard's whole tailor path with a raw traceback,
     and making `projects_max()`'s careful try/except below unreachable. Mirrors
     `measure._env_int` and `measure._env_fraction`."""
     raw = os.getenv(name)
@@ -244,7 +243,7 @@ def projects_mode() -> str:
 def fill_underfull_enabled() -> bool:
     """Whether the underfull-bullet fill pass runs (compose.fill_underfull): when a tailored
     bullet renders shorter than its configured line target, fold ONE detail from an unused atom
-    in the SAME block in to fill it. It never fabricates -- a bullet whose block has no spare
+    in the SAME block in to fill it. It never fabricates: a bullet whose block has no spare
     atom is left exactly as-is. Defaults ON. Precedence: RESUME_TAILOR_FILL_UNDERFULL env >
     config.json 'fill_underfull' > True."""
     env = os.getenv("RESUME_TAILOR_FILL_UNDERFULL")
@@ -258,7 +257,7 @@ def lead_overview_enabled() -> bool:
     overview bullet, the FIRST atom under it in master_experience.yaml, prints first, and the
     rest follow in relevance order. select() orders bullets by JD-relevance, which can bury
     the overview or leave it out; this pass is deterministic, so it holds on every job. It
-    only reorders or keeps the user's own atoms -- never invents. Defaults ON; off leaves
+    only reorders or keeps the user's own atoms and never invents. Defaults ON; off leaves
     select()'s relevance order. Precedence: RESUME_TAILOR_LEAD_OVERVIEW env > config.json
     'lead_overview' > True."""
     env = os.getenv("RESUME_TAILOR_LEAD_OVERVIEW")
@@ -270,7 +269,7 @@ def lead_overview_enabled() -> bool:
 def reground_enabled() -> bool:
     """Whether a bullet the FIRST grounding gate deletes gets one bounded re-ask
     (compose.reground). That gate has no earlier text to revert to, so it drops the line
-    outright over a single unsupported term -- and the line it drops is often the block's
+    outright over a single unsupported term, and the line it drops is often the block's
     opening bullet, the one that says what the job or project IS. The re-ask rewrites from
     the same atoms with that term banned, and the gate re-runs over the result, so nothing
     ungrounded can slip back in. Costs one cheap call, and ONLY on a run that already lost
@@ -285,7 +284,7 @@ def reground_enabled() -> bool:
 def methods_line_enabled() -> bool:
     """Whether the résumé renders a 'Methods' concepts line (compose.methods_line): a 5th
     technical-skills line that surfaces the JD's concept buzzwords ('A/B Testing', 'ETL',
-    'data wrangling') the candidate owns — printed in the JD's own spelling via
+    'data wrangling') the candidate owns, printed in the JD's own spelling via
     the anchored skill_aliases layer (Tier 1) then padded with the model's role-relevant
     concept ranking (Tier 2). It only draws from concepts_and_methodologies the user
     declared, never invents. Defaults ON. Precedence: RESUME_TAILOR_METHODS_LINE env >
@@ -326,8 +325,8 @@ def avoid_ai_writing_enabled() -> bool:
     style gate, so a letter that slips into that vocabulary buys the one repair call.
     The rule text itself (aiwriting.RULES_PROMPT) rides in every letter prompt whatever
     this says, and the two structural checks (bullet echo, uniform rhythm) run whatever
-    this says; the toggle governs enforcement only. Letter only -- the résumé bullets
-    keep their own gate untouched. Defaults ON. Precedence:
+    this says; the toggle governs enforcement only. Letter only: the résumé bullets
+    keep their own gate. Defaults ON. Precedence:
     RESUME_TAILOR_AVOID_AI_WRITING env > config.json 'cover_letter_avoid_ai_writing' >
     True."""
     env = os.getenv("RESUME_TAILOR_AVOID_AI_WRITING")
@@ -357,7 +356,7 @@ def aiwriting_detector_enabled() -> bool:
 def aiwriting_sweep_enabled() -> bool:
     """Whether the item-level AI-writing sweep runs over the résumé bullets
     (sweep.sweep_items): each Experience / Projects / Leadership entry goes to the model
-    as a WHOLE -- the entry plus all of its bullets -- so the tells that only exist across
+    as a WHOLE (the entry plus all of its bullets), so the tells that only exist across
     an item can be seen at all (one sentence skeleton reused down the list, every bullet
     the same length, a three-part series in each line, one noun cycling through them).
     compose.enforce_style sees one bullet at a time and is structurally blind to those; it
@@ -406,8 +405,8 @@ def sweep_scan_enabled() -> bool:
 def sweep_p2_enabled() -> bool:
     """Whether the AI-writing sweep also REPAIRS its P2 findings, or only reports them.
 
-    P2 is `length_uniformity` and `rule_of_three`. Both are real tells and both are
-    measured honestly, but neither implies the repair is an improvement: a rule-of-three
+    P2 is `length_uniformity` and `rule_of_three`. Both are tells and both are
+    measured correctly, but neither implies the repair is an improvement: a rule-of-three
     hit is often an enumeration of things that come in threes (three providers,
     the three statistical variable types), and asking a model to break one up gives it a
     choice between dropping a real item and padding. That is why the default is OFF and
@@ -514,8 +513,8 @@ def resume_layout_enabled() -> bool:
     """Master on/off for the custom bullet layout (config.json `resume_layout_enabled`).
     Defaults True when absent, so existing configs keep applying their saved targets.
     When False, `resume_layout()`/`project_layout()` report empty so the engine falls
-    back to its built-in defaults WITHOUT the saved targets being deleted -- a quick
-    A/B test of custom-vs-default layout."""
+    back to its built-in defaults WITHOUT the saved targets being deleted, which makes a
+    quick A/B test of custom-vs-default layout."""
     return _config_json().get("resume_layout_enabled", True) is not False
 
 
@@ -545,11 +544,11 @@ def block_targets(name: str) -> list[int]:
 
 
 def verbatim_blocks() -> dict:
-    """{block_name: [bullet, ...]} for blocks the user marked 'don't tailor — use my
+    """{block_name: [bullet, ...]} for blocks the user marked 'don't tailor; use my
     exact bullets'. A block with a non-empty list renders those exact bullets and the
     LLM is bypassed for it; an empty/absent list means normal tailoring. Returns
     sanitized {name: [non-empty str, ...]} ({} when absent/bad). NOT gated by the
-    resume_layout master toggle — verbatim is an explicit per-block override."""
+    resume_layout master toggle: verbatim is an explicit per-block override."""
     val = _config_json().get("verbatim_blocks")
     if not isinstance(val, dict):
         return {}
@@ -667,7 +666,7 @@ def project_rank_lines(rank: int) -> list[int] | None:
 
 def gemini_auth() -> str:
     """Gemini auth mode: 'vertex' (default; uses GOOGLE_CLOUD_PROJECT),
-    'api_key' (one RESUME_TAILOR_GEMINI_API_KEY -- for users without Vertex), or
+    'api_key' (one RESUME_TAILOR_GEMINI_API_KEY, for users without Vertex), or
     'pool' (every key in GEMINI_API_KEYS, rotated and RPD-gated by the job
     scorer's keypool.KeyPool, with Vertex as the spillover).
 
@@ -681,8 +680,8 @@ def gemini_auth() -> str:
 # Tier token -> (env var, local/config.json key) for the POOL fallback chains.
 # Mirrors _TIER_ENV deliberately: a fallback list is only ever correct for the
 # tier it belongs to. The tiers are quality/cost classes, and free-tier quota
-# runs the opposite way -- the lite models allow 500 requests/day per key while
-# the full Flash models allow 20 -- so one shared list would send the cheap
+# runs the opposite way (the lite models allow 500 requests/day per key while
+# the full Flash models allow 20), so one shared list would send the cheap
 # high-volume selection pass into the scarce allowance the cover letter and the
 # scorer's deep stage depend on, and would let the pro pass quietly drop onto a
 # lite. Each tier falls back inside its own class or not at all.
@@ -724,8 +723,8 @@ def _fallback_list(env: str, cfg_key: str) -> list[str]:
 
 def _cover_or(tier: str | None, env: str) -> tuple[str | None, str]:
     """(tier to resolve, cover model id or ''). For a cover-letter tier: the id
-    named in `env` when set, else '' with the tier switched to the one that pass
-    used before the letter had its own model (_COVER_TIERS). Any other tier
+    named in `env` when set, else '' with the tier switched to that pass's default
+    tier (_COVER_TIERS). Any other tier
     passes through unchanged."""
     if tier not in _COVER_TIERS:
         return tier, ""
@@ -739,15 +738,15 @@ def gemini_fallback_models(tier: str | None = None) -> list[str]:
 
     Only consulted in gemini_auth='pool'. Free-tier quota is metered per
     (key, model), so naming a second model is an independent daily allowance
-    rather than a share of the same one -- which is the only reason this exists.
+    rather than a share of the same one. That is the only reason this exists.
     The tier's own model always leads; these follow in the order given.
 
     Which list applies follows model_for()'s own split, and must:
-      'simple' mode -- every tier resolves to RESUME_TAILOR_MODEL_ALL, so one
+      'simple' mode: every tier resolves to RESUME_TAILOR_MODEL_ALL, so one
         chain (RESUME_TAILOR_FALLBACK_MODELS) is right for all of them.
-      'tiers' mode  -- each tier gets its OWN chain, from _TIER_FALLBACK_ENV.
+      'tiers' mode: each tier gets its OWN chain, from _TIER_FALLBACK_ENV.
         An unknown or missing tier returns [] rather than borrowing the shared
-        list: no fallback is today's behaviour, while a wrong-class fallback
+        list: no fallback is harmless, while a wrong-class fallback
         spends an allowance the caller had no business spending.
 
     Precedence within a chain: env var > local/config.json > empty.
@@ -874,18 +873,18 @@ def claude_effort(tier: str | None = None) -> str:
 def model_for(tier: str) -> str:
     """Concrete Gemini model id for a tier token.
 
-    Resolved live (not frozen at import), like gemini_auth()/projects_max() --
-    reads os.environ on every call rather than caching a module-level constant.
+    Resolved live (not frozen at import), like gemini_auth()/projects_max():
+    it reads os.environ on every call rather than caching a module-level constant.
     That does NOT mean a Settings-written RESUME_TAILOR_MODEL_* change in .env
     is picked up by an already-running dashboard: load_dotenv() only runs once,
     at import, and Settings writes to the .env file, not to os.environ directly.
     The new value is only visible to a process that re-reads env after the
-    write -- e.g. the dashboard restarting, or the var being set directly in
+    write, e.g. the dashboard restarting, or the var being set directly in
     the environment (not just the .env file) before the process starts. An
     unrecognized tier falls back to the flash model.
 
     RESUME_TAILOR_MODEL_MODE='simple' short-circuits the tier map entirely and
-    returns RESUME_TAILOR_MODEL_ALL for EVERY tier -- one model for every step.
+    returns RESUME_TAILOR_MODEL_ALL for EVERY tier: one model for every step.
     'tiers' (the default) keeps the per-stage split, and so does 'simple' with a
     blank/unset "all" id: this never returns ''."""
     one = _one_model(MODEL_MODE_ENV, MODEL_ALL_ENV)
@@ -905,7 +904,7 @@ def tailor_timeout_schedule() -> list[int]:
     tried, and after the last the call fails with a timeout error. So the list
     length is also the max number of attempts. Override with
     RESUME_TAILOR_TIMEOUTS='60,120,180'; garbage / non-positive / empty falls back
-    to the default. Not a Settings GUI field on purpose — a value a non-technical
+    to the default. Not a Settings GUI field on purpose: a value a non-technical
     user could set to 0 is a footgun (see DECISIONS); power users still get the env."""
     raw = os.getenv("RESUME_TAILOR_TIMEOUTS", "")
     return _parse_timeouts(raw, [60, 120, 180])

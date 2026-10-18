@@ -1,7 +1,7 @@
 """The vendored avoid-ai-writing extract: one arm for the letter, one for bullets.
 
-A bounded extract of the **avoid-ai-writing** skill (v3.38.0, MIT licence,
-author **Conor Bronsdon**), vendored from
+A bounded extract of the avoid-ai-writing skill (v3.38.0, MIT licence,
+author Conor Bronsdon), vendored from
 ``~/.claude/skills/avoid-ai-writing/SKILL.md`` and the pattern catalog it loads,
 ``references/patterns.md``. Together they run to ~140 KB: far too large to ship
 inside a per-call prompt, and most of it covers registers this pipeline never
@@ -19,12 +19,12 @@ Two arms live here, kept visibly separate below. They share ONE module on
 purpose: the vendored attribution and the tier-1 vocabulary regex are common to
 both, and a second copy is how the two would drift apart.
 
-  * The **cover-letter arm** (``RULES_PROMPT`` / ``EXTRA_BANS`` /
+  * The cover-letter arm (``RULES_PROMPT`` / ``EXTRA_BANS`` /
     ``violations()``, plus the two letter-level detectors ``bullet_echo()`` and
     ``uniform_rhythm()``). The prompt rules ride in every letter prompt; the
     Settings toggle (default ON) decides whether ``violations()``
     joins the deterministic gate, and the two detectors join it either way.
-  * The **résumé arm** (``RESUME_PROFILE`` / ``RESUME_RULES_PROMPT`` /
+  * The résumé arm (``RESUME_PROFILE`` / ``RESUME_RULES_PROMPT`` /
     ``RESUME_EXTRA_BANS`` / ``resume_violations()``), which serves the
     item-level sweep over Experience, Projects and Leadership bullets.
 
@@ -33,21 +33,21 @@ both, and a second copy is how the two would drift apart.
 Only the letter-relevant subset lives here, split the same two ways
 the résumé engine already splits its style gate:
 
-  * ``RULES_PROMPT`` -- the judgment calls, appended to the generation, refine,
+  * ``RULES_PROMPT``: the judgment calls, appended to the generation, refine,
     and repair prompts so the model applies them (compose.BANNED_PHRASING's
     counterpart).
-  * ``EXTRA_BANS`` / ``violations()`` -- the deterministic arm, mirroring
+  * ``EXTRA_BANS`` / ``violations()``: the deterministic arm, mirroring
     ``compose._STYLE_BANS`` / ``compose.style_violations``.
-  * ``bullet_echo()`` / ``uniform_rhythm()`` -- the structural arm. A regex sees
+  * ``bullet_echo()`` / ``uniform_rhythm()``: the structural arm. A regex sees
     one phrase; these two see the whole letter against the whole résumé. A
     bullet copied into the letter (the résumé travels with it, so a copy says
     nothing twice) and a letter whose sentences or paragraphs all run the same
     length (the strongest AI tell the skill names) are letter-level facts, so
     they are measured here and reported under the same name-list contract.
 
-**What earns a place in EXTRA_BANS.** Same rule as ``compose._STYLE_BANS``: only
+What earns a place in EXTRA_BANS follows ``compose._STYLE_BANS``: only
 phrasing that is ALWAYS slop, because a false positive buys a repair call that
-can damage correct text. In a cover letter the load-bearing risk is specific --
+can damage correct text. In a cover letter the main risk is specific:
 the letter must stay grounded in the candidate's own résumé bullets, and it
 always names an employer. So a skill word is kept out of the regex arm when it
 has a real technical sense a bullet could carry (``realm`` is a Keycloak/Kerberos
@@ -56,7 +56,7 @@ GIS/market analysis, ``best practices`` and ``actionable`` are ordinary
 engineering and analytics vocabulary), when the skill itself qualifies it as
 context-dependent (``embrace``/``symphony``/``load-bearing`` are tagged
 "(metaphor)"; ``genuine``, ``keen``, ``features``, ``presents`` are tagged "(as
-intensifier)" / "(inflated)" -- and this package's own prompts deliberately ask
+intensifier)" / "(inflated)", and this package's own prompts deliberately ask
 for "genuine but MEASURED interest"), or when it doubles as a common employer
 name (``Tapestry``, ``Embark``, ``Vibrant``, ``Thrive``). All of those stay in
 RULES_PROMPT, where the model can read context. Anything already covered by
@@ -155,7 +155,7 @@ RULES_PROMPT = (
 )
 
 # ── the deterministic arm ─────────────────────────────────────────────────────
-# Tier 1 words kept ONLY where there is no load-bearing reading in a letter that
+# Tier 1 words kept ONLY where there is no legitimate reading in a letter that
 # must stay grounded in résumé bullets. See the module docstring for what was
 # left out and why.
 _TIER1_RE = re.compile(
@@ -368,7 +368,7 @@ RESUME_PROFILE: Dict[str, Tolerance] = {
         "reader diffing this profile against SKILL.md will otherwise think the "
         "row was dropped by accident."),
 
-    # ---- what the résumé is actually at risk of -----------------------------
+    # ---- what the résumé is at risk of ------------------------------------
     "promotional language": Tolerance(
         EXTRA_STRICT,
         "The document as a whole is a pitch, so brochure vocabulary is the "
@@ -518,8 +518,8 @@ def resume_profile_level(rule: str) -> str:
 # already covers is repeated (em dashes, contrast framing, participial tails,
 # buzz adjectives, buzzword verbs, vague quantifiers, stacked adjectives, the
 # rule-of-three verb train). What is left is the P0 and P1 material the shared
-# list misses. P2 polish is deliberately out of scope for auto-fixing this cycle:
-# it gets detected and reported, never rewritten.
+# list misses. P2 polish is deliberately out of scope for this prompt:
+# it is detected and reported by default (see config.sweep_p2_enabled).
 #
 # The REGISTER preamble comes first and is the reason this constant exists at
 # all. Without it a repair call is free to "fix" a subjectless fragment into a
@@ -616,7 +616,7 @@ _SUBORDINATORS = (r"so|that|which|who|whom|whose|where|when|while|if|whether"
 
 # Hedging, in the position where it is always wrong.
 #
-# Two care points, both of which a flat r"\b(may|could|potentially|generally)\b"
+# Three care points, all of which a flat r"\b(may|could|potentially|generally)\b"
 # gets wrong on real bullets:
 #
 # 1. NO re.I, deliberately. "May" is a month, and "Launched the rewrite in May
@@ -633,7 +633,7 @@ _SUBORDINATORS = (r"so|that|which|who|whom|whose|where|when|while|if|whether"
 # 3. Sentence-initial capitals are handled separately, because (1) drops them.
 #    "Might improve throughput on larger inputs" is a hedge in the position the
 #    pipeline reserves for an action verb, and lowercase openers already match
-#    through the tempered branch at zero width, so only the capitals were missing.
+#    through the tempered branch at zero width, so only the capitals need a branch.
 _HEDGE_RE = re.compile(
     r"\b(?:potentially|generally|presumably|arguably)\b"
     # 3. A CAPITALISED modal is the gap case (2) leaves open. Case separates the
@@ -646,7 +646,7 @@ _HEDGE_RE = re.compile(
     r"|^(?:(?!\b(?:" + _SUBORDINATORS + r")\b)[\s\S])*?\b(?:may|might|could)\b")
 
 # Tourism-brochure vocabulary, which the profile marks EXTRA STRICT because it is
-# the résumé's own failure mode. Kept to words with no honest reading in a
+# the résumé's own failure mode. Kept to words with no legitimate reading in a
 # bullet: "award-winning" can be a grounded fact, "next-generation sequencing" is
 # a real technique and "unmatched records" a real data term, so none of those are
 # here.

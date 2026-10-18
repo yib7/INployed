@@ -1,7 +1,7 @@
 """On-disk cache of job description text, so the dashboard frame need not hold it.
 
-The loaded dashboard frame was ~500 MB, ~440 MB of it the four description
-columns, and only two readers ever look at them: the job detail card and the
+With descriptions in it, the loaded dashboard frame is ~500 MB, ~440 MB of it
+the four description columns, and only two readers ever look at them: the job detail card and the
 tailor/cover-letter payload, one job at a time. `jobsdata.load_files` (in its
 `descriptions_cached` mode) stores each source file's descriptions here, keyed
 by (source, job_posting_id) and stamped with the file's (size, mtime_ns), and
@@ -14,8 +14,8 @@ opens its own short-lived connection, because the load runs on a worker thread
 while the UI thread and tailor workers look descriptions up.
 
 The journal is WAL, so a lookup on the UI thread reads the last committed rows
-while a store writes a whole master (a rollback journal made it wait the store
-out). seen.db stays off WAL because it once lost weeks of writes that lived only
+while a store writes a whole master (a rollback journal would make it wait the
+store out). seen.db stays off WAL because it once lost weeks of writes that lived only
 in a WAL file that went missing; that cannot cost anything here, since a
 source's stamp and its rows commit in one transaction and a lost WAL only means
 that source is read and stored again on the next load.
@@ -211,7 +211,7 @@ def store(source: str, stat: os.stat_result, df: pd.DataFrame) -> bool:
                         " VALUES (?, ?, ?, ?)",
                         (source, stat.st_size, stat.st_mtime_ns, time.time_ns()))
         # A whole master's rows went through the WAL file: fold them into the db
-        # and shrink the WAL now, not leave it on disk at the transaction's size.
+        # and shrink the WAL now, so it does not sit on disk at the transaction's size.
         # A reader mid-lookup only makes this a partial checkpoint.
         con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         return True

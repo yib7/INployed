@@ -1,4 +1,4 @@
-"""The Résumé Data tab (Qt): structured editor for master_experience.yaml + the
+"""The Resume Data tab (Qt): structured editor for master_experience.yaml + the
 scorer-resume.md generator.
 
 A scrollable editor over `basics` and the three atom-bearing sections
@@ -6,8 +6,8 @@ A scrollable editor over `basics` and the three atom-bearing sections
 entries/atoms can be added or deleted, and Education/Skills are shown read-only.
 Every write goes through `master_edit` (which backs up to `.bak`); Validate runs
 `master_validate`; Revert restores the on-open snapshot. The top bar regenerates
-the scorer's `resume.md` from the YAML via Gemini (preview-then-write), with the
-LLM call injectable so tests never spend a credit.
+the scorer's `resume.md` from the YAML with one LLM call (Gemini, or Claude on
+the Claude provider; preview-then-write), injectable so tests never spend a credit.
 """
 from __future__ import annotations
 
@@ -113,7 +113,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         self._atom_impact_orig: dict[str, str] = {}
         # Which entry (section, index) each atom id belongs to, so
         # Save can find and re-check the owning entry when only one of its atoms
-        # changed -- populated in `_entry_block`/`_atom_block`, keyed by atom id.
+        # changed; populated in `_entry_block`/`_atom_block`, keyed by atom id.
         self._atom_owner: dict[str, tuple] = {}
         self._layout_section_edits: dict[str, QtWidgets.QLineEdit] = {}
         self._layout_project_edits: dict[str, QtWidgets.QLineEdit] = {}
@@ -121,7 +121,8 @@ class ResumeDataEditor(QtWidgets.QWidget):
         # row-widget, form) so a per-row ✕ or the "Remove stale entries" button can
         # drop them from the saved map without a full tab rebuild.
         self._stale_layout_rows: list = []
-        # C: per-block "don't tailor" verbatim editors, {block_name: (checkbox, editor)}.
+        # Per-block "don't tailor" verbatim editors:
+        # {(section, idx): (name, checkbox, editor)}.
         self._verbatim_edits: dict = {}
 
         self._build_shell()
@@ -186,7 +187,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         return bar
 
     def _build_stale_banner(self) -> QtWidgets.QWidget:
-        """A warning shown when resume.md has drifted behind the master YAML —
+        """A warning shown when resume.md has drifted behind the master YAML;
         the scorer would otherwise keep matching against an out-of-date résumé."""
         from qt import theme
         frame = QtWidgets.QFrame()
@@ -294,7 +295,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
             form.addRow(Label(label), edit)
         bv.addLayout(form)
 
-        # C: per-block "don't tailor". When checked, this block renders the user's
+        # Per-block "don't tailor". When checked, this block renders the user's
         # EXACT bullets (LLM bypassed); the atom editors are hidden and a simple
         # bulleted editor takes over, prefilled from the saved verbatim bullets.
         saved_vb = jobsdata.load_verbatim_blocks().get(name) or []
@@ -692,8 +693,8 @@ class ResumeDataEditor(QtWidgets.QWidget):
     def _pending_changes(self) -> tuple[dict, dict, dict]:
         """The edits Save is about to write, read straight off the widgets: basics
         (key -> new text), entries ((section, idx) -> {field: new text}) and atoms
-        (id -> {field: new value}, angles/impact already parsed to lists) --
-        pure, no I/O, so both `save()` and its pre-write check read one source."""
+        (id -> {field: new value}, angles/impact already parsed to lists).
+        Pure, no I/O, so both `save()` and its pre-write check read one source."""
         b_changes = {k: e.text() for k, e in self._basics_edits.items()
                      if e.text() != self._basics_orig.get(k, "")}
 
@@ -720,18 +721,17 @@ class ResumeDataEditor(QtWidgets.QWidget):
                           atom_changes: dict) -> list[str]:
         """Every problem with what Save is about to write, checked against the
         FULL projected value (the on-disk entry/basics merged with the pending
-        edits) -- `update_entry`/`update_atom` write unchecked today, so this is
-        what actually stops a blanked-out required field from ever reaching disk.
+        edits). `update_entry`/`update_atom` write unchecked, so this check is
+        what stops a blanked-out required field from ever reaching disk.
 
         Basics reuses `master_validate.validate_master` (the same check the
-        Validate button already runs) on a document holding only the projected
+        Validate button runs) on a document holding only the projected
         `basics`, so absent `experience`/`projects`/`leadership`/`tailor`/`skills`
-        keys read as empty, keeping this check limited to what is actually
-        being written and off unrelated pre-existing problems elsewhere in the
-        file. Each touched entry reuses
-        `master_edit.entry_problems` -- the SAME rules `append_entry` and the
-        add-entry dialog enforce -- over the entry as it will read once its
-        pending field AND atom edits both land.
+        keys read as empty, keeping this check limited to what is being
+        written and off unrelated pre-existing problems elsewhere in the
+        file. Each touched entry reuses `master_edit.entry_problems` (the SAME
+        rules `append_entry` and the add-entry dialog enforce) over the entry
+        as it will read once its pending field AND atom edits both land.
         """
         problems: list[str] = []
         data = self._read()
@@ -879,7 +879,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         # so a problem is visible (and OK is disabled) from the first
         # keystroke, ahead of any submit attempt. The on-disk document is read
         # once, when the dialog opens, so the "target entry still exists"
-        # check reflects what a write would actually see.
+        # check reflects what a write would see.
         doc = self._read()
 
         def _recheck() -> None:
@@ -985,19 +985,19 @@ class ResumeDataEditor(QtWidgets.QWidget):
 
     def refresh_push_state(self) -> None:
         """Public slot: re-evaluate the resume.md push button (vm_enabled /
-        VMTarget). Driven by the settings-saved path, not tab switches — it does
-        settings.load() + VMTarget.from_env() per call."""
+        VMTarget). The settings-saved path calls it (tab switches do not),
+        since each call runs settings.load() + VMTarget.from_env()."""
         import vm_sync
         cfg = settings.load()
         on = bool(cfg.get("vm_enabled")) and vm_sync.VMTarget.from_env().configured()
         self.btn_push_md.setEnabled(on)
 
-    # Backward-compatible alias (pre-audit callers/tests used the private name).
+    # Alias under the private name, which callers and tests still use.
     _refresh_push_state = refresh_push_state
 
     def refresh_model_state(self) -> None:
         """Public slot: grey out the Gemini model box on the Claude provider and
-        name the Claude model resume.md generation really uses. Cheap (reads
+        name the Claude model resume.md generation uses instead. Cheap (reads
         local config.json only), so it runs on tab show and after a Settings save."""
         claude = resume_md.claude_model_in_use()
         self.md_model.setEnabled(not claude)
@@ -1017,7 +1017,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
             QtWidgets.QMessageBox.critical(
                 self, "Generate resume.md", "No master_experience.yaml found; add Resume Data first.")
             return
-        # On Claude the box's Gemini id is ignored; name the model that really runs.
+        # On Claude the box's Gemini id is ignored; name the model that runs.
         claude = resume_md.claude_model_in_use()
         shown, vendor = (claude, "Claude") if claude else (model, "Gemini")
         if QtWidgets.QMessageBox.question(
@@ -1093,8 +1093,8 @@ class ResumeDataEditor(QtWidgets.QWidget):
     def _push_outcome(res) -> tuple[bool, str]:
         """Decide success/failure from the scp result. `scp` does NOT raise on a
         non-zero exit (e.g. pscp can't reach the host / open the path), so the
-        return code — not the mere absence of an exception — is what tells us the
-        file actually landed. Returns (ok, message)."""
+        return code tells us whether the file landed; the absence of an
+        exception proves nothing. Returns (ok, message)."""
         ok = getattr(res, "returncode", 0) == 0
         out = ((getattr(res, "stdout", "") or "") + (getattr(res, "stderr", "") or "")).strip()
         if ok:

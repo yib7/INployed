@@ -119,7 +119,7 @@ def test_the_empty_panel_names_the_file_and_the_reason(win, tmp_path):
     body = win._empty_msg.text()
     assert "linkedin_jobs_master.csv.gz" in body
     assert "invalid stored block lengths" in body
-    assert "Refresh" in body                       # says what to do
+    assert "reloads by itself" in body             # says what to do
     assert "Three steps" not in body               # and does not claim a fresh install
 
 

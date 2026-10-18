@@ -33,7 +33,7 @@ def read_csv_gz(path: Path, usecols=None) -> pd.DataFrame:
     else:
         # A fresh row from scraper.py's pd.concat([existing, df]) column-union
         # (append_to_master) lands with is_seen=NaN when the master already has
-        # the column -- nothing downstream ever stamps it (update_master_scores
+        # the column; nothing downstream ever stamps it (update_master_scores
         # deliberately excludes is_seen; see its docstring). Every consumer here
         # tests astype(str) == "no", and NaN stringifies to "nan", not "no", so an
         # un-normalized blank silently hides the row from every high-score view.
@@ -48,10 +48,10 @@ def read_csv_gz(path: Path, usecols=None) -> pd.DataFrame:
 
 
 def write_csv_gz_atomic(df: pd.DataFrame, path: Path, *, compression: str | None = "gzip") -> None:
-    """Atomic in-place rewrite of a CSV -- same-volume tempfile + os.replace.
+    """Atomic in-place rewrite of a CSV (same-volume tempfile + os.replace).
 
-    `compression` defaults to "gzip" (the original behavior, for the .csv.gz
-    stores this was written for); pass compression=None for a plain CSV so
+    `compression` defaults to "gzip" (for the .csv.gz stores); pass
+    compression=None for a plain CSV so
     local/jobsdata.py's master-CSV writers (_drop_ids_from_csv, _append_dedup_csv)
     can reuse the same atomic tmp+replace helper instead of a naked to_csv.
 
@@ -86,7 +86,7 @@ def reconcile_is_seen(df: pd.DataFrame, registry: SeenRegistry) -> tuple[pd.Data
         return df, 0
     df["job_posting_id"] = df["job_posting_id"].astype(str)
     # A frame that predates the is_seen column (a first-day master, or one
-    # rebuilt from a source without it) used to raise KeyError here — and
+    # rebuilt from a source without it) would raise KeyError here, and
     # _needs_reconcile deliberately routes exactly that shape into this
     # function. Default it to "no" and let the registry flip what it owns.
     if "is_seen" not in df.columns:
@@ -106,9 +106,9 @@ def _needs_reconcile(path: Path, seen_ids: set) -> bool:
     """True if any row in `path` is in `seen_ids` but not already is_seen=yes.
 
     Reads only the two columns it needs, in chunks, and short-circuits on the
-    first hit — so the common no-op case never touches the wide text columns.
-    Any read problem returns True so the real pass runs and reports the error
-    the way it always did (fail toward doing the work, not toward skipping it).
+    first hit, so the common no-op case never touches the wide text columns.
+    Any read problem returns True so the full pass runs and reports the error:
+    a failed probe errs toward doing the work.
     """
     if not seen_ids:
         return False
@@ -129,15 +129,15 @@ def reconcile_file(path: Path, registry: SeenRegistry) -> int:
     """Read + reconcile + write back. Returns rows changed (0 if no rewrite needed).
 
     Streams the file in bounded chunks: the watcher runs this
-    against the ~90 MB decompressed master on every fire, and the old full
-    read + full rewrite held the whole frame in memory. The rewrite lands via
+    against the ~90 MB decompressed master on every fire, and a full
+    read + full rewrite would hold the whole frame in memory. The rewrite lands via
     tmp + retrying replace, and is skipped entirely when nothing changed."""
     seen_ids = registry.all_ids()
 
-    # Cheap two-column probe FIRST. The rewrite below was already
-    # skipped when nothing changed — but only the os.replace was: the full
-    # decompress + re-serialize + gzip of a ~90 MB master still ran on every
-    # watcher fire, and "nothing changed" is the overwhelmingly common case.
+    # Cheap two-column probe FIRST. Skipping only the os.replace when nothing
+    # changed would still run the full decompress + re-serialize + gzip of a
+    # ~90 MB master on every watcher fire, and "nothing changed" is the
+    # overwhelmingly common case.
     # Reading just job_posting_id + is_seen costs a fraction of that, and lets
     # the no-op path return without allocating a temp file at all.
     if not _needs_reconcile(path, seen_ids):
@@ -181,9 +181,9 @@ def reconcile_file(path: Path, registry: SeenRegistry) -> int:
         # `or normalized`: the pass also rewrites literal
         # ""/"nan"/"None" in is_seen to "no", and _needs_reconcile enters it on
         # a read error or a missing column too, not only on a pending seen flag.
-        # Gating the replace on `total` alone built that normalized file and
-        # then deleted it in the finally, so the same decompress + re-serialize
-        # of a ~90 MB master repeated on every watcher fire. Persisting it also
+        # Gating the replace on `total` alone would build that normalized file
+        # and then delete it in the finally, so the same decompress + re-serialize
+        # of a ~90 MB master would repeat on every watcher fire. Persisting it also
         # matters beyond this module: read_csv_gz re-fills blanks on every read,
         # but prune_master.py and merge_incoming.py read the master with plain
         # pd.read_csv and would see the literal "nan".

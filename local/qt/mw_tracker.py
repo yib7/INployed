@@ -2,9 +2,7 @@
 context menu (open, status, block company, résumé folder), the tracker
 extras (followed up, remove, export, import, interview prep) and the
 Stats tab. `_TrackerActions` is a base of `MainWindow`, and its methods
-run on a `MainWindow`.
-
-Split out of `qt.main_window`.
+run on a `MainWindow`, which `qt.main_window` defines.
 """
 from __future__ import annotations
 
@@ -56,7 +54,7 @@ class _TrackerActions:
 
     def _write_is_seen(self, ids: list[str], value: str, paths=None) -> None:
         """Set is_seen=`value` for `ids` in whichever source CSV(s) hold them.
-        Runs on the write queue's worker thread — `paths` is snapshotted on the
+        Runs on the write queue's worker thread: `paths` is snapshotted on the
         UI thread at enqueue time so this never reads the mutable id_to_path map."""
         idset = set(ids)
         if paths is None:
@@ -147,8 +145,8 @@ class _TrackerActions:
                                      job_title=self._cell(row, "job_title"),
                                      url=self._cell(row, "url"))
         if status == "applied":
-            # Applying to a job means you've triaged it — also mark it seen (this
-            # is what the old 'Mark applied' button did) and reload via that path.
+            # Applying to a job means you've triaged it, so mark it seen too and
+            # reload via that path.
             self._mark_ids_seen(ids)
         else:
             self._refresh_tracker()

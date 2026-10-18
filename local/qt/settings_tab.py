@@ -1,4 +1,4 @@
-"""Schema-driven settings form (Qt) — mounted as the dashboard's Settings tab.
+"""Schema-driven settings form (Qt), mounted as the dashboard's Settings tab.
 
 Renders `settings.SETTINGS_SCHEMA` grouped by section: one labelled, explained
 input per Field, the right widget per type (dropdown / editable dropdown / slider /
@@ -16,14 +16,14 @@ THREE VIEW FOLDS, ONE CONFIGURATION GATE. A collapsed section, the advanced
 disclosure and an active search all hide rows the settings still apply to, so the
 form opens them on the user's behalf when it has to (`_reveal_view_folds`) and
 never persists an opening it made itself. A `show_if` gate and the VM master
-switch are the other kind — they mean "this does nothing for the way you have
-things set up" — so the form names them instead of flipping them.
+switch are the other kind: they mean "this does nothing for the way you have
+things set up", so the form names them instead of flipping them.
 
-Problems are reported IN PLACE, not in a modal: the offending input outlines in
+Problems are reported IN PLACE: the offending input outlines in
 red, a danger note appears under it, the form scrolls to the first one the user
 can act on, and the status line counts them ("2 settings need fixing"). The one
-surviving modal is the disk-failure arm of Save — a rejected field is something
-you can see and fix where you are, an unwritable config.json is neither.
+modal is the disk-failure arm of Save: a rejected field is something you can see
+and fix where you are, and an unwritable config.json is neither.
 """
 from __future__ import annotations
 
@@ -67,12 +67,11 @@ SECTION_HELP = {
                   "new score_jobs.py once, because only the new score_jobs.py knows how "
                   "to use these settings."),
     "Scraper": "What job searches the discovery step runs (this drives its API spend).",
-    # Rewritten in P8: the old blurb ("which models score jobs … changing the model
-    # names can silently break scoring") described rows a fresh profile cannot see.
-    # P4 made all four model pickers `advanced`, so what renders by default is
-    # provider / stage2_threshold / max_scored_per_run / min_filter_years — a
-    # section header describing a screen the reader is not looking at is worse than
-    # none, because it reads as a bug in the form.
+    # Describes the rows a fresh profile sees. All four model pickers are
+    # `advanced`, so what renders by default is provider / stage2_threshold /
+    # max_scored_per_run / min_filter_years, and the model names get one pointer
+    # to the disclosure. A section header describing a screen the reader is not
+    # looking at is worse than none, because it reads as a bug in the form.
     "Scoring": ("Which AI service scores collected jobs when Jev is off, the score that "
                 "earns a deeper second pass, and the caps on how much one run may spend. "
                 "The per-stage model names and throughput knobs live under \"Show "
@@ -109,7 +108,7 @@ SECTION_DISPLAY = {
     "VM (cloud scraper)": "VM (cloud job discovery)",
 }
 
-# Short one-liners shown next to each section header — always visible, even when the
+# Short one-liners shown next to each section header, always visible, even when the
 # section is collapsed, so a user knows what to expand without clicking through.
 SECTION_TAGLINE = {
     "Jev": "The TypeSafe judge: master switch, API key & per-area switches",
@@ -119,10 +118,10 @@ SECTION_TAGLINE = {
     "Dashboard": "How jobs are surfaced & tracked",
     "About you": "School status and security clearance, read by the scorer",
     "Scraper": "What job searches to run",
-    # Not "(advanced)": the section is not, and four of its rows are on screen at
-    # shipped defaults. The parenthetical was a leftover from before P4 gave the
-    # word a specific meaning in this tab (the disclosure checkbox), and a tagline
-    # that claims a folded-away section reads as an empty one.
+    # No "(advanced)": the section is not, and four of its rows are on screen at
+    # shipped defaults. The word has a specific meaning in this tab (the
+    # disclosure checkbox), and a tagline that claims a folded-away section reads
+    # as an empty one.
     "Scoring": "Scoring engine, thresholds & spend guards",
     "Resume": "Cover letter, ATS report & prep-sheet toggles",
     "Auto-apply": "Batch cap, inbox, submit gate & pause",
@@ -131,7 +130,7 @@ SECTION_TAGLINE = {
 }
 COLLAPSIBLE_SECTIONS = {"VM (cloud scraper)": "vm_enabled"}
 
-# The two flavours of inline note a field row can carry (one at a time — see
+# The two flavours of inline note a field row can carry (one at a time; see
 # `_set_field_note`). An ERROR blocks Save; a WARN is information about what the
 # form already did to a stored value, or about one Save keeps as typed (an
 # unknown or lite fallback model, `_flag_model_list`). A WARN never blocks Save.
@@ -153,7 +152,7 @@ class _FocusOutValidator(QtCore.QObject):
     Finding out at Save time that a box has been wrong for ten minutes is the
     modal's other failure, so leaving the field is when to say so. Installed on
     the REGISTERED control; note that a `QSpinBox` hands focus to its internal
-    line edit, so its FocusOut arrives there rather than here — harmless, because
+    line edit, so its FocusOut arrives there rather than here. That is harmless:
     a spin box is structurally in range and has nothing to report.
     """
 
@@ -172,7 +171,7 @@ class _PopupOnClick(QtCore.QObject):
     """Open an editable combo's dropdown when its text field is clicked.
 
     An editable ``QComboBox`` shows its line edit, so a click lands on the text
-    field and Qt does *not* open the popup — the field just looks like a plain
+    field and Qt does *not* open the popup; the field just looks like a plain
     text box. Installed on the combo's line edit, this opens the list on click so
     the model selectors behave like the dropdowns users expect; typing a custom
     id still works once the popup is dismissed.
@@ -222,31 +221,31 @@ class SettingsForm(QtWidgets.QWidget):
         self._setters: dict[str, Callable[[object], None]] = {}
         # Address any field by key: its control, and every form row it occupies.
         # `_widgets` holds the control you'd read/write/style (the INNER one for a
-        # composite cell — see `_make_widget`); `_rows` holds the (form, index)
+        # composite cell; see `_make_widget`); `_rows` holds the (form, index)
         # pairs `_set_field_visible` flips, which for a normal field is BOTH its
         # label row and its muted help row.
         #
         # CONSTRAINT: the row indices are POSITIONAL and captured once, at build.
-        # Never `insertRow`/`removeRow` into these forms afterwards — an insert
+        # Never `insertRow`/`removeRow` into these forms afterwards: an insert
         # shifts every later row and silently re-points every stored index below
         # it at the wrong field, with no error (`setRowVisible` on an out-of-range
         # row neither raises nor warns). A row that only sometimes shows (an
         # inline validation message, say) must be BUILT here, hidden, and toggled
-        # with `setRowVisible` — not inserted later.
+        # with `setRowVisible`, never inserted later.
         # `test_every_field_registers_the_widget_in_its_own_row` is the guard.
         self._widgets: dict[str, QtWidgets.QWidget] = {}
         self._rows: dict[str, list[tuple[QtWidgets.QFormLayout, int]]] = {}
         # Inline validation. `_notes` is one always-present, initially EMPTY and
         # HIDDEN QLabel per field, sitting inside the field's own cell (see
-        # `_add_field`) — which is why nothing here has to touch the positional
+        # `_add_field`), which is why nothing here has to touch the positional
         # row indices above. `_errors` is the subset currently blocking Save.
         self._notes: dict[str, QtWidgets.QLabel] = {}
         self._errors: dict[str, str] = {}
         # Unsaved-change markers. `_dirty` is every key whose value differs from
-        # `_opening_values` — i.e. exactly what the next Save would write — and
+        # `_opening_values` (exactly what the next Save would write), and
         # `_off_default` every key a ↺ button would move. Both are kept as SETS,
         # not recomputed onto every widget, so an edit repolishes only the markers
-        # that actually flipped (a keystroke would otherwise restyle ~60 rows).
+        # that flipped (a keystroke would otherwise restyle ~60 rows).
         # `_dots` has no entry for `vm_enabled`, which has no form row to hold one.
         self._dirty: set[str] = set()
         self._off_default: set[str] = set()
@@ -273,7 +272,7 @@ class SettingsForm(QtWidgets.QWidget):
         self._save_collapsed = save_collapsed or jobsdata.save_collapsed_sections
 
         # Progressive disclosure: are the `advanced` fields folded away? Injected
-        # the same way as the collapse state (and for the same reason — a test
+        # the same way as the collapse state (and for the same reason: a test
         # that fell through to jobsdata would read the DEVELOPER's config.json and
         # its assertions would depend on what that person last ticked).
         self._show_advanced: bool = (
@@ -283,7 +282,7 @@ class SettingsForm(QtWidgets.QWidget):
         # before anything reads it (same as self.status, built by `_add_buttons`).
 
         # Search / filter. `_search_terms` is the parsed, lower-cased, AND-ed term
-        # list and is the ONLY search state anything else reads — empty means "not
+        # list and is the ONLY search state anything else reads. Empty means "not
         # searching", which is the single test every branch below keys off.
         # Deliberately NOT persisted: a filter is a thing you are doing right now,
         # and reopening the tab into a two-section view with no memory of why is
@@ -292,7 +291,7 @@ class SettingsForm(QtWidgets.QWidget):
         # One "(advanced)" chip per advanced field, built hidden in `_label_cell`
         # and shown only while a search is running (search ignores `advanced`, so a
         # result needs to say when it is one). `_search_footer` is the muted line
-        # naming the gates keeping matches off screen — also built hidden, because
+        # naming the gates keeping matches off screen. It is also built hidden, because
         # `self._rows` holds positional indices and nothing may be inserted later.
         self._advanced_tags: dict[str, QtWidgets.QLabel] = {}
         self._search_footer: QtWidgets.QLabel | None = None
@@ -309,7 +308,7 @@ class SettingsForm(QtWidgets.QWidget):
         outer.addWidget(scroll)
         self._scroll = scroll   # Save scrolls the first offender into view
         # The form lives in a centered, max-width column of section cards
-        # (restyle 3f) so a full-width window doesn't stretch every input.
+        # so a full-width window doesn't stretch every input.
         host = QtWidgets.QWidget()
         hl = QtWidgets.QHBoxLayout(host)
         hl.setContentsMargins(16, 12, 16, 12)
@@ -319,7 +318,7 @@ class SettingsForm(QtWidgets.QWidget):
         self._body.setContentsMargins(0, 0, 0, 0)
         self._body.setSpacing(14)
         # Zero-stretch spacers: the column grows first (to its 1160 cap), THEN
-        # the leftover splits equally between the two spacers — centered.
+        # the leftover splits equally between the two spacers, which centers it.
         hl.addStretch(0)
         hl.addWidget(column, 1)
         hl.addStretch(0)
@@ -363,9 +362,9 @@ class SettingsForm(QtWidgets.QWidget):
         self._flag_model_lists()
         # Last, because it writes to the Save button `_add_buttons` just made. Not
         # a no-op on a fresh form either: a stored int the widget had to CLAMP is
-        # dirty — the form is holding 5000 where the file says 99999, and
-        # the next Save writes it — so the marker opens alongside P5's note saying
-        # so, rather than the two disagreeing.
+        # dirty (the form is holding 5000 where the file says 99999, and the next
+        # Save writes it), so the marker opens alongside the clamp note
+        # (`_flag_a_rewritten_int`) and the two agree.
         self._refresh_dirty()
 
     def _name_damaged_files(self) -> None:
@@ -426,7 +425,7 @@ class SettingsForm(QtWidgets.QWidget):
     def _add_search_footer(self) -> None:
         """The muted line under the results naming the gates holding matches back.
 
-        Built empty and HIDDEN, then toggled — never inserted on demand. Same
+        Built empty and HIDDEN, then toggled, never inserted on demand. Same
         constraint as the per-field notes: `self._rows` holds positional
         `QFormLayout` indices captured at build, and while this label lives in
         `self._body` rather than in a form layout, "build it hidden" is the rule
@@ -445,16 +444,15 @@ class SettingsForm(QtWidgets.QWidget):
         """What one field is searchable BY: its label, its help, its config key,
         and the text of any CHIP the row carries.
 
-        The key is not padding. A user reading `.env`, a GitHub issue or this
-        project's docs searches `GEMINI_API_KEYS` — a string that appears in no
-        label and in no help text — and that person is the most likely to reach
+        The key is deliberate. A user reading `.env`, a GitHub issue or this
+        project's docs searches `GEMINI_API_KEYS` (a string that appears in no
+        label and in no help text), and that person is the most likely to reach
         for a search box in the first place.
 
-        The chips are here for the same reason, and P8 is what made it necessary:
-        it deleted "Restart the dashboard after changing" from three help strings
-        and "Advanced:" from two more, because a chip now says both — and
-        `test_no_restart_field_repeats_the_word_in_its_help` ENFORCES the
-        deletion. Without this line the word printed on a row's own chip finds
+        The chips are here for the same reason. The help strings leave out
+        "Restart the dashboard after changing" and "Advanced:", because a chip
+        says both, and `test_no_restart_field_repeats_the_word_in_its_help`
+        ENFORCES that. Without this line the word printed on a row's own chip finds
         nothing in the box directly above it, which is the exact failure the key
         is included to avoid. The words have to be added here rather than put back
         in the help, since the lint forbids the latter.
@@ -473,7 +471,7 @@ class SettingsForm(QtWidgets.QWidget):
         """Drive the box programmatically and re-filter NOW, skipping the debounce.
 
         The one entry point for a caller (or a test) that wants the filter applied
-        before the next event loop turn — `_reveal_view_folds` needs exactly that,
+        before the next event loop turn. `_reveal_view_folds` needs exactly that,
         because it has to put a rejected field on screen inside the same Save.
         """
         self._search_timer.stop()
@@ -485,10 +483,10 @@ class SettingsForm(QtWidgets.QWidget):
     def _commit_search(self) -> None:
         """Re-read the box and re-filter. What the debounce timer fires.
 
-        The early return is not just a saving: while a search is running,
+        The early return does more than save work: while a search is running,
         `_apply_field_visibility` force-expands every matching section, so
         re-committing an unchanged term would undo a fold the user had just made
-        by hand mid-search. Note the exact scope of that — an UNCHANGED term. A
+        by hand mid-search. Note the exact scope of that: an UNCHANGED term. A
         section the user folds mid-search and then types another letter into is
         force-expanded again, because the new term is a new set of results and
         every matching section is opened for it. The fold is not lost: it went
@@ -506,10 +504,10 @@ class SettingsForm(QtWidgets.QWidget):
     def _restore_collapse_state(self) -> None:
         """Put every section back to the fold the USER chose, on clearing a search.
 
-        `self._collapsed` is untouched by search from end to end — force-expanding
+        `self._collapsed` is untouched by search from end to end (force-expanding
         goes through `CollapsibleSection.set_collapsed`, which does not fire
-        `on_toggled` — so this is a restore, not a guess. That is the whole point:
-        this repo's owner runs with 9 of the 10 sections folded, and a search that
+        `on_toggled`), so this puts back the user's own folds exactly. It matters
+        because this repo's owner runs with 9 of the 10 sections folded, and a search that
         permanently unfolds the tab is worse than no search at all.
 
         Called only on the searching → cleared transition, never from
@@ -525,15 +523,15 @@ class SettingsForm(QtWidgets.QWidget):
         "(advanced)" chips, which sections survive, and the gate footer.
 
         A section with zero surviving rows is hidden outright rather than left as
-        an empty card — ten headers with nothing under them is the same wall of
+        an empty card: ten headers with nothing under them is the same wall of
         chrome the filter exists to cut. A section WITH a hit is force-expanded,
-        because a result the user still has to go and unfold is not a result.
+        so the user never has to go and unfold a result.
 
         `shown` counts `_field_visible`, which is ROW-FLAG level and knows nothing
         about the VM section's master switch hiding the container those rows sit
-        in. That is deliberate, not the oversight it looks like: search "gcloud"
-        with VM features off and both matches are behind that switch, so no row
-        survives — and the card stays anyway, because the switch is INSIDE it.
+        in. That is deliberate: search "gcloud" with the VM switch off and both
+        matches are behind that switch, so no row survives, and the card stays
+        anyway, because the switch is INSIDE it.
         Counting "really on screen" would drop the card and leave the footer
         telling the user to flip a control the same search had just hidden.
         Pinned by `test_a_section_whose_only_matches_are_gated_keeps_its_switch_on_screen`.
@@ -541,8 +539,8 @@ class SettingsForm(QtWidgets.QWidget):
         searching = bool(self._search_terms)
         for tag in self._advanced_tags.values():
             tag.setVisible(searching)
-        # The disclosure governs nothing while a search is running — search ignores
-        # `advanced` — so it neither counts (see `_advanced_hidden_count`) nor
+        # The disclosure governs nothing while a search is running (search ignores
+        # `advanced`), so it neither counts (see `_advanced_hidden_count`) nor
         # pretends to be live.
         self._advanced_check.setEnabled(not searching)
         self._advanced_check.setToolTip(
@@ -562,11 +560,11 @@ class SettingsForm(QtWidgets.QWidget):
         self._refresh_search_footer()
 
     def _refresh_search_footer(self) -> None:
-        """Name the gates keeping matching settings off screen — or say nothing.
+        """Name the gates keeping matching settings off screen, or say nothing.
 
-        The honest third option. A search that silently omits results teaches the
-        user the tool lies; one that lists a field their configuration makes inert
-        hands them a row that does nothing. Naming the gate does neither: the
+        A search that silently omits results teaches the user the tool lies; one
+        that lists a field their configuration makes inert hands them a row that
+        does nothing. Naming the gate avoids both: the
         setting is accounted for AND the sentence says what would bring it back.
         """
         if self._search_footer is None:
@@ -597,10 +595,10 @@ class SettingsForm(QtWidgets.QWidget):
 
     def _add_advanced_toggle(self) -> None:
         """The one checkbox that folds every `advanced` field away, at the top of
-        the form (P7's search box goes above it).
+        the form (the search box sits above it).
 
-        Built BEFORE the sections so `_apply_field_visibility` — which refreshes
-        the label — can assume it exists, and connected AFTER `setChecked` so
+        Built BEFORE the sections so `_apply_field_visibility` (which refreshes
+        the label) can assume it exists, and connected AFTER `setChecked` so
         restoring the persisted state does not write it straight back out.
         """
         check = QtWidgets.QCheckBox()
@@ -610,18 +608,17 @@ class SettingsForm(QtWidgets.QWidget):
         self._body.addWidget(check)
 
     def _shut_section_gate(self, f: settings.Field) -> settings.Field | None:
-        """The master switch of `f`'s section when it is OFF — or None.
+        """The master switch of `f`'s section when it is OFF, or None.
 
-        `f.key != gate_key` is the carve-out that makes this usable, and it is
-        the fix for a defect three features said out loud: A MASTER SWITCH IS
-        NEVER HIDDEN BY ITSELF. It is the control that OPENS its section, so it
-        is on screen precisely when the gate is shut. Reading the gate without
-        that exemption made every sentence built off this walk circular — P7's
-        search footer printed "1 more setting applies when Enable VM features is
-        on" underneath a form plainly showing that checkbox, and P6's section
-        badge told a user who had just unticked it that their unsaved change was
-        "not shown on this form" and that the fix was to turn on the thing they
-        had just turned off.
+        `f.key != gate_key` is the carve-out that makes this usable: A MASTER
+        SWITCH IS NEVER HIDDEN BY ITSELF. It is the control that OPENS its
+        section, so it is on screen precisely when the gate is shut. Without that
+        exemption every sentence built off this walk is circular: the search
+        footer would print "1 more setting applies when Enable VM features is
+        on" underneath a form plainly showing that checkbox, and the section
+        badge would tell a user who had just unticked it that their unsaved change
+        was "not shown on this form" and that the fix was to turn on the thing
+        they had just turned off.
         """
         gate_key = COLLAPSIBLE_SECTIONS.get(f.section)
         if gate_key is None or f.key == gate_key or self._getters[gate_key]():
@@ -635,7 +632,7 @@ class SettingsForm(QtWidgets.QWidget):
         gate already hides its fields by hiding their whole container, so
         repeating it per row would fight `_set_field_visible`'s property that
         showing a row inside a gated-off container does not force the container
-        open — and would make this a second field-visibility path.
+        open, and would make this a second field-visibility path.
         """
         return self._shut_section_gate(f) is None
 
@@ -645,23 +642,23 @@ class SettingsForm(QtWidgets.QWidget):
 
         Two subtractions, one line between them:
 
-        * A CONFIGURATION gate subtracts — both kinds. A `show_if` gate shut
+        * A CONFIGURATION gate subtracts, both kinds. A `show_if` gate shut
           (the other provider's model pickers) and the VM section's master
           switch off both mean the same thing: that field does nothing for the
           way this user has things set up. Counting them would promise rows a
-          tick cannot deliver, which is the whole reason this is not simply
+          tick cannot deliver, which is why this is not simply
           "how many advanced fields exist" (18 today, of which 5 belong to the
           provider that is not selected and 3 to a VM the user may not run).
         * A collapsed SECTION does not subtract. That is a fold the user set
           themselves, with a header on screen naming what is inside; the
           settings still apply and expanding is not a configuration change. It
           also cannot subtract: this repo's owner runs with 9 of the 10 sections
-          folded, so counting that way would report ~0 and destroy the only
-          signal — until search ships — that the hidden settings exist at all.
+          folded, so counting that way would report ~0 and erase this label's
+          signal that the hidden settings exist at all.
 
         Zero once the box is ticked, which is what drops the parenthetical from
-        the label — and zero again while a SEARCH is running, for the same reason
-        rather than a different one: search ignores `advanced`, so the checkbox is
+        the label, and zero again while a SEARCH is running, for the same
+        reason: search ignores `advanced`, so the checkbox is
         withholding nothing and a count there would promise rows a tick cannot
         deliver. (What the search itself is withholding is not this label's claim;
         the gate footer makes that one.)
@@ -730,11 +727,11 @@ class SettingsForm(QtWidgets.QWidget):
         check.toggled.connect(self._apply_section_visibility)
         # This switch decides whether its section's fields apply at all, so it
         # moves BOTH things that report on withheld settings: the disclosure count
-        # and — since P7 — the search footer naming the gates ("2 more settings
-        # apply when Enable VM features is on"). `_apply_field_visibility` drives
-        # both, and connecting only the label left that footer standing after the
-        # user flipped the very switch it named. Connected HERE rather than from
-        # `_apply_section_visibility`, which also runs mid-`_build` — neither
+        # and the search footer naming the gates ("2 more settings apply when
+        # Enable VM features is on"). `_apply_field_visibility` drives both, and
+        # connecting only the label would leave that footer standing after the
+        # user flips the very switch it names. Connected HERE rather than from
+        # `_apply_section_visibility`, which also runs mid-`_build`: neither
         # claim may depend on SECTION_ORDER happening to render this section after
         # every gate widget `_gate_values` reads. (setChecked is above the
         # connects, so nothing fires during construction.)
@@ -742,7 +739,7 @@ class SettingsForm(QtWidgets.QWidget):
         # ...and it is a real setting, so flipping it is a real unsaved change.
         # `_add_field` never sees this widget, so the one hook every other field
         # gets through `_connect_field_signals` has to be wired by hand. It has no
-        # form row, hence no dot and no ↺ — but it counts, in the Save button and
+        # form row, hence no dot and no ↺, but it counts, in the Save button and
         # in its section's header, because the Save WILL write it.
         check.toggled.connect(lambda *_a: self._on_field_edited(gate_key))
         sec.add_widget(check)
@@ -789,15 +786,15 @@ class SettingsForm(QtWidgets.QWidget):
                 container.setVisible(bool(self._getters[gate_key]()))
 
     def _set_field_visible(self, key: str, visible: bool) -> None:
-        """Show or hide every form row ONE field occupies — its label+chip row AND
+        """Show or hide every form row ONE field occupies: its label+chip row AND
         its help row, so a hidden control never leaves its explanation behind.
 
         Composes with the two coarser visibility mechanisms rather than fighting
         them: a row hidden here stays hidden through a VM gate off/on cycle and a
         section collapse/expand, and showing a row inside a gated-off container
         does not force the container open. `KeyError` on an unregistered key is
-        deliberate — every schema key IS registered, so a miss is a typo or a key
-        that was deleted from the schema, not a field that happens to be hidden.
+        deliberate: every schema key IS registered (hidden fields included), so a
+        miss is a typo or a key that was deleted from the schema.
         `vm_enabled` registers zero rows, which makes it a legitimate no-op.
         """
         for form, row in self._rows[key]:
@@ -812,7 +809,7 @@ class SettingsForm(QtWidgets.QWidget):
         This is also the full set of keys `settings.is_visible` can consult: a
         gate that is itself gated (`gemini_auth`) appears here because something
         gates on IT, and its own gate (`tailor_provider`) appears for the same
-        reason — so a chain of any depth is covered without walking it.
+        reason, so a chain of any depth is covered without walking it.
         """
         keys: list[str] = []
         for f in settings.SETTINGS_SCHEMA:
@@ -824,7 +821,7 @@ class SettingsForm(QtWidgets.QWidget):
         """Current values of the gate fields, read LIVE from their widgets.
 
         Not from `settings.load()`: visibility has to follow the form as the user
-        edits it, before anything is saved. Only gates are read —
+        edits it, before anything is saved. Only gates are read;
         `settings.is_visible` falls back to a Field's own default for any key
         absent from this mapping.
         """
@@ -842,14 +839,14 @@ class SettingsForm(QtWidgets.QWidget):
 
         An unsupported gate widget raises rather than silently never firing (the
         same posture as `_set_field_visible`'s KeyError). Only a bounded-value
-        control can be a gate — `show_if` compares against `Field.choices` — so
+        control can be a gate (`show_if` compares against `Field.choices`), so
         QComboBox and QCheckBox are the whole supported set, and both are
         guaranteed to have a `_getters` entry for `_gate_values`.
 
         The QCheckBox arm is reachable only if you give the bool gate an explicit
         `choices=("True", "False")`: a bool Field defaults to `choices=()`, which
         `test_every_gate_names_a_real_field_and_real_choices` rejects, and
-        `is_visible` compares `str(True)` — so `("true",)` and `(True,)` both
+        `is_visible` compares `str(True)`, so `("true",)` and `(True,)` both
         fail their own schema-lint test. Nothing can ship broken; you just have
         to spell it that one way.
         """
@@ -867,9 +864,9 @@ class SettingsForm(QtWidgets.QWidget):
     def _field_visible(self, f: settings.Field, gate_values: dict) -> bool:
         """Should one field be on screen right now?
 
-        The single place field-level visibility is decided — P3 put the gate here,
-        P4 composed the advanced flag in, and search composes here too rather than
-        opening a third rule that the other two would have to be kept in step with.
+        The single place field-level visibility is decided: the `show_if` gate,
+        the advanced flag and search all compose here, so there is no separate
+        rule that the others would have to be kept in step with.
 
         The gate half is in EVERY branch and nothing overrides it: ticking "show
         advanced" never reveals a field whose `show_if` gate is shut (it would
@@ -877,7 +874,7 @@ class SettingsForm(QtWidgets.QWidget):
         a search hit.
 
         What search DOES override is `advanced`, deliberately and asymmetrically.
-        The disclosure is a view fold — "not now" — and a user who has typed the
+        The disclosure is a view fold ("not now"), and a user who has typed the
         name of the thing they want has said "now"; leaving an advanced row out of
         its own search results is what would make the fold indefensible. A
         `show_if` gate is not a fold, so it survives, and `_refresh_search_footer`
@@ -892,14 +889,14 @@ class SettingsForm(QtWidgets.QWidget):
         """Re-render every field's visibility from the CURRENT gate values.
 
         Runs once at build, on every gate change, on the advanced toggle, on every
-        committed search, and from `_repopulate` — so Revert, Restore defaults and
+        committed search, and from `_repopulate`, so Revert, Restore defaults and
         snapshot-load all re-evaluate. Walks the whole schema, not just the gated
         fields, so an ungated field is actively asserted visible instead of merely
         never touched. The advanced count and the search chrome ride along because
         a gate change moves both (flip `provider` mid-search and a section can go
         from three hits to none).
 
-        It does NOT restore the persisted collapse state — see
+        It does NOT restore the persisted collapse state; see
         `_restore_collapse_state` for why that would fight `_reveal_view_folds`.
         """
         gate_values = self._gate_values()
@@ -931,14 +928,14 @@ class SettingsForm(QtWidgets.QWidget):
         # The "restart" chip, beside the storage one because it is the same kind
         # of fact about where the value lives: this one is read out of `.env` once
         # per launch, so editing it changes a file the running process has already
-        # stopped consulting. Always visible (not toggled like the advanced chip) —
-        # the whole failure it addresses is a user who saves, sees "Saved.", and
-        # then watches the old model / key / output folder keep being used.
-        # Borrows `storageTag`'s SHAPE deliberately — the two chips are siblings
-        # by design — but `restartTag` carries its own colour rule in theme.py, or
-        # a reader scanning the row would just see two storage tags. (Setting a
-        # dynamic property no QSS matches is the P5 defect: counted, styled,
-        # invisible. `test_the_restart_chip_has_a_selector_the_widget_matches`.)
+        # stopped consulting. Always visible (not toggled like the advanced chip):
+        # the failure it addresses is a user who saves, sees "Saved.", and then
+        # watches the old model / key / output folder keep being used.
+        # Borrows `storageTag`'s SHAPE deliberately (the two chips are siblings
+        # by design), but `restartTag` carries its own colour rule in theme.py, or
+        # a reader scanning the row would just see two storage tags. (A dynamic
+        # property no QSS matches makes a chip that is counted, styled and
+        # invisible; `test_the_restart_chip_has_a_selector_the_widget_matches`.)
         if f.restart:
             chip = Label("restart")
             chip.setProperty("storageTag", True)
@@ -949,7 +946,7 @@ class SettingsForm(QtWidgets.QWidget):
             h.addWidget(chip)
         # The "(advanced)" chip: built for every advanced field, hidden, and shown
         # only in search results. Search ignores `advanced` so that a folded-away
-        # knob stays findable — but a result that arrives with no explanation of
+        # knob stays findable, but a result that arrives with no explanation of
         # why it was not there a moment ago is its own small confusion, and the
         # chip is also where the user learns the disclosure toggle exists.
         if f.advanced:
@@ -965,7 +962,7 @@ class SettingsForm(QtWidgets.QWidget):
         widget = self._make_widget(f, value)
         # The visible label lives in a composite cell (label + storage chip),
         # which QFormLayout can't expose as the field's label to assistive
-        # tech -- name the input explicitly so screen readers announce it.
+        # tech, so name the input explicitly for screen readers to announce it.
         widget.setAccessibleName(f.label)
         # A field owns TWO rows: label+chip, then the muted help paragraph.
         # Record both so `_set_field_visible` takes the explanation with the
@@ -986,7 +983,7 @@ class SettingsForm(QtWidgets.QWidget):
         """The field's control (plus its ↺ reset) with the inline note underneath.
 
         The note lives INSIDE the field's cell rather than in a form row of its
-        own, and it is built here — empty and hidden — for every field, never
+        own, and it is built here (empty and hidden) for every field, never
         added on demand. Two reasons, neither cosmetic:
 
         * `self._rows` holds POSITIONAL QFormLayout indices captured at build, so
@@ -994,7 +991,7 @@ class SettingsForm(QtWidgets.QWidget):
           the constraint at the `_rows` declaration). Inside the cell there is no
           index to invalidate.
         * `_set_field_visible` flips whole rows, so a note in the cell is hidden
-          and restored WITH its control for free — a note left behind by a field
+          and restored WITH its control for free; a note left behind by a field
           the advanced toggle just folded away would be an error message with
           nothing to attach it to.
 
@@ -1024,10 +1021,10 @@ class SettingsForm(QtWidgets.QWidget):
         """The per-field ↺, or None for a secret.
 
         NO reset on a credential, and not merely hidden: a secret's schema default
-        is `""`, so the button would be offering to clear a live API key — an
+        is `""`, so the button would be offering to clear a live API key: an
         action with no undo (the old value is gone from .env and from the box that
-        was showing it) sitting one stray click away from a row the user opened to
-        read, not to edit. Every other field's default is a value you can type
+        was showing it) sitting one stray click away from a row the user opened
+        only to read. Every other field's default is a value you can type
         back.
 
         Built hidden and shown only while the value differs from the default, so a
@@ -1035,10 +1032,9 @@ class SettingsForm(QtWidgets.QWidget):
 
         `NoFocus`, deliberately. A `QToolButton` is a tab stop by default, which
         would put ~19 one-keypress "overwrite this value" controls into the tab
-        chain of a real profile — several holding text nobody can retype
-        (`keywords`, the inbox map) — and double the number of stops between one
-        setting and the next, which is itself the friction this cycle exists to
-        remove. It follows Qt's own convention for an inline auxiliary control
+        chain of a full profile (several holding text nobody can retype:
+        `keywords`, the inbox map) and double the number of stops between one
+        setting and the next. It follows Qt's own convention for an inline auxiliary control
         (`QLineEdit`'s built-in clear button is not a tab stop either). The
         keyboard route to a default is unchanged: select the field's text and type
         it, or use Restore defaults for the whole form.
@@ -1059,7 +1055,7 @@ class SettingsForm(QtWidgets.QWidget):
 
     @staticmethod
     def _default_label(f: settings.Field) -> str:
-        """`f.default` as a short phrase for the ↺ tooltip — the button says what
+        """`f.default` as a short phrase for the ↺ tooltip: the button says what
         it would do BEFORE it does it, since the value it overwrites is gone."""
         d = f.default
         text = ", ".join(str(x) for x in d) if isinstance(d, list) else str(d)
@@ -1074,7 +1070,7 @@ class SettingsForm(QtWidgets.QWidget):
         mark dirty. For the four composite cells that is the INNER control, not
         the container this returns: `_slider_widget` registers its `QSlider`,
         `_path_widget` and `_secret_widget` their `QLineEdit`. `multichoice` is
-        the deliberate exception — it has no single inner control (one
+        the deliberate exception: it has no single inner control (one
         `QCheckBox` per choice, all of which move together), so it registers the
         cell and the per-choice boxes stay addressable through `self._multi[key]`.
         """
@@ -1155,9 +1151,9 @@ class SettingsForm(QtWidgets.QWidget):
         Save names it (`settings.field_problem`) until the user picks one.
 
         A blank (a hand-written `KEY=` line, a JSON "" or null) reads as the
-        field's default: shown as typed, it was an option
-        `field_problem` refuses, so every Save failed on a value the user never
-        chose. The code that reads these settings mostly agrees: the tailor, the
+        field's default: shown as typed, it would be an option
+        `field_problem` refuses, so every Save would fail on a value the user
+        never chose. The code that reads these settings mostly agrees: the tailor, the
         scorer's provider, the Jev judge and the snapshot pruner all take a blank
         as the default. The scraper hands a blank search filter to Bright Data
         as it is, so a Save puts the default in its place. A field whose help
@@ -1224,7 +1220,7 @@ class SettingsForm(QtWidgets.QWidget):
         here would pass a casual test and break those.
 
         Structurally this makes `_coerce`'s "must be a whole number" arm and
-        `settings.validate`'s range arm unreachable from these rows — which is the
+        `settings.validate`'s range arm unreachable from these rows. That is the
         point, and also why `_flag_a_rewritten_int` exists: what the widget cannot
         be driven to, it silently CLAMPS to on the way in.
         """
@@ -1302,9 +1298,9 @@ class SettingsForm(QtWidgets.QWidget):
         return cell
 
     def _secret_widget(self, f, value):
-        """A secret field is MASKED by default (restyle 3f — locked user
-        decision): the saved value is present in the box (straight from the
-        local .env — nothing leaves this PC) but shown as dots until the Hide
+        """A secret field is MASKED by default (a locked user decision): the
+        saved value is present in the box (straight from the local .env;
+        nothing leaves this PC) but shown as dots until the Hide
         toggle is unticked. Edit it to change it, clear the box to remove the
         key."""
         cell = QtWidgets.QWidget()
@@ -1337,20 +1333,20 @@ class SettingsForm(QtWidgets.QWidget):
         signals.
 
         Clearing on CHANGE rather than on the next Save is what keeps a red box
-        from following someone around after they have already fixed it — and, for
-        a clamp note, the moment they type the widget IS the value, so a note
+        from following someone around after they have already fixed it. For a
+        clamp note, the moment they type the widget IS the value, so a note
         about the value that was on disk is stale.
 
         Reads `self._widgets[f.key]`, i.e. the REGISTERED control, NOT whatever
         `_make_widget` returned: for the four composite cells those differ, and
-        connecting to the wrapper finds no signal at all — sliders, path boxes and
+        connecting to the wrapper finds no signal at all: sliders, path boxes and
         credential boxes would silently never clear. (The registry exists for
         exactly this; see `_make_widget`'s docstring.) `multichoice` is the
         documented exception with no single inner control, so its per-choice boxes
         are wired individually.
 
-        `_on_field_edited` is deliberately one narrow hook per key: P6's dirty
-        markers want exactly this signal set, and should extend that method rather
+        `_on_field_edited` is deliberately one narrow hook per key: the dirty
+        markers want exactly this signal set, and extend that method rather
         than connect a second pass of their own.
         """
         widget = self._widgets[f.key]
@@ -1375,9 +1371,9 @@ class SettingsForm(QtWidgets.QWidget):
         ONE note per field, last writer wins: an error supersedes a clamp warning
         rather than stacking, because the two cannot both be true at once
         (a spin box the form clamped on the way in cannot then be out of range).
-        A field with no note label — `vm_enabled`, the VM section's master
+        A field with no note label (`vm_enabled`, the VM section's master
         checkbox, which is added straight to the section body rather than through
-        `_add_field` — is a deliberate no-op, exactly as it is for
+        `_add_field`) is a deliberate no-op, exactly as it is for
         `_set_field_visible`.
         """
         note = self._notes.get(key)
@@ -1396,14 +1392,14 @@ class SettingsForm(QtWidgets.QWidget):
     def _flag_a_rewritten_int(self, f: settings.Field, stored) -> None:
         """Say so when building the widget CHANGED the stored value.
 
-        The real bug in this feature: `QSpinBox.setValue` (and `QSlider.setValue`)
+        The bug this guards against: `QSpinBox.setValue` (and `QSlider.setValue`)
         clamp SILENTLY, so a hand-edited `max_scored_per_run: 99999` becomes 5000
-        and is written back on the next Save with no visible cause — a "safety"
+        and is written back on the next Save with no visible cause, a "safety"
         feature quietly rewriting the user's config. Keyed off `Field.type`, not
         off which widget got built, because the five slider ints clamp identically.
 
-        A WARNING, not an error: the value on screen is legal and Save works, the
-        user is simply told what happened before it is written. Cleared the moment
+        A WARNING, which never blocks Save: the value on screen is legal and Save
+        works; the user is told what happened before it is written. Cleared the moment
         they edit the field (`_on_field_edited`), because from then on the widget
         is the value and this note describes history.
         """
@@ -1447,9 +1443,8 @@ class SettingsForm(QtWidgets.QWidget):
         replace it cleanly: both notes share the same label, so only one shows
         at a time.
 
-        The one narrow per-key hook, as P5 promised it would be — the dirty
-        markers extend it rather than opening a second pass of connections over
-        the same signals.
+        The one narrow per-key hook: the dirty markers extend it rather than
+        opening a second pass of connections over the same signals.
         """
         if self._notes.get(key) is not None and not self._notes[key].isHidden():
             self._set_field_note(key, "")
@@ -1528,7 +1523,7 @@ class SettingsForm(QtWidgets.QWidget):
 
     def _unreachable(self) -> list[settings.Field]:
         """The flagged fields a CONFIGURATION gate is keeping off screen, in schema
-        order — the ones the status line has to name, because nothing else on the
+        order: the ones the status line has to name, because nothing else on the
         form will."""
         return [f for f in settings.SETTINGS_SCHEMA
                 if f.key in self._errors and self._blocking_gate(f) is not None]
@@ -1544,15 +1539,15 @@ class SettingsForm(QtWidgets.QWidget):
 
     def _blocking_gate_field(self, f: settings.Field):
         """The CONFIGURATION gate keeping `f` off screen, as
-        `(gate field, the values that would open it)` — or None when nothing
+        `(gate field, the values that would open it)`, or None when nothing
         configuration-level is. An empty `allowed` means a bool master switch.
 
-        The line P4 drew, reused by three features now (P5's error status, P6's
-        section-badge tooltip, P7's search footer): a `show_if` gate and the VM
+        The line this draws is shared by three features (the error status, the
+        section-badge tooltip, the search footer): a `show_if` gate and the VM
         section's master switch both mean "this field does nothing for the way you
         have things set up", and the form must not flip either one to make its own
         message true. A collapsed section, the advanced disclosure and an active
-        search are the other kind — view folds — and `_reveal_view_folds` opens
+        search are the other kind (view folds), and `_reveal_view_folds` opens
         those instead.
 
         READS THE WIDGETS (`_gate_values`), never `settings.load()`, on purpose.
@@ -1577,8 +1572,8 @@ class SettingsForm(QtWidgets.QWidget):
         return None
 
     def _blocking_gate(self, f: settings.Field) -> str | None:
-        """That gate phrased as the thing the user would DO about it — the shape
-        P5's status line and P6's badge tooltip both append to a field label."""
+        """That gate phrased as the thing the user would DO about it: the shape
+        the error status line and the badge tooltip both append to a field label."""
         found = self._blocking_gate_field(f)
         if found is None:
             return None
@@ -1600,7 +1595,7 @@ class SettingsForm(QtWidgets.QWidget):
         return None
 
     def _gate_condition(self, f: settings.Field) -> str | None:
-        """The same gate phrased as the CONDITION under which the field applies —
+        """The same gate phrased as the CONDITION under which the field applies:
         what the search footer needs ("… when Scoring provider is 'claude'").
 
         A second phrasing over one shared walk, rather than a second walk: the two
@@ -1615,28 +1610,29 @@ class SettingsForm(QtWidgets.QWidget):
         return f"{gate.label} is " + " or ".join(f"'{a}'" for a in allowed)
 
     def _reveal_view_folds(self, f: settings.Field) -> None:
-        """Open every VIEW fold hiding `f` — an active search, the advanced
-        disclosure, and the collapsed section it lives in — WITHOUT persisting any
+        """Open every VIEW fold hiding `f` (an active search, the advanced
+        disclosure, and the collapsed section it lives in) WITHOUT persisting any
         of them.
 
         The user did not choose to open these, so neither `_save_collapsed` nor
         `_save_show_advanced` is called: `CollapsibleSection.set_collapsed` does
         not fire `on_toggled`, `self._collapsed` is left holding the state the user
-        actually chose, and the checkbox is ticked with its signal blocked. A
+        chose, and the checkbox is ticked with its signal blocked. A
         restart comes back to their layout.
 
         The search clears FIRST, and it has to: clearing restores the persisted
         collapse layout, which would otherwise re-fold the section this method is
-        about to open. It also cannot be skipped — Save validates every collected
+        about to open. It also cannot be skipped: Save validates every collected
         field, so a filter that leaves the rejected row off screen breaks this
         method's whole guarantee (the user must be able to REACH every problem the
         status line claims exists) with no gate to name.
 
         A keystroke still inside the debounce window is flushed FIRST, because
-        the guarantee is about the box's real state, not its last committed one:
-        typing a term and pressing Save within `SEARCH_DEBOUNCE_MS` used to leave
-        an armed timer that re-filtered a fraction of a second later and took the
-        field this method had just focused — red note and all — back off screen.
+        the guarantee covers what the box holds, including an uncommitted term:
+        without the flush, typing a term and pressing Save within
+        `SEARCH_DEBOUNCE_MS` leaves an armed timer that re-filters a fraction of
+        a second later and takes the field this method just focused (red note
+        and all) back off screen.
         """
         if self._search_timer.isActive():
             self._search_timer.stop()
@@ -1670,12 +1666,11 @@ class SettingsForm(QtWidgets.QWidget):
         """Drop every inline note and every flag, errors and clamp warnings alike.
 
         For the moments when the values the notes describe stop existing: a
-        successful Save (the clamp note says "config.json has 99999" — it no longer
-        does, this Save is what wrote 5000 there) and `_repopulate` (Revert,
-        Restore defaults and snapshot-load each replace every value on screen).
-        Leaving them is not a cosmetic wrinkle: a note naming a disk state that is
-        no longer true is the same lie as the silent rewrite this feature exists to
-        expose.
+        successful Save (the clamp note says "config.json has 99999", and this
+        Save just wrote 5000 there) and `_repopulate` (Revert, Restore defaults
+        and snapshot-load each replace every value on screen). Leaving them
+        misleads: a note naming a disk state that is no longer true is the same
+        lie as the silent rewrite this feature exists to expose.
         """
         for key in list(self._notes):
             self._set_field_note(key, "")
@@ -1685,14 +1680,14 @@ class SettingsForm(QtWidgets.QWidget):
 
     def _report_errors(self, errors: dict[str, str]) -> None:
         """Put every rejected field on screen if it can be, name the ones it
-        cannot, focus the first one the user can actually act on.
+        cannot, focus the first one the user can act on.
 
         The bar this has to clear: the user must be able to REACH every problem
         the status line claims exists. Auto-revealing a view fold does that for
         free; a configuration gate cannot be opened on their behalf, so the
-        status line names the field and the switch that brings it into view —
-        telling someone their config is broken and hiding the broken part is the
-        one outcome worse than the modal this replaces.
+        status line names the field and the switch that brings it into view.
+        Telling someone their config is broken and hiding the broken part is
+        worse than a modal.
         """
         self._show_errors(errors)
         self._refresh_error_status()        # names the unreachable ones, same as everywhere
@@ -1721,11 +1716,11 @@ class SettingsForm(QtWidgets.QWidget):
         reports: that field would open permanently dirty with nothing to undo, and
         the post-save summary would announce "5 -> 5" (and take an archive snapshot
         for it). Put through the same `_coerce` `_field_value` uses, so both sides
-        of every comparison in this form are produced the same way — the reason
-        `_field_value` itself exists.
+        of every comparison in this form are produced the same way, which is the
+        reason `_field_value` itself exists.
 
         `_coerce` deliberately hands an UNREADABLE int straight back ("lots"),
-        which keeps such a field dirty, and that is right: the next Save really
+        which keeps such a field dirty, and that is right: the next Save
         would replace it with the default. `list`/`multichoice` are returned as-is
         because `_coerce` does not speak them (`_field_value` reaches them through
         their own branches), and a secret because .env values are already text.
@@ -1753,28 +1748,28 @@ class SettingsForm(QtWidgets.QWidget):
 
     def _changed_from(self, baseline: Callable[[settings.Field], object]) -> set[str]:
         """Every key whose current value differs from `baseline(field)`, compared
-        with `_value_changed` — the same per-type comparison the post-save summary
+        with `_value_changed`: the same per-type comparison the post-save summary
         and the VM-push prompt use, so "changed" means one thing in this form."""
         return {f.key for f in settings.SETTINGS_SCHEMA
                 if self._value_changed(f, baseline(f), self._field_value(f)[0])}
 
     def _refresh_dirty(self) -> None:
-        """Re-read every field and move only the markers that actually flipped.
+        """Re-read every field and move only the markers that flipped.
 
-        VISIBILITY IS NOT CONSULTED, and that is the whole line — the opposite of
-        P4's advanced count, deliberately. That count promises "ticking this box
+        VISIBILITY IS NOT CONSULTED, the opposite of the advanced count,
+        deliberately. That count promises "ticking this box
         reveals N rows", so a field a configuration gate holds shut has to be
         subtracted or the promise is false. This one promises "Save writes N
         changes", and `collect()` walks the SCHEMA: a gated-off or folded-away
         field's edit is written exactly like any other, so leaving it out would
         make the number wrong in the direction that loses data quietly. Edit a
-        Gemini model, switch the provider to Claude, and the count still says one —
+        Gemini model, switch the provider to Claude, and the count still says one,
         because the Save still writes it.
 
-        The reachability question P5 answered for errors therefore does not arise
-        here: P5 names an unreachable ERROR because the user has to reach it to
-        act, while a dirty field asks nothing of them. The section header — on
-        screen even when the section is folded — is where it becomes findable.
+        The reachability question the error status answers therefore does not
+        arise here: an unreachable ERROR is named because the user has to reach
+        it to act, while a dirty field asks nothing of them. The section header
+        (on screen even when the section is folded) is where it becomes findable.
         """
         if self._save_btn is None or self._suspend_markers:
             return                       # mid-build or mid-bulk-fill; both refresh after
@@ -1790,8 +1785,8 @@ class SettingsForm(QtWidgets.QWidget):
         self._refresh_save_label()
 
     def _set_field_dirty(self, key: str, on: bool) -> None:
-        """Toggle one field's accent dot. A field with no dot — `vm_enabled`, which
-        has no form row — is a deliberate no-op, as it is for `_set_field_note` and
+        """Toggle one field's accent dot. A field with no dot (`vm_enabled`, which
+        has no form row) is a deliberate no-op, as it is for `_set_field_note` and
         `_set_field_visible`; it still counts in the totals."""
         dot = self._dots.get(key)
         if dot is None:
@@ -1805,8 +1800,8 @@ class SettingsForm(QtWidgets.QWidget):
         """Push each section's dirty count onto its header, plus a tooltip for the
         part of that count expanding the section would NOT show.
 
-        The badge's whole claim is "open me and you will find them". That holds for
-        a view fold — collapse, or the advanced disclosure — where the dot is
+        The badge's claim is "open me and you will find them". That holds for
+        a view fold (collapse, or the advanced disclosure), where the dot is
         waiting behind it. It does not hold for a configuration gate: that row is
         off screen entirely, so a section reading "· 2 changed" can expand to
         exactly one dot and look like a lie. `_blocking_gate` already produces the
@@ -1844,9 +1839,9 @@ class SettingsForm(QtWidgets.QWidget):
         f = next(x for x in settings.SETTINGS_SCHEMA if x.key == key)
         self._set_field_value(f, f.default)
         # Insurance, and idempotent. The button is only ever VISIBLE while the value
-        # differs from the default, so today every setter this reaches really does
-        # emit and land in `_on_field_edited` on its own — but that is a property of
-        # the visibility rule, not of the reset, and a programmatic call has no such
+        # differs from the default, so every setter this reaches does emit and
+        # land in `_on_field_edited` on its own. That comes from the visibility
+        # rule rather than from the reset, and a programmatic call has no such
         # guarantee.
         self._on_field_edited(key)
 
@@ -1887,13 +1882,13 @@ class SettingsForm(QtWidgets.QWidget):
     def collect(self) -> tuple[dict, dict[str, str]]:
         """Read every field's current value out of its widget.
 
-        THE ROUND-TRIP GUARANTEE — do not "optimise" this to iterate
+        THE ROUND-TRIP GUARANTEE: do not "optimise" this to iterate
         `settings.visible_keys()`. It walks the SCHEMA and reads `self._getters`,
         so a field hidden by `show_if` still returns the value it is holding and
         still gets written. Iterate visible fields instead and the very first
         Save after switching `provider` to claude silently wipes both Gemini
         model ids off disk (they fall out of `values`, `settings.save` never
-        groups them, and the next `load` hands back the schema default) — the one
+        groups them, and the next `load` hands back the schema default), the
         failure mode `test_provider_round_trip_does_not_wipe_hidden_model_choices`
         exists to catch.
         """
@@ -1910,7 +1905,7 @@ class SettingsForm(QtWidgets.QWidget):
         """ONE field's current value, plus any coercion error.
 
         Shared by `collect()` and the focus-out validator so both read a field
-        exactly the same way — a second copy of this per-type dispatch is how a
+        exactly the same way: a second copy of this per-type dispatch is how a
         field ends up validating differently depending on whether you tabbed out
         of it or pressed Save.
         """
@@ -1965,7 +1960,7 @@ class SettingsForm(QtWidgets.QWidget):
                 continue
             old = before.get(key, f.default)
             if f.secret:
-                # never echo a secret value — report only that it changed
+                # never echo a secret value; report only that it changed
                 if str(old) != str(new):
                     out.append(f"{f.label}: {'cleared' if str(new).strip() == '' else 'updated'}")
                 continue
@@ -1983,16 +1978,16 @@ class SettingsForm(QtWidgets.QWidget):
         values, errors = self.collect()
         errors.update(settings.validate(values))
         if errors:
-            # In place, not in a modal: a newline-dump of every offender named
-            # them but pointed at nothing, so the user dismissed it and then hunted
-            # ~130 form rows for the box it meant.
+            # In place: a modal listing every offender names them but points at
+            # nothing, so the user dismisses it and then hunts ~130 form rows for
+            # the box it meant.
             self._report_errors(errors)
             return False
         self._show_errors({})
         # Normalised, for the same reason `_opening_value` is: `settings.load()`
-        # returns the file verbatim, so a hand-edited `"min_score": "5"` made the
-        # summary announce "5 -> 5" — take an archive snapshot for it, and offer a
-        # VM push over it — while the Save button, which normalises, correctly read
+        # returns the file verbatim, so a hand-edited `"min_score": "5"` would make
+        # the summary announce "5 -> 5" (and take an archive snapshot for it, and
+        # offer a VM push over it) while the Save button, which normalises, reads
         # "Save settings". Two claims about the same question must not disagree.
         before = self._as_form_values(settings.load(self.targets))
         try:
@@ -2053,18 +2048,18 @@ class SettingsForm(QtWidgets.QWidget):
                 "Finished school. Set the month you expect to graduate.")
 
     def _restart_notice(self, before: dict, values: dict) -> str:
-        """"Restart the dashboard for these to take effect: A, B." — or "".
+        """"Restart the dashboard for these to take effect: A, B.", or "".
 
         The chip beside the input is the reminder while you are editing; this is
         the one at the moment it matters, which is the click that writes the file
-        and puts "Saved." on screen. Without it the whole failure mode survives
+        and puts "Saved." on screen. Without it the failure mode survives
         the badge: the user saves a new model id or API key, is told it saved
-        (truthfully — it is on disk), and then watches the old one keep being used
+        (truthfully: it is on disk), and then watches the old one keep being used
         with nothing to connect the two.
 
         Names only what THIS Save changed, so the sentence has to be earned. A
         line on every Save is a line nobody reads on the Save that needed one.
-        LABELS only, never values — `GEMINI_API_KEYS` is both restart-required and
+        LABELS only, never values: `GEMINI_API_KEYS` is both restart-required and
         a credential, and `_changed_summary`'s no-echo rule applies here for
         exactly the same reason.
         """
@@ -2075,7 +2070,7 @@ class SettingsForm(QtWidgets.QWidget):
             return ""
         # Elided at three, the same shape `_error_status` uses. `self.status` is a
         # plain unwrapped QLabel, and a snapshot load can change all sixteen of
-        # these at once — a ~450-character status line does not wrap, it just runs
+        # these at once, and a ~450-character status line does not wrap: it runs
         # off the end of the bar and takes the rest of the sentence with it.
         named = ", ".join(labels[:3])
         if len(labels) > 3:
@@ -2101,7 +2096,7 @@ class SettingsForm(QtWidgets.QWidget):
     def _maybe_prompt_vm_push(self, before: dict, values: dict, summary: list[str]) -> None:
         """After a Save that changed something, if VM features are on and a changed
         setting is one the VM reads from its OWN config copy (a 'search'/'scoring'
-        target — see vm_sync.TARGET_REMOTE_FILE), offer to push the updated config
+        target; see vm_sync.TARGET_REMOTE_FILE), offer to push the updated config
         up to the VM. Nothing else reminds the user their VM config has drifted."""
         if not summary or not values.get("vm_enabled"):
             return
@@ -2110,7 +2105,7 @@ class SettingsForm(QtWidgets.QWidget):
         for key in values:
             f = by_key.get(key)
             if f is None or f.target not in vm_sync.TARGET_REMOTE_FILE:
-                continue  # unknown key or a setting the VM doesn't read — ignore
+                continue  # unknown key or a setting the VM doesn't read: ignore
             if self._value_changed(f, before.get(key, f.default), values[key]):
                 changed_vm.add(key)
         if not changed_vm:
@@ -2145,8 +2140,7 @@ class SettingsForm(QtWidgets.QWidget):
 
     def _archive_after_save(self, values: dict) -> bool:
         """Snapshot all settings then apply the retention policy. Never raises into
-        Save — archiving is a safety net, not something that should be able to block
-        a save.
+        Save: archiving is a safety net and must never block a save.
 
         One `archive_mode` drives both halves: "Off" takes no new snapshot (and
         leaves existing ones alone), and every other value carries its own
@@ -2170,7 +2164,7 @@ class SettingsForm(QtWidgets.QWidget):
             self._secret_hides[key].setChecked(True)
 
     def _set_field_value(self, f: settings.Field, val) -> None:
-        """Write one value into its widget, per type — the three-way dispatch
+        """Write one value into its widget, per type: the three-way dispatch
         `_repopulate` and the ↺ reset both need, in one place so a bulk restore and
         a single reset can never diverge.
 
@@ -2191,7 +2185,7 @@ class SettingsForm(QtWidgets.QWidget):
     def _repopulate(self, value_for: Callable[[settings.Field], object]) -> None:
         incoming: dict[str, object] = {}
         # Markers off for the fill: every setter emits, and each emission would
-        # otherwise re-read all ~60 fields — 60 rescans for one Revert. One refresh
+        # otherwise re-read all ~60 fields, 60 rescans for one Revert. One refresh
         # at the end says the same thing once.
         self._suspend_markers = True
         try:
@@ -2205,15 +2199,15 @@ class SettingsForm(QtWidgets.QWidget):
             # (the slider's does `int(v)`, reachable from a corrupt snapshot), and
             # a half-filled form whose every dot, badge and count still describes
             # the values it replaced is the worst of both states. Re-describe what
-            # actually landed, then let the exception carry on.
+            # landed, then let the exception carry on.
             self._suspend_markers = False
             # Every value on screen was just replaced, so every note about the old
-            # ones is stale — and a setter that happened to write the SAME value
+            # ones is stale, and a setter that happened to write the SAME value
             # emits no change signal, so `_on_field_edited` cannot be relied on to
-            # have cleared them. Then re-run the clamp check against what actually
-            # arrived: the setters clamp exactly as the constructor does, so without
-            # this a snapshot holding `max_scored_per_run: 99999` loads as 5000 in
-            # silence — the rewrite P5 exists to expose, back through its own door.
+            # have cleared them. Then re-run the clamp check against what arrived:
+            # the setters clamp exactly as the constructor does, so without this a
+            # snapshot holding `max_scored_per_run: 99999` loads as 5000 in
+            # silence, the same rewrite `_flag_a_rewritten_int` exists to expose.
             self._clear_all_notes()
             for f in settings.SETTINGS_SCHEMA:
                 if f.type == "int" and f.key in incoming:
@@ -2226,13 +2220,13 @@ class SettingsForm(QtWidgets.QWidget):
             # checkbox's toggled) and would get there by itself, but that comes
             # from the widget types, and nothing promises it.
             self._apply_field_visibility()
-            # The one marker refresh for the whole fill — the per-setter ones were
-            # suspended above, so this is not a belt-and-braces call: drop it and
-            # Revert leaves every dot, badge and count describing the old values.
+            # The one marker refresh for the whole fill. The per-setter ones were
+            # suspended above, so this call is required: drop it and Revert leaves
+            # every dot, badge and count describing the old values.
             self._refresh_dirty()
 
     def restore_defaults(self) -> None:
-        # Defaults reset the tunables but never wipe saved keys — leave secrets as-is.
+        # Defaults reset the tunables but never wipe saved keys; leave secrets as-is.
         self._repopulate(lambda f: f.default)
         if self._vm_panel is not None:
             self._vm_panel.revert()
@@ -2250,7 +2244,7 @@ class SettingsForm(QtWidgets.QWidget):
 
     def load_from_snapshot(self, snap_path) -> None:
         """Fill the form from a saved snapshot for review. Nothing is written until
-        the user clicks Save. A snapshot only carries the secrets it actually had,
+        the user clicks Save. A snapshot only carries the secrets it had,
         so a key the snapshot didn't include is left at its current value. Every
         secret box stays masked, as it opens: a restore is no reason to put the
         keys on screen (untick Hide to read one)."""
@@ -2277,8 +2271,7 @@ class ArchiveDialog(QtWidgets.QDialog):
         v = QtWidgets.QVBoxLayout(self)
         intro = Label(
             "Saved snapshots (newest first). Load one into the form to review, then Save to apply it. "
-            "Secrets are restored too; loading un-masks them in the form so you can review "
-            "exactly what would be saved.")
+            "Secrets are restored too and stay masked; untick Hide to read one.")
         intro.setWordWrap(True)
         intro.setProperty("muted", True)
         v.addWidget(intro)

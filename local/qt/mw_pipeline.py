@@ -4,7 +4,7 @@ a job by hand, and deleting or editing a hand-added job.
 `_PipelineActions` is a base of `MainWindow`, and its methods run on a
 `MainWindow`.
 
-Split out of `qt.main_window`.
+`MainWindow` itself is defined in `qt.main_window`.
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def _console_python(exe: str | None = None) -> str:
 
     The dashboard launches under ``pythonw.exe`` (no console window), whose
     ``sys.executable`` is ``pythonw.exe``. A child spawned with that has no real
-    stdout, so its output — and any error — vanishes. Swap to the sibling
+    stdout, so its output (and any error) vanishes. Swap to the sibling
     ``python.exe`` so the scraper/scorer have capturable stdio.
     """
     exe = exe or sys.executable or "python"
@@ -157,7 +157,7 @@ class _PipelineActions:
 
     # ---- run scraper (spend-guarded) -----------------------------------------
 
-    # -u: the children write to a pipe, which Python block-buffers — without it
+    # -u: the children write to a pipe, which Python block-buffers; without it
     # scrape.log stays empty for the whole run and a healthy scrape looks dead.
     @staticmethod
     def scraper_cmd(bounded: bool) -> list[str]:
@@ -242,7 +242,7 @@ class _PipelineActions:
         process, so closing the dashboard mid-run orphans it: the collected
         `<label>/<run>.csv` survives on disk but was never scored, and unscored
         CSVs are invisible to the dashboard. Called from app.main() once at
-        startup (never from __init__ — a modal there would hang headless tests).
+        startup (never from __init__: a modal there would hang headless tests).
         """
         if self._pipeline_busy():
             return
@@ -282,12 +282,12 @@ class _PipelineActions:
 
     def _scrape_env(self) -> dict:
         """Environment for the local scrape subprocess: `_scorer_env()`, plus a pointer to
-        the synced Drive master so the scraper also excludes — and never re-bills — jobs
+        the synced Drive master so the scraper also excludes (and never re-bills) jobs
         the VM already collected. The local repo master is only a small stub of recent
         local runs, so without this a local 'Find new jobs' run re-pulls (and re-scores)
-        postings the VM already has. Set on the CHILD's env only, not our own process, so
-        the post-scrape VM-push set stays lean — it carries what THIS host collected, not
-        the Drive master pulled down from the VM.
+        postings the VM already has. Set on the CHILD's env only, leaving our own process
+        alone, so the post-scrape VM-push set stays lean: it carries only what THIS host
+        collected and leaves out the Drive master pulled down from the VM.
 
         It also sets scraper.EXPECT_DRIVE_MASTER_ENV when this setup has a Drive
         master to exclude from (`_drive_master_expected`: a job data folder or VM
@@ -303,7 +303,7 @@ class _PipelineActions:
         if root is not None:
             master = Path(root) / "linkedin_jobs_master.csv.gz"
             if master.exists():
-                # scraper.EXTRA_MASTER_ENV — the synced Drive master to also exclude from.
+                # scraper.EXTRA_MASTER_ENV: the synced Drive master to also exclude from.
                 env["LINKEDIN_EXTRA_MASTER"] = str(master)
         return env
 
@@ -321,7 +321,7 @@ class _PipelineActions:
             warnings = self._run_pipeline((self.scraper_cmd(bounded), self.scorer_cmd()),
                                           log, log_path, env=env)
             # Both steps succeeded: push the freshly-collected ids to the VM (if
-            # configured) so its next scheduled run doesn't re-collect — and re-bill —
+            # configured) so its next scheduled run doesn't re-collect (and re-bill)
             # what this run just pulled. Best-effort: never fail the scrape over a sync.
             self._push_seen_ids_to_vm(log)
             self._push_outbox_to_vm(log, before)
@@ -329,7 +329,7 @@ class _PipelineActions:
 
     def _score_only_work(self):
         """Recovery worker: run ONLY score_jobs.py (it picks up the newest unscored
-        run CSV itself). Appends to scrape.log — the earlier, interrupted run's
+        run CSV itself). Appends to scrape.log: the earlier, interrupted run's
         output is the context for what is being recovered, so keep it."""
         log_path = self._scrape_log_path()
         before = self._outbox_snapshot()
@@ -340,7 +340,7 @@ class _PipelineActions:
             except PipelineFailed as e:
                 e.kind = "score"
                 raise
-            # The recovered run's ids/rows never made it to the VM either — they
+            # The recovered run's ids/rows never made it to the VM either; they
             # ride the same post-scrape sync as a normal run, or the recovery
             # stays local-only.
             self._push_seen_ids_to_vm(log)
@@ -410,7 +410,7 @@ class _PipelineActions:
     def _push_seen_ids_to_vm(log) -> None:
         """Best-effort post-scrape sync: write this host's exclude-id set and scp it
         to the VM when one is configured. Any failure (no VM, gcloud error, file error)
-        is logged to scrape.log and swallowed — the scrape result is unaffected."""
+        is logged to scrape.log and swallowed; the scrape result is unaffected."""
         try:
             repo = Path(__file__).resolve().parents[2]
             for _p in (str(repo / "pipeline"), str(repo / "local")):
@@ -425,20 +425,20 @@ class _PipelineActions:
                 return
             # Stage the push artifact in outbox/, NOT next to the scraper. The local
             # scraper reads OUTPUT_DIR/external_exclude_ids.json as "ids collected on
-            # ANOTHER machine", so writing our own load_exclude_ids() there fed the
-            # file straight back into the next run's exclude set — and those ids are
-            # deliberately NOT windowed, so the exclusion array ratcheted up
-            # monotonically (to the whole 2,679-row master) until Bright
-            # Data rejected every input with child_input_size_validation and the
-            # scrape silently collected nothing. vm_sync only ever pushes this file
+            # ANOTHER machine", so writing our own load_exclude_ids() there would feed
+            # the file straight back into the next run's exclude set. Those ids are
+            # deliberately NOT windowed, so the exclusion array would ratchet up
+            # monotonically toward the whole master until Bright Data rejects every
+            # input with child_input_size_validation (it did at a 2,679-row master)
+            # and the scrape silently collects nothing. vm_sync only ever pushes this file
             # OUT (see push_exclude_ids_cmd), never pulls one in, so on this host it
             # has no business being read at all. The remote filename is fixed by
             # vm_sync.EXCLUDE_REMOTE_FILE, so the local name is free to move.
             #
             # Ask the outbox module for its own directory rather than rebuilding
             # `repo / "outbox"` here. Same path, but one owner: a second copy of
-            # the expression is a copy the conftest redirect does not cover, so
-            # this line was mkdir'ing into the real repo during the test suite.
+            # the expression is a copy the conftest redirect does not cover, so a
+            # hand-built path here mkdirs into the real repo during the test suite.
             import outbox
             outbox_dir = outbox.OUTBOX_DIR
             outbox_dir.mkdir(parents=True, exist_ok=True)
@@ -479,9 +479,9 @@ class _PipelineActions:
         """Best-effort post-scrape data sync: queue this run's new master rows (+ the
         run-stats file) in the outbox and push every pending outbox file to the VM's
         ~/incoming/. Also sweeps the local master for rows the Drive master lacks
-        (outbox.unsynced_master_ids) so rows collected outside this hook — a CLI
-        snapshot recovery, a push that never got retried — are queued too instead of
-        staying stranded on this PC. Failures are logged to scrape.log and swallowed —
+        (outbox.unsynced_master_ids) so rows collected outside this hook (a CLI
+        snapshot recovery, a push that never got retried) are queued too instead of
+        staying stranded on this PC. Failures are logged to scrape.log and swallowed:
         a sync problem never fails a scrape. Push still runs when the run added
         nothing, so files queued by earlier failed pushes retry here."""
         try:
@@ -520,8 +520,8 @@ class _PipelineActions:
     def _after_scrape(self, result) -> None:
         self._scraping = False
         # A local scrape writes to the repo dir, not the synced Drive folder this
-        # window was opened against — fold the new scored run file(s) into the
-        # sources so the freshly scraped jobs actually appear.
+        # window was opened against. Fold the new scored run file(s) into the
+        # sources so the freshly scraped jobs appear.
         for p in jobsdata.local_run_files():
             if p not in self.csv_paths:
                 self.csv_paths.append(p)
@@ -542,7 +542,7 @@ class _PipelineActions:
         # Set before the reload starts: the reload ends by writing its summary over
         # the status bar, and _apply_frames puts this note back in front of it,
         # once. Set after, a reload that applies at once (no source on disk yet)
-        # had already run, and the note rode the next, unrelated reload.
+        # has already run, and the note rides the next, unrelated reload.
         self._status_note_after_reload = note
         self.reload_data_async()
         if getattr(self, "_status_note_after_reload", None) is not None:
@@ -657,7 +657,7 @@ class _PipelineActions:
             record, jd_text=jd_text, tailor_opts=opts, on_status=self.tailor_progress.emit)
 
     def _push_manual_row_to_vm(self, res: dict) -> None:
-        # Queue + push the new master row to the VM (best-effort — never fail the add).
+        # Queue + push the new master row to the VM (best-effort; never fail the add).
         try:
             repo = Path(__file__).resolve().parents[2]
             if str(repo / "local") not in sys.path:
@@ -724,7 +724,7 @@ class _PipelineActions:
                 "undone. Any tailored-résumé folder is moved to the Recycle Bin.")
         ) != QtWidgets.QMessageBox.StandardButton.Yes:
             return
-        # Snapshot the résumé folders BEFORE the delete — the registry rows are
+        # Snapshot the résumé folders BEFORE the delete: the registry rows are
         # cleared below, and the folder must still be findable afterwards.
         folders = {}
         for jid in ids:
@@ -742,7 +742,7 @@ class _PipelineActions:
             except Exception:  # noqa: BLE001 - bookkeeping only
                 pass
         # Optimistic: drop the rows from the in-memory frame and repaint now; the
-        # multi-file CSV rewrite (the part that used to freeze the UI for seconds)
+        # multi-file CSV rewrite (seconds of work that would freeze the UI)
         # runs on the background write queue.
         if not self.df.empty:
             self.df = self.df[~self.df["job_posting_id"].astype(str).isin(set(ids))]
@@ -777,7 +777,7 @@ class _PipelineActions:
 
     def _edit_manual_job(self, jid) -> None:
         """Field-fix a manually-added job (URL/title/company/JD) via the manual-add
-        form in edit mode. Does not re-score/re-tailor — preserves the job's id and
+        form in edit mode. Does not re-score/re-tailor; it keeps the job's id and
         score so its tracker status and résumé link survive the edit."""
         jid = str(jid or "")
         if not jid:

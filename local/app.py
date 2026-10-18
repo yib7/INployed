@@ -18,7 +18,7 @@ if str(HERE) not in sys.path:
 
 # Load the repo root's .env so LINKEDIN_CHROME_ACCOUNT and other local values are
 # populated before chrome/settings read them. The VM never runs the UI, so a
-# missing python-dotenv is harmless. Mirrors scraper.py / the old ui.py.
+# missing python-dotenv is harmless. Same load as scraper.py.
 try:
     from dotenv import load_dotenv
 
@@ -40,7 +40,7 @@ def _with_local_runs(csv_paths: list[Path]) -> list[Path]:
 
     This is the ONE owner of the local-runs fold: watcher launches pass only the
     Drive master as argv, so without this a watcher-popped window can never show a
-    local 'Find new jobs' or manual add. Best-effort — a data-dir hiccup must not
+    local 'Find new jobs' or manual add. Best-effort: a data-dir hiccup must not
     stop the dashboard from opening."""
     out = list(csv_paths)
     try:
@@ -89,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
 
     lock = _UILock(UI_LOCK)
     if not lock.acquire():
-        # Exit silently (no modal) -- the already-running instance's own
+        # Exit silently (no modal): the already-running instance's own
         # FS-watcher/poll picks up any new files this relaunch would have
         # opened, so interrupting the user here only annoys them.
         return 0
@@ -101,8 +101,8 @@ def main(argv: list[str] | None = None) -> int:
         win.showMaximized()
         win.start()  # load data AFTER the window paints, off the UI thread
         # Once the event loop is up, offer to score results an interrupted scrape
-        # left behind (deliberately here, not in MainWindow.__init__: a modal
-        # during construction would hang the headless test suite).
+        # left behind. This runs here because a modal during MainWindow.__init__
+        # would hang the headless test suite.
         QtCore.QTimer.singleShot(0, win.offer_unscored_recovery)
         rc = app.exec()
     finally:

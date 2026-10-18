@@ -10,20 +10,20 @@ a desktop dashboard, writes a one-page résumé for each job you pick, and can f
 the application for you. Four subsystems do that work, and each hands its output to the next
 through a file.
 
-1. **Job discovery** (`pipeline/scraper.py`) runs by cron on a small GCP VM. It asks Bright
+1. Job discovery (`pipeline/scraper.py`) runs by cron on a small GCP VM. It asks Bright
    Data for postings by keyword and remote type, downloads the rows, drops duplicates and
    blocklisted companies, and appends what is new to the master CSV.
-2. **Scoring** (`pipeline/score_jobs.py`) reads the new rows in two stages: a cheap first pass
+2. Scoring (`pipeline/score_jobs.py`) reads the new rows in two stages: a cheap first pass
    drops the clear misses, and a deeper second pass gives each job left a 1 to 10 fit score, a
    main factor and a recommendation. Gemini (or the Claude Code CLI, on the PC) does the
    reading, with Jev (a small judge model) first when it is switched on. Code filters run
    before either stage: years, advanced degree, clearance, and postings outside the US. The
    VM then copies the master to Google Drive.
-3. **The dashboard** (`local/app.py` + `local/qt/`) runs on your Windows machine. It reads the
+3. The dashboard (`local/app.py` + `local/qt/`) runs on your Windows machine. It reads the
    synced master, lists the high scores, keeps the tracker of what you applied to, and drives
-   the **résumé engine** (`local/resume_tailor/`), which turns your experience file into a
+   the résumé engine (`local/resume_tailor/`), which turns your experience file into a
    tailored LaTeX résumé, a cover letter and an apply sheet (`apply.md`) in one folder per job.
-4. **Auto-apply** (`local/apply_run.py` + the `apply_*` modules) takes the jobs you queued from
+4. Auto-apply (`local/apply_run.py` + the `apply_*` modules) takes the jobs you queued from
    the dashboard, opens each posting in the run's own browser profile (Google Chrome, or
    Playwright's Chromium when Chrome will not start), reads every page with Jev,
    fills the form from your apply sheet and saved answers, and either sends the application
@@ -130,8 +130,8 @@ appends to a cumulative master CSV. Five cost-aware details:
   machine collected and pushed here, undated) and the collection ledger. Each id is
   dated by the newest date any source gives it, and the window applies to that date.
   The ledger exists because a master's `extracted_date` is the day a job was FIRST found
-  (`append_to_master` keeps the existing row), so a job collected again yesterday looked
-  weeks old and fell off the list. `collected_ids_ledger.csv` in `OUTPUT_DIR` holds one
+  (`append_to_master` keeps the existing row), so by that date alone a job collected again
+  yesterday would look weeks old and fall off the list. `collected_ids_ledger.csv` in `OUTPUT_DIR` holds one
   row per id: `job_posting_id`, `collected_date` (the last day a run collected it),
   `job_title` (the newest non-empty title) and `keywords` (the normalized keywords of the
   searches that returned it, `|`-joined and unioned across runs; `_save_results` reads them
@@ -141,7 +141,7 @@ appends to a cumulative master CSV. Five cost-aware details:
   existed reads with them empty and gets all four columns on its next write. See
   `load_exclude_ids()`, and `load_known_jobs()`, which returns the same ids in the same
   order with each id's title (ledger, then own master, then Drive master) and keywords.
-- **The window is not the real bound; the byte budget per input is.** Bright Data copies
+- The byte budget per input bounds the list more tightly than the window. Bright Data copies
   an input's `jobs_to_not_include` array onto every one of the up-to-`limit_per_input`
   child fetches it fans out to, so the payload is spent `len(ids) x limit_per_input` times
   over. Past an unpublished limit the whole collection is rejected with
@@ -163,7 +163,7 @@ appends to a cumulative master CSV. Five cost-aware details:
   keyword with no title rule (blank, not text, or boolean: OR, AND, NOT or parentheses;
   see `_keyword_rule()`) carries the whole list. Each list keeps the `load_known_jobs()`
   order, oldest first.
-- **The experience level becomes NOT words on every keyword.** LinkedIn's logged-out search
+- The experience level becomes NOT words on every keyword. LinkedIn's logged-out search
   ignores Bright Data's `experience_level` input (a 2026-10-14 A/B returned 24-25 of the
   same 25 jobs for Entry level, Director and no filter). A NOT in the keyword works on
   titles. `title_exclude_terms_for(cfg)` resolves the words: `title_exclude_terms` from
@@ -177,7 +177,7 @@ appends to a cumulative master CSV. Five cost-aware details:
   and wraps a keyword with OR or AND in parentheses first. `build_inputs()` expands the
   keywords after `max_keywords` caps them, sends each distinct expanded search once, and
   gives Bright Data the single chosen level or `""` for none or several.
-- **Skip lists follow NOT keywords.** `_split_not_keyword()` parses `BASE NOT a NOT "b c"`
+- Skip lists follow NOT keywords. `_split_not_keyword()` parses `BASE NOT a NOT "b c"`
   (BASE free of OR, AND, NOT and parentheses, or plain inside one pair of parentheses;
   capital NOT only) into the base and its banned terms. `exclude_ids_per_keyword()`
   builds the base's list as above, then drops every id whose normalized title holds a
@@ -189,15 +189,15 @@ appends to a cumulative master CSV. Five cost-aware details:
   records. On the real data on 2026-10-15 (120-day window of 38,455 known ids,
   `limit_per_input` 300, the user's 16 quoted keywords at Entry level), the NOT words
   shrank the lists from 29,251 ids to 24,208 in all, and the trigger body from 409,541
-  bytes to 338,939. Four of the six keywords the 47,000-byte input budget trimmed now fit
-  whole; "Software Engineer" (5,493) and "Data Engineer" (3,595) still keep their newest
+  bytes to 338,939. Four of the six keywords the 47,000-byte input budget trimmed fit
+  whole with them; "Software Engineer" (5,493) and "Data Engineer" (3,595) still keep their newest
   ~3,355. The cap leaves off 2,376 ids instead of 11,991, so 90.8% of the ids the searches
-  can return are on a list, up from 71.0%. None of the 2,155 jobs scored apply has a
-  banned word in its title. **The VM** runs its own `scraper.py`: an older copy sends the
-  plain keywords and ignores `title_exclude_terms`, so it needs the new file if it is
+  can return are on a list, against 71.0% without them. None of the 2,155 jobs scored apply has a
+  banned word in its title. The VM runs its own `scraper.py`: an older copy sends the
+  plain keywords and ignores `title_exclude_terms`, so it needs this repo's copy if it is
   ever resumed. Settings writes `experience_level` as a plain string for one level, which
   the older copy still reads.
-- **Each keyword's list is capped on its own.** `_cap_per_keyword()` runs `_cap_ids()` on
+- Each keyword's list is capped on its own. `_cap_per_keyword()` runs `_cap_ids()` on
   every list: the newest k ids whose `json.dumps` size times `limit_per_input` fits
   `MAX_EXCLUDE_PAYLOAD_BYTES`, sized exactly (brackets, each id's JSON width and the
   separators, summed from the newest end), so a LinkedIn id that outgrows today's 10
@@ -205,18 +205,18 @@ appends to a cumulative master CSV. Five cost-aware details:
   also capped at `max_exclude_ids()` (10,000 by default; `max_exclude_ids` in
   `search_config.json` or the `MAX_EXCLUDE_IDS` env var). The ids are oldest first by
   their newest date, undated ids at the front, so the tail the cap keeps is the most
-  recently collected, the ids a "Past 24 hours" search can actually resurface. Every input
+  recently collected, the ids a "Past 24 hours" search can resurface. Every input
   of a keyword (one per remote type when the types are split) carries that keyword's
   list. On the real data on 2026-10-14 at `limit_per_input` 300, every keyword's full
   30-day list fit except "Software Engineer" (its newest ~3,355 of ~4,100); 17,864 of
   18,557 known ids were on some list, against 3,357 with one shared list, and the trigger
   body was 0.27 MB instead of 0.76 MB. Trims go to the log as one info line naming each
-  trimmed keyword and the setting that would avoid it, not a `WARNING:`, since both
-  limits are the user's own settings. Below `MIN_EXCLUDE_IDS` (50) the run warns once and
+  trimmed keyword and the setting that would avoid it. The line carries no `WARNING:`,
+  since both limits are the user's own settings. Below `MIN_EXCLUDE_IDS` (50) the run warns once and
   proceeds, because a rejected collection costs more than some re-collected rows.
-  `build_inputs()` still takes a plain id list for older callers and tests: one list every
+  `build_inputs()` also takes a plain id list for older callers and tests: one list every
   search shares, capped once by `cap_exclude_ids()`.
-- **A rejected collection is a failure, not a quiet empty run.** When Bright Data refuses
+- The run checks for a rejected collection. When Bright Data refuses
   every input the snapshot still reports `status="ready"` with `records=0`. Read naively that
   looks like "no new jobs" and exits 0, which is how the VM cron logged clean successes for
   weeks while collecting nothing. `_assert_collected_something()` keys on the error *codes*: an
@@ -227,7 +227,7 @@ appends to a cumulative master CSV. Five cost-aware details:
 - `--snapshot <id>` re-downloads an already-collected (already-billed) snapshot
   without triggering a new collection: the recovery path when a run dies after
   billing.
-- **The trigger endpoint has two answer shapes, and both are billed.** `/datasets/v3/scrape`
+- The trigger endpoint has two answer shapes, and both are billed. `/datasets/v3/scrape`
   is synchronous with an asynchronous escape hatch: it collects for up to about a minute and
   only a run still going gets a `202` with a `snapshot_id` to poll. A run that finishes inside
   that window answers with the records themselves as NDJSON, one object per line, and
@@ -272,7 +272,7 @@ Jev answers typed questions and writes no text, so `jev_score.stage1` and `stage
 request about `{candidate, resume, job}` and compose the same columns the LLM path writes, on
 the same rubric wording the LLM stage prompts use:
 
-- **Stage 1** asks one `fit` Score on `FIT_LEVELS` (five levels, "No match" to "Strong match",
+- Stage 1 asks one `fit` Score on `FIT_LEVELS` (five levels, "No match" to "Strong match",
   the stage 1 prompt's own wording) and one `main_factor` Choice among nine deciding factors.
   `compose_stage1` maps `fit`'s level to the score (`floor(value + 0.5) + 1`, 1-5); a code cap
   from `jev_facts` can then lower it: `YEARS_CAPS` caps at 1 / 2 / 3 for 5+ / 3+ / 1+ years, a
@@ -281,7 +281,7 @@ the same rubric wording the LLM stage prompts use:
   posting carries a student cue. The reason is
   `"{label}: {text}."`; a cap that lowered the score names the posting's requirement in place
   of `main_factor`.
-- **Stage 2** asks `deep_fit` (a Score on `DEEP_FIT_LEVELS`, "Poor fit" to "Excellent fit") plus
+- Stage 2 asks `deep_fit` (a Score on `DEEP_FIT_LEVELS`, "Poor fit" to "Excellent fit") plus
   a met noul, and a must noul where the code gives no must/nice-to-have cue, for each line
   `requirement_lines()` finds (0 to 30 lines; a job with fewer than 3 requirement lines stays
   on the Jev path). The deep score is
@@ -380,17 +380,17 @@ afterward. The run prints `Reposts: reused N scores` and records `scores_reused`
 #### The key pool (`pipeline/keypool.py`)
 Every Gemini call the scorer makes goes through one `KeyPool`: N free-tier API keys
 (`GEMINI_API_KEYS`) plus an optional paid Vertex member (`GOOGLE_CLOUD_PROJECT`) behind one
-`generate()`. Free-tier quota is metered by Google per **(key, model)** pair, in requests per
+`generate()`. Free-tier quota is metered by Google per (key, model) pair, in requests per
 minute and per day, and that fact shapes the whole module:
 
-- **A stage names a ranked chain, not one model.** `stage1_model` / `stage2_model` lead and
+- A stage names a ranked chain of models. `stage1_model` / `stage2_model` lead and
   `stage1_models` / `stage2_models` (Settings → Scoring, or `SCORE_STAGE1_MODELS` /
   `SCORE_STAGE2_MODELS` on the VM) follow, best first; `keypool.ranked_models` builds the
-  list and `_select` walks it **models outermost, keys innermost**, so every key is tried on
+  list and `_select` walks it models outermost, keys innermost, so every key is tried on
   the preferred model before the second model is considered. A second model is an
   independent daily allowance, which is the only reason the chain exists. The résumé tailor
   reuses the same pool and the same walk in its `pool` auth mode (see `llm.py` below).
-- **Limits are keyed by model.** `LIMITS` carries the free-tier rpm/rpd for the whole
+- Limits are keyed by model. `LIMITS` carries the free-tier rpm/rpd for the whole
   Flash family; an id it does not know gates at `DEFAULT_LIMITS`, and `model_limits`
   (Settings → Scoring, `SCORE_MODEL_LIMITS`) overrides one model at a time as
   `<model> <rpm> <rpd>` rows. A per-stage limit would collapse last-write-wins whenever two
@@ -398,21 +398,21 @@ minute and per day, and that fact shapes the whole module:
   Vertex: the other stage's boxes said 5/20. `limits_from_disk` reads the same
   `scoring_config.json` the Settings tab writes, so the tailor resolves the same numbers
   without importing the scorer.
-- **Three different refusals, three different answers.** A full RPM window is the pool's
+- Three refusals get three different answers. A full RPM window is the pool's
   own counter and certain to clear, so it spills sideways to the next model first and waits
-  only when no pair anywhere is usable. A **503** is Google short of capacity for that
+  only when no pair anywhere is usable. A 503 is Google short of capacity for that
   *model*, so every key would collect the same refusal: the model is parked for
-  `OVERLOAD_COOLDOWN_S` (in memory, no allowance spent) and the chain moves on. A **429** is
+  `OVERLOAD_COOLDOWN_S` (in memory, no allowance spent) and the chain moves on. A 429 is
   the ambiguous one: its payload rarely says whether the minute or the day is spent, and
   stamping the daily ceiling on the first one once wrote off three keys' 500-call
   allowances after a run of a few dozen calls. Unless `_quota_scope` finds a `PerDay` metric,
   the first 429 only parks the pair for `QUOTA_COOLDOWN_S` and counts a strike; the second
   retires the pair for the day (`QUOTA_STRIKES_BEFORE_DAILY`), and a successful answer on
   that pair (`mark_ok`) forgets the strike.
-- **Vertex is the backstop, in a fixed order.** It is taken only when no free pair has daily
+- Vertex is the backstop, in a fixed order. It is taken only when no free pair has daily
   headroom, or when everything left is a park (a guess about the next minute that the
   caller asked not to stall on). A pool with no Vertex member waits.
-- **Daily counters persist, keyed by fingerprint.** `UsageState` writes `score_state.json`
+- Daily counters persist, keyed by fingerprint. `UsageState` writes `score_state.json`
   under an 8-character SHA-256 of each key (never the key), debounced every ten
   reservations and forced on exhaustion and at exit, folding in another process's counts by
   per-key max; the day rolls over at midnight America/Los_Angeles. The tailor points its
@@ -426,7 +426,7 @@ request itself. The locks do not exclude each other, so one `KeyPool` serves exa
 PySide6/Qt app (entry point `local/app.py`): high-score triage, an SQLite-backed
 application tracker (`local/seen_db.py`) with follow-up nudges, a stats tab, the
 Settings/Resume Data/Apply Answers editors, and the **Tailor résumé** button. The
-job tables are `QTableView` + `QSortFilterProxyModel` (virtualized, smooth). Pure
+job tables are `QTableView` + `QSortFilterProxyModel` (virtualized). Pure
 data/config logic is toolkit-agnostic (`local/jobsdata.py`, `local/chrome_launch.py`,
 `local/setup_check.py`, `local/errmsg.py`).
 `MainWindow` (`local/qt/main_window.py`) builds the window, loads the data and owns the
@@ -472,11 +472,11 @@ CLI's own browser sign-in. The console runs the CLI by its resolved path (`shuti
 PowerShell never picks npm's `claude.ps1` shim that the default execution policy refuses. No
 credential passes through the dashboard.
 
-Between VM drops, `local/watcher.py` closes the loop with **no polling**: a one-shot fired by
+Between VM drops, `local/watcher.py` closes the loop with no polling: a one-shot fired by
 Windows Task Scheduler (Logon / Unlock / Resume plus six scheduled fires around the VM's Drive
 drops; installed by `local/setup_tasks.ps1` from `local/task.xml`), it reconciles each newly-synced
 file's `is_seen` against the registry and launches the dashboard only when unseen score≥4 rows
-arrived that High Score would actually show (`watcher.has_unseen_high_score`: a two-column probe,
+arrived that High Score would show (`watcher.has_unseen_high_score`: a two-column probe,
 then, on a hit, `jobsdata.filter_high_unseen_with_count` over the candidate and seen.db-marked
 rows, so a repost hidden by the repost window does not pop the dashboard). Its summary also flags a master run older than the `stale_after_hours` setting
 (`watcher.master_is_stale`, the same config key the Stats badge reads). The watcher and the
@@ -506,7 +506,7 @@ straight into a screenshot or a bug report. The caller already knows which file 
 on and says so itself. It is deliberately not a log scrubber: `watcher.log` and `scraper.log`
 keep their full paths, because a log on the user's own disk is exactly where a path belongs.
 
-The **batch auto-apply queue** is the one dashboard feature driven from outside the process.
+The batch auto-apply queue is the one dashboard feature driven from outside the process.
 `local/apply_queue.py` is an atomic JSON store beside `seen.db` (every mutation under a sidecar
 byte lock) plus a small queue CLI (`list` / `stats` / `enqueue` / `remove` / `requeue` /
 `refresh-answers`); the dashboard enqueues while the tailor runs, and the **Auto-apply** tab
@@ -590,7 +590,7 @@ config and the exclude-id file, drains the outbox, and reads `VMTarget` out of t
 
 Two parts of it are easy to get wrong:
 
-- **Managed credentials:** cron runs with a bare environment, so `run_scraper.sh` has to export
+- Managed credentials: cron runs with a bare environment, so `run_scraper.sh` has to export
   `BRIGHT_DATA_API_TOKEN` and `GEMINI_API_KEYS` itself. They live in a chmod-600
   `~/scraper_secrets.env` that the script sources on line 3, and the VM panel's **Credentials**
   section writes them (`vm_sync.set_vm_secret`), so rotating a dead token takes one form
@@ -598,7 +598,7 @@ Two parts of it are easy to get wrong:
   Only the names in `MANAGED_SECRETS` are accepted, and a value has to match
   `_SAFE_SECRET` (`valid_secret_value`), because the file is *sourced* by bash: a value
   carrying `$`, a backtick, a quote or whitespace would be interpolated or word-split at
-  source time, and every credential this pipeline actually uses
+  source time, and every credential this pipeline uses
   fits the safe set, so the check rejects an unsafe value outright and never tries to
   escape it. Both checks run before the upload, and no failure path leaves a staged
   credential on the VM: the remote
@@ -606,15 +606,15 @@ Two parts of it are easy to get wrong:
   slot whenever `INSTALLER_MARKERS` prove it did not. The plaintext touches this machine only as
   a file in a private temp dir, deleted in a `finally`; `leftover_staging_dirs()` is how the panel
   notices the rare survivor, since the dashboard runs under `pythonw` with no console to print to.
-- **A crontab write is a merge.** `merge_crontab()` strips any prior managed block and
+- A crontab write is a merge. `merge_crontab()` strips any prior managed block and
   appends the new one, keeping every line outside the markers verbatim. A whole-crontab replace
   would wipe the user-added `HEALTHCHECKS_URL=` and `GOOGLE_CLOUD_PROJECT=` lines that
   `run_scraper.sh` reads. It is pure text, so the round-trip is unit-testable with no live VM.
 
-A few **durability/visibility** affordances: the Tracker tab can **Export / Import** the whole
+A few durability and visibility affordances: the Tracker tab can **Export / Import** the whole
 `seen.db` (`SeenRegistry.export_to` via SQLite `VACUUM INTO`; `import_from` merges, with newer
 `status_date` winning, earliest `applied_date` kept, seen unioned). The Stats tab shows a fresh/stale
-**pipeline badge** (`jobsdata.run_staleness` + the `stale_after_hours` setting). The Resume Data tab
+pipeline badge (`jobsdata.run_staleness` + the `stale_after_hours` setting). The Resume Data tab
 warns when `resume.md` has drifted behind `master_experience.yaml` (`resume_md.resume_md_stale`,
 mtime compare) with a one-click Regenerate; the rebuild (`local/resume_md.py`, an injected Gemini
 call, or Claude's fast-tier model on the `claude` provider;
@@ -635,13 +635,13 @@ edited in the same tab's projects control (`_projects_control`) via the "Bullets
 tiers are typed as `projects:bullets` pairs and round-tripped by `jobsdata.load/save_project_bullet_tiers`.
 With zero jobs loaded the High Score tab shows a first-run get-started hint (`JobsTab.set_empty_widget`).
 
-A few **readability** affordances: the look is driven by a **design-token module** (`local/qt/theme.py`):
+A few readability affordances: the look is driven by a design-token module (`local/qt/theme.py`):
 named surface/border/text colors plus a `SEMANTICS` dict (accent / success / warning / danger /
 followup / followup_sent / neutral, each with base, hover, and tint alphas) that every row tint,
 pill, and badge derives from; the legacy `ROW_*` constants are pre-composed blends of those tokens,
-so legend swatches and tests keep working. Fonts go through **type roles** (title / section / body /
+so legend swatches and tests keep working. Fonts go through type roles (title / section / body /
 control / caption / mono), each a *multiplier* of the live base size, never absolute px, assigned
-per widget class or via `theme.set_type_role`. One persisted **interface scale** (`ui_scale_pct` in
+per widget class or via `theme.set_type_role`. One persisted interface scale (`ui_scale_pct` in
 `config.json`) sizes the whole UI via `theme.set_scale`, driven by an **Interface size** control
 (slider + `-`/`+`, 10% steps, 75-150%; `MainWindow._apply_scale`), or by the **Ctrl +/-/0** shortcuts
 (`_setup_zoom_shortcuts`). That control lives, together with the action buttons and a
@@ -658,7 +658,7 @@ owned by
 **`local/qt/delegates.py:JobRowDelegate`** (category tint + selection lines + first-column stripe +
 score badges, deep-score mini-bars, status/reco pills, "Open ↗" links) reading a `TAG_ROLE` the
 model exposes. The same semantic families feed the scale-aware widget kit in
-**`local/qt/chrome.py`** (`Pill` / `Chip` / `ChipBar`, used by the header **identity strip**
+**`local/qt/chrome.py`** (`Pill` / `Chip` / `ChipBar`, used by the header identity strip
 with its jobs/unseen/tracked counters + freshness pill, the Tracker's status chip bar, and the
 auto-apply pipeline chips) and **`local/qt/detail_card.py:JobDetailCard`**, the bottom pane under the job
 tables: title + meta, the Open posting / Tailor résumé / Apply action
@@ -715,9 +715,9 @@ consider / neutral gray "don't consider"), the Tracker keys the application stat
 (blue applied / pink follow-up due / purple follow-up sent / yellow interviewing / green offer / red
 rejected), and All Jobs
 is a deliberately untinted plain list. Each tinted tab shows a matching `ColorLegend`
-(`jobs_tab.legend_items_for`) under its table; All Jobs has none. An app-wide **wheel guard**
+(`jobs_tab.legend_items_for`) under its table; All Jobs has none. An app-wide wheel guard
 (`qt/wheelguard.py`) stops a stray scroll from editing a combo/spin/slider regardless of focus, so the
-editable model dropdowns can't be scroll-edited. Settings sections are **collapsible**
+editable model dropdowns can't be scroll-edited. Settings sections are collapsible
 (`qt/widgets.py:CollapsibleSection`) with always-visible taglines, and the fold state persists to `config.json`.
 
 **Repost suppression** (`jobsdata.repost_key` / `suppress_reposts` / `filter_high_unseen_with_count`)
@@ -806,7 +806,7 @@ runner tests (`RUNNER_TESTS` in `tests/jev_harness.py`: `test_apply_run.py`,
 (`-Cap` required, the key loaded into that one process) or replays (`-Mode replay`, no key, no
 network) either target.
 
-- **Prune**: `jev_record.ps1 -Mode replay -Prune`, with `-Target runner` or `matrix`,
+- Prune: `jev_record.ps1 -Mode replay -Prune`, with `-Target runner` or `matrix`,
   rewrites the cache to the keys the replay served (`ReplayJev.used_keys`, then
   `jev.prune_cache`). It refuses, and leaves the cache as it was, together with record mode,
   `-Dry` or `-Flows`, or with the `captures` target; on any replay miss or test failure; for
@@ -814,7 +814,7 @@ network) either target.
   a deselected test, a node id narrower than a file) or a `jev_judge` test skipped for a reason
   the harness does not account for; for the matrix, on a narrowed `--flows` or a flow still
   marked `recorded=False` in `tests/apply_flows.py`.
-- **Spend cap:** `jev.SpendCap` measures its spend, request count and failed requests as a
+- Spend cap: `jev.SpendCap` measures its spend, request count and failed requests as a
   delta of the lifetime counter `total_usage()`, which `reset_usage()` never touches. Reading
   `usage()` would let a runner test that calls `reset_usage()` inside a live recording clamp the
   spend to 0 and raise the cap by everything spent before it. The recording summary
@@ -844,15 +844,15 @@ bullet must be traceable to a fact ("atom") the user wrote in
 | `skills.py` | The four technical-skills lines and the optional 5th "Methods" concepts line. `compress_skills` ranks each category's pool against the JD; the anchoring layer (`_anchored`, `_base_anchors`, `_merged_members`, `_complete_to_count`, `_cap_items`) is what stops a skill the user does not own from reaching the page. `methods_line` prints concepts from the master's `concepts_and_methodologies` pool that the JD actually references, in the JD's own spelling on an alias hit. |
 | `jev_assist.py` | The tailor's Jev requests. Jev answers typed questions and writes no text, so each helper returns data for code to compose, and the LLM still writes every bullet. On whenever Jev runs for the tailor: `skills_pick` rates each skill in the user's pools against the job (one noul per skill) and picks `skill_focus`, and each skills line fills in probability order within `compress_skills`' count and width; `atom_relevance` rates each atom's `what` (one noul per atom, batched to fit) for the shortlist `select` sees; no Jev step picks the lead bullet, since `compose.lead_with_overview` leads every entry with its first master atom by rule; `faithfulness` asks per bullet whether it is `supported` by its atoms and whether it `inflates` or `adds_claim`, and a flagged bullet (a sure "unsupported" or "contradicted", or `inflates`) gets one reground call with the finding before it is reverted or dropped; `sweep_flags` reads each entry for the banned tells (`SWEEP_QUESTIONS`), so the AI-writing sweep calls the model only for an entry with a tell or a detector finding; `pick_verb` picks a repeated opener's palette category, then a verb among its unused ones, halving that list only when the request would not fit. Settings options, off by default and shown only while `jev_tailor` is on (`config.py`: env, then `config.json` `is True`, then False): `best_variant` ("Best of 3 bullet drafts (Jev picks)", `tailor_best_of_n` / `RESUME_TAILOR_BEST_OF_N`) keeps one of three rephrase drafts that pass the grounding gate and `faithfulness`; `letter_unsupported` ("Jev checks the cover letter's claims", `cover_letter_jev_check` / `RESUME_TAILOR_COVER_LETTER_JEV_CHECK`) sends each flagged letter sentence to the letter's repair, which goes back through the style gate; `keyword_meaning` ("ATS report: coverage by meaning (Jev)", `tailor_ats_meaning` / `RESUME_TAILOR_ATS_MEANING`) adds a meaning-level coverage line to `ats_report.txt`. Each takes `judge=` (default `jev_switch.client("tailor")`) and returns `None` when Jev is off or the request fails, so its caller keeps its Jev-off path (`faithfulness`'s is the deterministic grounding gate alone); `run.tailor` hands one judge to every step, so an outage moves the rest of the run to the LLM path. `usage_line(step)` is the run report's line per step (requests, estimated tokens, USD), counted per thread since the dashboard tailors several jobs at once. |
 | `layout.py` | The count spec: best-N items per skill line (`skill_targets`, env-overridable) and the leadership per-entry line budget. Printed-line *widths* are `measure.py`'s job. |
-| `measure.py` | Width-aware line measurement: per-character Times-Roman advance widths greedily wrapped against the calibrated column capacity, so a bullet's printed line count is modeled from the actual render, not a flat character count. `char_budget` converts that width budget back into the character ceiling the prompt has to state; `FULL_LINE_FILL` / `LAST_LINE_FILL` / `UNDERFULL_FILL` are the fill fractions (see "The length budget"). |
+| `measure.py` | Width-aware line measurement: per-character Times-Roman advance widths greedily wrapped against the calibrated column capacity, so a bullet's printed line count is modeled from the rendered widths. `char_budget` converts that width budget back into the character ceiling the prompt has to state; `FULL_LINE_FILL` / `LAST_LINE_FILL` / `UNDERFULL_FILL` are the fill fractions (see "The length budget"). |
 | `render.py` | Assembles the `.tex`: header + Education + body, all generated from the yaml. The header's LinkedIn and GitHub fields render as `\href` links in the template's link colour, a project's `repo` becomes a link whenever it is shaped like a host address (any host with a dot in it, github.com included), and `_education` lays each entry out for an ATS parser as much as a reader: school and location on one row, the degree on its own row, GPA and honors on a third, because a GPA glued to the date column extracted as `GPAAugust 2021` and a location at the end of the degree row was read as part of the degree. |
 | `compile.py` | Runs `pdflatex` and enforces one page (drop-weakest-project-bullet loop). `CompileResult.pages` carries the final page count, so a run that could not fit one page is recorded as a warning. |
 | `latexutil.py` | Escaping, emphasis stripping, date formatting, unicode-math → LaTeX. |
 | `output.py` | Where the PDF goes; candidate name from the yaml. |
-| `ats.py` | Deterministic ATS keyword-coverage report, plus the **anchored alias layer**: the master's optional `skill_aliases` (matched *and* printable: Methods line / tech-line swap) and `skill_aliases_match_only` (matched, never printed) maps, where a group only survives if its canonical is a real skill in the taxonomy, so an alias can never inject an untethered keyword. |
+| `ats.py` | Deterministic ATS keyword-coverage report, plus the anchored alias layer: the master's optional `skill_aliases` (matched *and* printable: Methods line / tech-line swap) and `skill_aliases_match_only` (matched, never printed) maps, where a group only survives if its canonical is a real skill in the taxonomy, so an alias can never inject an untethered keyword. |
 | `coverletter.py`, `prep.py`, `research.py`, `apply_data.py` | Optional artifacts: cover letter, interview-prep sheet, grounded company research, and the self-contained `apply.md` apply sheet. |
 | `aidetector.py` | The *avoid-ai-writing* skill's own deterministic engine (v3.38.0, MIT, Conor Bronsdon), vendored unmodified under `vendor/avoid_ai_writing/` and run through Node.js as an opt-in extra check on the cover letter (Settings toggle, off by default, and only while the letter's AI-writing check is on). `violations()` reports an allowlist of phrase-level types the Python arm cannot carry (negative parallelism, performed insight, the crowd contrast, launch copy and others) under the same name-list contract as `aiwriting.violations()`, so `coverletter._body_violations` keeps its single repair call. Without Node, or on any failed run, it returns no findings and the gate carries on. |
-| `aiwriting.py` | The vendored extract of the MIT-licensed *avoid-ai-writing* skill (v3.38.0, first vendored at v3.18.0, Conor Bronsdon; attribution in its docstring and `docs/CREDITS.md`), in two arms that share one copy of the vocabulary so the two cannot drift. The **cover-letter arm** (`RULES_PROMPT` / `EXTRA_BANS` / `violations()`, plus the letter-level `bullet_echo()` and `uniform_rhythm()` detectors) rides in every letter prompt; the Settings toggle (on by default) decides only whether `violations()` joins the deterministic gate, and the two detectors join it regardless. `RULES_PROMPT` also rides in `chat.py`'s system prompt, guiding every Ask AI answer. The **résumé arm** (`RESUME_PROFILE` / `RESUME_RULES_PROMPT` / `RESUME_EXTRA_BANS` / `resume_violations()`) serves the item sweep below. A bullet is a subjectless fragment that opens on a past-tense verb, which matches none of the skill's six context profiles, so `RESUME_PROFILE` is a seventh column of its tolerance matrix: it switches off the rules that fire on correct résumé grammar (subjectless fragments, missing first person, copula avoidance) and tightens the ones a résumé does fail (promotional language, significance inflation, hedging), with a written reason on every deviation. Both arms split the same two ways the résumé style gate does: prompt text for the calls that need judgment, regexes for what is always slop. A phrase earns a regex only when it is always slop, because a false positive buys a repair call that can damage correct text. |
+| `aiwriting.py` | The vendored extract of the MIT-licensed *avoid-ai-writing* skill (v3.38.0, first vendored at v3.18.0, Conor Bronsdon; attribution in its docstring and `docs/CREDITS.md`), in two arms that share one copy of the vocabulary so the two cannot drift. The cover-letter arm (`RULES_PROMPT` / `EXTRA_BANS` / `violations()`, plus the letter-level `bullet_echo()` and `uniform_rhythm()` detectors) rides in every letter prompt; the Settings toggle (on by default) decides only whether `violations()` joins the deterministic gate, and the two detectors join it regardless. `RULES_PROMPT` also rides in `chat.py`'s system prompt, guiding every Ask AI answer. The résumé arm (`RESUME_PROFILE` / `RESUME_RULES_PROMPT` / `RESUME_EXTRA_BANS` / `resume_violations()`) serves the item sweep below. A bullet is a subjectless fragment that opens on a past-tense verb, which matches none of the skill's six context profiles, so `RESUME_PROFILE` is a seventh column of its tolerance matrix: it switches off the rules that fire on correct résumé grammar (subjectless fragments, missing first person, copula avoidance) and tightens the ones a résumé does fail (promotional language, significance inflation, hedging), with a written reason on every deviation. Both arms split the same two ways the résumé style gate does: prompt text for the calls that need judgment, regexes for what is always slop. A phrase earns a regex only when it is always slop, because a false positive buys a repair call that can damage correct text. |
 | `itemcheck.py` | The item-level detectors: the AI-writing tells that exist only *across* one entry's bullets, which `compose.enforce_style` is structurally blind to because it reads one bullet at a time. `shape_repetition` (one sentence skeleton reused down the list), `length_uniformity` (every bullet the same length), `rule_of_three`, `noun_cycling` and `bare_noun_bullet`, each returning findings with their offending spans and a P1/P2 tier. Stdlib only, and that is a hard requirement: `config.py` loads the `.env` at import scope, so a module that depends on nothing but `re` and `statistics` can be exercised standalone. Every threshold is calibrated against 57 résumés this pipeline generated, because a correct item already has each property these detectors measure to some degree, and a threshold picked by intuition fires on text that was already right. |
 | `sweep.py` | The item-level AI-writing sweep: one model call per Experience / Projects / Leadership entry, sending the entry and all of its bullets together along with `itemcheck`'s P1 findings, so the repair is targeted; a free rewrite is how a grounded bullet drifts off its atoms. A rewrite is committed only when all five acceptance conditions hold against the text it replaces: non-empty, renders within the same per-bullet printed-line budget `run._trim_to_caps` enforces, adds no deterministic style violation, keeps its opening verb, and drops no number or proper name the original carried. Anything else keeps the original, which was already grounded, clean and fitting. Bullets refused for length buy one bounded re-ask that names each one's exact character overage, and then it stops: never a third call, and nothing here is ever trimmed. On by default. An entry makes its call only when a detector forces it (a P1 `itemcheck` finding, or P2 with `config.sweep_p2_enabled()`, or an `aiwriting` phrasing hit) or a read flags one of its bullets (`_gate_skips`). The read is Jev's `sweep_flags` with Jev on; with Jev off or failed, the optional résumé scan, ONE detect-only flash call over every bullet that names tells from a fixed list (`_SCAN_TELLS`: the user's banned patterns and the P0 and P1 rules, anything else as `other: ...`), off by default (`config.sweep_scan_enabled()`, `RESUME_TAILOR_SWEEP_SCAN` / config.json `resume_sweep_scan`). With no read (`SweepResult.gate` = `detectors`), only a detector finding sends an entry: on ten real tailored résumés the old send-every-entry rule made 80 calls and committed 0 rewrites, since the repair prompt's SCOPE rule hands back unflagged bullets unchanged. The scan ships off because on those résumés it flagged 24% of the bullets, mostly for word swaps. |
 | `chat.py` | The per-job "Ask AI" chat, toolkit-agnostic: `build_context` assembles one stable system prompt (job identity, the JD fenced as untrusted data, the folder's `apply.md` when there is one, and `master_digest()` alongside it on every turn, capped at `MASTER_CHAR_CAP` = 80,000 characters) and `ask` sends only the turns as the user message, which is the prompt-cache split, so the provider switch is honoured with no new setting. Every excerpt and the transcript are capped by named constants (the per-turn floor runs at most about 96,000 characters, roughly 24k tokens on the flash tier), because the whole payload is re-sent (and re-billed) each turn. `master_digest()` walks the known sections by name (basics, education, experience, projects, leadership, skills, the `letter.seed` voice sample) then every other top-level key the file holds, skipping the tailor's own layout configuration. No grounding gate runs on an answer; the grounding rule is carried by the system prompt. `_prose_gate` does run: an answer of `PROSE_WORD_FLOOR` (60) words or more is checked against `compose.style_violations` and `aiwriting.violations`, the same two deterministic scans the résumé and letter arms use, and a flash repair call fires once, kept only when it strictly lowers the finding count; an em dash is stripped from every answer regardless of length. |
@@ -927,7 +927,7 @@ wide token, that prefix is the original text. `_note_still_underfull` re-measure
 bullets the pass actually CHANGED (a committed fill re-keys the bullet onto its borrowed
 atom) and records the ones that are still short. It never re-calls the model: a second
 billed call per bullet to recover a part-empty last line is not worth it, and a bullet the
-fill skipped for want of a spare atom is a documented no-op, not a finding.
+fill skipped for want of a spare atom is a documented no-op and records nothing.
 
 The AI-writing sweep runs LAST, for two reasons that pull the same way. The style gate is
 free and mechanical, so running it first means the judgment pass reads text the banned
@@ -969,7 +969,7 @@ width" nothing wraps by is a stale meaning waiting to mislead.
 The fill fractions are the other half, and they are two distinct ideas kept decoupled.
 `FULL_LINE_FILL` (0.90) and `LAST_LINE_FILL` (0.75) are the aim: what the prompt asks
 for, and what `_length_hint`'s floor is computed from. `UNDERFULL_FILL` (0.50) is the
-**rescue trigger**, which decides which bullets `fill_underfull` rewrites; it sits far lower
+rescue trigger, which decides which bullets `fill_underfull` rewrites; it sits far lower
 because some white space above a bullet is fine and only a sparse line is worth a
 billed call. The prompt formats its two percentages from those constants, because a
 prompt carrying its own copy of a number drifts silently the moment the constant is
@@ -983,8 +983,8 @@ mean every bullet is already full enough, a 2.0 that none ever is).
 Enforcement is `_word_trim`, which prefers to cut at a clause boundary (comma or semicolon)
 over cutting mid-phrase, but only when that boundary sits at `_CLAUSE_CUT_FLOOR` (0.85) or
 more of the budget. A floor of 0.6 lets the rightmost qualifying separator sit at 62% of
-budget and discard 38% of a bullet that fitted. A clause cut is for ending cleanly,
-not for shortening; below the floor the word cut takes over, shedding one or two words with
+budget and discard 38% of a bullet that fitted. A clause cut exists to end a bullet
+cleanly; below the floor the word cut takes over, shedding one or two words with
 `_strip_dangling` protecting the grammar.
 
 ### The style exemplar
@@ -998,7 +998,7 @@ git-ignored personal content. The `lru_cache` and the swallow-everything posture
 deliberate: the exemplar is a nice-to-have, and no tailoring run may die because a personal
 file is absent or malformed.
 
-The curated arm sits first because the PDF is a whole page, not a bullet list, and the
+The curated arm sits first because the PDF is a whole résumé page, and the
 measurements say how badly that reads as an exemplar. A flat 1200-character slice of it spends
 its first 472 characters on name, contact, education and honors; delivers 3 complete bullets
 out of 14 plus a fourth cut mid-word at "Proc"; glues the next section's heading onto several
@@ -1022,23 +1022,23 @@ The four stages' calls run on the cover tiers: the draft on `TIER_COVER`, every 
 the humanizer on `TIER_COVER_EDIT`. With no cover-letter model set those resolve to the pro
 and flash tiers named below.
 
-1. **generate** (pro tier): a narrative prompt writes three or four paragraphs of visibly
+1. generate (pro tier): a narrative prompt writes three or four paragraphs of visibly
    different lengths from the tailored bullets, an optional background excerpt of the
    selected atoms (`assets.flatten_entries`, capped at `LETTER_BACKGROUND_CAP` = 80,000
    characters; over the cap, atoms come off the longest entries first and every entry
    keeps its header) and the optional `letter.seed` voice sample (`assets.letter_seed`, capped at
    `LETTER_SEED_CAP` = 1,200 characters).
-2. **humanize** (flash tier, `refine_body`): a second pass gives the draft mixed sentence
+2. humanize (flash tier, `refine_body`): a second pass gives the draft mixed sentence
    and paragraph lengths, retells any sentence that reads like a bullet with a subject
    bolted on, and pulls an over-eager tone back to measured interest. Best-effort: a failed
    or empty call leaves the draft untouched.
-3. **gates** (`enforce_body_style`): `compose.style_violations`, and with the Settings
+3. gates (`enforce_body_style`): `compose.style_violations`, and with the Settings
    toggle on, `aiwriting.violations`, plus two structural checks that always run:
    `aiwriting.bullet_echo` (a seven-word run copied from a résumé bullet) and
    `aiwriting.uniform_rhythm` (sentences or paragraphs all within a narrow band of the
    average length). A violation buys one flash repair call, committed only when it strictly
    lowers the finding count; an em dash is stripped from the result unconditionally.
-4. **grounding** (`verify.letter_allowed_source` / `letter_unseen`): every distinctive token
+4. grounding (`verify.letter_allowed_source` / `letter_unseen`): every distinctive token
    in the body must trace to the bullets, the background, the research blurb or the posting
    itself. One repair call removes any named unsupported item; a body still holding one
    after that fails the letter outright, since an optional artifact must not ship a
@@ -1055,8 +1055,8 @@ folder on every run: which passes ran, every bullet the gate reverted or dropped
 token that caused it and the rejected text behind it, the final page count, and each
 advisory failure. Callers can also pass `on_warning` to receive them live; the dashboard
 does this and reports degraded runs in the batch summary, so a two-page résumé reads
-differently from a clean one. A degraded run is still a success that produced a PDF. It
-is just not a silent one.
+differently from a clean one. A degraded run is still a success that produced a PDF, with
+its warnings on record.
 
 The report has a second, quieter section: **notes**. Same `<kind>: <message>` line shape,
 one severity down, and deliberately NOT streamed to `on_warning`: a note is something the
@@ -1148,7 +1148,7 @@ whose pins are mostly negative: the technical words that must stay quiet).
 ## Settings & customization (`local/settings.py` + dashboard Settings tab)
 `settings.py` is one schema (`SETTINGS_SCHEMA`) of 99 `Field` rows describing every
 user-editable option (key, type, default, validation, backing file). The dashboard's
-**Settings** tab auto-renders it grouped by collapsible section, inside a scrollable canvas.
+Settings tab auto-renders it grouped by collapsible section, inside a scrollable canvas.
 `SECTION_ORDER` (`local/qt/settings_tab.py`) is Jev / Credentials / Connection & paths / Engine /
 Dashboard / About you / Scraper / Scoring / Resume / Auto-apply / Settings history / VM (cloud scraper), three
 of which `SECTION_DISPLAY` retitles for the UI as *Résumé tailor*, *Job discovery* and *VM (cloud
@@ -1164,7 +1164,7 @@ month, clearance and an open box the scorer and filters read.
 git-ignored `.env` and
 `local/config.json`, plus the root-level `search_config.json` (read by `scraper.py`) and
 `scoring_config.json` (read by `score_jobs.py`). The VM-standalone scraper/scorer never
-import `local/`; they read their own JSON with **env-override > file > built-in-default**
+import `local/`; they read their own JSON with env-override > file > built-in-default
 precedence, so an absent file reproduces the built-in defaults exactly.
 
 `Field.file_form` covers a value the backing file holds in another shape than the form.
@@ -1178,18 +1178,18 @@ by `, `, an empty list as `none`, and Save writes the text as typed.
 
 ### Rendering flags vs. validation, on the same dataclass
 Four optional `Field` attributes carry the Settings tab's whole disclosure story as
-declarative data, so the form carries no branches to keep in step. The first three are **rendering
-decisions only**: `load()`, `save()` and `validate()` never consult them, so a field the
+declarative data, so the form carries no branches to keep in step. The first three are rendering
+decisions only: `load()`, `save()` and `validate()` never consult them, so a field the
 tab is not showing still round-trips its stored value to disk (`collect()` walks the
-schema, not the visible rows; `tests/test_qt_settings.py::test_provider_round_trip_does_not_wipe_hidden_model_choices`
-is the guard). The fourth is the exception that proves the rule.
+whole schema, hidden rows included; `tests/test_qt_settings.py::test_provider_round_trip_does_not_wipe_hidden_model_choices`
+is the guard). The fourth is the one exception.
 
 | Attribute | Contract |
 | --- | --- |
 | `show_if=(gate_key, allowed_values)` | Rendering. A **configuration gate**: the field does nothing for the way this user has things set up, so it is off screen. Resolved transitively by `settings.is_visible` / `visible_keys`: a field is visible only if its own predicate holds *and* its gate field is itself visible. A typo'd gate key raises; it never degrades to "hidden". |
 | `advanced` (35 fields) | Rendering. A **view fold**: the setting applies, the user has said "not now". Composes with `show_if` (both must pass); `settings_tab._field_visible` is the single place both are decided. Search deliberately ignores it, so a folded row stays findable. |
 | `restart` (25 fields) | Rendering. The dashboard reads this key once, at launch, so a save writes the file but the running process keeps the old value. It is nearly every `.env` field: `local/app.py` calls `load_dotenv()` at startup and `python-dotenv` defaults to `override=False`, so neither a live `os.environ` read nor a subprocess that inherits the environment can see the new value. The six VM keys are exempt, because `vm_sync.VMTarget.from_env` reads the file via `settings.load`. |
-| `pattern` / `pattern_help` | Not rendering: `validate()` enforces it with `re.fullmatch`, which is what stops the tab writing free text the consumer would silently discard. **A pattern must reject only what the consumer would DISCARD**, never a value it honours: `validate()` runs over every collected field, so an over-strict rule blocks every future Save of every *other* setting. Write the differential test against the real consumer. |
+| `pattern` / `pattern_help` | Not rendering: `validate()` enforces it with `re.fullmatch`, which is what stops the tab writing free text the consumer would silently discard. **A pattern must reject only what the consumer would DISCARD**: `validate()` runs over every collected field, so an over-strict rule blocks every future Save of every *other* setting. Write the differential test against the real consumer. |
 
 The eight per-stage model rows are where that transitivity earns its keep. A `Field` carries
 exactly one `show_if`, so they cannot say both "provider is gemini" and "mode is tiers".
@@ -1201,8 +1201,8 @@ are deliberately not `advanced`, because the setting exists for the user who nev
 ticks the disclosure, and folding it there would hide it from its only
 audience.
 
-The tab composes three **view folds** (a collapsed section, the advanced disclosure, an
-active search) against those two **configuration gates** (`show_if`, and the VM section's
+The tab composes three view folds (a collapsed section, the advanced disclosure, an
+active search) against those two configuration gates (`show_if`, and the VM section's
 `vm_enabled` master switch). The line between them governs every count and message in the
 form: a view fold may be opened on the user's behalf and is never persisted when it is
 (`_reveal_view_folds`), while a configuration gate is only ever *named*
@@ -1212,10 +1212,10 @@ message true. A master switch is never reported as hiding itself.
 ## Apply automation (`apply.py` + the `apply.md` apply sheet)
 `apply_data.write` drops a single self-contained `apply.md` next to each tailored résumé, and
 `apply_data.build_markdown` (a pure function) assembles it: a title line and the date it was
-generated; **Candidate** (name, email, phone, location, LinkedIn, GitHub); **Address**, from the
-structured address answers; **Education**; **this job's tailored résumé as markdown** (work
-experience / projects / leadership / technical skills); the **Cover letter** when one was written;
-**Standard answers**, the confirmed entries of the answer store; an **Electronic signature** block
+generated; Candidate (name, email, phone, location, LinkedIn, GitHub); Address, from the
+structured address answers; Education; this job's tailored résumé as markdown (work
+experience / projects / leadership / technical skills); the Cover letter when one was written;
+Standard answers, the confirmed entries of the answer store; an Electronic signature block
 (name, and today's date on the day you apply); and a hidden HTML-comment meta marker carrying the
 job identity for lookup. It lists no files to upload. The résumé sections are rendered
 deterministically by mirroring `render.py`'s selection + grouping, fed the tailor's own `sel` +
@@ -1231,7 +1231,7 @@ Three deterministic stages, none of which can invent text.
 
 `measure.py` holds the width model: hard-coded Times advance-width tables calibrated
 against a compiled PDF, so `measure.line_count(text)` returns how many printed lines a
-bullet will actually occupy. `run._trim_to_caps` trims every bullet to its per-bullet
+bullet will occupy. `run._trim_to_caps` trims every bullet to its per-bullet
 printed-line target (`config.block_targets` / `config.project_targets`) by real rendered
 width, cutting at a clause or word boundary and stripping any dangling connective.
 Under-length bullets are left alone, since padding them would mean inventing facts.
@@ -1241,7 +1241,7 @@ Under-length bullets are left alone, since padding them would mean inventing fac
 from the last project backwards) and re-renders. Experience and leadership are never
 touched.
 
-That loop is best effort, not a guarantee. When the overflow originates outside projects
+That loop is best effort. When the overflow originates outside projects
 it runs out of droppable bullets and returns the over-length PDF.
 `CompileResult.pages` carries the final page count so `run.tailor()` records a warning for
 that case. See "Run reporting" below.
@@ -1317,4 +1317,4 @@ flowchart LR
 - `tests/test_qt_claude_signin.py`, `tests/test_claude_cli_signed_out.py`: the signed-out
   classification and the Sign in to Claude console.
 - `tests/test_aidetector.py`: the vendored Node detector bridge, with and without Node.
-- `tests/smoke_qt.py`: Qt dashboard smoke (run directly with `QT_QPA_PLATFORM=offscreen`, not under pytest).
+- `tests/smoke_qt.py`: Qt dashboard smoke (run it directly with `QT_QPA_PLATFORM=offscreen`, outside pytest).

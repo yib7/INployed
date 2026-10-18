@@ -1,4 +1,4 @@
-"""Open a tailored job application for human review — never submit it.
+"""Open a tailored job application for human review. Never submit it.
 
 Given a job (by id, or by company+title), this finds the folder where its
 tailored résumé + apply.md landed, loads the self-contained apply sheet, and
@@ -162,7 +162,7 @@ def _summary(ctx: Dict[str, Any]) -> str:
 
 def _open_url(url: str) -> None:
     """Open the apply URL in Chrome (configured profile) if the launcher is
-    importable, else the default browser. Opens the posting only — never submits."""
+    importable, else the default browser. Opens the posting only and never submits."""
     if not url:
         return
     try:

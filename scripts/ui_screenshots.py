@@ -2,11 +2,11 @@
 
 Run:  python scripts/ui_screenshots.py [prefix]     (prefix defaults to "current")
 
-Builds the real MainWindow offscreen (never app.main()/win.start() -- no
+Builds the real MainWindow offscreen (never app.main()/win.start(): no
 single-instance lock, no real data loaders), feeds it synthetic data covering
 every visual state, and saves one PNG per tab at UI scales 0.75 / 1.0 / 1.5
 plus an empty-state pass, into the gitignored `.screenshots/` dir at the repo
-root. Idempotent (overwrites), quiet on success -- prints one summary line.
+root. Idempotent (overwrites), quiet on success: prints one summary line.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from unittest.mock import MagicMock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # The offscreen platform uses the freetype font database, which finds no fonts
-# on Windows by default -- every glyph renders as a tofu box. Point it at the
+# on Windows by default, so every glyph renders as a tofu box. Point it at the
 # system font dir so the screenshots show real text.
 if os.name == "nt":
     windir = os.environ.get("WINDIR", r"C:\Windows")
@@ -29,7 +29,7 @@ if os.name == "nt":
     # That freetype database opens a C stdio stream per font face it loads, and
     # the C runtime allows 512 by default. A run that walks every tab at three
     # scales passes that limit, after which faces silently fail to open: the
-    # Tracker's check mark turned into a box at 100% and the 150% pass fell
+    # Tracker's check mark turns into a box at 100% and the 150% pass falls
     # back to a serif font full of boxes. Raise the limit before Qt loads a font.
     try:
         import ctypes
@@ -42,10 +42,10 @@ REPO = Path(__file__).resolve().parent.parent
 # Keep the maintainer's real `.env` out of this process, BEFORE anything under
 # `local/` is imported. `resume_tailor.config` calls `load_dotenv()` at import
 # scope and does not honour INPLOYED_NO_DOTENV, so its values would land in
-# `os.environ` -- and `output.candidate_slug()` reads RESUME_TAILOR_CANDIDATE
+# `os.environ`, and `output.candidate_slug()` reads RESUME_TAILOR_CANDIDATE
 # from there, which would put the real candidate name on the two file paths the
 # Apply panel prints in the walkthrough. Patching the attribute (rather than
-# setting the flag alone) is what actually works: `from dotenv import load_dotenv`
+# setting the flag alone) is what works: `from dotenv import load_dotenv`
 # inside that module resolves against this object. Both fixture values are then
 # pinned, so a maintainer who exports either one in their shell still gets Jane.
 os.environ["INPLOYED_NO_DOTENV"] = "1"
@@ -240,9 +240,9 @@ def _status_rows() -> list[dict]:
 
     Dated in days-before-today rather than as literals. The Tracker's Days column
     and its NEXT STEP card both count from `applied_date` to now, so a fixed date
-    made those numbers a function of when the media was shot: the same fixture
-    read "69 days" in August and "88 days" three weeks later, silently rotting the
-    README alt text that quotes it. Offsets keep the frame saying the same thing
+    makes those numbers a function of when the media is shot (one fixture read
+    "69 days" in August and "88 days" three weeks later), and the README alt text
+    that quotes them silently goes stale. Offsets keep the frame saying the same thing
     at every re-shoot.
     """
     return [
@@ -420,8 +420,9 @@ def _pin_dashboard_config(tmp_dir: Path) -> Path:
     Everything in `SYNTHETIC_CONFIG` is a per-user preference read straight out of
     that file, so without this the committed media records whoever ran the script:
     the sections they left unfolded, the columns they hid, the interface scale they
-    set. It leaked twice before this existed -- an expanded Credentials card with
-    masked key rows on screen, and a 120% readout under a frame drawn at 100%.
+    set. Without it, both of these have reached the media: an expanded Credentials
+    card with masked key rows on screen, and a 120% readout under a frame drawn at
+    100%.
     Pinning also means no `save_*` helper fired by the tour can reach the real file.
     """
     cfg = tmp_dir / "config.json"
@@ -443,8 +444,7 @@ def _sanitize_personal_tabs(tmp_dir: Path) -> None:
     answers = _apply_answers.load_with_defaults(path=store)  # defaults only
     # Keys must be the answer-store ids from `apply_answers` defaults, not the
     # field labels: an id that matches nothing silently leaves the real default in
-    # place, which is how five of these went unset (and the apply sheet's Address
-    # block rendered with only a country) until 8B caught it in a frame.
+    # place, and the apply sheet's Address block then renders with only a country.
     fictional = {
         "years_experience": "3", "address_street": "100 Example Street",
         "address_city": "Springfield", "address_state": "Illinois", "address_zip": "00000",
@@ -452,7 +452,7 @@ def _sanitize_personal_tabs(tmp_dir: Path) -> None:
     }
     # Every answer that has a value is marked Confirmed, as a set-up user's store
     # is: the apply sheet and the run read only confirmed answers, so without this
-    # the sheet's Address block and Standard answers came out empty and every
+    # the sheet's Address block and Standard answers come out empty and every
     # Apply Answers row said "Forms will get nothing until you confirm".
     for e in answers:
         if e["id"] in fictional:
@@ -601,14 +601,13 @@ def _freeze_auto_reload(win: MainWindow) -> None:
     The real window watches its source CSVs and polls every 15s, and both paths
     end in a reload from `csv_paths`, which is EMPTY here: the harness installs
     its synthetic frame directly. A capture that outruns the poll therefore gets
-    a half-blank dashboard, and it did -- the walkthrough grew past 15s and its
-    last four frames came back reading "0 jobs / 0 unseen" under a populated
-    Settings tab.
+    a half-blank dashboard: a walkthrough longer than 15s ends in frames reading
+    "0 jobs / 0 unseen" under a populated Settings tab.
 
-    The reload ENTRY POINTS are what get neutered, not just the timers: every
-    later `_apply_df_views` calls `_rearm_watcher`, so a freeze that only stopped
-    the timers would be undone by the next line of fixture setup (it was, and the
-    blank frames moved by one instead of going away).
+    The reload ENTRY POINTS get neutered along with the timers: every later
+    `_apply_df_views` calls `_rearm_watcher`, so a freeze that only stopped the
+    timers would be undone by the next line of fixture setup, and the blank
+    frames would move by one instead of going away.
     """
     for name in ("_poll_timer", "_reload_timer", "_scale_debounce"):
         timer = getattr(win, name, None)
@@ -706,7 +705,7 @@ def main() -> int:
     app.processEvents()
 
     # Pass 1: empty states (no jobs df, empty queue, mock tracker rows already
-    # present via the registry -- cheap and harmless). Scale 1.0 only.
+    # present via the registry, cheap and harmless). Scale 1.0 only.
     written = _capture_all(app, win, prefix, "empty_", (1.0,))
 
     # Pass 2: populated. Install the synthetic frame through the same path the
@@ -714,7 +713,7 @@ def main() -> int:
     win.min_score = 4
     win.df = _jobs_df()
     # Point the Stats tab at a synthetic run_stats.csv (never the user's real
-    # Drive folder -- pin the root resolver to the temp dir) so the metrics
+    # Drive folder: pin the root resolver to the temp dir) so the metrics
     # table and the "Fresh" chip render instead of the not-synced placeholder.
     stats_path = tmp_dir / "run_stats.csv"
     _write_run_stats(stats_path)

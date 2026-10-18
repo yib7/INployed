@@ -1,4 +1,4 @@
-"""LinkedIn jobs watcher — one-shot.
+"""LinkedIn jobs watcher (one-shot).
 
 Launched by Windows Task Scheduler on Logon / SessionUnlock / Resume,
 plus six scheduled fires per day (10:10/20/30 + 19:10/20/30 ET) covering
@@ -13,7 +13,7 @@ Each invocation:
      unseen score>=4 rows that the High Score tab would show (a repost of a
      recently marked job does not count). Otherwise exits silently.
 
-No polling loop — the process exits after one pass.
+No polling loop: the process exits after one pass.
 """
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ STATE_PATH = APPDATA / "state.json"
 LOCK_PATH = APPDATA / "watcher.lock"
 
 CONFIG_PATH = HERE / "config.json"
-UI_PATH = HERE / "app.py"   # the Qt dashboard entry point (was the deleted ui.py)
+UI_PATH = HERE / "app.py"   # the Qt dashboard entry point
 
 
 # --------------------------------------------------------------------------- logging
@@ -94,9 +94,9 @@ def save_config_key(key: str, value) -> None:
     The dashboard (jobsdata._save_cfg) and this watcher both read-modify-write
     config.json, from separate processes. Writing back the whole dict the
     watcher loaded at startup would silently revert any key the dashboard saved
-    between our load and our write — atomic_write_json prevents torn files, not
-    lost updates. update_json_locked re-reads FRESH inside an exclusive sidecar
-    lock, so the window is closed rather than narrowed. gdrive_root auto-detect
+    between our load and our write. atomic_write_json prevents torn files but
+    does nothing for lost updates. update_json_locked re-reads FRESH inside an
+    exclusive sidecar lock, which closes that window entirely. gdrive_root auto-detect
     is the one key the watcher owns."""
     try:
         update_json_locked(CONFIG_PATH, {key: value})
@@ -149,7 +149,7 @@ def load_state() -> dict:
             return _default_state()
         # A parseable-but-wrong-shape state.json (not a dict, or a
         # reconciled_mtimes that isn't a dict) would make the downstream
-        # state["reconciled_mtimes"] access raise on every future fire — and the
+        # state["reconciled_mtimes"] access raise on every future fire, and the
         # file is only rewritten on success, so the watcher would stay bricked.
         # Fall back to the default instead of returning the bad shape as-is.
         if not isinstance(state, dict) or not isinstance(state.get("reconciled_mtimes"), dict):
@@ -215,8 +215,8 @@ def master_is_stale(age_h: float, cfg: dict) -> bool:
     """True if the master run is older than the configured staleness threshold.
 
     Reads `stale_after_hours` from the same config dict the dashboard's Stats
-    tab uses (local/settings.py), defaulting to 36 when absent so existing
-    behavior is unchanged for configs that predate this setting.
+    tab uses (local/settings.py), defaulting to 36 when the config has no such
+    key.
     """
     threshold = cfg.get("stale_after_hours", 36)
     return age_h > threshold
@@ -233,7 +233,7 @@ def has_unseen_high_score(path: Path, min_score: int, registry=None,
     A cheap probe runs first: any row unseen with score >= min_score. It reads
     ONLY the two needed columns, in bounded chunks, stopping at the first hit:
     this fires 6+ times a day against a ~90 MB decompressed master, so a
-    full-frame load here was the watcher's biggest allocation. A miss answers
+    full-frame load here would be the watcher's biggest allocation. A miss answers
     False with no further work. On a hit, and given the seen `registry`, the
     hit is confirmed against High Score's own filter (`_high_score_would_show`),
     which also hides a repost of a job marked within `repost_window_days`."""
@@ -249,16 +249,16 @@ def has_unseen_high_score(path: Path, min_score: int, registry=None,
         else:
             return False
     except Exception as e:  # noqa: BLE001 - "cannot tell" must degrade, not crash
-        # ValueError covers a master missing either usecols column, which the old
-        # code answered False for. Deliberately broader than that: this reads a
+        # ValueError covers a master missing either usecols column (answered
+        # False). The clause is broader than that on purpose: this reads a
         # .csv.gz that Google Drive may be halfway through delivering, and a
         # corrupt deflate stream raises `zlib.error`, which is neither an OSError
-        # nor a ValueError. The caller (line ~437) sits inside a try whose only
-        # clause is `finally`, so that escaped all the way out of main() — the
-        # scheduled watcher died with a traceback into its own log, sync_back
-        # never ran, and the dashboard never popped, for as long as the bad file
-        # sat there. Answering False just means "no reason to pop this round";
-        # the next fire retries once the mtime settles.
+        # nor a ValueError. The caller in main() sits inside a try whose only
+        # clause is `finally`, so an escaped error would leave main() entirely:
+        # the scheduled watcher would die with a traceback into its own log,
+        # sync_back would never run, and the dashboard would never pop, for as
+        # long as the bad file sat there. Answering False just means "no reason
+        # to pop this round"; the next fire retries once the mtime settles.
         log.warning("Could not read %s: %s", path, e)
         return False
     if registry is None:
@@ -333,8 +333,8 @@ def launch_ui(csv_paths: list[Path]) -> None:
 
     Critically, the UI must OUTLIVE this watcher. When the watcher is started
     by Task Scheduler, it runs inside a job object that Task Scheduler tears
-    down shortly after the task completes — which kills any child still in the
-    job. So we launch the UI with CREATE_BREAKAWAY_FROM_JOB (plus a new process
+    down shortly after the task completes, and that kills any child still in
+    the job. So we launch the UI with CREATE_BREAKAWAY_FROM_JOB (plus a new process
     group) so it escapes the job and keeps running after we exit. If breakaway
     is denied, we fall back to a plain detached launch.
 
@@ -367,11 +367,11 @@ def sync_back_to_vm(gdrive_root: Path) -> None:
 
     Queues any local-master rows the Drive master lacks and pushes every pending
     outbox file to the VM's ~/incoming/, where merge_incoming.py folds them into
-    the real master before the next scheduled scrape. Hanging this off the
+    the VM's master before the next scheduled scrape. Hanging this off the
     watcher (6 scheduled fires/day + logon/unlock/resume) means locally
     collected rows reach the shared master even when the dashboard's own
-    post-scrape push never ran — a CLI snapshot recovery, a crashed dashboard, a
-    push that failed with no retry. Skips without building a VMTarget when there
+    post-scrape push never ran (a CLI snapshot recovery, a crashed dashboard, a
+    push that failed with no retry). Skips without building a VMTarget when there
     is nothing to do, and never raises: a sync problem must not break the
     watcher's reconcile/launch duties."""
     try:
@@ -479,8 +479,8 @@ def main() -> int:
                 try:
                     n = reconcile_file(f, registry)
                 except (OSError, ValueError, pd.errors.ParserError) as e:
-                    # Read mid-sync, partial gzip, etc. Skip this round — next
-                    # fire will retry once mtime stabilizes again.
+                    # Read mid-sync, partial gzip, etc. Skip this round; the
+                    # next fire retries once mtime stabilizes again.
                     log.warning("Reconcile failed for %s: %s; will retry next run", f.name, e)
                     continue
                 except Exception:
@@ -504,7 +504,7 @@ def main() -> int:
                 # The master is the complete scored record (scraping is
                 # incremental, so morning/evening only hold that run's new
                 # batch). Show the master so every unseen high-score job
-                # surfaces, not just the latest batch. Fall back to
+                # surfaces, earlier batches included. Fall back to
                 # morning/evening if the master hasn't synced yet.
                 master = gdrive_root / "linkedin_jobs_master.csv.gz"
                 active = [master] if master.exists() else latest_for_ui(files)

@@ -36,7 +36,7 @@ def master_source() -> Path:
     Exists so a caller can tell the user's own master apart from the committed
     example, which `load_master` silently falls back to. That fallback is what
     keeps a fresh clone and CI working, but it also means a brand-new user gets
-    a résumé built entirely from demo data with nothing saying so — and the whole
+    a résumé built entirely from demo data with nothing saying so, and the whole
     contract of this engine is that every bullet traces to a fact the USER wrote.
     """
     path = config.MASTER_YAML
@@ -70,7 +70,7 @@ def load_master() -> Dict[str, Any]:
         ) from None
     except yaml.YAMLError as exc:
         # The user hand-edits this file, so a broken edit is the likeliest way
-        # the tailor fails. Say which file, where, and what fixes it -- a raw
+        # the tailor fails. Say which file, where, and what fixes it; a raw
         # ParserError traceback in the dashboard's error dialog does not.
         where = ""
         mark = getattr(exc, "problem_mark", None)
@@ -85,8 +85,8 @@ def load_master() -> Dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(
             f"{path.name} must be a YAML mapping (got "
-            f"{type(data).__name__ if data is not None else 'empty file'}) "
-            "- see master_experience.example.yaml")
+            f"{type(data).__name__ if data is not None else 'empty file'}); "
+            "see master_experience.example.yaml")
     return data
 
 
@@ -159,8 +159,8 @@ def entry_lines(master: Dict[str, Any], section: str, *name_keys: str,
 
     `entry_atoms` is an ENTRY-level filter: with it given, an entry is listed,
     in full, when it owns at least one of those atom ids, and left out
-    altogether otherwise. With it None (chat's use) every entry is listed and
-    the output is what chat._entries always produced."""
+    altogether otherwise. With it None (chat's use, through its `_entries`
+    alias) every entry is listed."""
     marks = None if entry_atoms is None else set(entry_atoms)
     lines: List[str] = []
     entries = master.get(section) or []
@@ -272,7 +272,7 @@ def _load_alias_map(key: str) -> Dict[str, List[str]]:
 @lru_cache(maxsize=1)
 def skill_aliases() -> Dict[str, List[str]]:
     """Optional top-level `skill_aliases:` map: canonical skill -> [JD spellings the
-    ATS/JD may use for that same concept]. These are the PRINTABLE spelling variants —
+    ATS/JD may use for that same concept]. These are the PRINTABLE spelling variants:
     matched by the ATS layer AND surfaced in the JD's own spelling on the page when earned
     (the Methods concepts line, and swapped onto the four technical-skills lines). Use for
     true variants you are happy to see printed (Postgres == PostgreSQL). Each canonical
@@ -286,7 +286,7 @@ def skill_aliases_match_only() -> Dict[str, List[str]]:
     """Optional top-level `skill_aliases_match_only:` map: canonical skill -> [broader JD
     synonyms]. These are matched by the ATS report + gap-finder (a JD synonym of an owned
     skill counts as covered and is not proposed as a gap) but are NEVER printed/swapped onto
-    the page — the candidate's stronger canonical token stays. Use for broader or weaker
+    the page; the candidate's stronger canonical token stays. Use for broader or weaker
     terms you do NOT want literally on the résumé (e.g. 'Large Language Models' for a specific
     'LLM APIs (Gemini, OpenAI, Claude)' token). Same shape + anchoring as skill_aliases."""
     return _load_alias_map("skill_aliases_match_only")
@@ -358,7 +358,7 @@ def template_head() -> str:
 
 def full_url(value) -> str:
     """A clickable absolute URL from a stored link value. The master yaml may hold
-    either a bare host+path (linkedin.com/in/x) or a full URL — strip and return
+    either a bare host+path (linkedin.com/in/x) or a full URL. Strip and return
     scheme-prefixed values as-is (case-insensitive), otherwise prepend https://.
     Empty/None -> ""."""
     text = str(value or "").strip()
@@ -397,7 +397,7 @@ def _exemplar_lines(path) -> str:
     """The curated style exemplar as bullet lines: one bullet per line, `#` comment
     lines and blanks dropped, every line stripped of trailing whitespace.
 
-    Returns "" for a file that is missing, unreadable, or holds nothing but comments —
+    Returns "" for a file that is missing, unreadable, or holds nothing but comments;
     the caller then falls back to the PDF rather than sending the model an empty (or
     comment-only) exemplar."""
     try:
@@ -414,11 +414,10 @@ def example_text() -> str:
     priority order: the curated style_exemplar.txt, else the sample PDF's extracted
     text, else "".
 
-    The PDF arm is the original source and stays so an existing install that never
-    writes the .txt behaves exactly as before; the curated arm exists because that
-    extract is a whole résumé page — name/contact/education before the first bullet,
-    next-section headings glued onto bullet tails, column collisions — of which the
-    prompt could only afford the first slice. See config.STYLE_EXEMPLAR_TXT.
+    The PDF arm keeps an install with no .txt working. The curated arm exists
+    because that extract is a whole résumé page (name/contact/education before the
+    first bullet, next-section headings glued onto bullet tails, column collisions),
+    of which the prompt can afford only the first slice. See config.STYLE_EXEMPLAR_TXT.
 
     Swallows everything on purpose: the exemplar is a nice-to-have, and no tailoring
     run may die because a personal file is absent or malformed."""
@@ -435,11 +434,11 @@ def example_text() -> str:
 
 
 # A built-in palette used only when active_words.md is missing/unparseable (fresh clone,
-# CI, or a user who deleted it) — keeps the engine working with a sane verb set. The real
+# CI, or a user who deleted it), so the engine keeps a sane verb set. The primary
 # source is the curated, categorized resume_tailor_files/active_words.md.
 #
-# Curating the list by hand was a measured decision: openers extracted from the 6KB
-# raw résumé-PDF dump (jumbled multi-column OCR) were a weak and expensive signal, and
+# The list is curated by hand on purpose: openers extracted from the 6KB
+# raw résumé-PDF dump (jumbled multi-column OCR) are a weak and expensive signal, and
 # the model only needs a clean set of verbs, so curation is both cheaper and better.
 _FALLBACK_VERBS: Dict[str, List[str]] = {
     "Technical Skills": [

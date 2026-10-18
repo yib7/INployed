@@ -1,4 +1,4 @@
-"""Open a file or folder in the OS file manager -- cross-platform.
+"""Open a file or folder in the OS file manager on Windows, macOS or Linux.
 
 The dashboard's "open folder" / "reveal generated resume" actions need to work on
 Windows, macOS, and Linux. `os.startfile` exists only on Windows (it raises
@@ -8,10 +8,10 @@ AttributeError elsewhere), so this single helper dispatches per platform:
     macOS   -> `open <path>`
     Linux   -> `xdg-open <path>`
 
-Best-effort and fire-and-forget, matching the old os.startfile call sites: it does
-not wait on the child and only surfaces failures as OSError (a missing `open` /
-`xdg-open` raises FileNotFoundError, an OSError subclass), so existing
-`except OSError` handlers keep working unchanged.
+Best-effort and fire-and-forget, like os.startfile: it does not wait on the
+child and only surfaces failures as OSError (a missing `open` / `xdg-open`
+raises FileNotFoundError, an OSError subclass), so a caller's
+`except OSError` handler catches every failure.
 """
 from __future__ import annotations
 

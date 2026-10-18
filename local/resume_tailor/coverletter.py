@@ -41,7 +41,7 @@ log = logging.getLogger(__name__)
 #   Sincerely,
 #   Name
 #
-# No name banner, no phone/email line, no company line — the résumé travelling with
+# No name banner, no phone/email line, no company line: the résumé travelling with
 # the letter already carries all of that, so repeating it just crowds the page. Times
 # text comes from newtxtext (same font as the résumé template), and `parskip` at 9pt
 # supplies the one uniform gap between every block, so nothing here needs a \medskip
@@ -125,14 +125,14 @@ def _contact_values() -> list[str]:
     LinkedIn and GitHub are intentionally excluded (the user wants them out of the
     letter). The rendered PDF prints no contact line at all, so this feeds only
     cover_letter_text, whose header a paste-in form still wants. Missing/blank
-    fields are dropped. Raw (unescaped) — callers escape as needed."""
+    fields are dropped. Raw (unescaped); callers escape as needed."""
     basics = assets.load_master().get("basics", {}) or {}
     return [str(v).strip() for v in (basics.get("phone"), basics.get("email"))
             if str(v or "").strip()]
 
 
 def _today_str() -> str:
-    """Today as 'Month D, YYYY' (no leading zero) — portable across OSes and shared
+    """Today as 'Month D, YYYY' (no leading zero), portable across OSes and shared
     verbatim by the PDF header and the plain-text export so they never disagree."""
     t = date.today()
     return f"{calendar.month_name[t.month]} {t.day}, {t.year}"
@@ -142,7 +142,7 @@ _SIGNOFF_RE = re.compile(r"^\s*sincerely[,!.]?\s*$", re.I)
 
 
 def _strip_trailing_signoff(body: str) -> str:
-    """Drop any trailing 'Sincerely, / Name' the model appended — the template and
+    """Drop any trailing 'Sincerely, / Name' the model appended. The template and
     the plain-text export both supply the closing, so a model-added one doubles it."""
     lines = body.strip().splitlines()
     if len(lines) >= 2 and _SIGNOFF_RE.match(lines[-2]):
@@ -151,7 +151,7 @@ def _strip_trailing_signoff(body: str) -> str:
 
 
 # A letter reply is the letter and nothing else, but a model can still wrap it in a
-# note about its own task. One real reply opened with such a note ("Using
+# note about its own task. One observed reply opened with such a note ("Using
 # avoid-ai-writing's own review output already provided, I'll finalize the repaired
 # body as-is..."). drop_task_notes removes that kind of text before the letter uses
 # a reply. Markdown goes wherever it sits, since the letter is plain prose: fence
@@ -467,7 +467,7 @@ Write the body now."""
     # draft, the bullets and the background. THEN the deterministic gate runs
     # last, so the humanizer can never sneak banned phrasing past it.
     # No jd: both passes are grounded ONLY in the draft, the bullets and the
-    # background, so neither prompt ever carried the job description.
+    # background, so neither prompt carries the job description.
     body = refine_body(job_title, company, body, bullets, tone=tone,
                        background=background)
     body = enforce_body_style(job_title, company, body, bullets, tone=tone,
@@ -508,7 +508,7 @@ def _repair_ungrounded_body(job_title: str, company: str, body: str,
     """One flash repair pass removing the named ungrounded tokens (same letter,
     same paragraphs, no new facts). `claims` are the sentences the claims check
     flagged; they ride in a section of their own (LETTER_CLAIMS_NOTE), and with none
-    the prompt is the one this pass always sent. Best-effort: a failed call returns the body
+    the prompt has no claims section. Best-effort: a failed call returns the body
     unchanged and the caller's re-check decides."""
     system = (
         "You repair a cover-letter body that mentions facts with NO SOURCE. Rewrite "
@@ -642,7 +642,7 @@ Rewrite the body now, clearing every finding."""
 
 
 def _paragraphs(body: str) -> str:
-    """The body as escaped LaTeX paragraphs joined by a blank line only — the
+    """The body as escaped LaTeX paragraphs joined by a blank line only; the
     template's `parskip 9pt` is what puts the gap between them."""
     paras = [p.strip() for p in re.split(r"\n\s*\n", body.strip()) if p.strip()]
     esc = [to_latex(p).replace("\n", " ") for p in paras]
@@ -650,7 +650,7 @@ def _paragraphs(body: str) -> str:
 
 
 def cover_letter_text(body: str, company: str) -> str:
-    """The cover letter as clean, copy-pasteable plain text (no LaTeX) — embedded in
+    """The cover letter as clean, copy-pasteable plain text (no LaTeX), embedded in
     the folder's apply.md under `## Cover letter`, so it can be dropped straight
     into an application form's paste box (the .tex/.pdf can't). Unlike the
     PDF it keeps a name/contact/company header, because a pasted-in letter travels
@@ -672,7 +672,7 @@ def render_cover_letter(body: str, company: str, tex_path: Path, work_dir: Path)
 
     `company` is accepted but NOT rendered: this layout prints no addressee line.
     It stays in the signature because every call site passes it and the plain-text
-    export (cover_letter_text) still uses it — dropping it would churn them all.
+    export (cover_letter_text) still uses it; dropping it would churn them all.
     """
     # Drop any trailing "Sincerely, / Name" the model added; the template supplies it.
     body = _strip_trailing_signoff(body)

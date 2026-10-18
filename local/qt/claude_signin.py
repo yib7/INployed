@@ -18,8 +18,8 @@ from qt import theme
 
 SIGNIN_COMMAND = "claude auth login"
 SIGNIN_BUTTON = "Sign in to Claude"
-# Quotes, not backticks: this is dialog text, and a backtick in a message box
-# prints as itself.
+# Plain quotes around the command: this is dialog text, and a backtick in a
+# message box prints as itself.
 SIGNIN_HINT = (
     f'Click {SIGNIN_BUTTON} to open a console that runs "{SIGNIN_COMMAND}", finish '
     "the sign-in in the browser it opens, then tailor again. Without the button: "
@@ -32,7 +32,7 @@ def signin_script() -> str:
 
     The CLI's own path when it is on PATH: a bare `claude` makes PowerShell pick
     npm's claude.ps1 shim before claude.cmd, and under Windows' default
-    execution policy (Restricted) that script is refused, so the console showed
+    execution policy (Restricted) that script is refused, so the console shows
     "running scripts is disabled" and no sign-in. `shutil.which` follows PATHEXT,
     which names .cmd and .exe and never .ps1."""
     path = shutil.which("claude")

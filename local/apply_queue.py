@@ -1,4 +1,4 @@
-"""The batch auto-apply queue: an atomic JSON store + the agent CLI.
+"""The batch auto-apply queue: an atomic JSON store + its CLI.
 
 Two processes share this queue: the dashboard enqueues jobs while the
 tailor runs, and the drain (local/apply_run.py) works through it: `claim` one
@@ -24,7 +24,7 @@ Entry lifecycle: tailoring -> queued -> in_progress -> ready_to_submit |
 submitted | needs_human | failed (the last four are terminal). ready_to_submit
 is parked-for-human-review (the drain's outcome when the submit gate does not
 pass, and every outcome with auto_apply_submit off); submitted means the
-application actually went in, set either by the drain's gated submit or by a
+application went in, set either by the drain's gated submit or by a
 human who submitted a parked tab and re-finished the entry. Every entry always carries every field, so consumers
 never .get()-dance around missing keys.
 
@@ -131,7 +131,7 @@ def locked(path: Optional[Path] = None, timeout: Optional[float] = None):
         raise           # the body's own (`QueueUnreadable`), already in its words
     except FileLockTimeout as exc:
         raise QueueLockTimeout(
-            f"{exc} (another dashboard/agent process is holding it)") from None
+            f"{exc} (another dashboard or auto-apply process is holding it)") from None
 
 
 # ── load / save ──────────────────────────────────────────────────────────────
@@ -296,12 +296,12 @@ def infer_ats(apply_url: str) -> Dict[str, str]:
     return {"domain": netloc, "system": system}
 
 
-# `company`, `title` and `apply_url` come straight off a scraped posting, and a
-# queue entry is not just data the dashboard shows: the auto-apply orchestrator
-# substitutes these three into the subagent brief that drives the user's real
-# signed-in Chrome. A newline in a company name forges a line in that brief; a
-# non-http(s) apply_url is a scheme nothing downstream should ever navigate to.
-# local/chrome_launch.py:102 already refuses a non-http(s) URL at the "Open posting"
+# `company`, `title` and `apply_url` come straight off a scraped posting. The
+# dashboard shows them, the drain opens `apply_url` in the signed-in auto-apply
+# profile, and the apply record writes each one on its own line. A newline in a
+# company name forges a line in that record; a non-http(s) apply_url is a
+# scheme nothing downstream should ever navigate to.
+# `chrome_launch.open_in_chrome` refuses a non-http(s) URL at the "Open posting"
 # button; this is the same rule at the other entry point, applied on the way
 # IN so a stored entry is clean for every later reader.
 _WS_RUN_RE = re.compile(r"\s+")
@@ -479,7 +479,7 @@ def add_missing(job_id: str, question: str, context: str = "",
                 help: str = "", options: Any = (), type: str = ""
                 ) -> Dict[str, Any]:
     """Append one missing-answer item ({question, context, suggestion}): the
-    agent's "this form asked something the answer store can't cover" report.
+    run's "this form asked something the answer store can't cover" report.
     The field's `help`, live `options` and answer `type` go with it when the
     run knows them: Answer now opens Add answer prefilled with
     them."""
@@ -639,7 +639,7 @@ def requeue(job_id: str, *, refresh_answers: bool = False,
             path: Optional[Path] = None) -> Dict[str, Any]:
     """Send an entry (any status) back to "queued": clears missing_answers /
     finished_at / tab_note / claimed_by and the judge-outage count, KEEPS
-    attempts (the retry count is the point), re-stamps queued_at (a requeued
+    attempts (it is the retry count), re-stamps queued_at (a requeued
     job goes to the back of the FIFO).
 
     refresh_answers=True re-splices the folder's apply.md Standard answers
@@ -677,7 +677,7 @@ def requeue(job_id: str, *, refresh_answers: bool = False,
                     msg += " Open the dashboard's Apply Answers tab to restore the backup."
                 print(f"apply_queue: refresh_answer_sections failed for "
                       f"{folder}: {exc}", file=sys.stderr)
-                # Surface it on the entry so it's visible in the panel, not just stderr.
+                # Surface it on the entry so the panel shows it beside stderr.
                 try:
                     entry = update(job_id, path=path, notes=msg)
                 except Exception:  # never let the surfacing fail the requeue
@@ -760,7 +760,7 @@ def stats(path: Optional[Path] = None) -> Dict[str, int]:
     return out
 
 
-# Well-known email-provider → webmail inbox, so the drain agent opens the RIGHT
+# Well-known email-provider → webmail inbox, so the drain opens the RIGHT
 # inbox for the signup email's domain. Only the consumer providers ship here,
 # because a work or school domain resolves per organization: a university on
 # Microsoft 365 signs in at https://outlook.office.com/mail/, one on Google
@@ -805,22 +805,21 @@ def _parse_inbox_map(raw: Any) -> Dict[str, str]:
 
 
 def build_context(path: Optional[Path] = None) -> Dict[str, Any]:
-    """The batch-run context the agent needs before draining the queue.
+    """The batch-run context the drain needs before draining the queue.
 
     signup_email comes from the master yaml (basics.email); batch_cap from the
     dashboard config.json's auto_apply_* keys, tolerantly. inbox_url is resolved
     from the signup email's domain via DEFAULT_INBOX_MAP + the user's
     auto_apply_inbox_map (so an @hotmail.com signup opens Outlook, not Gmail), falling
     back to the single auto_apply_inbox_url then Gmail. The effective inbox_map is
-    returned too, so a subagent that uses a different account email can resolve
+    returned too, so a caller that uses a different account email can resolve
     it. Never anything secret-shaped.
 
     `auto_apply_inbox_url` is a LEGACY KEY, honoured for back-compat: do NOT
-    "clean it up". The Settings tab dropped its Field (it duplicated
-    auto_apply_inbox_map, which already ships the common providers), and this
-    function is precisely what made that deletion safe: it reads config.json
-    DIRECTLY and carries its own DEFAULT_INBOX_URL, so a value an existing user
-    already saved keeps resolving exactly as it did before. Nothing here routes
+    "clean it up". The Settings tab has no Field for it (it duplicates
+    auto_apply_inbox_map, which ships the common providers). This function
+    reads config.json DIRECTLY and carries its own DEFAULT_INBOX_URL, so a
+    value an existing user saved keeps resolving as it always has. Nothing here routes
     through settings.load(), which returns schema fields only. Pinned by
     test_build_context_single_inbox_is_fallback_for_unmapped_domain and
     test_auto_apply_inbox_url_is_not_a_settings_field.
@@ -867,7 +866,7 @@ def build_context(path: Optional[Path] = None) -> Dict[str, Any]:
 def _force_utf8_stdio() -> None:
     """Piped stdout/stderr on Windows default to cp1252, so any job title with
     an emoji/arrow would UnicodeEncodeError mid-verb, AFTER a mutating verb
-    already persisted its change, leaving the agent without the entry it now
+    already persisted its change, leaving the caller without the entry it now
     owns. Reconfigure both streams to UTF-8 up front; errors="replace" so
     printing can never raise, whatever the terminal."""
     for stream in (sys.stdout, sys.stderr):

@@ -12,14 +12,14 @@ jobs you pick, and fills in and sends the applications you queue.
 
 Two rules keep it to what you wrote, and code enforces both:
 
-- **Select and re-phrase, never invent.** Every résumé bullet traces to a fact in your
+- Select and re-phrase, never invent. Every résumé bullet traces to a fact in your
   experience file. A deterministic grounding gate (no LLM) drops any bullet that doesn't.
-- **Only the submit gate sends.** Auto-apply sends from one place in code, and only when
+- Only the submit gate sends. Auto-apply sends from one place in code, and only when
   every required field is filled from your data and read back. Anything less pauses for
   your answer or parks the job with the reason.
 
-45,458 postings collected from June 6 to October 16, 2026. 6% earn a second-stage
-recommendation and 5% come back *apply*, so that is all you read.
+The pipeline collected 45,458 postings from June 6 to October 16, 2026. 6% earn a
+second-stage recommendation and 5% come back *apply*, so that is all you read.
 
 Every push to `main` or a release branch runs the full test suite on Windows, the pipeline
 and the auto-apply browser tests on Linux, and a clean-room job that installs from this
@@ -27,14 +27,14 @@ README's own setup steps.
 
 Four pieces do the work:
 
-1. **Discovery** (`pipeline/scraper.py`) collects postings from Bright Data. Each search
+1. Discovery (`pipeline/scraper.py`) collects postings from Bright Data. Each search
    sends its own skip list, so a posting already collected is not bought again.
-2. **Scoring** (`pipeline/score_jobs.py`) ranks each job in two stages on Gemini or
+2. Scoring (`pipeline/score_jobs.py`) ranks each job in two stages on Gemini or
    Claude, with TypeSafe's Jev model making the calls first when it is on.
-3. **The dashboard** (`local/app.py`, PySide6/Qt) is where you triage and track. It runs
+3. The dashboard (`local/app.py`, PySide6/Qt) is where you triage and track. It runs
    the résumé engine (`local/resume_tailor/`): a one-page LaTeX résumé, cover letter,
    ATS keyword report and `apply.md` apply sheet per job.
-4. **Auto-apply** (`local/apply_run.py`) works through your queue one job at a time in
+4. Auto-apply (`local/apply_run.py`) works through your queue one job at a time in
    Chrome. Jev reads each page, code fills it from your apply sheet and saved answers,
    and the submit gate decides whether it sends.
 
@@ -81,8 +81,8 @@ flowchart TD
 
 One master CSV, two writers. The VM owns it. Anything found on the PC rides the outbox
 up and is merged before the next scrape, so a posting is paid for once. The dashboard
-keeps description text in an on-disk cache (`local/desc_cache.py`) and reads it per job,
-so a 45,000-row list loads in a few seconds.
+keeps description text on disk in the description cache (`local/desc_cache.py`) and
+reads it per job, so a 45,000-row list loads in a few seconds.
 
 The scorer's Gemini calls go through one key pool: free-tier keys first, metered per key
 and model, and a paid Cloud project only when every free pair is spent. The tailor joins
@@ -93,13 +93,13 @@ tailoring and auto-apply, and Gemini or Claude writes the text.
 
 ## Quick start
 
-**You need:** Windows 11, **Git** ([download](https://git-scm.com/downloads)), and **Python
-3.14** ([download](https://www.python.org/downloads/); 3.14.8, the version in
+You need: Windows 11, Git ([download](https://git-scm.com/downloads)), and Python
+3.14 ([download](https://www.python.org/downloads/); 3.14.8, the version in
 `.python-version`, is the one CI tests). Nothing else. Everything the dashboard
 needs installs with `pip` in Step 2. Steps 1-4 take about five minutes and end with a running
 app; Steps 5-7 connect it to your own data and accounts.
 
-> **Platform support: what is actually tested**
+> **Platform support: what is tested**
 >
 > | | Status |
 > |---|---|
@@ -144,13 +144,13 @@ key blank; you set the real values in Step 5, from the app. Re-run it any time;
 nothing is overwritten without `-Force`.
 
 ### Step 4: Launch the dashboard
-**Double-click `Open INployed Dashboard.cmd`** in the project folder. That is the single
+Double-click `Open INployed Dashboard.cmd` in the project folder. That is the single
 entry point, and the only thing you need for every later launch. (Right-click it →
 *Send to* → *Desktop (create shortcut)* for a desktop icon. From a terminal it is
 `venv\Scripts\python.exe local\open_dashboard.pyw`: the same interpreter and the same
 script the launcher runs, since Step 2's venv is never activated.)
 
-With no keys and no jobs yet, the window opens to a **get-started panel**, so you can
+With no keys and no jobs yet, the window opens to a get-started panel, so you can
 confirm the install worked before configuring anything.
 
 ### Step 5 (skip to just look around): Set your keys in the Settings tab
@@ -189,19 +189,19 @@ on your PC, and the VM controls stay hidden until you switch on **Enable VM
 features** in Settings.)*
 
 ### Step 6 (skip until you tailor): Enter your experience in the Resume Data tab
-Your experience lives in **`resume_tailor_files/master_experience.yaml`**, the single
+Your experience lives in `resume_tailor_files/master_experience.yaml`, the single
 source of truth the pipeline selects from per job (it never fabricates). Use the
 dashboard's **Resume Data** tab to add / edit / delete entries and achievements, with
 inline tips, a **Validate** button, and a **Revert to opening state** safety net. (The
-heavily-commented
+heavily commented
 [`master_experience.example.yaml`](resume_tailor_files/master_experience.example.yaml)
 shows the structure if you would rather edit the file.)
 
 **What makes a résumé the tailor can use well:**
-- Store **facts as atoms** (*what happened / how / scope / impact*), not finished
-  sentences. The tailor re-angles each atom to fit a job.
-- **Quantify** everything you can (%, $, counts, time saved). Numbers win.
-- Tag each atom with **angles** (e.g. `backend`, `llm`, `data-pipeline`) so it matches a
+- Store facts as atoms (*what happened / how / scope / impact*). The tailor writes the
+  sentences and re-angles each atom to fit a job.
+- Quantify everything you can (%, $, counts, time saved). Numbers win.
+- Tag each atom with angles (e.g. `backend`, `llm`, `data-pipeline`) so it matches a
   posting's keywords.
 - Hold more than fits on one page: selection picks the best evidence per job.
 - Click **Check setup** any time to lint your résumé data + apply answers, so a malformed
@@ -225,33 +225,33 @@ names whichever piece is still missing.
 
 ## What it does
 
-- **Discover:** on the VM's cron schedule, or on demand with **Find new jobs**. Each
+- Discover: on the VM's cron schedule, or on demand with **Find new jobs**. Each
   search carries its own skip list of up to 10,000 known jobs its keyword can return,
   newest by the day each was last collected, so a posting you already have is not bought
   again. **Experience level** leaves senior titles out of the search (`NOT Senior NOT Sr
   NOT Lead NOT Principal` for entry level).
-- **Score:** code filters run first. They drop postings outside the U.S. and those that
+- Score: code filters run first. They drop postings outside the U.S. and those that
   require your years cutoff or more, an advanced degree, or a clearance you lack. A cheap
   first stage drops the clear misses; a deeper second stage gives the rest a 1 to 10 fit,
   strengths, gaps and apply / consider / skip. **About you** (school status, graduation
   month, clearance) feeds both stages.
-- **Triage:** **High Score** lists unseen postings scoring 4 or more, tinted by
+- Triage: **High Score** lists unseen postings scoring 4 or more, tinted by
   recommendation. A repost of a job you already marked stays out.
-- **Tailor:** one click writes a one-page LaTeX résumé, a cover letter, an ATS keyword
+- Tailor: one click writes a one-page LaTeX résumé, a cover letter, an ATS keyword
   report, an interview-prep sheet and `apply.md`. A batch tailors 4 at a time by default
   (1 to 10). **Bullets by strength** gives the best-matching projects more bullets and
   lines, and the contact line can carry "U.S. Citizen".
-- **Check difficulty:** Jev reads a queued job's first application page, typing nothing,
+- Check difficulty: Jev reads a queued job's first application page, typing nothing,
   and scores it 1 to 10. Jobs are read one at a time, up to 30 per click.
-- **Auto-apply:** **Start auto-apply run** works through the queue in the run's own Chrome
+- Auto-apply: **Start auto-apply run** works through the queue in the run's own Chrome
   profile. A question it needs you for shows up as a **Waiting for you** card. Each job
   gets an `apply_record.md` of what was typed where.
-- **Apply Answers:** your reusable answers (work authorization, sponsorship, relocation,
+- Apply Answers: your reusable answers (work authorization, sponsorship, relocation,
   EEO, address). The run fills only answers you have set and confirmed.
-- **Track:** applied, interviewing, offer, rejected, with follow-up nudges, in a local
+- Track: applied, interviewing, offer, rejected, with follow-up nudges, in a local
   SQLite file you can export.
-- **Ask:** right-click a job for a chat scoped to its apply sheet and description.
-- **Operate:** one Settings form covers every key, path and option, plus the VM's
+- Ask: right-click a job for a chat scoped to its apply sheet and description.
+- Operate: one Settings form covers every key, path and option, plus the VM's
   schedule, pause, config push and key rotation.
 
 Every tab, CLI and setting: [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
@@ -272,31 +272,31 @@ and the data every bullet comes from.
 
 ## Limitations
 
-- **Windows, one user, your own cloud:** the dashboard, launcher and setup script are
+- Windows, one user, your own cloud: the dashboard, launcher and setup script are
   tested on Windows only. Linux runs the pipeline scripts and the auto-apply browser
   tests; macOS is untested. There is no server: the cloud half is a VM you create and
   deploy yourself.
-- **It costs money at volume.** Bright Data bills per collected posting, Gemini per token
+- It costs money at volume. Bright Data bills per collected posting, Gemini per token
   (the tailor bills your Cloud project by default), and Jev $0.042 per million input
   tokens for scoring, tailoring, the difficulty check and every auto-apply page. Leaving
   senior titles out makes Bright Data match keywords in the description too, so expect
   about twice the jobs billed per search.
-- **Auto-apply knows the pages it has met.** LinkedIn Easy Apply jobs are left to you, a
+- Auto-apply knows the pages it has met. LinkedIn Easy Apply jobs are left to you, a
   CAPTCHA or payment page parks the job, and a required question your answers don't
   cover pauses the run, then parks. A portal that changes its pages can park jobs that
   used to go through.
-- **One master password for every job site.** The run types it only over https into a
+- One master password for every job site. The run types it only over https into a
   password box on the application's own site, but a fake posting that runs its own
   careers site counts as that site and would learn it. Use a password you keep for job
   applications only.
-- **The scorer's prompts describe one candidate:** early-career, data and engineering
+- The scorer's prompts describe one candidate: early-career, data and engineering
   roles, authorized to work in the U.S. **About you** covers school status and clearance;
   for anything else, edit the prompts in `pipeline/score_jobs.py`.
-- **The grounding gate traces distinctive tokens only.** An overstatement in ordinary
+- The grounding gate traces distinctive tokens only. An overstatement in ordinary
   lowercase words passes, a bare `30m` reads as thirty million, and two- and three-letter
   acronyms are its weakest match (`MS` traces to `systems`). Read the output before you
   send it.
-- **Next:** per-site passwords for auto-apply, and splitting the three largest modules
+- Next: per-site passwords for auto-apply, and splitting the three largest modules
   (`score_jobs.py`, `scraper.py`, `jobsdata.py`) along the seams they already have.
 
 ---
@@ -307,15 +307,15 @@ and the data every bullet comes from.
 
 The engine (`local/resume_tailor/`) can only select and re-phrase:
 
-1. **select:** pick the experiences and projects that fit the job and group their atoms.
+1. select: pick the experiences and projects that fit the job and group their atoms.
    It can only choose from your atoms.
-2. **rephrase:** write one bullet per group from that group's facts alone.
-3. **bullet passes:** verb dedupe, an underfull bullet filled from a spare fact in its
+2. rephrase: write one bullet per group from that group's facts alone.
+3. bullet passes: verb dedupe, an underfull bullet filled from a spare fact in its
    own entry, a deterministic style gate, and an AI-writing sweep over each whole entry
    that a check flags.
-4. **layout:** fit each bullet to a printed-line budget measured from real Times glyph
+4. layout: fit each bullet to a printed-line budget measured from real Times glyph
    widths. No pass can grow an entry's line count.
-5. **compile:** render LaTeX and enforce one page.
+5. compile: render LaTeX and enforce one page.
 
 ```mermaid
 flowchart LR
@@ -331,7 +331,7 @@ flowchart LR
     C --> P["tailored PDF"]
 ```
 
-**The gate** (`local/resume_tailor/verify.py`) runs after every pass, with no LLM. Every
+The gate (`local/resume_tailor/verify.py`) runs after every pass, with no LLM. Every
 number, proper noun and tool name in a bullet must trace to the atoms it came from. A
 first draft that fails gets one re-ask; after that a bullet goes back to its last
 grounded wording or is dropped, and the run report quotes what it dropped. A job
@@ -369,25 +369,25 @@ flowchart TD
 
 Jev answers questions and writes nothing. Code decides what happens on the page:
 
-- **One place sends.** The submit step clicks a send control only when
+- One place sends. The submit step clicks a send control only when
   `apply_gate.can_submit` passes: **Submit when verified** is on, every required field
   is filled and read back, and Jev is sure of the button. Every other click reads the
   control's live words first and refuses one that now reads as a send.
-- **It asks before it guesses.** A required question your answers can't fill, a tie
+- It asks before it guesses. A required question your answers can't fill, a tie
   between options, or a sensitive required field pauses the run on a **Waiting for you**
   card. No answer in 10 minutes (the default) parks the job.
-- **Some boxes are never filled:** a social security number, a birthdate, bank or card
+- Some boxes are never filled: a social security number, a birthdate, bank or card
   details, an ID number.
-- **It stays on the job's own account.** Once a job reaches its application platform
+- It stays on the job's own account. Once a job reaches its application platform
   (Workday, iCIMS, Greenhouse and the rest), a page that moves it to another company's
   account or another platform parks it.
-- **The master password goes only over https,** into a password box on the
+- The master password goes only over https, into a password box on the
   application's own site, and never reaches a log, the record or Jev.
-- **A drafted free-text answer is checked sentence by sentence** against your apply
+- A drafted free-text answer is checked sentence by sentence against your apply
   sheet. One unsupported sentence drops the draft, and the field is left for you.
-- **Emailed codes come only from the job's own senders**, and Chrome runs with its
+- Emailed codes come only from the job's own senders, and Chrome runs with its
   sandbox on and takes no downloads.
-- **A posting's text stays text.** The apply sheet viewer and the Ask AI chat load no
+- A posting's text stays text. The apply sheet viewer and the Ask AI chat load no
   image or file that scraped or model-written markdown points at.
 
 Switch **Submit when verified** off and every job stops at its submit step. The full park
@@ -449,7 +449,7 @@ cryptography; the Zlib, CC0-1.0 and 0BSD arms come from numpy's composite expres
 under pandas). All of those permit an MIT release.
 `docs/CREDITS.md` lists the same set per library.
 
-The one copyleft dependency is **PySide6/Qt**, which is LGPL-3.0-only OR GPL-2.0-only OR
+The one copyleft dependency is PySide6/Qt, which is LGPL-3.0-only OR GPL-2.0-only OR
 GPL-3.0-only, or commercial from The Qt Company. The dashboard imports PySide6 as an
 ordinary Python module and bundles no Qt binaries, so LGPLv3's relink condition is met by
 construction: you have the full source and can swap the PySide6 version with one

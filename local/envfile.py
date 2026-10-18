@@ -1,4 +1,4 @@
-"""Comment-preserving read/write for a `.env` file — tiny and dependency-free.
+"""Comment-preserving read/write for a `.env` file, with no dependencies.
 
 The config GUI edits secrets and paths that live in `.env`. This module updates
 that file *surgically*: it changes only the keys you ask it to and leaves every
@@ -13,7 +13,7 @@ hand-written `.env` survives a Save.
 
 Quoting on write is chosen for python-dotenv compatibility:
   * bare (unquoted) for simple tokens/ids,
-  * single-quoted for values with spaces or backslashes (Windows paths) — dotenv
+  * single-quoted for values with spaces or backslashes (Windows paths); dotenv
     treats single-quoted values literally, so `C:\\Users\\...` is never mangled,
   * double-quoted (with `\\` and `"` escaped) only when the value itself contains
     a single quote.
@@ -32,7 +32,7 @@ _BARE_SAFE_RE = re.compile(r"^[A-Za-z0-9_./:@,+=-]+$")
 
 # Characters that cannot survive this format at all. Every value here becomes ONE
 # `KEY=VALUE` line, and `read()` parses line by line, so a newline in a value does
-# not round-trip -- it writes a second physical line that the reader then treats as
+# not round-trip: it writes a second physical line that the reader then treats as
 # a whole new assignment. Pasting a key that wrapped across two lines, or two pool
 # keys on separate lines, would therefore invent a `.env` entry nobody typed. NUL
 # and the other C0 controls cannot be represented either. Rejected rather than
@@ -42,9 +42,9 @@ _BARE_SAFE_RE = re.compile(r"^[A-Za-z0-9_./:@,+=-]+$")
 # The class is exactly what `str.splitlines()` breaks on, and that is more
 # than CR/LF: splitlines ALSO splits U+0085 NEL, U+2028 LINE SEPARATOR and
 # U+2029 PARAGRAPH SEPARATOR, none of which falls inside \x00-\x1f\x7f.
-# Without those three the guard was two thirds of a guard -- a value carrying
-# U+2028 passed the check, was written as one quoted line, and came back out
-# of read() as TWO assignments, which is the exact hole this exists to close.
+# Without those three, a value carrying U+2028 would pass the check, be
+# written as one quoted line, and come back out of read() as TWO assignments,
+# which is the exact hole this guard closes.
 # U+2028 and U+0085 are not exotic; they arrive in text pasted from a PDF or
 # a web page.
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f\x85\u2028\u2029]")
@@ -55,9 +55,9 @@ def _parse_value(raw: str) -> str:
 
     Strips one matching pair of surrounding quotes; inside double quotes, undoes
     the `\\\\` / `\\"` escaping our writer applies. Unquoted values are taken
-    verbatim (after trimming surrounding whitespace) — we deliberately do not
-    parse inline `# comments`, since this project keeps comments on their own
-    lines and that keeps round-tripping exact.
+    verbatim (after trimming surrounding whitespace). Inline `# comments` are
+    not parsed on purpose: this project keeps comments on their own lines, and
+    that keeps round-tripping exact.
     """
     raw = raw.strip()
     if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ("'", '"'):
@@ -74,8 +74,7 @@ def read(path: str | os.PathLike) -> dict[str, str]:
     utf-8-sig so a BOM'd .env (Notepad, or PowerShell 5.1's `Set-Content
     -Encoding UTF8`) does not glue a U+FEFF onto the first line's key name,
     which makes _LINE_RE miss it and drops that key. Harmless only while .env
-    starts with a comment -- exactly the kind of guarantee that quietly stops
-    holding."""
+    starts with a comment, and nothing guarantees that it does."""
     p = Path(path)
     try:
         text = p.read_text(encoding="utf-8-sig")
@@ -124,7 +123,7 @@ def update(path: str | os.PathLike, updates: dict[str, str | None]) -> None:
     a `.bak` backup.
 
     Raises ValueError for a value carrying a newline or another control character
-    (see `_CONTROL_RE`) -- checked for EVERY key before anything is written, so a
+    (see `_CONTROL_RE`). EVERY key is checked before anything is written, so a
     rejected value cannot leave the file half-updated.
     """
     bad = sorted(k for k, v in updates.items()

@@ -1,20 +1,20 @@
 """Write a self-contained apply.md next to each tailored resume.
 
-This is the machine-readable "apply sheet" — pure data a subagent draws on to fill
+This is the machine-readable "apply sheet": pure data a subagent draws on to fill
 a job application (the no-submit contract lives in the auto-apply runbook, not
 here). It carries the candidate basics + mailing address, education, THIS JOB'S
 TAILORED RÉSUMÉ translated into markdown (Work experience / Projects / Leadership /
 Technical skills), this job's cover letter as plain text when one was generated
-(`## Cover letter` — the folder ships the letter's `.tex` and `.pdf`, neither of
+(`## Cover letter`; the folder ships the letter's `.tex` and `.pdf`, neither of
 which can go in a paste box), the reusable standard answers (work auth / EEO /
 how-did-you-hear), and an electronic-signature section. A hidden HTML-comment meta
 marker at the foot carries the job identity for machine lookup (invisible in
 rendered markdown).
 
-The résumé sections are built **deterministically** from the data the tailor
-already computed — the selection (`sel`), the bullets that survived one-page
-enforcement (`bullets`, keyed by group key), and the compressed `skill_lines` —
-so the apply sheet mirrors the PDF exactly and needs **no extra LLM call**. Only
+The résumé sections are built deterministically from the data the tailor
+already computed: the selection (`sel`), the bullets that survived one-page
+enforcement (`bullets`, keyed by group key), and the compressed `skill_lines`.
+The apply sheet therefore mirrors the PDF exactly and needs no extra LLM call. Only
 the blocks the tailor selected for this job appear (mirroring render.py's grouping).
 Nothing here ever submits.
 """
@@ -34,7 +34,7 @@ from .common import one_line
 # with no answers.
 ANSWERS_LEFT_OUT = "answers left out: the Apply Answers file is damaged"
 
-# Structured mailing-address answer ids — rendered in the Address section and
+# Structured mailing-address answer ids, rendered in the Address section and
 # excluded from the generic Standard-answers list (so they aren't shown twice).
 ADDRESS_KEYS = ("address_street", "address_city", "address_state",
                 "address_zip", "address_country")
@@ -87,7 +87,7 @@ def _last(pattern: "re.Pattern[str]", text: str, pos: int = 0,
 
 
 # The résumé sections whose bullets ARE the tailored resume content. Technical
-# skills is deliberately excluded — it's the same set coverletter.generate_body
+# skills is deliberately excluded, so the set matches what coverletter.generate_body
 # receives at tailor time (the surviving bullets, never the skill lines).
 _RESUME_BULLET_SECTIONS = frozenset(
     ("## Work experience", "## Projects", "## Leadership"))
@@ -103,7 +103,7 @@ def parse_resume_bullets(md_text: str) -> List[str]:
     leading `- ` stripped. Entry headers are `**…**` lines and project links are
     `*…*` lines, so bullets are the only `- ` lines there; an INDENTED `  - `
     sub-bullet (education's honors line) never matches. Returns [] for an
-    untailored/backfilled sheet (the re-tailor placeholder) — callers use that to
+    untailored/backfilled sheet (the re-tailor placeholder); callers use that to
     tell the user to re-tailor first. Tolerant of hand edits: stray text lines
     are simply ignored.
     """
@@ -126,8 +126,8 @@ def parse_resume_bullets(md_text: str) -> List[str]:
 # One `- **label:** value` line is ONE line, and apply_sheet.parse_apply_md
 # reads this file line by line to decide what gets typed into a real application
 # form. So every value that lands in a structured line has its whitespace runs
-# collapsed to single spaces first. Without that, a value carrying a newline --
-# a scraped job title, a master-YAML field pasted out of a web page -- ends the
+# collapsed to single spaces first. Without that, a value carrying a newline
+# (a scraped job title, a master-YAML field pasted out of a web page) ends the
 # line early and everything after it is read as fresh document structure.
 _one_line = one_line
 
@@ -224,7 +224,7 @@ def _lead_meta(master: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
 
 
 def _grouped_bullets(entry: Dict[str, Any], bullets: Dict[str, str]) -> List[str]:
-    """Surviving bullet texts for one block's groups, in selection order — mirrors
+    """Surviving bullet texts for one block's groups, in selection order, mirroring
     render._group_bullets (a group whose bullet was trimmed away on one-page
     enforcement, i.e. absent from `bullets`, is skipped). Each bullet is one
     line here, whatever the model wrote: a newline in it would end the `- `
@@ -371,10 +371,10 @@ def _defuse_structure(text: str) -> str:
 
 def _cover_letter_section(cover_body: str) -> str:
     """The `## Cover letter` block: heading, blank line, then the paste-ready
-    letter (coverletter.cover_letter_text's output — header and sign-off included,
+    letter (coverletter.cover_letter_text's output, header and sign-off included,
     because a pasted letter travels without the résumé that would carry them).
 
-    This is where the cover letter's plain text lives now; the folder ships the
+    This is where the cover letter's plain text lives; the folder ships the
     letter's `.tex` instead of a `.txt`, and a `.tex` is useless in a paste box.
     Line endings are normalised to `\\n`, the Unicode line breaks
     `str.splitlines` honours (U+2028, U+0085, ...) included, so every line the
@@ -503,15 +503,15 @@ def write(job: Dict[str, str], out_dir: Path, *,
 
 def write_from_folder(folder: Path, job: Dict[str, str]) -> Path:
     """Backfill apply.md for an already-tailored folder whose résumé PDF exists but
-    whose apply.md is missing (e.g. folders tailored before this format). The
+    whose apply.md is missing (e.g. a folder tailored before the tailor wrote apply.md). The
     selection/bullets are unavailable here, so the résumé sections carry a re-tailor
     note; everything else is rebuilt the same way write() does."""
     return write(job, Path(folder))
 
 
 # The Standard-answers span is delimited by its own heading and the signature
-# heading. The signature heading carries a long parenthetical suffix, so it is
-# matched as a line-start PREFIX — never the full text. Both patterns run over
+# heading. The signature heading carries a long parenthetical suffix, so only its
+# line-start PREFIX is matched. Both patterns run over
 # untranslated text (newline=""), so the heading match tolerates a trailing \r.
 _ANSWERS_HEADING_RE = re.compile(r"(?m)^## Standard answers[ \t]*\r?$")
 _SIGNATURE_PREFIX_RE = re.compile(r"(?m)^## Electronic signature")
@@ -525,16 +525,16 @@ _COVER_HEADING_RE = re.compile(r"(?m)^## Cover letter[ \t]*\r?$")
 _ANY_HEADING_RE = re.compile(r"(?m)^## ")
 _MARKER_START_RE = re.compile(r"<!--\s*" + re.escape(_MARKER_PREFIX))
 
-# Folders tailored before the cover letter moved into apply.md still carry the
-# old copy-paste export. Matched by shape rather than by the candidate slug, which
+# A folder tailored before apply.md carried the cover letter holds the letter as
+# a copy-paste export. Matched by shape rather than by the candidate slug, which
 # may well have changed since that folder was tailored.
 LEGACY_COVER_TXT_GLOB = "*_Cover_Letter.txt"
 
 
 def _dominant_eol(text: str) -> str:
     """The file's dominant line ending: "\\r\\n" when CRLF pairs outnumber bare
-    LFs, else "\\n". The splice renders its section in the file's own convention
-    — write_text's default os.linesep translation would CRLF-ify a whole
+    LFs, else "\\n". The splice renders its section in the file's own convention,
+    because write_text's default os.linesep translation would CRLF-ify a whole
     LF-saved file, violating the bytes-outside-the-span-identical contract."""
     crlf = text.count("\r\n")
     return "\r\n" if crlf > text.count("\n") - crlf else "\n"
@@ -660,13 +660,13 @@ def refresh_cover_letter(folder: Path, text: str = "") -> Optional[Path]:
 
     The regenerate path (run.generate_cover_letter) writes into a folder whose
     apply.md already exists and carries the expensive tailored résumé sections,
-    so the letter is patched in — never rebuilt via write()/write_from_folder(),
+    so the letter is patched in and never rebuilt via write()/write_from_folder(),
     which would nuke that content. Everything outside the section's span stays
     byte-identical, line endings included.
 
     MIGRATION: a folder tailored before the letter moved into apply.md has a
     `*_Cover_Letter.txt` and no `## Cover letter` section. With no `text` supplied
-    the letter is backfilled from that file, which is then deleted — but only
+    the letter is backfilled from that file, which is then deleted, but only
     once the apply.md write has succeeded, so the letter is never lost in
     between. A supplied `text` wins over the (by then stale) file.
 

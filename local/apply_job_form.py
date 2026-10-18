@@ -1218,7 +1218,7 @@ class _FormSteps:
         """The master password in the page's password boxes
         (`apply_judge.PASSWORD_ACTION`): an account made inside the
         application. The password is for job applications only (the user's
-        rule, 2026-09-22), so it goes into a form as it does into a sign-up,
+        rule), so it goes into a form as it does into a sign-up,
         and the submit gate still decides the send. It is typed last, once
         the other boxes are filled and verified, with `guard` armed, and only
         into a box that is a real password input, is named a password (not a

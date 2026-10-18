@@ -2,8 +2,8 @@
 
 One flash call. Grounded the same way as the resume: the model may only cite
 evidence that exists in master_experience.yaml's atoms (and the tailored
-bullets, when a generated resume.tex is available) — a requirement with no
-matching atom is reported honestly as a gap to prepare an answer for.
+bullets, when a generated resume.tex is available). A requirement with no
+matching atom is reported as a gap to prepare an answer for.
 
 Output: interview_prep.md in the job's resume folder (or a fresh folder when
 no resume was tailored yet).
@@ -74,7 +74,7 @@ def generate_prep_sheet(job: Dict[str, str], out_dir: Optional[Path] = None) -> 
     # The JD is arbitrary internet content and it rides in this prompt too. It is
     # fenced like the six compose.py sites and the cover letter, and unlike the
     # résumé bullets the prep sheet has NO
-    # verify.enforce_grounded backstop downstream — so the fence is the only
+    # verify.enforce_grounded backstop downstream, so the fence is the only
     # defence here.
     user = f"""TARGET ROLE: {job_title} at {company}
 

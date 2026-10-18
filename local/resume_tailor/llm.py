@@ -1,7 +1,7 @@
-"""Thin synchronous LLM transport for the resume tailor -- two providers.
+"""Thin synchronous LLM transport for the resume tailor, with two providers.
 
 Gemini (default) is reached one of three ways, selected by config.gemini_auth():
-Vertex AI, a single dedicated API key, or "pool" -- the job scorer's
+Vertex AI, a single dedicated API key, or "pool": the job scorer's
 keypool.KeyPool over every key in GEMINI_API_KEYS, rotated and RPD-gated per
 model with Vertex as the spillover. The optional "claude" provider (config.tailor_provider())
 runs the headless Claude Code CLI (`claude -p`) on the user's subscription via
@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 # Rate limits get their own retry budget, independent of the timeout schedule:
 # a parallel batch (bounded to a few concurrent jobs, each making several
 # Gemini calls) EXPECTS 429s on free-tier RPM quotas, and the right response
-# is to hold off and continue — not to burn the 3 timeout attempts and fail
+# is to hold off and continue; burning the 3 timeout attempts would fail
 # the job. Exponential backoff (base 30s, doubling, capped at 5 min) plus
 # jitter de-synchronizes concurrent jobs; a server retryDelay hint wins when
 # the error carries one.
@@ -38,23 +38,23 @@ RATE_LIMIT_MAX_RETRIES = 6
 RATE_LIMIT_BASE_SLEEP = 30.0
 RATE_LIMIT_MAX_SLEEP = 300.0
 
-# In "pool" auth a 429 from a free key is not something to wait out: the pool
+# In "pool" auth a 429 from a free key is a signal to rotate: the pool
 # holds other keys, so the pair is parked or retired and the next one is tried
-# IMMEDIATELY. Rotation is naturally bounded -- each 429 costs a (key, model)
-# pair, and once they are gone the pool hands back its Vertex backstop -- so
+# IMMEDIATELY. Rotation is naturally bounded (each 429 costs a (key, model)
+# pair, and once they are gone the pool hands back its Vertex backstop), so
 # this ceiling exists only to stop a pathological loop.
 #
-# It is a FLOOR, not the answer: _rotation_budget sizes the real ceiling from
-# the pool, because a flat 12 is smaller than the author's 3 keys x 5 models
-# and made a tailor run give up with "kept hitting quota ... through 12
-# rotations" on the lease immediately before Vertex would have answered.
+# It is a FLOOR: _rotation_budget sizes the ceiling itself from the pool,
+# because a flat 12 is smaller than the author's 3 keys x 5 models and makes a
+# tailor run give up with "kept hitting quota ... through 12 rotations" on the
+# lease immediately before Vertex would answer.
 POOL_MAX_ROTATIONS = 12
 
 # A 503 UNAVAILABLE ("this model is currently experiencing high demand") is
 # neither a timeout nor a quota error. The generic transient branch would spend
 # three attempts, 1.5s and 3s apart, every one of them against the model Google
 # had just said it was short of capacity for. In pool mode the
-# real remedy is a different model, so the first overload rotates with no sleep
+# remedy is a different model, so the first overload rotates with no sleep
 # at all; the backoff below only starts once rotating has already failed, which
 # means either the whole chain is busy or there is nothing to rotate to (a
 # single-model config, or the Vertex backstop).
@@ -218,7 +218,7 @@ def call(
     )
 
 
-# -- pooled auth --------------------------------------------------------------
+# --- pooled auth -------------------------------------------------------------
 # One KeyPool per process, built on first use. The pool owns N genai clients and
 # a shared RPD state file, so rebuilding it per call would be both wasteful and
 # wrong (the in-memory RPM windows would reset every time).
@@ -226,13 +226,13 @@ _POOL: Any = None
 _POOL_LOCK = threading.Lock()
 # The model the last _invoke on THIS thread actually ran. Thread-local because
 # the tailor runs its jobs on a ThreadPoolExecutor, and in pool mode the model
-# is chosen inside _invoke_pooled -- too deep to return, since _invoke's return
+# is chosen inside _invoke_pooled, too deep to return, since _invoke's return
 # value is the SDK response object and callers destructure it.
 _LAST = threading.local()
 
 
 def _keypool():
-    """Lazy import of pipeline/keypool.py -- same sys.path hop as _claude_cli().
+    """Lazy import of pipeline/keypool.py (same sys.path hop as _claude_cli()).
 
     Lazy so llm.py stays importable where pipeline/ is not on sys.path, and so
     the two non-pool auth modes never pay for it.
@@ -250,8 +250,8 @@ def _pool_limits() -> dict:
     """Free-tier rpm/rpd per model, read from the scorer's scoring_config.json.
 
     The tailor deliberately does NOT get its own copy of these numbers: a
-    free-tier allowance belongs to the model and the Google account, not to
-    whichever lane happens to be calling. Whatever the Settings tab recorded for
+    free-tier allowance belongs to the model and the Google account, whichever
+    lane is calling. Whatever the Settings tab recorded for
     the scorer's stage models governs the tailor too when it names one of them;
     a tailor model the scorer never uses falls back to keypool's own table.
     """
@@ -261,12 +261,11 @@ def _pool_limits() -> dict:
 def _rotation_budget(model: Any, tier: Optional[str]) -> int:
     """How many pooled retirements ONE call may legitimately need.
 
-    Sized from the pool -- free keys x the length of this tier's ranked chain,
-    times the strikes a pair may take before it is retired -- so the rotation
+    Sized from the pool (free keys x the length of this tier's ranked chain,
+    times the strikes a pair may take before it is retired), so the rotation
     ceiling can never fire while the pool still has members to hand out. The
     Vertex backstop is the last of those members, which is why an undersized
-    ceiling does not merely retry less: it converts "fall back to Vertex" into
-    "give up". The strike factor matters because an unproven 429 only PARKS a
+    ceiling converts "fall back to Vertex" into "give up". The strike factor matters because an unproven 429 only PARKS a
     pair (keypool.QUOTA_STRIKES_BEFORE_DAILY), and a slow call lets a parked
     pair come back for its second strike before the walk is over: each pair can
     cost two rotations, exactly as KeyPool.generate sizes its own budget.
@@ -293,7 +292,7 @@ def _pool():
                 limits=_pool_limits(),
                 # Pool clients are built once, so they cannot escalate their
                 # timeout per attempt the way _build_client does. The longest
-                # slot in the schedule is the honest choice: every attempt gets
+                # slot in the schedule is the safe choice: every attempt gets
                 # the most generous timeout instead of the least.
                 http_timeout_s=config.tailor_timeout_schedule()[-1],
             )
@@ -330,7 +329,7 @@ def _check_creds() -> None:
 
 
 def _is_timeout(exc: Optional[BaseException]) -> bool:
-    """True if exc — or anything in its cause/context chain — is a network/HTTP
+    """True if exc (or anything in its cause/context chain) is a network/HTTP
     timeout (httpx ReadTimeout/ConnectTimeout, a wrapped SDK deadline, etc.).
     Errs toward True (a stray 'timeout' in the message just means we escalate the
     timeout rather than do the short transient backoff)."""
@@ -362,10 +361,10 @@ def _is_rate_limit(exc: BaseException) -> bool:
 
 
 def _is_overload(exc: BaseException) -> bool:
-    """True for a 503 / UNAVAILABLE: the model is busy, not out of quota.
+    """True for a 503 / UNAVAILABLE: the model is busy (a quota error is a 429).
 
     Mirrors keypool._is_overload_error, and is duplicated for the same reason
-    _is_rate_limit duplicates keypool._is_quota_error -- llm.py must stay
+    _is_rate_limit duplicates keypool._is_quota_error: llm.py must stay
     importable where pipeline/ is not on sys.path, and the non-pool auth modes
     never import keypool at all.
     """
@@ -456,22 +455,22 @@ def _invoke(
 def _invoke_pooled(model: str, user: str, cfg, *, tier: Optional[str] = None):
     """One generation against a leased (key, model) pair.
 
-    The pool is asked for a RANKED chain -- the step's own model first, then
-    config.gemini_fallback_models(tier) -- and hands back whichever pair is
+    The pool is asked for a RANKED chain (the step's own model first, then
+    config.gemini_fallback_models(tier)) and hands back whichever pair is
     usable right now. Free-tier quota is metered per (key, model), so a fallback
     model is a separate daily allowance, and a chain multiplies the free calls
     available before anything reaches the paid Vertex backstop.
 
-    The chain is looked up BY TIER, not by model id, because in 'tiers' mode the
+    The chain is looked up BY TIER because in 'tiers' mode the
     three tiers are different quality/cost classes with opposite quota profiles
     (a lite allows 500 requests/day per key, a full Flash 20). A shared chain
     would let the cheap high-volume selection pass drain the scarce allowance the
-    cover letter needs. A caller with no tier gets no fallbacks in 'tiers' mode --
-    see config.gemini_fallback_models.
+    cover letter needs. A caller with no tier gets no fallbacks in 'tiers' mode
+    (see config.gemini_fallback_models).
 
-    A 429 from a FREE key is a rotation signal, not something to wait out: the
-    exhausted PAIR is retired for the day -- that key keeps whatever it still has
-    on the other models -- and the failure is re-raised as kind="rotate" so
+    A 429 from a FREE key is a rotation signal: the
+    exhausted PAIR is retired for the day (that key keeps whatever it still has
+    on the other models), and the failure is re-raised as kind="rotate" so
     _call_gemini retries the same schedule slot immediately against the next
     pair. A 429 from the Vertex member has nothing to rotate to, so it passes
     through unchanged and lands in the normal backoff budget.
@@ -500,12 +499,12 @@ def _invoke_pooled(model: str, user: str, cfg, *, tier: Optional[str] = None):
                 kind="rotate",
             ) from exc
         if _is_overload(exc):
-            # Not a spent allowance -- mark_exhausted here would write off a
+            # A 503 does not spend the allowance: mark_exhausted here would write off a
             # whole day of this pair for a spike that clears in a minute. The
             # MODEL is parked instead (every key reaches the same busy backend,
             # so the next key would collect the identical 503), and the pool
             # skips it on the re-lease. Applies to the Vertex member too: the
-            # shortage belongs to the model, not to the lane.
+            # shortage belongs to the model, whichever lane calls it.
             pool.mark_unavailable(used)
             raise LLMError(
                 f"{used} returned 503 UNAVAILABLE (overloaded); parking it and "
@@ -535,7 +534,7 @@ def _call_gemini(
     retries on the next, longer timeout. A 429/quota error does NOT consume a
     schedule attempt: it has its own RATE_LIMIT_MAX_RETRIES budget of
     exponential-backoff waits (see the constants above) and then retries the
-    SAME schedule slot — batch runs must hold off on quota pressure, not fail.
+    SAME schedule slot, since batch runs must hold off on quota pressure instead of failing.
     After a budget is exhausted, raise a clear LLMError naming the cause."""
     _check_creds()
     schedule = config.tailor_timeout_schedule()
@@ -576,7 +575,7 @@ def _call_gemini(
         except Exception as exc:  # noqa: BLE001
             last_err = exc
             # Rotation first, and by KIND: _invoke_pooled has already retired the
-            # dead key, and its message quotes the 429 that caused it — so the
+            # dead key, and its message quotes the 429 that caused it, so the
             # substring classifiers below would read it as a rate limit and sleep
             # out a 30s backoff before reaching for a key that is ready now.
             if getattr(exc, "kind", "") == "rotate":
@@ -590,9 +589,9 @@ def _call_gemini(
                 log.warning("llm: %s pooled pair spent (rotation %d/%d), "
                             "trying the next one: %s", model, rotations,
                             max_rotations, exc)
-                continue  # SAME schedule slot, no sleep — the next key is ready
+                continue  # SAME schedule slot, no sleep: the next key is ready
             # Structural classification next. `local` covers the LLMErrors this
-            # very try block raises (empty body, unparseable JSON) — their
+            # very try block raises (empty body, unparseable JSON); their
             # messages carry model output, so handing them to the substring
             # classifiers below would let a JD about sales quotas or request
             # timeouts route a deterministic failure into the 429 branch.
@@ -621,14 +620,14 @@ def _call_gemini(
                 if wait:
                     time.sleep(wait)
                 ol_used += 1
-                continue  # SAME schedule slot -- this was not a timeout
+                continue  # SAME schedule slot: this was not a timeout
             if not local and _is_timeout(exc):
                 timed_out = True
                 log.warning("llm: %s timed out at %ss (attempt %d/%d); escalating "
                             "timeout: %s", model, timeout_s, idx + 1,
                             len(schedule), exc)
                 idx += 1
-                continue  # escalate to the next (longer) timeout — no sleep
+                continue  # escalate to the next (longer) timeout, no sleep
             timed_out = False
             if not local and _is_rate_limit(exc):
                 if rl_used >= RATE_LIMIT_MAX_RETRIES:
@@ -658,7 +657,7 @@ def _call_gemini(
 
 def _claude_cli():
     """Lazy import of the claude_cli module from pipeline/ (config.SCRAPE_DIR IS
-    the repo root -- same sys.path pattern as local/manual_add.py:30-34).
+    the repo root; same sys.path pattern as local/manual_add.py:30-34).
     Imported lazily (not at module load) so llm.py stays importable even in
     contexts where pipeline/ isn't yet on sys.path, and so tests can stub
     this function without a real claude_cli import."""
@@ -726,13 +725,13 @@ def _call_claude(
 ) -> Any:
     """Run one Claude Code CLI generation, mirroring `_call_gemini`'s retry
     envelope: a per-call timeout that ESCALATES across attempts
-    (config.claude_timeout_schedule(), default 180->300s -- the CLI's cold
+    (config.claude_timeout_schedule(), default 180->300s, because the CLI's cold
     start + opus latency make Gemini's 60s first slot waste attempts), and a
     429/usage-limit error that reuses the SAME schedule slot through its own
     RATE_LIMIT_MAX_RETRIES budget instead of burning a timeout attempt.
 
     `temperature` / `max_output_tokens` are accepted for signature parity with
-    `_call_gemini` and IGNORED -- the print-mode CLI exposes neither. A
+    `_call_gemini` and IGNORED: the print-mode CLI exposes neither. A
     non-empty `tools` enables the CLI's WebSearch tool (the mapping
     research.py's Gemini GoogleSearch grounding uses on the Claude lane)."""
     cc = _claude_cli()
@@ -791,7 +790,7 @@ def _call_claude(
                             "escalating timeout: %s", model, timeout_s, idx + 1,
                             len(schedule), exc)
                 idx += 1
-                continue  # escalate to the next (longer) timeout — no sleep
+                continue  # escalate to the next (longer) timeout, no sleep
             timed_out = False
             # `not kind` mirrors the timeout line above: a kinded exception was
             # already classified at the point it was raised (claude_cli runs

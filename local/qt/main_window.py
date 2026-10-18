@@ -3,7 +3,8 @@ the global action bar.
 
 The three job tabs (High Score / All Jobs / Tracker) are real `JobsTab`s wired to
 the data and registry; Auto-apply mirrors the batch apply queue; Stats / Resume
-Data / Apply Answers / Settings are filled in later phases. Long-running actions
+Data / Apply Answers / Settings are their own widgets (`StatsTab`,
+`ResumeDataEditor`, `AnswersEditor`, `SettingsForm`). Long-running actions
 (scrape, apply, tailor) run on a worker thread via `qt.workers.run_async`. The
 score preview rides in a vertical splitter and is shown only on the job tabs; it
 grows to ~half that splitter while the card's description pane is open and hands
@@ -87,8 +88,8 @@ PREVIEW_TABS = {"High Score (Unseen)", "All Jobs", "Tracker"}
 # repaint ever touches the Drive-synced stats file.
 # `problems` carries the (path, reason) pairs for sources that exist but could
 # not be read, so the empty state can say "this file is unreadable" instead of
-# "no jobs yet". Defaulted so the four-field construction older tests use, and
-# the bare (df, id_to_path) tuple _apply_frames also accepts, both still work.
+# "no jobs yet". Defaulted so a four-field construction (some tests use one) and
+# the bare (df, id_to_path) tuple _apply_frames also accepts both work.
 # `offline` carries (path, copy mtime or None, rows) for each Drive source whose
 # folder was gone (Google Drive not running), shown from its saved copy.
 LoadedFrames = namedtuple("LoadedFrames", "df id_to_path stats stale_hours problems offline",
@@ -99,15 +100,15 @@ LoadedFrames = namedtuple("LoadedFrames", "df id_to_path stats stale_hours probl
 # filesystem on every click). Cleared outright on every _apply_frames.
 _DISK_CACHE_TTL_S = 20.0
 # Hard cap on cached probes. Entries are per-key, and some keys are
-# per-job, so an all-day triage session grew the dict without bound between
-# reloads. Comfortably above the handful of live keys a session actually reuses.
+# per-job, so without a cap an all-day triage session grows the dict without
+# bound between reloads. Comfortably above the handful of live keys a session reuses.
 _DISK_CACHE_MAX = 512
 
 
 class _ScaleReadout(Label):
     """The "100%" beside the slider, always as wide as "150%" in its current
     font, so the bar does not shift as the value changes. A fixed 38px floor
-    did that at 100% and clipped "150%" to "150" at 150%, where it needs 49."""
+    holds at 100% but clips "150%" to "150" at 150%, where it needs 49."""
 
     def sizeHint(self) -> QtCore.QSize:  # noqa: N802 (Qt naming)
         return QtCore.QSize(self.fontMetrics().horizontalAdvance("150%") + 2,
@@ -119,8 +120,8 @@ class _ScaleReadout(Label):
 
 class _ScaleSlider(QtWidgets.QSlider):
     """The Interface size slider: 140px when the bar has room, down to 64px
-    when it does not (it used to be fixed at 140, which left the bar no way to
-    fit a 1000px window but to clip its own labels)."""
+    when it does not (a fixed 140 leaves the bar no way to fit a 1000px
+    window but to clip its own labels)."""
 
     def sizeHint(self) -> QtCore.QSize:  # noqa: N802 (Qt naming)
         return QtCore.QSize(140, super().sizeHint().height())
@@ -135,14 +136,14 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
 
     # Tailoring progress, streamed from the worker + thread-pool threads to the UI
     # status bar. A Qt signal so a cross-thread emit is queued onto the UI thread
-    # (the ThreadPoolExecutor workers are plain threads — direct widget calls from
+    # (the ThreadPoolExecutor workers are plain threads; direct widget calls from
     # them would be unsafe).
     tailor_progress = QtCore.Signal(str)
     # One per-job outcome dict ({"id", "label", "dir", "error"}) the moment that
     # job finishes, queued onto the UI thread. The registry is written per job so
-    # an interrupted batch (crash, power loss) keeps every result already done —
-    # the July 8 batch crash lost all 12 finished resumes because bookkeeping
-    # only happened after the WHOLE batch completed.
+    # an interrupted batch (crash, power loss) keeps every result already done.
+    # Bookkeeping that waits for the WHOLE batch loses every finished résumé
+    # when the batch crashes.
     tailor_job_done = QtCore.Signal(object)
 
     def __init__(self, csv_paths: list[Path] | None = None, registry=None,
@@ -180,11 +181,11 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         # All source-CSV rewrites (mark-seen / delete) run on this FIFO single-flight
         # background queue so the UI never freezes on a ~27MB gz rewrite and two
         # writes can never interleave on the same files. Registry (SQLite) writes
-        # stay on the UI thread — the connection is thread-affine and they're fast.
+        # stay on the UI thread: the connection is thread-affine and they're fast.
         self._writes = workers.SerialTaskQueue(self)
         # Open per-job chat windows, keyed by job id. They are PARENTED to this
-        # window (so they die with it) and remove themselves from here on close —
-        # a stale entry would be a Python wrapper over a deleted C++ object.
+        # window (so they die with it) and remove themselves from here on close,
+        # since a stale entry would be a Python wrapper over a deleted C++ object.
         self._chat_dialogs: dict[str, "JobChatDialog"] = {}
         # Detail-pane growth while the card's description is open: the state the
         # last descriptionToggled reported, and the splitter sizes to hand back
@@ -221,9 +222,9 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         )
 
     # The two states the empty panel can be in. "Nothing yet" is the first run;
-    # "unreadable" is a source file that exists and could not be parsed, which
-    # used to render identically to the first run and so told a user with a
-    # half-synced 37 MB master that they had no jobs.
+    # "unreadable" is a source file that exists and could not be parsed. The two
+    # must not look alike: first-run wording tells a user with a half-synced
+    # 37 MB master that they have no jobs.
     EMPTY_FIRST_RUN = ("No jobs yet",
                        "Three steps: set your keys and folders in Settings, fetch "
                        "and score new jobs, then add your résumé data so jobs get "
@@ -279,9 +280,10 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         return (
             f"{len(problems)} job file(s) exist but could not be read, so nothing "
             "is showing. This is usually a sync that has not finished or a file "
-            "that was cut short, not lost data. Wait for Google Drive to finish, "
-            "then press Refresh; if it persists, delete the file below and let the "
-            "next run re-sync it.\n\n" + "\n".join(lines))
+            "that was cut short, and the data is still there. Wait for Google "
+            "Drive to finish: the dashboard reloads by itself when the file "
+            "changes. If it persists, delete the file below and let the next run "
+            "re-sync it.\n\n" + "\n".join(lines))
 
     def offline_message(self) -> str:
         """What the Drive banner says while a Drive source's folder is gone.
@@ -429,7 +431,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
 
     def _apply_scale(self, pct: int) -> None:
         """Clamp to [theme.MIN_SCALE, theme.MAX_SCALE] (75..150%), re-scale the
-        live UI (font only — fast), sync the bar, and persist via jobsdata."""
+        live UI (font only, fast), sync the bar, and persist via jobsdata."""
         pct = max(75, min(150, int(pct)))
         previous = self._ui_scale_pct
         self._ui_scale_pct = pct
@@ -480,17 +482,17 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
     def _rescale_geometry(self, factor: float) -> None:
         """Re-scale the pixel geometry that was sized off the interface scale.
 
-        `theme.set_scale` re-scales what rides on the font — type, row heights,
-        every painted metric — but three things are pixel values applied ONCE,
+        `theme.set_scale` re-scales what rides on the font (type, row heights,
+        every painted metric), but three things are pixel values applied ONCE,
         at construction, from the scale that was current then: each table's
         column widths, and the height this window's vertical splitter hands the
-        detail card. Both were already scale-aware at startup (see
+        detail card. Both are scale-aware at startup (see
         `JobsTab._set_column_widths` and the `setSizes` below `self.splitter`),
-        so the bug only appeared on the LIVE path — drag the interface-size
-        slider and the type grows inside geometry that doesn't: at 150% the High
-        Score header clipped to "cor" / "licants" and the detail card kept its
-        100% height, which cut the last STRENGTHS line through the middle. A
-        restart then fixed it, which is why it survived this long.
+        so this is needed only on the LIVE path. Without it, dragging the
+        interface-size slider grows the type inside geometry that doesn't grow:
+        at 150% the High Score header clips to "cor" / "licants" and the detail
+        card keeps its 100% height, which cuts the last STRENGTHS line through
+        the middle. A restart fixes it, since startup sizes are scaled.
 
         Multiplicative, so a column the user dragged wider stays proportionally
         wider. Best-effort: a geometry hiccup must never break the scale change
@@ -610,7 +612,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 0)
         # The detail card needs ~300px @100%, and every line inside it scales with
-        # the interface size — at 150% the unscaled 300 clipped the last strength
+        # the interface size: at 150% an unscaled 300 clips the last strength
         # bullet in half. Scale the initial split the same way the card's contents
         # scale (a drag still overrides it; only the starting point is set here).
         _s = theme._current_scale
@@ -642,8 +644,8 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
 
         vbox.addLayout(self._build_action_bar())
         self._setup_zoom_shortcuts()  # Ctrl +/-/0 mirror the bottom scale bar
-        # The status bar is just the transient message line now (the interface-size
-        # control moved up into the single bottom action bar).
+        # The status bar is only the transient message line (the interface-size
+        # control lives in the single bottom action bar).
         self.setStatusBar(QtWidgets.QStatusBar())
 
     def _build_action_bar(self) -> QtWidgets.QHBoxLayout:
@@ -654,8 +656,8 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         # The hint is the one thing in this bar that gives ground when the window
         # is narrow (ElidedLabel = Ignored policy, no minimum), so the controls to
         # its right keep their full width instead of every element shrinking
-        # together. It ELIDES rather than clipping: at 1100px the plain QLabel
-        # rendered a bare "Ct".
+        # together. It ELIDES rather than clipping: at 1100px a plain QLabel
+        # renders a bare "Ct".
         # It also carries the bar's only stretch, so it shows in full on a wide
         # window and simply gives ground as the window narrows.
         bar.addWidget(tip, 1)
@@ -668,8 +670,8 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
             bar.addWidget(b)
             return b
 
-        # Tailor/Apply live on the job detail card, not here — the bar keeps
-        # the selection-utility actions, with Find new jobs as its primary.
+        # Tailor/Apply live on the job detail card. This bar keeps the
+        # selection-utility actions, with Find new jobs as its primary.
         button("Mark seen (selected)", self._mark_seen_selected)
         self.btn_undo_seen = button("Undo seen", self._undo_seen)
         button("Resume folder", self._open_resume_folder)
@@ -689,7 +691,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         scale_bar = self._build_scale_bar()
         # The scale control gives ground only through its caption (hidden whole)
         # and its slider (down to `_ScaleSlider`'s minimum); the -/+ buttons and
-        # the readout keep their width, so the "110" readout never clips again.
+        # the readout keep their width, so the "110" readout never clips.
         self._scale_bar_layout = scale_bar.layout()
         scale_bar.setSizePolicy(QtWidgets.QSizePolicy.Policy.Maximum,
                                 QtWidgets.QSizePolicy.Policy.Preferred)
@@ -722,12 +724,12 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
             on_change=self._on_tracker_chip)
         self.tracker_chips.set_checked("all")
         self.tracker_tab.layout().insertWidget(1, self.tracker_chips)
-        # Set status lives on the right-click menu (it was redundant as a button here).
+        # Set status lives on the right-click menu (a button here would duplicate it).
         self.tracker_tab.add_toolbar_button("Mark followed up", self._tracker_followed_up)
         self.tracker_tab.add_toolbar_button("Interview prep", self._tracker_prep)
         self.tracker_tab.add_toolbar_button("Remove", self._tracker_remove)
         # "Export…" / "Import…": the tab already says what they move, and the
-        # longer "Export tracker…" pair pushed this bar past a 1280px window at
+        # longer "Export tracker…" pair pushes this bar past a 1280px window at
         # 150% interface size, clipping every button in it.
         self.tracker_tab.add_toolbar_button("Export…", self._export_tracker).setToolTip(
             "Save your application history (the tracker database) to a file")
@@ -750,14 +752,14 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         with its artifact paths back on the UI thread, in `_finish_tailor` /
         `_finish_queue_tailor`. If the window closes (or otherwise exits) before
         that `finished` signal is delivered, the folder is complete on disk but
-        the entry is stranded: either at "tailoring", or — if the user hit
-        Re-queue on it — "queued" yet still artifact-less (claimable with NO
+        the entry is stranded: either at "tailoring", or (if the user hit
+        Re-queue on it) "queued" yet still artifact-less (claimable with NO
         résumé to upload). In both cases the résumé is unrecorded, so the job
         never tints blue.
 
         On launch this heals every such entry: a "tailoring" or "queued" entry
         with an EMPTY folder artifact whose canonical folder is complete on disk
-        gets exactly what the lost callback would have done — record_resume +
+        gets exactly what the lost callback would have done: record_resume +
         set_artifacts (which also flips "tailoring" -> "queued"). Healthy
         entries (folder already linked) and terminal ones are left untouched.
         Best-effort: a bad/locked queue or half-written folder is skipped."""
@@ -771,7 +773,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
             if not isinstance(e, dict) or e.get("status") not in ("tailoring", "queued"):
                 continue
             if (e.get("artifacts") or {}).get("folder"):
-                continue   # already linked to a folder — healthy, leave it
+                continue   # already linked to a folder: healthy, leave it
             jid = str(e.get("job_posting_id") or "")
             company = str(e.get("company") or "")
             title = str(e.get("title") or "")
@@ -785,7 +787,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
             except OSError:
                 complete = False
             if not complete:
-                continue   # still tailoring, or never finished — leave it
+                continue   # still tailoring, or never finished: leave it
             try:
                 self.registry.record_resume(jid, str(folder))
             except Exception:  # noqa: BLE001 - bookkeeping only (mirrors _finish_tailor)
@@ -808,7 +810,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         merge the source files, drop blocklisted rows, and read run_stats.csv +
         the staleness threshold (a synchronous Drive read here would run on
         every UI-thread repaint). Touches neither Qt nor the SQLite registry
-        (both thread-affine) — those wait for _apply_frames. The description
+        (both thread-affine); those wait for _apply_frames. The description
         cache load_files writes opens its own connection per operation."""
         problems: list[tuple[Path, str]] = []
         offline: list[tuple[Path, float | None, int]] = []
@@ -836,7 +838,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
             self._stale_hours = loaded.stale_hours
             self._load_problems = tuple(loaded.problems or ())
             self._offline = tuple(loaded.offline or ())
-        else:  # bare (df, id_to_path) — older callers/tests
+        else:  # bare (df, id_to_path), from some callers/tests
             df, id_to_path = loaded
             self._load_problems = ()
             self._offline = ()
@@ -884,7 +886,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         strip.set_counts(total, len(self.df_high), len(self._tracked))
 
     def _apply_df_views(self) -> None:
-        """Refresh everything derived from the in-memory `self.df` — row/url maps,
+        """Refresh everything derived from the in-memory `self.df`: row/url maps,
         the high-score view, both job tabs, tracker/stats, the Apply button, and the
         fs watcher. Zero disk I/O: the optimistic mark-seen/delete paths mutate
         `self.df` and call this for an instant repaint while the CSV rewrite runs
@@ -909,8 +911,8 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         self._refresh_tracker()
         self._refresh_stats()
         self._refresh_apply_button()  # a freshly tailored job may now be apply-ready
-        # Sources/folder may have changed (a local scrape appended paths) — keep the
-        # auto-refresh watcher pointed at the current files. No-op before setup.
+        # Sources/folder may have changed (a local scrape appended paths), so keep
+        # the auto-refresh watcher pointed at the current files. No-op before setup.
         if getattr(self, "_fs_watcher", None) is not None:
             self._rearm_watcher()
 
@@ -921,7 +923,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         self._apply_frames(self._load_frames())
 
     def reload_data_async(self) -> None:
-        """Load off the UI thread, then apply on it — so a cold/slow source mount
+        """Load off the UI thread, then apply on it, so a cold/slow source mount
         keeps the window responsive instead of freezing it. Overlapping calls
         coalesce into a single trailing reload."""
         if self._loading:
@@ -1014,7 +1016,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
     def _on_tracker_chip(self, key: str) -> None:
         """A pipeline chip was clicked. Status chips drive `_tracker_status_filter`;
         the "Follow-up due" chip proxies the (test-coupled) `tracker_due_only`
-        checkbox in the Filters popup — the checkbox stays the single source of
+        checkbox in the Filters popup; the checkbox stays the single source of
         truth for the due-only filter."""
         self._tracker_status_filter = (
             key if key in ("applied", "interviewing", "offer", "rejected") else "all")
@@ -1035,7 +1037,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         else:
             status_f = getattr(self, "_tracker_status_filter", "all")
             key = status_f if status_f != "all" else "all"
-        chips.set_checked(key)   # silent — never re-fires _on_tracker_chip
+        chips.set_checked(key)   # silent: never re-fires _on_tracker_chip
 
     def _disk_cached(self, key, compute):
         """Serve `compute()` through the short-TTL disk-probe cache:
@@ -1052,9 +1054,9 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         value = compute()
         cache[key] = (value, now)
         # Bound the cache. Keys include per-job entries, so a long
-        # triage session over a tens-of-thousands-row master added one entry per
-        # job clicked and only ever shrank on a full reload. Every entry past the
-        # TTL is dead weight by definition — drop those first, and if the cache is
+        # triage session over a tens-of-thousands-row master adds one entry per
+        # job clicked, and the dict only shrinks on a full reload. Every entry past
+        # the TTL is dead weight by definition: drop those first, and if the cache is
         # still over the cap, drop the oldest.
         if len(cache) > _DISK_CACHE_MAX:
             for k in [k for k, v in cache.items() if now - v[1] >= _DISK_CACHE_TTL_S]:
@@ -1067,7 +1069,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
     def _resume_ids(self) -> frozenset:
         # Only ids whose tailored folder still EXISTS on disk are tinted blue, so a
         # folder deleted by hand drops its tint on the next reload (jobsdata keeps
-        # the registry row — the tint returns if the folder comes back).
+        # the registry row, so the tint returns if the folder comes back).
         def probe() -> frozenset:
             try:
                 return frozenset(jobsdata.live_resume_ids(self.registry.resume_paths()))
@@ -1076,7 +1078,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         return self._disk_cached("resume_ids", probe)
 
     def _tailor_failure_ids(self) -> frozenset:
-        # Jobs whose most recent tailor run failed — tinted red ("re-run me")
+        # Jobs whose most recent tailor run failed stay tinted red ("re-run me")
         # until a later run succeeds (record_resume clears the flag).
         try:
             return frozenset(self.registry.tailor_failure_ids())
@@ -1086,7 +1088,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
     # ---- auto-refresh on file change -----------------------------------------
 
     def _setup_fs_watcher(self) -> None:
-        """Refresh the dashboard automatically when its source CSVs change — there
+        """Refresh the dashboard automatically when its source CSVs change; there
         is no manual Refresh button. A QFileSystemWatcher reacts instantly when the
         OS emits file events (Drive mirror mode, a local scrape); a slower mtime
         poll is the fallback for setups that emit none (Drive streaming mode), so
@@ -1123,7 +1125,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
 
     def _current_sig(self) -> tuple:
         """A cheap (path, mtime, size) signature of the source files, so the poll
-        fallback reloads only when something actually changed on disk."""
+        fallback reloads only when something changed on disk."""
         sig = []
         for p in self.csv_paths:
             try:
@@ -1142,7 +1144,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
     def _on_fs_change(self, _path: str) -> None:
         # While one of OUR background rewrites is in flight, ignore fs events: a
         # >1.5s gap between its per-file replaces would otherwise fire the debounce
-        # mid-write and reload half-old data (e.g. resurrect just-deleted rows) —
+        # mid-write and reload half-old data (e.g. resurrect just-deleted rows),
         # and the write-done re-snapshot would then keep that stale view. A real
         # Drive sync landing in this window is caught by the next 15s poll.
         if not self._writes.is_idle():
@@ -1214,7 +1216,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
 
     def _size_tabs_by_current_page(self) -> None:
         """A QTabWidget is as tall at minimum as its tallest page, so a tall
-        Auto-apply page (the Jev notice, a waiting pause) took its height out of
+        Auto-apply page (the Jev notice, a waiting pause) takes its height out of
         the job detail card under every other tab. A hidden page drops out of
         the minimum; the page on show keeps its own."""
         current = self.tabs.currentWidget()
@@ -1235,9 +1237,8 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         ids = tab.selected_ids() if tab is not None else []
         self._show_preview(ids[0] if ids else "")
         # The resume.md push-button state is driven by the settings-saved path
-        # (_on_settings_saved → refresh_push_state), not by tab switches — the old
-        # per-switch refresh did settings.load() + VMTarget.from_env() on every
-        # tab change.
+        # (_on_settings_saved → refresh_push_state). A refresh per tab switch
+        # would run settings.load() + VMTarget.from_env() on every tab change.
 
     def _apply_preview_visibility(self) -> None:
         title = self.tabs.tabText(self.tabs.currentIndex())
@@ -1249,7 +1250,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         """A drag of the outer divider is the user's newest word on how tall the
         detail pane should be, so it retires the pre-expand memory: collapsing
         the description then leaves their size alone instead of yanking it back.
-        Only real drags land here — setSizes() and window resizes do not emit
+        Only real drags land here: setSizes() and window resizes do not emit
         splitterMoved, so this never discards a size the window itself set."""
         self._preview_prev_sizes = None
 
@@ -1258,7 +1259,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         description is open, and give the height back when it closes.
 
         The signal fires from INSIDE JobDetailCard.set_fields/set_empty, i.e.
-        mid selection-update, so this only ever touches the splitter — calling
+        mid selection-update, so this only ever touches the splitter; calling
         back into the card would recurse. Repeats of the state already recorded
         are dropped, which is what makes a sticky expand across job selections
         (and a discovery↔Tracker switch) a no-op here."""
@@ -1285,7 +1286,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
             self._preview_prev_sizes = None
             return
         # A pane that was just un-hidden still reports its hidden [n, 0] until
-        # the next layout pass — and _on_tab_changed re-shows it and re-renders
+        # the next layout pass, and _on_tab_changed re-shows it and re-renders
         # the card in the SAME turn, so that stale read is the common case here.
         # refresh() recomputes the splitter's ranges in place; unlike
         # processEvents it delivers no events, so nothing can re-enter.
@@ -1296,7 +1297,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         self._preview_prev_sizes = list(sizes)
         target = sum(sizes) // 2
         if sizes[1] >= target:
-            return          # already at least half — never shrink what the user grew
+            return          # already at least half: never shrink what the user grew
         self.splitter.setSizes([sum(sizes) - target, target])
 
     def _show_preview(self, jid: str) -> None:
@@ -1354,7 +1355,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
     def _apply_ready(self, jid: str) -> tuple[bool, Path | None]:
         """A job is ready to apply to when its tailored folder holds BOTH the
         résumé PDF and apply.md on disk. Returns (ready, folder). Served through
-        the short-TTL disk cache — selection changes must not stat Drive."""
+        the short-TTL disk cache: selection changes must not stat Drive."""
         if not jid:
             return False, None
         return self._disk_cached(("apply_ready", jid),
@@ -1398,7 +1399,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
     def _enqueue_write(self, fn, *, description: str, on_done=None) -> None:
         """Run a source-CSV rewrite on the background write queue.
 
-        On completion (UI thread) the self-write feedback loop is muted — the
+        On completion (UI thread) the self-write feedback loop is muted: the
         rewrite fires the QFileSystemWatcher and shifts the mtime signature, which
         would otherwise trigger a pointless full reload of data we already show.
         On error, disk is truth: warn and resync with a full reload."""
@@ -1417,14 +1418,14 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         cancel the debounced reload it scheduled, re-add the watched paths the
         atomic replace dropped, and re-snapshot the mtime signature so the 15s
         poll stays quiet. (A real Drive sync landing inside this exact window is
-        picked up by the NEXT poll — accepted tradeoff.)"""
+        picked up by the NEXT poll, an accepted tradeoff.)"""
         if getattr(self, "_reload_timer", None) is not None:
             self._reload_timer.stop()
         if getattr(self, "_fs_watcher", None) is not None:
             self._rearm_watcher()   # also re-snapshots _source_sig
 
     def _on_write_error(self, description: str, exc: BaseException) -> None:
-        """A background write failed — the in-memory (optimistic) state may now
+        """A background write failed, so the in-memory (optimistic) state may now
         disagree with the files. Disk is truth: tell the user and reload."""
         if getattr(self, "_reload_timer", None) is not None:
             self._reload_timer.stop()
@@ -1438,7 +1439,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         """Flush pending work before the window goes away.
 
         Two things can be mid-flight at close: a résumé tailoring run (on a
-        worker thread — its finalize records the résumé + flips the queue entry
+        worker thread; its finalize records the résumé + flips the queue entry
         to "queued", and closing before that `finished` signal is delivered
         strands it) and queued background CSV/queue writes. Wait for the tailor
         first (its finalize enqueues writes), then drain the write queue."""
@@ -1485,7 +1486,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
                     "files on disk may be missing your last mark-seen/delete."))
         if self._owns_registry:
             # close() checkpoints the WAL; a connection left to the garbage
-            # collector raised a ResourceWarning at exit.
+            # collector raises a ResourceWarning at exit.
             self._owns_registry = False
             try:
                 self.registry.close()
@@ -1494,7 +1495,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         super().closeEvent(event)
 
     def _scrape_in_flight(self) -> bool:
-        """True only when a scrape/score run is still executing — the
+        """True only when a scrape/score run is still executing: the
         `_scraping` flag AND a live background thread, same gating rationale as
         `_tailor_in_flight` (the flag alone can linger set)."""
         if not getattr(self, "_scraping", False):
@@ -1508,7 +1509,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         return False
 
     def _tailor_in_flight(self) -> bool:
-        """True only when a tailor run is still executing — the
+        """True only when a tailor run is still executing: the
         `_tailoring` flag AND a live background thread. The flag alone can linger
         set (e.g. if a launch stub never spawns a real worker), so closeEvent
         gates its "wait for tailoring?" prompt on this to avoid blocking on a
@@ -1556,8 +1557,8 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
             return
         # Everything above is local file reads. The job-data check is a network
         # call and the claude CLI version check starts a subprocess, so both go
-        # to a worker thread. A blocking probe here would freeze the window,
-        # which is exactly the startup bug this dashboard already had.
+        # to a worker thread. A blocking probe here would freeze the window, the
+        # same failure as a blocking read at startup.
         self._set_status("Checking setup...")
         self._setup_check_running = True
         workers.run_async(
@@ -1572,7 +1573,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         if not problems:
             # The credential checks above read the FILE (settings.load /
             # secret_status), while the tailor and the scorer read this process's
-            # os.environ — a snapshot of .env taken once at launch (local/app.py).
+            # os.environ, a snapshot of .env taken once at launch (local/app.py).
             # So right after a Settings save this can truthfully report a key as
             # present while the engine is still using the old one. Rather than
             # make the check lie in the other direction, say which reading it is.

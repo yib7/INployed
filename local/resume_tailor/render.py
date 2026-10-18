@@ -1,8 +1,8 @@
 """Assemble the tailored resume .tex.
 
 Keeps the template's preamble (page geometry, fonts, \\resume* macros) verbatim via
-assets.template_head, then generates EVERYTHING candidate-specific — the name/contact
-header, Education, Work Experience, Projects, Leadership, Technical Skills — from
+assets.template_head, then generates EVERYTHING candidate-specific (the name/contact
+header, Education, Work Experience, Projects, Leadership, Technical Skills) from
 master_experience.yaml, mirroring the template's macros and spacing. This keeps the
 tracked template free of personal data and makes the layout work for any user. Bullets
 are keyed by group key (gkey = '+'.join(atom_ids)) and rendered in selection order.
@@ -25,7 +25,7 @@ _LINK_FIELDS = ("linkedin", "github")
 
 def _shown_dates(entry: dict) -> str:
     """The dates printed on the PDF: an entry's optional `resume_dates` (free text,
-    e.g. "Summer 2025" for an 8-week internship that "June 2025 -- July 2025"
+    e.g. "Summer 2025" for an 8-week internship that `June 2025 -- July 2025`
     undersells), else its `dates`. Only the PDF reads resume_dates; application
     forms and the cover letter keep the exact `dates`, so a form asking for start
     and end months still gets the real ones. Projects print no dates at all."""
@@ -77,11 +77,11 @@ def _contact_bit(field: str, value: str) -> str:
     """One entry of the contact line. Address fields become a coloured, clickable
     \\href; everything else is printed as-is.
 
-    The two arguments take different escaping and mixing them up is a real bug:
+    The two arguments take different escaping and mixing them up is a bug:
     to_latex is for the printed text (it backslashes `_`, right on the page), and
     escape_url is for the target (it must not, or the link resolves to an address
-    with a literal backslash in it). Display text is left exactly as it reads today
-    -- only the colour and the clickability change.
+    with a literal backslash in it). The display text prints as plain text would;
+    the link adds only the colour and the clickability.
     """
     text = to_latex(value)
     if field not in _LINK_FIELDS:
@@ -118,8 +118,9 @@ def _education(edu: List[dict]) -> str:
 
     The location sits with the school (not at the end of the degree row, where a
     parser reads "Minor in Data Science City, ST" as the degree), the
-    degree has its row to itself, and the GPA moved off the school row -- "3.7
-    GPA" glued to the date column extracted as "GPAAugust 2021" and lost both.
+    degree has its row to itself, and the GPA has a line of its own: on the school
+    row, "3.7 GPA" glued to the date column extracts as "GPAAugust 2021" and both
+    are lost.
     """
     if not edu:
         return ""
@@ -185,7 +186,7 @@ def _experience(sel: dict, bullets: Dict[str, str]) -> str:
             continue
         # `or ''`, not a .get default: assets.blocks() writes every key with
         # e.get(...), so a master entry with no `title:` has the key present and
-        # set to None -- and to_latex(None) prints the literal "None" onto the
+        # set to None, and to_latex(None) prints the literal "None" onto the
         # PDF. master_validate does not require title/location, so a master that
         # passes "Check setup" can reach here. Same guard as _header/_education.
         out.append(
@@ -205,7 +206,8 @@ def _looks_like_a_host_path(repo: str) -> bool:
 
     Gating the link on the literal "github.com" would silently drop a project
     hosted anywhere else (GitLab, Bitbucket, Hugging Face, a personal domain): no
-    href, no printed address, no warning. The field is "Repo", not "GitHub repo".
+    href, no printed address, no warning. The field is labelled "Repo" and takes
+    any host.
     The gate is the shape of an address: a host segment with
     a dot in it and no whitespace anywhere, so "private" or "ask me" still
     render no link, exactly as an empty value does.
@@ -226,17 +228,17 @@ def _projects(sel: dict, bullets: Dict[str, str]) -> str:
             continue
         name = to_latex(b.get("name") or "")            # see _experience on `or ''`
         repo = (b.get("repo") or "").strip()
-        # Strip any scheme the yaml already stored -- master_experience.yaml may hold
+        # Strip any scheme the yaml already stored: master_experience.yaml may hold
         # either a bare host+path (github.com/x/y) or a full URL (https://github.com/x/y);
         # without this, prefixing "https://" onto a full URL doubles the scheme.
         repo = repo.removeprefix("https://").removeprefix("http://")
         # The link sits inline after the name as " | github.com/x/y", mirroring the
         # Work Experience header; empty (no trailing pipe) when the project has no
-        # repo. The visible text is the repo's own host+path, not the word "Link":
-        # an ATS keeps only the extracted text and drops the \href target, so
-        # "Link" reached it as a dead word and the address never did. Display text
+        # repo. The visible text is the repo's own host+path because an ATS keeps
+        # only the extracted text and drops the \href target: a label such as
+        # "Link" would reach it as a dead word and the address would not. Display text
         # goes through to_latex (a `_` in a repo name must print), the target
-        # through escape_url (it must not be backslashed) -- see _contact_bit.
+        # through escape_url (it must not be backslashed); see _contact_bit.
         if _looks_like_a_host_path(repo):
             href = escape_url(f"https://{repo}")
             link = f" $|$ \\href{{{href}}}{{{to_latex(repo.rstrip('/'))}}}"

@@ -43,7 +43,7 @@ DATA_ROOT = _HERE.parent if _HERE.name == "pipeline" else _HERE
 # an INPLOYED_NO_DOTENV=TRUE that silently re-arms a billed script is the worst
 # possible way to be strict. Note it is read at IMPORT, so setting it inside a
 # process that already imported this module (the dashboard, which loads .env at
-# startup -- local/settings.py:108) does nothing.
+# startup in local/settings.py:108) does nothing.
 if os.environ.get("INPLOYED_NO_DOTENV", "").strip().lower() not in ("1", "true", "yes", "on"):
     try:
         from dotenv import load_dotenv
@@ -52,7 +52,7 @@ if os.environ.get("INPLOYED_NO_DOTENV", "").strip().lower() not in ("1", "true",
     except ImportError:
         pass
 
-# Bright Data credentials — supplied via environment (.env locally, exported on
+# Bright Data credentials, supplied via environment (.env locally, exported on
 # the VM). Never hardcode the token in the repo; see .env.example. The presence
 # check is deferred to run time (require_credentials) so importing this module
 # never aborts a credential-less process (e.g. the test suite or reuse).
@@ -123,13 +123,13 @@ OUTPUT_DIR = DATA_ROOT
 PREVIOUS_IDS_FILE = OUTPUT_DIR / "last_run_job_ids.json"
 MASTER_CSV = OUTPUT_DIR / "linkedin_jobs_master.csv"
 # Job ids collected on ANOTHER machine and pushed here (e.g. a manual local scrape
-# syncs its ids up to the VM) so a scheduled run never re-collects — and re-bills —
+# syncs its ids up to the VM) so a scheduled run never re-collects (and re-bills)
 # what was just pulled. Unioned into load_exclude_ids() on top of this host's master.
 EXTERNAL_EXCLUDE_FILE = OUTPUT_DIR / "external_exclude_ids.json"
 
 # An additional master CSV (path in this env var; .csv or .csv.gz) to exclude from, on
 # top of this host's own master. The local dashboard sets it to the synced Drive master
-# so a LOCAL "Find new jobs" run also skips — and never re-bills — jobs the VM already
+# so a LOCAL "Find new jobs" run also skips (and never re-bills) jobs the VM already
 # collected: the local repo master is only a small stub of recent local runs, while the
 # Drive master is the VM's full cumulative record. Unset on the VM (whose own master IS
 # the full set), so the VM's exclusion is unchanged.
@@ -143,11 +143,11 @@ EXPECT_DRIVE_MASTER_ENV = "INPLOYED_EXPECT_DRIVE_MASTER"
 
 # Every id each run got back from Bright Data, with the LAST day it was collected.
 # The masters cannot answer that: append_to_master keeps the existing row for a
-# known id, so a master's extracted_date is the day the job was FIRST found. A job
-# first found three weeks ago and collected again yesterday then looked three weeks
-# old to the skip-list window, fell off jobs_to_not_include, and was collected and
-# billed again on every run (replaying the 2026-10-05..13 runs, that rule skipped
-# ~7 of 2,320 repeats). load_exclude_ids windows on the newest date ANY source knows,
+# known id, so a master's extracted_date is the day the job was FIRST found. Windowed
+# on that date alone, a job first found three weeks ago and collected again yesterday
+# looks three weeks old, falls off jobs_to_not_include, and is collected and billed
+# again on every run (on a replay of the 2026-10-05..13 runs, that rule skipped ~7
+# of 2,320 repeats). load_exclude_ids windows on the newest date ANY source knows,
 # this file included. One row per id (its newest date); rows older than
 # LEDGER_KEEP_DAYS are pruned on every write, because a "Past 24 hours" search does
 # not bring back a job nobody has seen for two months. A missing ledger is seeded
@@ -157,7 +157,7 @@ LEDGER_KEEP_DAYS = 60
 
 # Cap the exclude-id set to a recency window. The search filter is time_range="Past
 # 24 hours", so a posting scraped more than ~60 days ago can never reappear in a
-# fresh run -- keeping its id in jobs_to_not_include is pure payload. Every search
+# fresh run, so keeping its id in jobs_to_not_include is pure payload. Every search
 # input carries its own skip list (the known jobs its keyword can return, see
 # exclude_ids_per_keyword), so a months-long history makes the Bright Data trigger
 # POST grow monotonically until it hard-fails the request-size limit and silently
@@ -170,13 +170,13 @@ DEFAULT_EXCLUDE_WINDOW_DAYS = 90
 # Hard bound on the exclusion array, and the backstop the window above is NOT.
 #
 # Bright Data expands ONE search input into up to `limit_per_input` CHILD inputs,
-# and every child carries a verbatim copy of the parent's fields -- including
-# jobs_to_not_include. The exclusion array is therefore paid for once per CHILD,
+# and every child carries a verbatim copy of the parent's fields, jobs_to_not_include
+# included. The exclusion array is therefore paid for once per CHILD,
 # not once per search, so its cost scales as len(ids) x limit_per_input. Past a
 # threshold Bright Data rejects every child with `child_input_size_validation`:
 # the collection completes "ready" with 0 records, so the run reports "No new jobs
 # returned this run" and exits 0. Nothing raises. The pipeline looks healthy and
-# silently collects nothing, which is how this went unnoticed for weeks.
+# silently collects nothing, so the failure can go unnoticed for weeks.
 #
 # Bright Data does not publish the threshold, so it has been measured directly
 # against the LinkedIn jobs dataset, one search at a time:
@@ -193,8 +193,8 @@ DEFAULT_EXCLUDE_WINDOW_DAYS = 90
 # Bright Data rejects either, the child_input_size_validation error names
 # max_exclude_ids in search_config.json as the setting to lower.
 #
-# The cap used to be 2,000, about two runs' worth, on the theory that only those
-# can resurface in a time_range="Past 24 hours" search. A replay of the
+# A cap of 2,000 (about two runs' worth) assumes only those ids can resurface in
+# a time_range="Past 24 hours" search. A replay of the
 # 2026-10-05..13 runs showed jobs coming back from weeks earlier, re-collected and
 # re-billed because they had fallen off the list. Re-collecting a few duplicates
 # costs a little; a rejected collection costs the entire run and still burns the
@@ -234,7 +234,7 @@ INPUT_REJECTION_CODES = frozenset({
 # messages name is max_exclude_ids.
 SIZE_REJECTION_CODES = frozenset({"child_input_size_validation", "input_size_validation"})
 
-# Spammy aggregator companies to drop entirely — from every fresh run AND from
+# Spammy aggregator companies to drop entirely: from every fresh run AND from
 # the cumulative master (case-insensitive substring match on company_name).
 # Add more names here as needed. The dashboard's right-click "Block company"
 # appends to company_blocklist.txt (synced down from Drive by run_scraper.sh);
@@ -270,7 +270,7 @@ HEADERS = {
 # Free, unbilled token probe. NOTE: /status reports PROXY capability, so an account
 # that only uses the Web Scraper (datasets/v3) API sits at can_make_requests=false /
 # zone_not_found forever, even while collections run perfectly. Never gate a run on
-# those fields — this account has scraped for months with zero zones. Only a 401/403
+# those fields: this account has scraped for months with zero zones. Only a 401/403
 # from /status means anything here, and it means the token itself is dead.
 STATUS_URL = "https://api.brightdata.com/status"
 PREFLIGHT_TIMEOUT = 15
@@ -471,7 +471,7 @@ SEARCH_CONFIG_FILE = "search_config.json"
 
 def _as_list(value, default: list) -> list:
     """A hand-edited list setting as a list. One string is one item (iterated
-    as-is, "Remote" became six one-letter searches, each billed); a missing or
+    as-is, "Remote" becomes six one-letter searches, each billed); a missing or
     null value, or one of another type, is the built-in default. The items pass
     through unchanged: build_inputs copes with an odd one on its own."""
     if isinstance(value, str):
@@ -515,11 +515,11 @@ def _keyword_cap(value: int) -> int:
     """`max_keywords` as a slice length, with a negative collapsed to 1.
 
     build_inputs spends this as `keywords[:n]`, and Python reads a negative slice
-    bound as "all but n" -- `keywords[:-1]` is every keyword except the last. So
+    bound as "all but n": `keywords[:-1]` is every keyword except the last. So
     --max-keywords -1, the obvious way to write "no limit", would announce a cap
     and then fire all-but-one search: a spend guard that names itself and lifts
     itself, which is the one failure mode a spend guard must not have. 1 is the
-    tightest real cap, so it is the fail-closed direction. 0 is left alone --
+    tightest real cap, so it is the fail-closed direction. 0 is left alone:
     `keywords[:0]` is empty and already spends nothing.
     """
     if value < 0:
@@ -547,7 +547,7 @@ def load_search_config() -> dict:
         # file users hand-edit and the dashboard pushes here. local/jsonutil.py's
         # read_json_dict already reads the same file BOM-tolerantly, so without
         # this the two halves disagree about one file: the dashboard honours it,
-        # the VM silently ignores it. utf-8-sig is a superset -- it strips a BOM
+        # the VM silently ignores it. utf-8-sig is a superset: it strips a BOM
         # when there is one and decodes plain UTF-8 identically when there isn't.
             data = json.loads(path.read_text(encoding="utf-8-sig"))
             if isinstance(data, dict):
@@ -571,7 +571,7 @@ def load_search_config() -> dict:
         "job_type": raw.get("job_type", BASE_FILTERS["job_type"]),
         # What Bright Data's experience_level input gets: the level when exactly
         # one is chosen, else "" (no filter). LinkedIn ignores the filter anyway
-        # (see TITLE_EXCLUDE_BY_LEVEL), and "" is the honest superset of several.
+        # (see TITLE_EXCLUDE_BY_LEVEL), and "" is the superset of several.
         "experience_level": levels[0] if len(levels) == 1 else "",
         "experience_levels": levels,
         "title_exclude_terms": raw.get("title_exclude_terms"),
@@ -748,8 +748,8 @@ def exclude_window_days() -> int:
     must not silently override a window the user set in the dashboard. Whatever
     the file holds, _positive_int() collapses junk/0/negative there too, so the
     walk always terminates on DEFAULT_EXCLUDE_WINDOW_DAYS. 0 or a negative window
-    would empty the exclude set and re-collect (and re-bill) every posting -- the
-    exact failure this guard prevents -- so we always fail toward the safe default
+    would empty the exclude set and re-collect (and re-bill) every posting (the
+    exact failure this guard prevents), so we always fail toward the safe default
     rather than an empty window.
 
     The cap still bounds what is sent: max_exclude_ids() (10,000 by default) and
@@ -784,7 +784,7 @@ def _parse_dates(df: pd.DataFrame) -> pd.DataFrame:
     YYYY-MM-DD, but merge_incoming folds rows from other machines and a Drive
     master can carry an ISO offset. Without utc=True pandas 3 returns a tz-AWARE
     column for those, and comparing it to a tz-naive Timestamp.now() raises
-    "Invalid comparison between dtype=datetime64[us, UTC] and Timestamp" -- or,
+    "Invalid comparison between dtype=datetime64[us, UTC] and Timestamp" or,
     for a column mixing offsets, "Mixed timezones detected". Normalising both
     sides costs nothing on naive input and removes the whole class. Parse each
     SOURCE on its own before combining: pandas infers one date format per column,
@@ -859,7 +859,7 @@ def _window_dated(dated: pd.DataFrame, window_days: int) -> list[str]:
     The order is part of the contract: cap_exclude_ids() evicts from the front, so
     this has to be sorted by date, not left in row order.
 
-    Fail toward a SUPERSET -- an exclude set that is too SMALL re-bills already-
+    Fail toward a SUPERSET: an exclude set that is too SMALL re-bills already-
     collected jobs, so when recency can't be determined we KEEP the id: a row with
     no parseable date (NaT) is treated as recent.
     """
@@ -878,7 +878,7 @@ def _window_dated(dated: pd.DataFrame, window_days: int) -> list[str]:
     # Oldest date FIRST, so cap_exclude_ids' tail slice evicts by date rather than by
     # row order. A merge_incoming fold on the VM (or a hand-added row) can land an
     # older posting after a newer one, and evicting on row order would then drop a
-    # recent id and keep a stale one -- backwards for a "Past 24 hours" search.
+    # recent id and keep a stale one, backwards for a "Past 24 hours" search.
     # Undated rows sort first, so they are evicted first: the window keeps them so
     # the set never silently shrinks, but a date we cannot prove must not outrank
     # one we can.
@@ -925,7 +925,7 @@ def _own_master_frame() -> pd.DataFrame | None:
     if "job_posting_id" not in df.columns:
         # Parsed, but not a master: a truncated write, or the wrong CSV copied
         # in. Say so. Falling through silently means an empty exclude set,
-        # which re-collects and re-bills every posting already held -- and on
+        # which re-collects and re-bills every posting already held, and on
         # the VM the only trace would be the ABSENCE of a line in scraper.log.
         # An empty-but-valid master is a different thing and stays quiet.
         warn(f"{MASTER_CSV.name} has no job_posting_id column (found: "
@@ -999,7 +999,7 @@ def _extra_master_frame() -> pd.DataFrame | None:
 
 # --- the collection ledger (see LEDGER_CSV) -----------------------------------
 
-# job_title and keywords were added for the skip list per search keyword: with
+# job_title and keywords serve the skip list per search keyword: with
 # selective_search on, a search only returns jobs whose title holds its keyword,
 # so a search only needs the known jobs whose title matches it, plus the jobs
 # that search is on record as returning (a margin for LinkedIn's own matching).
@@ -1101,7 +1101,7 @@ def _split_not_keyword(keyword) -> tuple[str, list[str]] | None:
     lead". Anything else (an OR or AND anywhere, a term in parentheses, an
     unclosed quote, a base or a term that normalizes to nothing, a lone
     operator as a term) is None, and its search keeps the whole known-id list,
-    as every boolean keyword did before."""
+    like every other boolean keyword."""
     if not isinstance(keyword, str):
         return None
     match = _NOT_KEYWORD.fullmatch(keyword.strip())
@@ -1252,7 +1252,8 @@ def with_title_excludes(keyword, terms) -> object:
       skip list of its own. Any other boolean keyword (OR or AND outside quotes, a
       parenthesis, a stray NOT) is first wrapped in one pair of parentheses unless
       it already is one, `("A" OR "B") NOT Senior`, so the NOTs apply to all of
-      it; its search keeps the whole known-id list, as every such keyword did."""
+      it; its search keeps the whole known-id list, like every other boolean
+      keyword."""
     if not isinstance(keyword, str) or not keyword.strip() or not terms:
         return keyword
     text = keyword.strip()
@@ -1348,8 +1349,8 @@ def seed_ledger_from_run_files() -> pd.DataFrame:
     column (the discovery_input columns are dropped before it is written), so a
     seeded row has no keywords; the skip list per keyword then goes by its title.
 
-    Used once, when the ledger does not exist yet (the first run after this was
-    added) or cannot be read. A run file that cannot be read is skipped with a
+    Used when the ledger does not exist yet (once, on the first run with a
+    ledger) or cannot be read. A run file that cannot be read is skipped with a
     WARNING: one bad file must not cost the rest of the seed.
     """
     cutoff = _ledger_cutoff()
@@ -1397,7 +1398,7 @@ def _save_seeded_ledger(led: pd.DataFrame) -> None:
     the rebuilt rows are already in hand, so a failed write costs a WARNING."""
     try:
         _atomic_to_csv(led[_LEDGER_COLUMNS], LEDGER_CSV)
-    except Exception as e:  # noqa: BLE001 -- the skip list is already built
+    except Exception as e:  # noqa: BLE001  (the skip list is already built)
         warn(f"could not save the rebuilt {LEDGER_CSV.name} ({e}). The skip list "
              f"is still complete for this run, but each run reads every saved run "
              f"file again until the file can be written. Check that the folder is "
@@ -1467,7 +1468,7 @@ def record_collected_ids(ids: list[str], day: str,
         merged = _newest_per_id([led, run])
         merged = merged[merged["collected_date"] >= _ledger_cutoff()]
         _atomic_to_csv(merged, LEDGER_CSV)
-    except Exception as e:  # noqa: BLE001 -- the rows are saved; this must not end the run
+    except Exception as e:  # noqa: BLE001  (the rows are saved; this must not end the run)
         warn(f"could not save the ids of this run's {len(ids)} job(s) to "
              f"{LEDGER_CSV.name} ({e}). The next run may leave them off the skip "
              f"list, so they may be collected and billed again. Check that the "
@@ -1475,7 +1476,7 @@ def record_collected_ids(ids: list[str], day: str,
 
 
 def load_exclude_ids() -> list[str]:
-    """Every job id this host knows to skip — a hard no-repeat guard. Bright Data
+    """Every job id this host knows to skip: a hard no-repeat guard. Bright Data
     bills per collection, so re-fetching a posting we already have is pure wasted
     spend. The sources, combined:
       - this host's master (or the last-run JSON when it is missing/unreadable);
@@ -1489,10 +1490,10 @@ def load_exclude_ids() -> list[str]:
     last exclude_window_days on that date. The search is 'Past 24 hours', so an
     id nobody has collected in weeks cannot reappear and is only trigger-POST
     bloat; but the masters hold the day a job was FIRST found, and windowing on
-    that dropped a job collected yesterday and re-billed it every run. Undated ids
+    that drops a job collected yesterday and re-bills it every run. Undated ids
     (the external file, a master without dates) are kept.
 
-    ORDER IS A CONTRACT, not an accident: cap_exclude_ids() keeps the TAIL, so the
+    ORDER IS A CONTRACT: cap_exclude_ids() keeps the TAIL, so the
     list is oldest first by that newest date, undated ids first. Every source is
     ranked on the same clock: a job the VM collected yesterday can resurface just
     like one of ours, so it outranks an id of ours last seen a week ago. Undated
@@ -1688,7 +1689,7 @@ def _atomic_to_csv(df: pd.DataFrame, path: Path, **kwargs) -> None:
     """Write `df` to `path` atomically: same-dir tempfile + os.replace.
 
     A crash/kill/OOM mid-write then leaves either the old file (rename never
-    happened) or the new one (rename completed) -- never a truncated partial
+    happened) or the new one (rename completed), never a truncated partial
     write. `path` is only touched by the final os.replace. scraper.py is
     copied standalone to the VM (no local/ package), hence this private copy
     instead of importing local/csv_io.write_csv_gz_atomic.
@@ -1747,7 +1748,7 @@ def append_to_master(df: pd.DataFrame) -> int:
     wrote_header = False
     try:
         # dtype=str + keep_default_na=False: byte-stable master
-        # round-trip — matches prune_master.py's reader.
+        # round-trip, the same as prune_master.py's reader.
         for chunk in pd.read_csv(MASTER_CSV, dtype=str, keep_default_na=False,
                                  chunksize=CHUNK):
             chunk = drop_blocklisted_companies(chunk, blocklist)  # retroactive re-filter, preserved
@@ -1791,7 +1792,7 @@ def _cap_ids(exclude_ids: list[str], limit: int) -> tuple[list[str], _Trim | Non
     above the floor). Prints nothing: cap_exclude_ids reports its one list, and
     _cap_per_keyword one line for every keyword's list together.
 
-    The payload is sized exactly, not from an average width: json.dumps of a
+    The payload is sized exactly from the ids' own widths: json.dumps of a
     list is "[" + ", ".join(json.dumps(id) ...) + "]", so the newest k ids take
     2 + (their widths) + 2 x (k - 1) bytes. A running sum of the widths from the
     newest end gives every k's size at once, and the budget is the largest k
@@ -1828,7 +1829,7 @@ def _floor_warning(limit: int, room: int) -> str:
 
 
 def cap_exclude_ids(exclude_ids: list[str], limit_per_input: int) -> list[str]:
-    """Trim `exclude_ids` to what Bright Data will actually accept in one input.
+    """Trim `exclude_ids` to what Bright Data will accept in one input.
 
     Each search input fans out to up to `limit_per_input` child inputs that each
     carry a copy of this array, so the budget is spent len(ids) x limit_per_input
@@ -1844,7 +1845,7 @@ def cap_exclude_ids(exclude_ids: list[str], limit_per_input: int) -> list[str]:
     search those are the only ids that can resurface, so trimming the head
     instead would keep precisely the ids that cannot recur.
 
-    The per-id width is MEASURED off the ids in hand, not assumed: the 14 bytes
+    The per-id width is MEASURED off the ids in hand: the 14 bytes
     per id behind MAX_EXCLUDE_PAYLOAD_BYTES fit a 10-digit LinkedIn posting id,
     ids are at 4.4e9 now, and the first 11-digit id would silently push the real
     payload past the cap with nothing noticing.
@@ -1859,11 +1860,11 @@ def cap_exclude_ids(exclude_ids: list[str], limit_per_input: int) -> list[str]:
     if trim is None:
         return kept
     if trim.floor:
-        # The budget, not the floor, wins here. An exclude set below the floor
+        # The budget wins over the floor here. An exclude set below the floor
         # re-bills postings we already hold, which is bad; a payload over the cap
         # gets the collection REJECTED, which costs the whole run and still burns
         # the trigger. The floor is worth having, but not at the price of the
-        # failure the cap exists to prevent -- so say plainly what to change.
+        # failure the cap exists to prevent, so say plainly what to change.
         warn(_floor_warning(limit, trim.room))
         return kept
     trimmed = (f"skip list capped at {trim.kept} of {trim.total} known jobs. "
@@ -1983,7 +1984,7 @@ def build_inputs(exclude: list[str] | pd.DataFrame, max_keywords: int | None = N
 
     Keywords, remote types, and the base filters come from load_search_config()
     (which falls back to the module constants when no search_config.json exists).
-    `max_keywords` caps how many keywords are used (the first N) — a spend guard
+    `max_keywords` caps how many keywords are used (the first N): a spend guard
     for verification runs so a single scrape can't fan out to every keyword.
     None (the default, used by the VM cron) keeps the full keyword list.
 
@@ -2122,9 +2123,9 @@ async def preflight(session: aiohttp.ClientSession) -> None:
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """Refuse to follow redirects, so the API token cannot leave api.brightdata.com.
 
-    urllib copies EVERY request header onto a redirect target -- see
+    urllib copies EVERY request header onto a redirect target (see
     HTTPRedirectHandler.redirect_request, which drops only content-length and
-    content-type -- and it does that even when the redirect crosses to a different
+    content-type), and it does that even when the redirect crosses to a different
     host. account_problems() sends the Bright Data token in an Authorization
     header, so a 30x from /status to any other origin would hand that token to
     whoever answered. aiohttp already guards this (it calls
@@ -2145,7 +2146,7 @@ def account_problems(timeout: int = PREFLIGHT_TIMEOUT) -> list[str]:
     """Sync mirror of preflight() for the dashboard's Check setup button.
 
     Returns human-readable problems (empty when the token is fine) so the user can
-    test their Bright Data setup without starting — and paying for — a run. Never
+    test their Bright Data setup without starting (and paying for) a run. Never
     raises and never bills. Fail-open like preflight(): a probe that can't reach
     Bright Data reports nothing rather than inventing a problem, because "offline"
     and "your token is dead" are not the same finding. Same rule as preflight():
@@ -2169,7 +2170,7 @@ def account_problems(timeout: int = PREFLIGHT_TIMEOUT) -> list[str]:
         if e.code in (401, 403):
             return [f"Bright Data rejected the API token ({e.code}). {TOKEN_HINT}"]
         return []
-    except Exception:  # noqa: BLE001 — offline/blocked/5xx is not a setup problem
+    except Exception:  # noqa: BLE001  (offline/blocked/5xx is not a setup problem)
         return []
     return []
 
@@ -2177,9 +2178,9 @@ def account_problems(timeout: int = PREFLIGHT_TIMEOUT) -> list[str]:
 class Collection(NamedTuple):
     """What a collection POST came back with. Exactly one side is populated.
 
-    `rows` -- Bright Data finished inside its synchronous window and handed the
+    `rows`: Bright Data finished inside its synchronous window and handed the
     records straight back with the POST. There is no snapshot behind them.
-    `snapshot_id` -- it ran long, answered 202, and is still collecting.
+    `snapshot_id`: it ran long, answered 202, and is still collecting.
     """
     snapshot_id: str | None
     rows: list[dict] | None
@@ -2231,17 +2232,16 @@ def _parse_collection_body(body: str, status: int | None = None) -> Collection:
 
     That endpoint is SYNCHRONOUS with an asynchronous escape hatch: it collects
     for up to a minute and, only if the run is still going, answers 202 with a
-    {"snapshot_id": ...} to poll instead. Every production run so far has been
-    slow enough to take the escape hatch -- 40 searches at limit_per_input=150
-    never finished in a minute -- which is the only reason reading the body as a
-    single JSON object and reaching for ["snapshot_id"] ever worked.
+    {"snapshot_id": ...} to poll instead. A full production run is slow enough
+    to take the escape hatch (40 searches at limit_per_input=150 never finished
+    in a minute), so most bodies are that one JSON object.
 
     A run that FINISHES in time returns the records themselves, one JSON object
     per line, and json() then dies on the second line with "Extra data: line 2
     column 1". That body is not corrupt: it is the collection, already billed,
-    and reading it as an envelope threw it away with no snapshot to recover it
+    and reading it as an envelope throws it away with no snapshot to recover it
     from. Which branch you get is a property of how long the scrape took, so it
-    flips on its own -- and flips toward THIS one as the exclude set grows and
+    flips on its own, and flips toward THIS one as the exclude set grows and
     the runs get smaller.
 
     All three shapes are accepted here rather than pinned with a `format`
@@ -2258,7 +2258,7 @@ def _parse_collection_body(body: str, status: int | None = None) -> Collection:
     text = (body or "").strip()
     if not text:
         # Returning an empty collection here would print "No new jobs returned
-        # this run" and exit 0 -- the silent-success shape that
+        # this run" and exit 0, the silent-success shape that
         # _assert_collected_something exists to stop.
         raise RuntimeError(
             "Bright Data returned an empty body for a collection request: no "
@@ -2266,7 +2266,7 @@ def _parse_collection_body(body: str, status: int | None = None) -> Collection:
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
-        pass                      # not one JSON value -- fall through to NDJSON
+        pass                      # not one JSON value: fall through to NDJSON
     else:
         if isinstance(data, dict) and data.get("snapshot_id"):
             return Collection(str(data["snapshot_id"]), None)
@@ -2291,7 +2291,7 @@ def _parse_collection_body(body: str, status: int | None = None) -> Collection:
     rows: list = []
     # split("\n"), not splitlines(): splitlines() also breaks on U+2028, U+2029
     # and \x85, which JSON carries raw inside a string (a job description pasted
-    # from Word), and cutting a record there threw the whole billed set away.
+    # from Word), and cutting a record there throws the whole billed set away.
     for n, line in enumerate(text.split("\n"), 1):
         line = line.strip()
         if not line:
@@ -2376,8 +2376,7 @@ def _assert_collected_something(progress: dict, snapshot_id: str) -> None:
     errors is a failure, and it has to be loud enough for the cron log and the
     dashboard's error dialog to show it.
 
-    Keyed on the error CODES, not on the error count, and that distinction is the
-    whole design:
+    Keyed on the error CODES rather than the error count, for two reasons:
 
       * A count-only rule raises on a legitimately quiet day. dead_page and
         page_too_big appear on nearly every healthy run (a normal one measured
@@ -2392,8 +2391,8 @@ def _assert_collected_something(progress: dict, snapshot_id: str) -> None:
 
     So: an input-rejection code with NO rows is fatal (InputsRejected). With rows,
     those rows are already paid for, so they are downloaded and saved like any
-    others and the rejection is a WARNING: raising there threw the paid rows away
-    and skipped scoring. Zero rows with only ordinary page errors is a WARNING too.
+    others and the rejection is a WARNING: raising there would throw the paid
+    rows away and skip scoring. Zero rows with only ordinary page errors is a WARNING too.
 
     Pure ASCII: this text lands in the Windows console and the dashboard dialog.
     """
@@ -2508,7 +2507,7 @@ async def wait_until_ready(session: aiohttp.ClientSession, snapshot_id: str) -> 
         status = data.get("status") if isinstance(data, dict) else None
         print(f"  status: {status}")
         if status == "ready":
-            # "ready" is not the same as "worked" -- see _assert_collected_something.
+            # "ready" is not the same as "worked": see _assert_collected_something.
             _assert_collected_something(data, snapshot_id)
             return
         if status == "failed":
@@ -2526,13 +2525,13 @@ async def download(session: aiohttp.ClientSession, snapshot_id: str) -> list[dic
     """Fetch the collected rows for a snapshot.
 
     Bright Data's /progress endpoint can flip to 'ready' a beat before the
-    /snapshot data endpoint is actually servable. The first download then comes
+    /snapshot data endpoint is servable. The first download then comes
     back as HTTP 200 with a JSON *body* like
         {"status": "building", "message": "Dataset is not ready yet, try again in 30s"}
-    instead of the rows array. Because that is a 200 (not a ClientError), the old
-    retry loop never caught it: it returned the dict, and main() aborted the
-    whole run with "Unexpected response shape". So inspect the body and keep
-    polling on a not-ready signal, exactly like wait_until_ready does.
+    instead of the rows array. That is a 200 (not a ClientError), so a retry
+    loop that waits for errors returns the dict, and main() aborts the whole run
+    with "Unexpected response shape". So inspect the body and keep polling on a
+    not-ready signal, like wait_until_ready does.
     """
     url = f"https://api.brightdata.com/datasets/v3/snapshot/{snapshot_id}?format=json"
     deadline = asyncio.get_event_loop().time() + MAX_WAIT_MINUTES * 60
@@ -2562,7 +2561,7 @@ async def download(session: aiohttp.ClientSession, snapshot_id: str) -> list[dic
             await asyncio.sleep(POLL_INTERVAL)
             continue
 
-        # The rows arrived — done.
+        # The rows arrived: done.
         if isinstance(data, list):
             return data
 
@@ -2576,7 +2575,7 @@ async def download(session: aiohttp.ClientSession, snapshot_id: str) -> list[dic
         not_ready = status.lower() in {"building", "running", "pending", "collecting", "scheduled"} \
             or "not ready" in message.lower() or "try again" in message.lower()
         if not not_ready:
-            # Genuinely unexpected payload — surface it rather than loop forever.
+            # An unexpected payload: surface it rather than loop forever.
             raise RuntimeError(f"Unexpected snapshot response shape: {data}")
         if asyncio.get_event_loop().time() > deadline:
             raise SnapshotNotFetched(
@@ -2599,10 +2598,10 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
     if limit_per_input is None:
         limit_per_input = cfg["limit_per_input"]
     else:
-        # trigger() coerces this again before it reaches the billed URL, but ONLY
-        # there -- so an explicit --limit=0 or --limit=-5 printed one number and
-        # billed against another, and the run log named a cap that was never in
-        # force. Coerce once, here, and say so.
+        # trigger() coerces this again before it reaches the billed URL. Coerced
+        # ONLY there, an explicit --limit=0 or --limit=-5 would print one number
+        # and bill against another, and the run log would name a cap that is never
+        # in force. Coerce once, here, and say so.
         capped = _positive_int(limit_per_input, cfg["limit_per_input"])
         if capped != limit_per_input:
             warn(f"--limit={limit_per_input} is not a positive count, so using "
@@ -2636,7 +2635,7 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
                 if excludes:
                     _print_line(excludes)
                 payload = {"input": inputs}
-                # Derived from `inputs`, not from the raw flag: build_inputs coerces
+                # Derived from `inputs` rather than the raw flag: build_inputs coerces
                 # the flag, and a run log naming a cap the run did not apply is worse
                 # than no line at all.
                 filters = remote_filters(cfg["remote_types"])
@@ -2664,7 +2663,7 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
                         # The /progress payload is where input-rejection codes live,
                         # and this branch never fetches one, so say plainly that the
                         # rejection check did not run rather than implying a clean
-                        # quiet day. An info line, not a WARNING: this is what a
+                        # quiet day. An info line rather than a WARNING: this is what a
                         # quiet run looks like. See _assert_collected_something.
                         print("Bright Data finished the collection at once with 0 jobs "
                               "and sent no progress record, so this run could not check "
@@ -2755,7 +2754,7 @@ def _keep_raw_rows(rows: list[dict], run_label: str) -> Path | None:
                           f"_raw_{now:%H%M%S}.json")
         _atomic_write_json(path, rows)
         return path
-    except Exception as e:  # noqa: BLE001 -- the save below is what matters
+    except Exception as e:  # noqa: BLE001  (the save below is what matters)
         warn(f"could not keep a copy of the {len(rows)} job(s) Bright Data sent back "
              f"({_exc_text(e)}). They are saved as usual next, but if that fails too "
              f"they are lost: this collection has no snapshot to download again.")
@@ -2808,7 +2807,7 @@ def _keywords_by_id(df: pd.DataFrame) -> dict[str, set[str]]:
     banned terms only narrow which titles come back, and every job the NOT search
     returned the base search can return too, so `"Data Engineer" NOT Senior` and
     "Data Engineer" share one record (exclude_ids_per_keyword reads it for both).
-    Any other keyword, boolean ones included, is recorded whole, as before."""
+    Any other keyword, boolean ones included, is recorded whole."""
     if "job_posting_id" not in df.columns:
         return {}
     ids = df["job_posting_id"].astype(str)
@@ -2878,7 +2877,7 @@ def _save_results(results: list[dict], run_label: str) -> None:
         try:
             collected_titles = _titles_by_id(df)
             collected_keywords = _keywords_by_id(df)
-        except Exception as e:  # noqa: BLE001 -- the ledger dates matter more
+        except Exception as e:  # noqa: BLE001  (the ledger dates matter more)
             print(f"Could not read the search keywords on this run's rows ({e}); "
                   f"the ledger records their ids and dates without them.")
         df = df.drop_duplicates(subset=["job_posting_id"])
@@ -2944,7 +2943,7 @@ def _run_csv_path(run_dir: Path, date_str: str, run_label: str,
 
     The match is on the job_posting_id SET, so a --snapshot rerun after a failed
     save reuses its file instead of adding a `-2` the scorer would pay to score
-    again. A run with any other job set gets a new file, as before. A file that
+    again. A run with any other job set gets a new file. A file that
     cannot be read never matches."""
     if ids:
         for name in _taken_run_names(run_dir, date_str, run_label):
@@ -2968,7 +2967,7 @@ def _file_ids(path: Path) -> set[str] | None:
     """The job ids in a run file (raw .csv or _scored.csv.gz), None when unreadable."""
     try:
         col = pd.read_csv(path, usecols=["job_posting_id"], dtype=str)["job_posting_id"]
-    except Exception:  # noqa: BLE001 -- unreadable means "not the same file"
+    except Exception:  # noqa: BLE001  (unreadable means "not the same file")
         return None
     return set(col.dropna().astype(str))
 
@@ -2979,12 +2978,12 @@ def _free_run_csv_path(run_dir: Path, date_str: str, run_label: str) -> Path:
 
     A name counts as taken while its raw CSV OR its `_scored.csv.gz` exists: the
     scorer skips any input whose scored sibling exists, so reusing a stem whose
-    raw file is gone would still leave the new jobs unscored. Overwriting it lost
-    185 jobs on 2026-10-12. Every reader accepts the suffix: they glob
+    raw file is gone would still leave the new jobs unscored, and overwriting one
+    loses jobs (185 on 2026-10-12). Every reader accepts the suffix: they glob
     `linkedin_jobs_*.csv` / `*_scored.csv.gz`, read the date from the start of the
     name, and take the label from the folder or the run_label column.
 
-    Check-then-write, not an atomic reservation: two scrapers saving the same
+    This is check-then-write with no atomic reservation: two scrapers saving the same
     label in the same second could pick the same name. Nothing runs two at once
     (the dashboard refuses a second run while one is going, and the VM cron runs
     each label once), and reserving the name with an empty file would leave a
@@ -3168,12 +3167,12 @@ def run(snapshot_id: str | None = None, run_label: str | None = None,
     except KeyboardInterrupt as e:
         _print_line(f"ERROR: {_one_line(_stopped_message(e))}")
         return 130
-    except Exception as e:  # noqa: BLE001 -- the last line of a failed run
+    except Exception as e:  # noqa: BLE001  (the last line of a failed run)
         traceback.print_exc()
         sys.stderr.flush()
         try:
             msg = _fatal_message(e)
-        except Exception:  # noqa: BLE001 -- the classifier must never hide the failure
+        except Exception:  # noqa: BLE001  (the classifier must never hide the failure)
             msg = f"the job search stopped unexpectedly: {_exc_text(e, 300)}"
         _print_line(f"ERROR: {_one_line(msg)}")
         return 1
@@ -3182,8 +3181,8 @@ def run(snapshot_id: str | None = None, run_label: str | None = None,
 
 def _utf8_stdio() -> None:
     """Make stdout/stderr UTF-8. Under the dashboard's pipe a Windows child gets
-    cp1252, and an arrow or CJK in a job title or Bright Data's answer then raised
-    UnicodeEncodeError and lost the WARNING or ERROR line that carried it. The
+    cp1252, and an arrow or CJK in a job title or Bright Data's answer then raises
+    UnicodeEncodeError and loses the WARNING or ERROR line that carried it. The
     dashboard decodes the pipe as UTF-8."""
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
@@ -3191,7 +3190,7 @@ def _utf8_stdio() -> None:
             continue
         try:
             reconfigure(encoding="utf-8", errors="backslashreplace")
-        except Exception:  # noqa: BLE001 -- _print_line still falls back to ASCII
+        except Exception:  # noqa: BLE001  (_print_line still falls back to ASCII)
             pass
 
 

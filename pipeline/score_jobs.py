@@ -55,8 +55,8 @@ else:
     JEV_IMPORT_ERROR = ""
 
 # The US-only location check. us_location.py sits beside this file; a VM copy
-# without it scores foreign jobs as before (the dashboard still hides them) and
-# says so once per run instead of failing.
+# without it skips the check and scores foreign jobs (the dashboard still hides
+# them), and says so once per run instead of failing.
 try:
     from us_location import is_non_us_location
 except ModuleNotFoundError as _loc_import_error:
@@ -78,7 +78,7 @@ DATA_ROOT = _HERE.parent if _HERE.name == "pipeline" else _HERE
 # INPLOYED_NO_DOTENV=1 skips the file, the same opt-out scraper.py carries and for
 # the same reason: this script spends LLM credits, and clearing a key in the
 # environment cannot make it safe to run while the file is reloaded at import.
-# Case-folded and generous about spelling, and read at IMPORT -- see the longer
+# Case-folded and generous about spelling, and read at IMPORT: see the longer
 # note on the same guard in scraper.py.
 if os.environ.get("INPLOYED_NO_DOTENV", "").strip().lower() not in ("1", "true", "yes", "on"):
     try:
@@ -95,7 +95,7 @@ RESUME_PATH = OUTPUT_DIR / "resume.md"
 # tab) retune the scorer without editing this file. Precedence is
 # env > config-file > built-in default: an env var (exported by run_scraper.sh
 # on the VM) always wins, then the file, then today's constant. The dashboard's
-# "Push config to VM" DOES scp this file (including `provider`) to the VM —
+# "Push config to VM" DOES scp this file (including `provider`) to the VM,
 # but claude_cli.py isn't shipped to the VM (and no `claude` CLI is installed
 # there), so make_pool() below silently falls back to Gemini regardless of a
 # pushed `provider: claude`. Absent the file entirely, the scorer uses the
@@ -142,7 +142,7 @@ _SCORING_DEFAULTS: dict[str, tuple[str, object, str]] = {
     "drop_easy_apply": ("SCORE_DROP_EASY_APPLY", False, "bool"),
     # Repost reuse: a repost (same title+company+location+description as a
     # master row scored within this many days) reuses that row's score, saving
-    # a fresh LLM call. 0 disables reuse entirely -- every incoming row is
+    # a fresh LLM call. 0 disables reuse entirely: every incoming row is
     # scored fresh.
     "repost_reuse_days": ("SCORE_REPOST_REUSE_DAYS", 30, "int"),
     # Who the candidate is right now. The prompts, the mechanical filters and
@@ -160,12 +160,12 @@ def _config_int(value, default: int, key: str) -> int:
     """Coerce a scoring-config value to an int, falling back to `default`.
 
     load_scoring_config() runs at IMPORT scope (see _SCORING below), so a bare
-    int(value) turns one bad entry -- a hand-edited scoring_config.json, or a
-    SCORE_* export -- into a ValueError raised while importing this module. On
+    int(value) turns one bad entry (a hand-edited scoring_config.json, or a
+    SCORE_* export) into a ValueError raised while importing this module. On
     the VM that lands at run_scraper.sh's `python score_jobs.py` under `set -e`,
     AFTER scraper.py has already billed Bright Data, and the master upload that
-    follows never runs. scraper._positive_int exists for exactly this reason on
-    the search-config side; the asymmetry was the bug.
+    follows never runs. scraper._positive_int guards the search-config side for
+    the same reason.
     """
     try:
         return int(value)
@@ -177,13 +177,13 @@ def _config_int(value, default: int, key: str) -> int:
 # The two spend guards are the only config values whose SIGN changes their meaning,
 # because both are spent as a pandas row slice and pandas reads a negative count as
 # "all but N": `head(-1)` returns every row but the last, `tail(-200)` every row but
-# the first 200. So `SCORE_MAX_PER_RUN=-1` -- the obvious way to write "no cap" --
+# the first 200. So `SCORE_MAX_PER_RUN=-1`, the obvious way to write "no cap",
 # takes the `len(to_score) > MAX_SCORED_PER_RUN` branch, prints "Spend guard:
 # capping at -1 of 4000 jobs", and then scores 3999 of them. The guard announces
 # itself and lifts itself, which is the one failure mode a spend guard must not
 # have. Reachable from `SCORE_MAX_PER_RUN` in the VM crontab or a hand-edited
-# scoring_config.json; the dashboard's own min=1 is a form control, not the
-# enforcement point, and score_jobs.py is what actually spends the money.
+# scoring_config.json. The dashboard's own min=1 is only a form control, and
+# score_jobs.py is what spends the money, so the guard lives here.
 #
 # Zero is deliberately left alone: `head(0)`/`tail(0)` are empty, so "score nothing"
 # already means what it says and fails closed.
@@ -222,7 +222,7 @@ def load_scoring_config() -> dict:
         # file users hand-edit and the dashboard pushes here. local/jsonutil.py's
         # read_json_dict already reads the same file BOM-tolerantly, so without
         # this the two halves disagree about one file: the dashboard honours it,
-        # the VM silently ignores it. utf-8-sig is a superset -- it strips a BOM
+        # the VM silently ignores it. utf-8-sig is a superset: it strips a BOM
         # when there is one and decodes plain UTF-8 identically when there isn't.
             data = json.loads(path.read_text(encoding="utf-8-sig"))
             if isinstance(data, dict):
@@ -266,12 +266,12 @@ def configured_limits(cfg: dict) -> dict:
     Keyed by MODEL ID because that is how keypool gates, and free-tier quota is a
     per-model allowance rather than a per-stage one. A stage naming several
     models (the ranked fallback chain) needs a row per model, and a model named
-    by both stages must resolve to ONE row -- neither of which a per-stage pair
-    of boxes could express. An empty table is normal: keypool's own LIMITS covers
+    by both stages must resolve to ONE row. A per-stage pair of boxes could
+    express neither. An empty table is normal: keypool's own LIMITS covers
     every model the Settings dropdown offers.
 
-    The mapping itself lives in keypool so the resume tailor -- which pools the
-    same keys against the same per-model quota -- resolves identical numbers
+    The mapping itself lives in keypool so the tailor (which pools the
+    same keys against the same per-model quota) resolves identical numbers
     without importing this module.
     """
     return limits_from_config(cfg)
@@ -281,7 +281,7 @@ def _active_scoring(cfg: dict) -> tuple[str, str, str]:
     """(provider, stage1_model, stage2_model) resolved from `cfg`.
 
     Anything but exactly "claude" (after strip/lower) resolves to "gemini"
-    with the Gemini stage models -- this pins the VM's behavior, since the
+    with the Gemini stage models. This pins the VM's behavior, since the
     VM ships no scoring_config.json and provider always defaults "gemini".
     """
     provider = "claude" if str(cfg.get("provider", "")).strip().lower() == "claude" else "gemini"
@@ -294,7 +294,7 @@ def stage_model_chain(cfg: dict, provider: str, stage: int) -> list[str]:
     """The ranked model list a stage hands to the pool: primary, then fallbacks.
 
     Gemini only. The Claude provider gets a single-element chain because
-    ClaudePool prices and caches per model with no free tier to multiply -- the
+    ClaudePool prices and caches per model with no free tier to multiply: the
     fallback list exists to spend more of Google's per-(key, model) allowance,
     which has no Claude equivalent.
     """
@@ -531,7 +531,7 @@ def append_run_stats(stats: dict) -> None:
         new_row = {c: stats.get(c, 0) for c in RUN_STATS_COLS}
 
         if not RUN_STATS_CSV.exists() or existing_header != RUN_STATS_COLS:
-            # Fresh file, or an older/narrower header -- rewrite with the current
+            # Fresh file, or an older/narrower header: rewrite with the current
             # columns, backfilling anything the old rows lack. Atomic (same-dir
             # tempfile + os.replace, mirroring _atomic_to_csv): a crash mid-rewrite
             # then leaves the existing stats file whole, never a truncated partial.
@@ -558,7 +558,7 @@ def append_run_stats(stats: dict) -> None:
                 w.writerow(new_row)
         print(f"Run stats appended -> {RUN_STATS_CSV.name}: {stats}")
     except OSError as e:
-        print(f"Could not append run stats ({e}) -- continuing")
+        print(f"Could not append run stats ({e}); continuing")
 
 JUNK_TITLE_PATTERNS = [
     re.compile(r"\b(senior|sr\.?|staff|principal|lead|manager|director|head of|vp|vice president|chief)\b", re.I),
@@ -606,7 +606,7 @@ MIN_FILTER_YEARS = _SCORING["min_filter_years"]
 # exactly what requires_clearance() flags. The negation guard keeps "no clearance
 # required" / "clearance is not required" postings (precision bias: keep on doubt).
 # Note: a bare mention of a clearance LEVEL ("Secret clearance shop", "team holds
-# an active clearance") is treated as a drop -- such roles effectively require
+# an active clearance") is treated as a drop: such roles effectively require
 # clearance. Only clearly-non-requiring phrasings ("no clearance required",
 # "clearance holders") are kept via _CLEARANCE_NEG.
 CLEARANCE_PATTERNS = [
@@ -640,8 +640,8 @@ _AVAILABILITY_WORDS = r"(?:available|offered|provided|possible|supported|an\s+op
 # negator followed by a sponsorship of that clearance ("we do not sponsor a
 # clearance"), and a clearance followed by "sponsorship" on the same line ("no
 # clearance sponsorship available"). The clearance is still required there, so they
-# stay out of the suppressor, which changes the default profile for those phrasings
-# (they used to pass every profile as "no clearance required"). Other sponsorship
+# stay out of the suppressor and block under the default profile instead of passing
+# as "no clearance required". Other sponsorship
 # wording between the negator and the clearance stays negated, as in "No
 # sponsorship or clearance required." and "We will not sponsor visas or require a
 # clearance." A negator that governs an availability word ("Sponsorship is not
@@ -665,8 +665,8 @@ _CLEARANCE_NEG = re.compile(
 
 # --- hard advanced-degree requirement -----------------------------------------
 # Fires only when an advanced-degree token co-occurs with a REQUIRE cue and NO
-# softener in the same window. The required-vs-preferred distinction is the whole
-# game, so softeners (preferred / a plus / or equivalent / bachelor's-or...) keep
+# softener in the same window. The required-vs-preferred distinction decides the
+# filter, so softeners (preferred / a plus / or equivalent / bachelor's-or...) keep
 # the job. A bachelor's requirement is NEVER filtered (the candidate has one);
 # "MS"/"M.S." only counts as a degree when followed by "degree" or "in <field>"
 # so unit tokens like "5 ms latency" never match.
@@ -704,10 +704,10 @@ STAGE1_SYSTEM = "You honestly evaluate how well a new-grad candidate fits early-
 
 # Split at the resume/job boundary so the Claude lane can send the resume half
 # (stable across every job in a run) via --system-prompt and the job half
-# (volatile per job) via stdin -- see the module-level caching note and
+# (volatile per job) via stdin; see the module-level caching note and
 # score_stage1/score_stage2 below. RESUME + JOB is a plain string
 # concatenation of the two literals below, so on the gemini path
-# STAGE1_TEMPLATE.format(...) is byte-identical to before the split.
+# STAGE1_TEMPLATE.format(...) is byte-identical to one unsplit template.
 # The candidate text (school status, graduation month, clearance) enters
 # through the placeholders below, filled by candidate_prompt_vars(). Every one sits
 # in a RESUME half, so the cached half is the same for every job in a run.
@@ -806,7 +806,7 @@ STAGE2_SCHEMA = {
 # The writer. For a job Jev scored in stage 2, one call to the
 # provider's stage 1 model turns Jev's findings into the reason/strengths/gaps
 # text the LLM path would otherwise have written. It is given the scores and
-# cannot change them -- see write_notes() below.
+# cannot change them; see write_notes() below.
 WRITER_FAIL_LIMIT = 3  # consecutive write_notes() failures that stop the writer for the run
 
 WRITER_SYSTEM = ("You write short, specific job-fit notes that explain findings another system "
@@ -1099,7 +1099,7 @@ def make_pool(required: bool = True):
 
     "claude" tries the local `claude_cli.ClaudePool` first; a missing
     claude_cli.py (not shipped to the VM) or a missing `claude` CLI on PATH
-    prints a warning and falls through to Gemini -- this branch must NEVER
+    prints a warning and falls through to Gemini. This branch must NEVER
     sys.exit, so a local-only provider choice pushed to the VM via
     scoring_config.json can't brick an unattended run. The final fallback
     (KeyPool.from_env, GEMINI_API_KEYS + Vertex) is the only branch that may
@@ -1112,15 +1112,15 @@ def make_pool(required: bool = True):
             import claude_cli  # lazy: file absent on the VM; branch unreachable there
         except ImportError:
             print("Scoring provider is 'claude' but claude_cli.py is missing "
-                  "(VM/standalone install?) -- falling back to Gemini.")
+                  "(VM/standalone install?); falling back to Gemini.")
         else:
             if claude_cli.find_claude() is not None:
                 raw_timeout = os.environ.get("SCORE_CLAUDE_TIMEOUT_S", "240")
                 try:
                     timeout_s = int(raw_timeout)
                 except ValueError:
-                    print(f"Ignoring invalid SCORE_CLAUDE_TIMEOUT_S={raw_timeout!r} "
-                          "-- using 240s.")
+                    print(f"Ignoring invalid SCORE_CLAUDE_TIMEOUT_S={raw_timeout!r}; "
+                          "using 240s.")
                     timeout_s = 240
                 return claude_cli.ClaudePool(
                     timeout_s=timeout_s,
@@ -1130,8 +1130,8 @@ def make_pool(required: bool = True):
         _use_gemini_models()
     limits = configured_limits(_SCORING)
     # Say so when a stage is about to be governed by DEFAULT_LIMITS. That downgrade
-    # is invisible from outside -- the run simply crawls, then spills every call
-    # past the phantom RPD onto the paid Vertex backstop -- so it has to announce
+    # is invisible from outside (the run simply crawls, then spills every call
+    # past the phantom RPD onto the paid Vertex backstop), so it has to announce
     # itself rather than be inferred from score_state.json afterwards.
     for stage, chain in (("Stage-1", STAGE1_MODELS), ("Stage-2", STAGE2_MODELS)):
         for model in chain:
@@ -1216,7 +1216,7 @@ class JevRun:
         self._raised: set[str] = set()
         self._workers: ThreadPoolExecutor | None = None
         self._start = self._usage()
-        # The writer's attempts on Jev-scored stage 2 jobs -- one of the two per
+        # The writer's attempts on Jev-scored stage 2 jobs: one of the two per
         # attempt, never both. Not part of stats()/RUN_STATS_COLS (no new
         # run-stats column); summary_line() reads these two directly.
         self._writer_written = 0
@@ -1393,7 +1393,7 @@ def latest_input_csv() -> Path | None:
     INTENDED drain rate: ONE pending input per invocation. A
     multi-day backlog (VM down, then restored) drains at the twice-daily run
     cadence; meanwhile the master rescore pass picks up the older runs' rows once
-    they reach the master, so nothing is stranded — only delayed. A backlog is
+    they reach the master, so nothing is stranded, only delayed. A backlog is
     surfaced with a log line below so it is visible in scraper.log.
     """
     candidates: list[Path] = []
@@ -2255,8 +2255,8 @@ def min_required_years(text: Any) -> int | None:
 
 
 def _plain_min_years(text: str) -> int | None:
-    """The plain reading min_required_years made before _years_floor existed: the
-    smallest counted figure, each taken at its face value."""
+    """The plain reading of the text, without _years_floor: the smallest
+    counted figure, each taken at its face value."""
     mins = []
     for m in YEARS_RE.finditer(text):
         conn = (m.group(2) or "").lower()
@@ -2375,7 +2375,7 @@ def writer_findings(score: int, row: dict) -> str:
     [...], "unmet_must": [...], "unmet_nice": [...]}`, full line texts). `row`
     also carries `deep_score` and `recommendation` (jev_score.stage2's other
     keys). An empty section reads "- none". Pure and never imports Jev at
-    module scope -- `jev_score.SCORE_LABELS` is looked up here, inside the
+    module scope: `jev_score.SCORE_LABELS` is looked up here, inside the
     call, so a VM whose `jev_score` import failed (jev_score is None at
     module level in that case) never touches it importing this module."""
     def _lines(items: Any) -> str:
@@ -2399,7 +2399,7 @@ def _strip_em_dashes(text: str) -> str:
     return re.sub(r"\s*—\s*|\s--\s", ", ", text)
 
 
-# Writer failure reasons already reported this run, one line per reason --
+# Writer failure reasons already reported this run, one line per reason:
 # an exception's class name, or one of the fixed words below. Mirrors
 # jev_score._WARNED. The message itself is never printed: a service error can
 # quote the request, which carries the resume and the job text.
@@ -2416,7 +2416,7 @@ async def write_notes(pool, sem: asyncio.Semaphore, resume: str, job_id: str, jo
                       findings_block: str) -> dict | None:
     """For a job Jev scored in stage 2: one call to the provider's stage 1
     model rewrites `reason`, `strengths` and `gaps` from `findings_block`. It is
-    given the scores and the recommendation and cannot change them -- the
+    given the scores and the recommendation and cannot change them; the
     prompt only asks for the explanatory text. Shaped like score_stage1: on
     the Claude provider the resume half rides the system instruction (cached
     across every job in the run) and the job half (findings plus the job,
@@ -2424,7 +2424,7 @@ async def write_notes(pool, sem: asyncio.Semaphore, resume: str, job_id: str, jo
 
     Returns `{"reason": str, "strengths": " | ".join(items), "gaps":
     " | ".join(items)}` (items stripped, empty items dropped), or None on any
-    exception, unreadable JSON, a blank reason or no strengths -- this never
+    exception, unreadable JSON, a blank reason or no strengths. This never
     raises and never produces an ERROR row; the caller keeps Jev's own
     code-written text on None. The first such failure of each kind this run
     prints one line: the exception's class name once per class, or a
@@ -2490,7 +2490,7 @@ def _atomic_to_csv(df: pd.DataFrame, path: Path, **kwargs) -> None:
     """Write `df` to `path` atomically: same-dir tempfile + os.replace.
 
     A crash/kill/OOM mid-write then leaves either the old file (rename never
-    happened) or the new one (rename completed) -- never a truncated partial
+    happened) or the new one (rename completed), never a truncated partial
     write. score_jobs.py is copied standalone to the VM (no local/ package),
     hence this private copy instead of importing local/csv_io.write_csv_gz_atomic.
     """
@@ -2519,7 +2519,7 @@ def update_master_scores(scored: pd.DataFrame) -> None:
     owned by the dashboard's sticky registry reconcile, not by scoring. Folding
     it in here would let a routine re-score (fresh scrape or rescore pass) reset
     an already-"yes" master row back to "no". `scored` (e.g. the per-run scored
-    CSV) may still carry the column for its own output -- it is simply never
+    CSV) may still carry the column for its own output; it is simply never
     read out of it here.
     """
     if not MASTER_CSV.exists() or "job_posting_id" not in scored.columns:
@@ -2560,7 +2560,7 @@ def update_master_scores(scored: pd.DataFrame) -> None:
         # (to_csv/os.replace OSError, update TypeError) are raised in the loop
         # body, are NOT parse errors, and still propagate unrelabelled.
         # dtype=object + keep_default_na=False: the master must
-        # round-trip byte-stable through rewrites — inferred dtypes reformat
+        # round-trip byte-stable through rewrites. Inferred dtypes reformat
         # values (1 -> "1.0") and risk id-like leading-zero loss. object (not
         # pandas' strict `str`) because chunk.update(s) below writes the scored
         # frame's raw ints/bools into these columns. prune_master.py reads
@@ -2697,14 +2697,14 @@ def add_filter_columns(df: pd.DataFrame, desc_col: str, title_col: str | None,
         | df["filter_internship"] | df["filter_non_us"]
     )
     # An unscoreable (empty/missing) description would otherwise be retried by
-    # the rescore pass forever — park it as filtered.
+    # the rescore pass forever, so mark it as filtered.
     no_desc = df["job_description_md"].str.len() < 40
     df.loc[no_desc, "filtered_out"] = True
     return df
 
 
 # --- Score-side repost reuse ---------------------------------------------------
-# score_jobs.py is copied standalone to the VM (no local/ package -- see the
+# score_jobs.py is copied standalone to the VM (no local/ package; see the
 # _atomic_to_csv note above for the same constraint), so this is a private,
 # self-contained copy of local/jobsdata.py's repost_key. Reference:
 # jobsdata.repost_key. tests/test_score_jobs.py pins the two copies to
@@ -2778,7 +2778,7 @@ def reuse_repost_scores(df: pd.DataFrame, master: pd.DataFrame | None, reuse_day
 
     `reuse_days <= 0` disables reuse (0 = off, matching the config's
     documented meaning); a missing/empty master yields no reuse. Neither case
-    is an error -- both leave `df` to be scored fresh.
+    is an error: both leave `df` to be scored fresh.
     """
     df = df.copy()
     if "score_reused" not in df.columns:
@@ -2816,7 +2816,7 @@ def reuse_repost_scores(df: pd.DataFrame, master: pd.DataFrame | None, reuse_day
     in_window = extracted.notna() & age_days.between(0, reuse_days)
     # A row that itself only carries a REUSED score is never a valid source: it
     # was never scored by the model, so chaining through it would let a score
-    # drift arbitrarily far from the posting that actually earned it (A -> B ->
+    # drift arbitrarily far from the posting that earned it (A -> B ->
     # C, with B and A both long out of window by the time C would reuse via B).
     not_reused_itself = (~m["score_reused"].fillna(False).astype(bool)
                           if "score_reused" in m.columns else True)
@@ -2882,7 +2882,7 @@ _REPOST_MASTER_COL_CANDIDATES = (
     ("score_reused",),
     # The five columns reuse_repost_scores copies besides `score`
     # (_REPOST_REUSE_COLS). Left out of this projection, every reused repost
-    # got a blank reason, deep score, strengths, gaps and recommendation.
+    # gets a blank reason, deep score, strengths, gaps and recommendation.
     ("reason",), ("deep_score",), ("strengths",), ("gaps",), ("recommendation",),
 )
 
@@ -2892,8 +2892,8 @@ def load_master_for_reuse() -> pd.DataFrame | None:
 
     Read-only and tolerant by design: a missing master (cold start), one
     missing the columns reuse needs (older schema), or one that fails to
-    parse all mean the same thing here -- no repost gets to reuse an old
-    score THIS run -- never a crashed run. Only the unreadable case prints a
+    parse all mean the same thing here: no repost gets to reuse an old
+    score THIS run, and the run never crashes. Only the unreadable case prints a
     line; the other two are the ordinary cold-start/older-schema shape.
     Projects only the needed columns (usecols), including the description
     column reuse needs to fingerprint a match, so this never has to hold the
@@ -2921,9 +2921,9 @@ def load_master_for_reuse() -> pd.DataFrame | None:
 
 
 # --- Heal reused rows an earlier build wrote blank --------------------------------
-# From 0b0d664 until the loader fix above, a reused repost was written with its
-# copied score and a blank reason, deep score, strengths, gaps and recommendation.
-# The rows are recoverable: the row named by `score_reused_from` still holds the
+# Builds from 0b0d664 up to the loader fix above wrote a reused repost with its
+# copied score and a blank reason, deep score, strengths, gaps and recommendation,
+# and masters and run files can still hold those rows. They are recoverable: the row named by `score_reused_from` still holds the
 # real values. heal_reused_rows is the pure rule; heal_master_reuse and
 # heal_run_files apply it to the master and to the local run files.
 
@@ -3202,7 +3202,7 @@ def _restore_reused_scores(result: pd.DataFrame, reused_snapshot: pd.DataFrame) 
 
     `result` is whatever run_scoring built (the empty-to_score early return, or
     the Stage-1/Stage-2 merge below) with those same columns dropped from its
-    input first -- so neither path can produce a name collision or leave a
+    input first, so neither path can produce a name collision or leave a
     reused row's score blanked to NaN by a left join that has no row for it.
     """
     if reused_snapshot.empty:
@@ -3216,7 +3216,7 @@ def _restore_reused_scores(result: pd.DataFrame, reused_snapshot: pd.DataFrame) 
     for col in snap.columns:
         # pandas >= 3 refuses to write an object-dtype value (e.g. an int
         # score copied alongside NaN/NA neighbours) into a stricter numeric
-        # block without widening first -- same upcast-before-write idiom as
+        # block without widening first: the same upcast-before-write idiom as
         # update_master_scores' chunk.update(s) above.
         if col in result.columns and result[col].dtype != object:
             result[col] = result[col].astype(object)
@@ -3247,7 +3247,7 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame, *,
     columns. A row with score_reused=True (set by reuse_repost_scores) already
     carries its six score columns and is excluded from both LLM stages; its
     columns are stripped before the merge below and restored afterward, so the
-    merge's left join -- which has no row for an id that was never scored --
+    merge's left join (which has no row for an id that was never scored)
     can never blank them back to NaN.
 
     With `jev_run` on, Jev scores each job's stage first and a job it
@@ -3284,7 +3284,7 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame, *,
         return _restore_reused_scores(result, reused_snapshot)
 
     # max(1, ...): a Semaphore(0) is never released, so asyncio.gather below would
-    # block forever -- and on the VM that holds run_scraper.sh's flock for good, so
+    # block forever, and on the VM that holds run_scraper.sh's flock for good, so
     # every later cron fire logs "already running" and job discovery stops silently.
     sem1 = asyncio.Semaphore(max(1, STAGE1_CONCURRENCY))
     jev_on = jev_run is not None and jev_run.on
@@ -3459,7 +3459,7 @@ async def rescore_master_failures(pool, resume: str, *,
         header = pd.read_csv(MASTER_CSV, nrows=0).columns
         light_cols = [c for c in ("job_posting_id", "score", "filtered_out", "reason",
                                   "recommendation") if c in header]
-        # Candidate-finding never needs the two ~90 MB job-text columns — but
+        # Candidate-finding never needs the two ~90 MB job-text columns, but
         # `reason` is itself a free-text column, so even the "light" projection of
         # a tens-of-thousands-row master is not small. Stream it in CHUNK pieces
         # and keep only the rescore candidates from each. Peak memory

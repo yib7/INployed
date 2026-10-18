@@ -1,25 +1,24 @@
-"""The job detail card — replaces the plain ScorePreview.
+"""The job detail card: the selected job's score breakdown, actions and description.
 
 `JobDetailCard` is a `QFrame[card="true"]` that renders one selected job:
-title + meta line, the action row (Open posting / Tailor / Apply — the main
+title + meta line, the action row (Open posting / Tailor / Apply; the main
 window aliases `btn_tailor`/`btn_apply` to this card's buttons so every
-existing enable/repolish path keeps its object identities), a chips row
-(score pill, deep mini-bar chip, applicants / salary / posted), and — below
-those two full-width rows — a horizontal QSplitter holding the scoring
+enable/repolish path keeps its object identities), a chips row
+(score pill, deep mini-bar chip, applicants / salary / posted), and, below
+those two full-width rows, a horizontal QSplitter holding the scoring
 column (REASON lede, STRENGTHS/GAPS, the "Show description" tertiary
 toggle) on the left and the full job description on the right. Collapsed,
 the right pane is hidden and Qt hides its handle with it, so the card is a
-plain single column with the shape it had before the split existed;
-expanded it defaults to 50/50 and stays draggable, and the drag is
-remembered for the session. The toggle is sticky (locked user decision):
-once open it stays open as the user clicks through jobs and only the text
-swaps. It folds back for a job with no JD, and when the card is cleared —
-in both cases without unchecking the toggle, so the next job that has a
-description re-opens the split and the stickiness survives. The card
-reports the state through `descriptionToggled(bool)` rather than reaching
-up into its parent; the main window uses it to grow the outer pane. The
-description is a read-only QPlainTextEdit — it can run to thousands of
-characters with real line breaks and bullets, so it keeps that structure,
+plain single column; expanded it defaults to 50/50 and stays draggable, and
+the drag is remembered for the session. The toggle is sticky (locked user
+decision): once open it stays open as the user clicks through jobs and only
+the text swaps. It folds back for a job with no JD and when the card is
+cleared, in both cases without unchecking the toggle, so the next job that
+has a description re-opens the split and the stickiness survives. The card
+reports the state through `descriptionToggled(bool)` and never reaches up
+into its parent; the main window uses it to grow the outer pane. The
+description is a read-only QPlainTextEdit: it can run to thousands of
+characters with line breaks and bullets, so it keeps that structure,
 scrolls internally, and can never interpret markup.
 
 On the Tracker tab the card switches to its tracker variant: status +
@@ -131,8 +130,8 @@ class _ScoringPane(QtWidgets.QWidget):
     QWidget's own hint measures each word-wrapped label at a guessed width, far
     narrower than the card gives it (325px tall at 100% and 493px at 150% for
     text that fills about 220px). The pane is vertically Minimum, so that guess
-    became the card's floor; a short window could not honour it, the splitter
-    squeezed the card anyway and the STRENGTHS lines were drawn over each
+    would become the card's floor; a short window cannot honour it, the
+    splitter squeezes the card anyway and the STRENGTHS lines draw over each
     other. Unshown, it keeps QWidget's hint."""
 
     def _needed_height(self) -> int | None:
@@ -170,7 +169,7 @@ def _clear_layout(lay) -> None:
 
 class JobDetailCard(QtWidgets.QFrame):
     #: Emitted when the description pane's EFFECTIVE state changes (checked and
-    #: a JD to show). The card never touches its parent — the main window
+    #: a JD to show). The card never touches its parent; the main window
     #: connects this to grow/restore the outer pane.
     descriptionToggled = QtCore.Signal(bool)
 
@@ -227,7 +226,7 @@ class JobDetailCard(QtWidgets.QFrame):
         head.setSpacing(12)
         title_col = QtWidgets.QVBoxLayout()
         title_col.setSpacing(1)
-        # PlainText, not Qt's AutoText default: both labels carry raw scraped
+        # PlainText overrides Qt's AutoText default: both labels carry raw scraped
         # strings (job title, company, location) and AutoText runs
         # Qt::mightBeRichText over them, so a posting titled
         # "Senior <b>Engineer</b>" would render as markup instead of as the
@@ -257,7 +256,7 @@ class JobDetailCard(QtWidgets.QFrame):
         self.followup_btn.setProperty("accent", True)
         self.followup_btn.clicked.connect(on_followed_up or (lambda: None))
         head.addWidget(self.followup_btn, 0, QtCore.Qt.AlignmentFlag.AlignTop)
-        # Discovery actions — the main window aliases btn_tailor/btn_apply to
+        # Discovery actions. The main window aliases btn_tailor/btn_apply to
         # THESE buttons (object identity is test- and repolish-coupled).
         self.tailor_btn = QtWidgets.QPushButton("Tailor résumé")
         self.tailor_btn.clicked.connect(on_tailor or (lambda: None))
@@ -268,30 +267,30 @@ class JobDetailCard(QtWidgets.QFrame):
         head.addWidget(self.apply_btn, 0, QtCore.Qt.AlignmentFlag.AlignTop)
         v.addLayout(head)
 
-        # Chips row (rebuilt per job) — full width, like the header above it.
+        # Chips row (rebuilt per job), full width like the header above it.
         # It is a line of FIXED-size pills that together demand ~830px, and
         # neither Pill nor _DeepChip elides, so a chips row confined to a
         # half-width pane clips its trailing chips (and chops the deep-score
-        # mini-bar in half) on any display narrower than ~1700px. Full-bleed it
-        # costs nothing — it is one metadata strip — and it keeps the left pane
-        # free to shrink to its text minimum, which is what makes a real 50/50
-        # split reachable at real window sizes.
+        # mini-bar in half) on any display narrower than ~1700px. Full width
+        # costs nothing (it is one metadata strip) and keeps the left pane free
+        # to shrink to its text minimum, which is what makes a 50/50 split
+        # reachable at ordinary window sizes.
         self._chips = QtWidgets.QHBoxLayout()
         self._chips.setSpacing(8)
         v.addLayout(self._chips)
 
         # Everything BELOW that lives in a horizontal splitter: the scoring
         # column (REASON / STRENGTHS / GAPS / toggle) on the left, the full
-        # description on the right. Collapsed, the right pane is hidden — Qt
+        # description on the right. Collapsed, the right pane is hidden; Qt
         # hides the handle with it, so the splitter is visually a plain single
-        # column and the card keeps exactly its previous compact shape.
+        # column and the card stays compact.
         self._split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         self._split.setChildrenCollapsible(False)   # no drag-to-zero pane
         self._left_pane = _ScoringPane()
         # Vertically Minimum (no ShrinkFlag), so qSmartMinSize floors the pane
-        # at its preferred height and the scoring column keeps the "cannot be
-        # squeezed" property the flat layout gave it. Horizontally Preferred —
-        # it MUST shrink, or the description could never take half the card.
+        # at its preferred height and the scoring column cannot be squeezed
+        # below it. Horizontally Preferred: it MUST shrink, or the description
+        # could never take half the card.
         self._left_pane.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
                                       QtWidgets.QSizePolicy.Policy.Minimum)
         lv = QtWidgets.QVBoxLayout(self._left_pane)
@@ -320,14 +319,14 @@ class JobDetailCard(QtWidgets.QFrame):
         lv.addStretch(1)
 
         # Full JD behind a tertiary toggle (locked user decision), parked at the
-        # bottom of the left column so the collapsed card is unchanged.
+        # bottom of the left column so the collapsed card stays one column.
         self.desc_toggle = QtWidgets.QPushButton("Show description")
         self.desc_toggle.setProperty("tier", "tertiary")
         self.desc_toggle.setCheckable(True)
         self.desc_toggle.toggled.connect(self._on_desc_toggled)
         lv.addWidget(self.desc_toggle, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
-        # The JD is raw scraped text and now arrives in full, with real line
-        # breaks and "• " bullets. A read-only QPlainTextEdit keeps that
+        # The JD is raw scraped text and arrives in full, with line breaks and
+        # "• " bullets. A read-only QPlainTextEdit keeps that
         # structure (a QLabel would not) and is plain text BY CONSTRUCTION, so
         # angle-bracket content (<b>, <img>) renders verbatim instead of being
         # rich-text interpreted; there is no textFormat switch
@@ -341,14 +340,14 @@ class JobDetailCard(QtWidgets.QFrame):
             QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.desc_view.setVerticalScrollBarPolicy(
             QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        # Read-only leaves the text selectable AND copyable — keep that. What we
+        # Read-only leaves the text selectable AND copyable; keep that. What we
         # drop is the editable-field costume: no frame, no caret, no tab stop
         # (ClickFocus still lets a click focus it so Ctrl+C reaches the widget).
         self.desc_view.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
         self.desc_view.setCursorWidth(0)
         self.desc_view.setFocusPolicy(QtCore.Qt.FocusPolicy.ClickFocus)
         # setReadOnly() alone leaves only TextSelectableByMouse, which drops
-        # keyboard selection (shift+arrows / ctrl+A) — spell both out.
+        # keyboard selection (shift+arrows / ctrl+A), so spell both out.
         self.desc_view.setTextInteractionFlags(
             QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
             | QtCore.Qt.TextInteractionFlag.TextSelectableByKeyboard)
@@ -366,11 +365,11 @@ class JobDetailCard(QtWidgets.QFrame):
         self._split.setStretchFactor(0, 1)
         self._split.setStretchFactor(1, 1)
         # The splitter owns the card's leftover height; each pane top-aligns its
-        # own content, so the collapsed card looks exactly as it did before.
+        # own content, so the collapsed card stays compact.
         v.addWidget(self._split, 1)
 
     def _on_desc_toggled(self, _checked: bool) -> None:
-        """The toggle's own slot — the state is re-read inside, because
+        """The toggle's own slot. The state is re-read inside, because
         `set_fields` reaches the same code with no bool to hand over."""
         self._apply_desc_state()
 
@@ -393,7 +392,7 @@ class JobDetailCard(QtWidgets.QFrame):
         if want == self._desc_open:
             return
         if not want:
-            # Remember the user's drag BEFORE hiding — a hidden pane reports 0.
+            # Remember the user's drag BEFORE hiding: a hidden pane reports 0.
             sizes = self._split.sizes()
             if len(sizes) == 2 and sizes[1] > 0:
                 self._split_sizes = sizes
@@ -411,7 +410,7 @@ class JobDetailCard(QtWidgets.QFrame):
         # Clearing the JD closes the split (and emits False) without touching
         # the toggle: an empty card has nothing to show beside the placeholder,
         # so the outer pane must not stay grown. The next selection re-opens it,
-        # because the toggle is still checked — stickiness survives.
+        # because the toggle is still checked, so stickiness survives.
         self.desc_view.clear()
         self._apply_desc_state()
         self._content.setVisible(False)
@@ -578,5 +577,5 @@ class JobDetailCard(QtWidgets.QFrame):
 
     # ---- text mirror (test-coupled) --------------------------------------------
 
-    def toPlainText(self) -> str:  # noqa: N802 (mirrors the old QTextBrowser API)
+    def toPlainText(self) -> str:  # noqa: N802 (QTextBrowser-style API name)
         return self._plain

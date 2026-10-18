@@ -4,7 +4,7 @@ There is one master, and a job discovered on this PC still has to reach it. Ever
 successful dashboard scrape and manual add writes its new rows (full local-master rows, JD included) plus the whole
 run_stats.csv into <repo>/outbox/, and the dashboard best-effort-pushes every pending
 outbox file to the VM's ~/incoming/ (vm_sync transport). merge_incoming.py on the VM
-folds them into the real master before each scheduled scrape. Files are deleted locally
+folds them into the master there before each scheduled scrape. Files are deleted locally
 only after a confirmed push (scp exit 0), so a failed push simply retries on the next
 scrape/add; re-pushing an already-merged file is a no-op (the VM merge dedups).
 
@@ -37,12 +37,12 @@ def _stamp() -> str:
 
 def snapshot_run_files(base: Path | None = None) -> dict[Path, tuple[float, int]]:
     """{scored-run-file: (mtime, size)} for every local run file, taken BEFORE a
-    scrape so new_run_ids can tell which files the scrape produced or rewrote (a
-    same-day re-run now gets its own `-2`, `-3`, ... file, but a run file can
-    still be rewritten in place (the manual-jobs file, a repost heal), so
-    presence alone is not enough). Size rides along: a rewrite landing within one mtime
-    tick — or on a coarse-resolution filesystem — would otherwise read as
-    unchanged and its fresh rows would wait for the sweep."""
+    scrape so new_run_ids can tell which files the scrape produced or rewrote. A
+    same-day re-run gets its own `-2`, `-3`, ... file, but a run file can still be
+    rewritten in place (the manual-jobs file, a repost heal), so presence alone is
+    not enough. Size rides along: a rewrite landing within one mtime tick, or on
+    a coarse-resolution filesystem, would otherwise read as unchanged and its
+    fresh rows would wait for the sweep."""
     import jobsdata
 
     out: dict[Path, tuple[float, int]] = {}
@@ -88,9 +88,9 @@ def new_run_ids(before: dict, base: Path | None = None) -> list[str]:
 def write_rows_outbox(ids, master_csv: Path | None = None,
                       outbox_dir: Path | None = None) -> Path | None:
     """Write the full local-master rows for `ids` (JD + score columns included) to
-    outbox/local_rows_<stamp>.csv.gz. None when there is nothing to write — no ids,
-    master missing/unreadable, or no id matched (best-effort by design: the outbox
-    must never fail a scrape)."""
+    outbox/local_rows_<stamp>.csv.gz. None when there is nothing to write (no ids,
+    master missing/unreadable, or no id matched): best-effort by design, since the
+    outbox must never fail a scrape."""
     ids = [str(i).strip() for i in (ids or []) if str(i).strip()]
     if not ids:
         return None
@@ -116,8 +116,8 @@ def write_rows_outbox(ids, master_csv: Path | None = None,
         return None
     not_found = id_set - have
     if not_found:
-        # A local job that never landed in the master won't reach the VM — surface
-        # it so a lost row is visible instead of silently dropped.
+        # A local job that never landed in the master won't reach the VM. Log it
+        # so a lost row is visible instead of silently dropped.
         log.warning("write_rows_outbox: %d of %d id(s) not in master, not queued: %s",
                     len(not_found), len(id_set),
                     ", ".join(sorted(not_found)[:20]))
@@ -137,7 +137,7 @@ def write_rows_outbox(ids, master_csv: Path | None = None,
 def write_stats_outbox(stats_csv: Path | None = None,
                        outbox_dir: Path | None = None) -> Path | None:
     """Queue the WHOLE local run_stats.csv (idempotent + monotonic, like
-    write_external_exclude_ids — the VM-side merge dedups, so no cursor state)."""
+    write_external_exclude_ids: the VM-side merge dedups, so no cursor state)."""
     stats = Path(stats_csv) if stats_csv is not None else RUN_STATS_CSV
     if not stats.exists():
         return None
@@ -164,7 +164,7 @@ def pending_files(outbox_dir: Path | None = None) -> list[Path]:
 
 def prune_stats(outbox_dir: Path | None = None) -> int:
     """Drop all but the newest queued local_stats file. Each one is a FULL copy
-    of run_stats.csv (monotonic — the VM-side merge dedups), so the newest
+    of run_stats.csv (monotonic; the VM-side merge dedups), so the newest
     strictly supersedes the rest and pushing them all is pure waste. Returns
     how many were removed."""
     ob = Path(outbox_dir) if outbox_dir is not None else OUTBOX_DIR
@@ -186,7 +186,7 @@ def prune_stats(outbox_dir: Path | None = None) -> int:
 # every unsynced-rows sweep in that window would re-queue (and re-push) the same
 # rows. pushed_ids.json remembers them; ids are forgotten once they show up in
 # the Drive master (the round trip completed). Re-pushing after a lost state
-# file is harmless — the VM merge dedups with the existing row winning.
+# file is harmless: the VM merge dedups with the existing row winning.
 
 def _pushed_ids_path(outbox_dir: Path | None = None) -> Path:
     ob = Path(outbox_dir) if outbox_dir is not None else OUTBOX_DIR
@@ -252,7 +252,7 @@ def unsynced_master_ids(drive_master, master_csv: Path | None = None,
                         outbox_dir: Path | None = None) -> list[str]:
     """The catch-all sweep: ids in the LOCAL master that the Drive master lacks
     and that are neither queued in a pending rows file nor already in flight to
-    the VM. These are rows that would otherwise be stranded on this PC forever —
+    the VM. These are rows that would otherwise be stranded on this PC forever,
     e.g. a snapshot recovered outside the dashboard, or a push that never got a
     retry. Returns [] when either master is missing/unreadable: failing CLOSED
     here matters, because an unreadable Drive master must not make the sweep
@@ -279,7 +279,7 @@ def push_outbox(target, outbox_dir: Path | None = None, log=None,
 
     A file is deleted locally ONLY when its scp exits 0; anything else (unconfigured
     VM, nonzero exit, runner exception) leaves it queued for the next scrape/manual
-    add. Returns (pushed, kept). Never raises — the caller is mid-scrape/add and a
+    add. Returns (pushed, kept). Never raises: the caller is mid-scrape/add and a
     sync failure must not surface as a scrape failure.
     """
     import vm_sync
@@ -335,7 +335,7 @@ def sync_back(target, drive_master, master_csv: Path | None = None,
               runner=None) -> tuple[int, int, int]:
     """One-call local→VM data reconcile: queue any local-master rows the Drive
     master lacks (see unsynced_master_ids), then push every pending outbox file.
-    Returns (queued_ids, pushed_files, kept_files). Never raises — callers are
+    Returns (queued_ids, pushed_files, kept_files). Never raises: callers are
     background hooks (the watcher, post-scrape) where a sync problem must never
     become a crash."""
     try:

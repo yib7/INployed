@@ -48,7 +48,7 @@ class ReaderBrowser(QtWidgets.QTextBrowser):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setOpenLinks(False)          # a reader, not a browser
+        self.setOpenLinks(False)          # reader only: a link click goes nowhere
         self.setOpenExternalLinks(False)
 
     def loadResource(self, kind, name):  # noqa: N802 (Qt override)

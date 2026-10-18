@@ -1,10 +1,10 @@
-"""Stage 1: select -- choose the blocks, the bullet groups and the skill focus.
+"""Stage 1, select: choose the blocks, the bullet groups and the skill focus.
 
-Split out of compose.py, together with the prompt helpers that
+Holds `select`, the prompt helpers that
 only `select` uses (`_catalog`, the two guidance builders, `_required_blocks`) and
 the deterministic post-processing that shapes the model's answer (`_normalize_selection`
 -> required blocks -> fixed order -> fixed counts -> project cap). `compose` re-exports
-every name below, so `compose.select` and friends still resolve.
+every name below, so `compose.select` and friends resolve there too.
 
 NOTE for monkeypatching: `call` is bound in THIS module's namespace, so a test that
 stubs the LLM for `select` must patch `selection.call`, not `compose.call`. The same
@@ -118,7 +118,7 @@ def _project_guidance(names: Optional[List[str]] = None) -> str:
     honors each project's configured bullet count instead of defaulting weaker projects
     to one group. A project with a custom layout (`config.project_targets`) uses that
     count; otherwise, when tiered allotment is configured (`config.project_bullet_tiers`),
-    an unconfigured project aims for the LARGEST tier count — select() runs before the
+    an unconfigured project aims for the LARGEST tier count: select() runs before the
     strength ranking exists, so we can't assign a per-project rank yet; aiming high makes
     the model surface enough relevant atoms for whatever lands in the top slot, and
     `_cap_projects` trims each project to its actual rank's tier count downstream. With no
@@ -191,7 +191,7 @@ def _shortlist(relevance: Mapping[str, float]) -> Dict[str, List[Dict[str, Any]]
 
 def _check_required_blocks() -> None:
     """Fail loudly if a required block names a block that isn't in
-    master_experience.yaml — otherwise the template's fixed sections silently
+    master_experience.yaml; otherwise the template's fixed sections silently
     vanish from the output. _required_blocks() already raises for missing names."""
     _required_blocks()  # raises on explicit missing required names
 
@@ -207,7 +207,7 @@ def select(jd: str, job_title: str, company: str, *,
     (`jev_assist.atom_relevance`) trims the catalog the model sees to `_shortlist`'s
     blocks, in relevance order. `skill_pick` (`jev_assist.skills_pick`)
     supplies the skills lines and the skill focus, so the prompt asks the model for
-    neither. Left None, each part of the request is today's."""
+    neither. Left None, each part of the request takes its Jev-off form."""
     _check_required_blocks()
     shortlist = _shortlist(atom_relevance) if atom_relevance else None
     head = (
@@ -392,7 +392,7 @@ def _block_atoms(section: str, name: str) -> List[str]:
 def _enforce_fixed_counts(clean: Dict[str, Any]) -> None:
     """Force each constant block to EXACTLY len(config.block_targets(name)) bullets
     (experience as fused groups, leadership as single-atom bullets), and cap projects.
-    Deterministic — the model cannot over/under-fill regardless of select()."""
+    Deterministic: the model cannot over/under-fill regardless of select()."""
     used: set[str] = {
         aid
         for sec in ("experience", "projects", "leadership")
@@ -419,12 +419,12 @@ def _cap_projects(clean: Dict[str, Any]) -> None:
          sizes them);
       3. else the global PROJECT_BULLETS_MAX.
 
-    For (1) and (2) the project is resized via _resize_to_count — padded UP from its OWN
-    unused atoms (fused groups preserved) as well as trimmed down — so the count is a
-    TARGET, not just a ceiling. For (3) it keeps cap-only behavior (trimmed, never padded).
+    For (1) and (2) the project is resized via _resize_to_count (padded UP from its OWN
+    unused atoms, fused groups preserved, as well as trimmed down), so the count is a
+    TARGET as well as a ceiling. For (3) it keeps cap-only behavior (trimmed, never padded).
     Padding draws only from the project's own atoms and never force-injects, so a count is
     best-effort: a project with fewer atoms than its target stays at its atom count (the
-    select-and-rephrase rule — never invent)."""
+    select-and-rephrase rule: never invent)."""
     projects = clean.get("projects", [])[:config.projects_max()]
     used: set[str] = {
         aid
@@ -451,8 +451,8 @@ def _resize_to_count(entry: Dict[str, Any], section: str, name: str, n: int,
     end; pad from this block's still-unused atoms; when those run out, split
     the largest fused group (its last atom becomes the next bullet, in place)
     until the count is met or every group is a single atom. Without the split a
-    block whose atoms select fused two-to-a-bullet shipped short of its
-    configured count (an entry with 3 atoms and 3 targets rendered 2).
+    block whose atoms select fused two-to-a-bullet ships short of its
+    configured count (an entry with 3 atoms and 3 targets renders 2).
     With singles=True every bullet is one atom (splitting any fused group),
     matching the leadership "one tight bullet per atom" plan."""
     avail = _block_atoms(section, name)

@@ -4,7 +4,7 @@ This project stands on a lot of other people's work.
 
 ## Résumé template
 - The LaTeX résumé layout in `resume_tailor_files/resume_template.tex` is derived
-  from the **"Jake's Resume"** template by Jake Gutierrez
+  from the "Jake's Resume" template by Jake Gutierrez
   (https://github.com/jakegut/resume), MIT-licensed. The `\resumeItem`,
   `\resumeSubheading`, and section macros come from that template; the generation
   pipeline fills them from `master_experience.yaml`. The MIT permission notice
@@ -13,8 +13,8 @@ This project stands on a lot of other people's work.
 
 ## Avoid-AI-writing rules
 - `local/resume_tailor/aiwriting.py` vendors a bounded extract of the
-  **avoid-ai-writing** skill, version 3.38.0 (first vendored at 3.18.0), by
-  **Conor Bronsdon**, MIT-licensed, read from the local Claude skill at
+  avoid-ai-writing skill, version 3.38.0 (first vendored at 3.18.0), by
+  Conor Bronsdon, MIT-licensed, read from the local Claude skill at
   `~/.claude/skills/avoid-ai-writing/` (`SKILL.md` and `references/patterns.md`).
   Two features use it, through one arm each, and the skill's rule text itself is
   not bundled.
@@ -52,43 +52,44 @@ This project stands on a lot of other people's work.
   for this pipeline.
 
 ## Services & APIs
-- **Google Gemini**, through API keys and **Vertex AI**: job relevance scoring and résumé
+- Google Gemini, through API keys and Vertex AI: job relevance scoring and résumé
   composition.
-- **Bright Data**: LinkedIn job dataset collection.
-- **Google Drive** + **rclone**: syncing scraped results from the VM to the desktop.
-- **MiKTeX** (`pdflatex`): LaTeX to PDF compilation.
-- **TypeSafe** (System One, through `typesafe-sdk`): the Jev judge behind auto-apply, the
+- Bright Data: LinkedIn job dataset collection.
+- Google Drive + rclone: syncing scraped results from the VM to the desktop.
+- MiKTeX (`pdflatex`): LaTeX to PDF compilation.
+- TypeSafe (System One, through `typesafe-sdk`): Jev, the model behind auto-apply, the
   difficulty check and the optional Jev scorer and tailor checks.
-- **Claude Code CLI** (Anthropic): the optional Claude provider for the tailor and the
+- Claude Code CLI (Anthropic): the optional Claude provider for the tailor and the
   local scorer.
 
 ## Python libraries
 pandas · google-genai · aiohttp · PyYAML · ruamel.yaml · pypdf · markdownify ·
 python-dotenv · tzdata · requests · Send2Trash · keyring · typesafe-sdk (MIT) ·
 PySide6 (Qt) · pytest · pytest-qt · pytest-xdist · pytest-timeout · ruff · and the
-Python standard library (asyncio, sqlite3, argparse). The VM pin set (`scripts/requirements-vm.txt`) adds **numpy**, whose own
-declared expression is `BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0`.
+Python standard library (asyncio, sqlite3, argparse). The VM pin set
+(`scripts/requirements-vm.txt`) adds numpy, whose own declared expression is
+`BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0`.
 
 Four more are optional and installed only if you want the feature they serve, so
-`requirements.txt` names them in a comment without installing them: **playwright**
-(Apache-2.0), the browser behind the Jev auto-apply runner; **pyarrow** (Apache-2.0), a
+`requirements.txt` names them in a comment without installing them: playwright
+(Apache-2.0), the browser behind the Jev auto-apply runner; pyarrow (Apache-2.0), a
 faster repost-key path the dashboard uses when it is present; and, for maintainers
-regenerating art and README media, **Pillow** (MIT-CMU) plus **imageio-ffmpeg** (BSD-2).
-A fifth license arrives without a pin: imageio-ffmpeg downloads its own **FFmpeg** binary
+regenerating art and README media, Pillow (MIT-CMU) plus imageio-ffmpeg (BSD-2).
+A fifth license arrives without a pin: imageio-ffmpeg downloads its own FFmpeg binary
 (LGPL-2.1-or-later) at first use, so no requirements file can name it. No FFmpeg binary,
 and nothing else from that list, is committed here.
 
 None of these are redistributed with this project; `pip` installs each from PyPI under
 its own license. Across the full pinned dependency tree the licenses are MIT, MIT-0
 (cffi, under google-auth's cryptography), BSD-2/3, 0BSD, Apache-2.0, PSF, Zlib, CC0-1.0
-and MPL-2.0 (certifi); the Zlib, CC0-1.0 and 0BSD
-arms come from numpy's composite `BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0`,
-pulled in under pandas. All of them are permissive, and the MIT release license permits
-every one.
-The one copyleft dependency is **PySide6** (with PySide6-Essentials, PySide6-Addons,
-PySide6-Pdf, PySide6-WebEngine and shiboken6), licensed LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only, or commercially from
-The Qt Company. See the License section of the README for why a source-only distribution
-satisfies the LGPL here.
+and MPL-2.0 (certifi); the Zlib, CC0-1.0 and 0BSD arms come from numpy's composite
+`BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0`, pulled in under pandas. All of them
+permit an MIT release.
+
+The one copyleft dependency is PySide6 (with PySide6-Essentials, PySide6-Addons,
+PySide6-Pdf, PySide6-WebEngine and shiboken6), licensed LGPL-3.0-only OR GPL-2.0-only OR
+GPL-3.0-only, or commercially from The Qt Company. See the License section of the README
+for why a source-only distribution satisfies the LGPL here.
 
 If you reuse this project, please keep this file and the upstream template
 attribution.

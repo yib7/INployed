@@ -1,13 +1,13 @@
 """The per-job "Ask AI" window: a chat about ONE job, non-modal beside the dashboard.
 
-Everything the pipeline knows about a job — the tailored bullets, the cover
-letter, the standard answers, the JD — already sits in one folder, but asking
-"how should I word the 'why this role' box?" used to mean copying files into a
+Everything the pipeline knows about a job (the tailored bullets, the cover
+letter, the standard answers, the JD) sits in one folder. Without this window,
+asking "how should I word the 'why this role' box?" means copying files into a
 separate chat by hand. This window puts that conversation next to the job.
 
 The view is thin on purpose: `resume_tailor.chat` owns the prompt, the caps and
 the transport (and knows nothing about Qt), while this file owns the widgets, the
-busy state and the object lifetime. Every turn runs through `workers.run_async` —
+busy state and the object lifetime. Every turn runs through `workers.run_async`:
 a chat turn is a network round-trip and would freeze the window inline. Building
 the context is part of that same worker call: it scans the output root for the
 job's tailored folder, which on a Drive-backed mount is exactly the kind of I/O
@@ -18,7 +18,7 @@ which is the widget-leak shape `tests/conftest.py::_drain_qt_widgets` exists to
 catch: closed-but-alive widgets pile up, and `theme.apply_theme` re-polishing
 `app.allWidgets()` then grows without bound until a test effectively hangs. So the
 dialog is parented to the main window, calls `deleteLater()` on close (via close
-OR reject — Esc never raises a close event), and tells the owner to drop its
+OR reject; Esc never raises a close event), and tells the owner to drop its
 reference on the way out. Do not "simplify" any of those three.
 """
 from __future__ import annotations
@@ -129,8 +129,8 @@ class JobChatDialog(QtWidgets.QDialog):
     def _work(self, question: str, history: List[Tuple[str, str]]):
         """Worker thread: build the context once, then take one turn.
 
-        Returns the context alongside the answer so the UI thread — not this one —
-        is what stores it on the dialog.
+        Returns the context alongside the answer so the UI thread stores it on
+        the dialog.
         """
         from resume_tailor import chat  # local import: keeps the engine off the UI import path
 
@@ -177,7 +177,7 @@ class JobChatDialog(QtWidgets.QDialog):
         self._teardown()
 
     def _teardown(self, *_args) -> None:
-        """Drop the owner's reference and schedule destruction — exactly once.
+        """Drop the owner's reference and schedule destruction, exactly once.
 
         Reached from closeEvent (the window's ✕ / Close) and from `finished`
         (Esc -> reject). See the module docstring for why this is not optional.

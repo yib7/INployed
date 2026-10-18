@@ -61,7 +61,7 @@ class SheetViewer(ReaderBrowser):
 class _ColumnLabel(Label):
     """A row label as wide as the widest label in its column, so the boxes
     beside them start at one x. It measures at the current type size: a width
-    fixed in pixels when the panel was built clipped "Cover letter PDF" at 150%."""
+    fixed in pixels at build time clips "Cover letter PDF" at 150%."""
 
     def __init__(self, text: str, column: list) -> None:
         super().__init__(text)
@@ -92,7 +92,7 @@ class ApplyPanel(QtWidgets.QWidget):
         # the owner knows the identity, so this fires with no arguments.
         self._on_ask_ai = on_ask_ai or (lambda: None)
         self._folder: str = ""
-        self._raw_md: str = ""   # the apply.md source — rendered in the viewer, copied verbatim
+        self._raw_md: str = ""   # the apply.md source: rendered in the viewer, copied verbatim
         self._popout: QtWidgets.QDialog | None = None  # the Expand reader, kept alive
         self.setMinimumWidth(320)
         self._build()
@@ -160,7 +160,7 @@ class ApplyPanel(QtWidgets.QWidget):
         sheet_row.addWidget(self._expand_btn)
         v.addLayout(sheet_row)
         # Rendered markdown viewer (nice to read). The clipboard still gets the raw
-        # markdown source via copy_sheet() — see self._raw_md. Selecting text and copying
+        # markdown source via copy_sheet() (see self._raw_md). Selecting text and copying
         # it gives `- ` bullets spaced by blank lines (SheetViewer). Read-only; no links.
         self._sheet = SheetViewer()
         self._sheet.setAccessibleName("Apply sheet")
@@ -251,9 +251,9 @@ class ApplyPanel(QtWidgets.QWidget):
                 pass
 
     def _pop_out(self) -> QtWidgets.QDialog:
-        """Open the apply sheet in a large, resizable, non-modal reader — the same
-        rendered markdown as the side panel, with its own Copy. The compact panel
-        is unchanged; this just gives more room to read without scrunching."""
+        """Open the apply sheet in a large, resizable, non-modal reader with the
+        same rendered markdown as the side panel and its own Copy. The compact
+        panel stays as it is; this gives more room to read."""
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle(self._title.text() or "Apply sheet")
         dlg.resize(720, 800)

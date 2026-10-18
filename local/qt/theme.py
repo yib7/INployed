@@ -26,7 +26,7 @@ from PySide6 import QtGui, QtWidgets
 # One factor drives the whole UI: the application font's point size. Qt sizes
 # widgets to their font, so scaling the font scales the dashboard. The stylesheet
 # is deliberately scale-INDEPENDENT (headings scale via the font, not a pinned px)
-# so a scale change never re-applies it — re-polishing every widget was the lag.
+# so a scale change never re-applies it: re-polishing every widget is what lags.
 # The bottom scale bar passes a scale in [MIN_SCALE, MAX_SCALE].
 BASE_FONT_PT = 10.0
 MIN_SCALE = 0.75
@@ -49,7 +49,7 @@ BORDER_STRONG = "#3f4a5a"  # hovered controls
 # Input wells and checkbox indicators only. Every OTHER hairline separates two
 # surfaces that already differ (a PANEL card on WINDOW, a table on its tab), so
 # the border is decoration and 1.55:1 is fine. An input is the one component
-# whose fill is the SAME WINDOW as the ground it sits on -- 1.09:1 -- so its
+# whose fill is the SAME WINDOW as the ground it sits on (1.09:1), so its
 # 1px outline is the only thing that says "you can type here", and WCAG 1.4.11
 # wants 3:1 for exactly that case. #636c78 measures 3.56:1 on WINDOW and 3.25:1
 # on PANEL (the Settings cards), and still sits dimmer than the MUTED label text
@@ -60,10 +60,10 @@ BORDER_INPUT = "#636c78"
 TEXT = "#e6edf3"           # primary
 TEXT_SECONDARY = "#c8d1da"
 MUTED = "#8b949e"
-FAINT = "#7d8590"        # 5.07:1 on WINDOW — the dimmest tier still AA-legible
+FAINT = "#7d8590"        # 5.07:1 on WINDOW, the dimmest tier still AA-legible
 # Disabled text is exempt from WCAG's 4.5:1, but it still has to be readable:
 # #484f58 measured 2.09:1 on the PANEL a disabled button sits on, so "Undo
-# seen" and "Restore backup" all but vanished on a laptop panel. #606873 is
+# seen" and "Restore backup" all but vanish on a laptop panel. #606873 is
 # 3.07:1 there (3.36:1 on WINDOW) and still well under FAINT's 5.07:1, so a
 # disabled control never reads as a live one.
 TEXT_DISABLED = "#606873"
@@ -125,7 +125,7 @@ TYPE_SCALE = {
     "body": 1.00,
     "control": 0.93,   # buttons / cells / tabs / inputs (labels w600 via QSS)
     "caption": 0.85,   # hints; table headers w600 via QSS
-    "mono": 0.93,      # Consolas — numerals / dates / paths
+    "mono": 0.93,      # Consolas: numerals / dates / paths
 }
 
 
@@ -189,12 +189,12 @@ SEL_TEXT = ACCENT_INK
 # family's row-tint alpha.
 ROW_HAS_RESUME = _tint("accent")        # tailored resume ready / applied (blue)
 ROW_REJECTED = _tint("danger")          # rejected (red)
-ROW_TAILOR_FAILED = ROW_REJECTED        # failed tailor run — needs a re-run (red)
+ROW_TAILOR_FAILED = ROW_REJECTED        # failed tailor run, needs a re-run (red)
 ROW_APPLY = _tint("success")            # reco "apply" / offer (green)
 ROW_CONSIDER = _tint("warning")         # reco "consider" / interviewing (yellow)
 ROW_FOLLOWUP = _tint("followup")        # follow-up due (pink)
 ROW_PENDING = _tint("followup_sent")    # follow-up sent, awaiting reply (purple)
-ROW_SKIP = _tint("neutral")             # reco "skip" — "Don't consider" (gray)
+ROW_SKIP = _tint("neutral")             # reco "skip", shown as "Don't consider" (gray)
 
 _ROW_TINTS = {
     "has_resume": ROW_HAS_RESUME,
@@ -246,8 +246,8 @@ def _dark_palette() -> QtGui.QPalette:
     # Fusion draws frame bevels (the QTabBar base line, sunken separators,
     # group-box frames) from the Light/Midlight/Mid/Dark/Shadow roles. A default
     # QPalette leaves those at their LIGHT-theme values, so Light = pure white:
-    # that is what painted a 1px #ffffff hairline across the full window width
-    # above the tab bar on every tab and every scale. Derive them from the dark
+    # that paints a 1px #ffffff hairline across the full window width above
+    # the tab bar on every tab and every scale. Derive them from the dark
     # surfaces instead.
     p.setColor(Role.Light, C(FLOATING))
     p.setColor(Role.Midlight, C(RAISED))
@@ -541,10 +541,10 @@ def _with_qss_weight(font: QtGui.QFont, cls: str = "",
     """`font`, bolded where the stylesheet bolds the thing it is going on.
 
     The style paints those four DemiBold whatever font the widget carries, but
-    `sizeHint()` is measured from that font — so pushing a Normal-weight font
+    `sizeHint()` is measured from that font. Pushing a Normal-weight font
     onto them, which is what every rescale does, asks the layout for narrower
-    text than actually gets painted. "Start auto-apply run" came up 7px short at
-    125% and rendered with its S and its n sliced in half. This is a MEASUREMENT
+    text than gets painted: without this, "Start auto-apply run" comes up 7px
+    short at 125% and renders with its S and its n sliced in half. This is a MEASUREMENT
     fix only: the weight on screen is the one the stylesheet was already drawing.
     Only the four selectors above qualify, so a custom-painted button that draws
     from its own font (`chrome.Chip`) is left alone.
@@ -563,7 +563,7 @@ def _with_qss_weight(font: QtGui.QFont, cls: str = "",
 def font_for(role: str, scale: float | None = None) -> QtGui.QFont:
     """QFont for a type role at the given (default: current) scale.
 
-    Only title/section carry a weight here — every other weight comes from the
+    Only title/section carry a weight here; every other weight comes from the
     QSS property selectors, so the stylesheet merge behavior stays as documented."""
     if scale is None:
         scale = _current_scale
@@ -605,7 +605,7 @@ def set_type_role(widget: QtWidgets.QWidget, role: str) -> None:
 def _role_for(widget: QtWidgets.QWidget) -> str:
     """Resolve a widget's type role: explicit `typeRole` property > `muted`
     property (captions) > class map > body. Plain widgets default to `body`
-    (exactly BASE_FONT_PT x scale — test-pinned)."""
+    (exactly BASE_FONT_PT x scale, test-pinned)."""
     role = widget.property("typeRole")
     if role:
         return str(role)
@@ -626,10 +626,10 @@ def _font_owner(widget: QtWidgets.QWidget) -> QtWidgets.QWidget:
     viewport takes its area's, everything else its own.
 
     A viewport is a plain child QWidget, so on its own it resolves to "body".
-    The header paints its section labels on its viewport, so after a rescale
-    the labels came out at body size (10pt) inside sections measured for the
-    caption font (8.5pt) they carried at startup, and "Attempts" and
-    "Applicants" lost their first and last letters on every rescale."""
+    The header paints its section labels on its viewport, so without this a
+    rescale draws the labels at body size (10pt) inside sections measured for
+    the caption font (8.5pt) they carried at startup, and "Attempts" and
+    "Applicants" lose their first and last letters."""
     parent = widget.parentWidget()
     if isinstance(parent, QtWidgets.QAbstractScrollArea) and parent.viewport() is widget:
         return parent
@@ -653,7 +653,7 @@ def register_table(view: QtWidgets.QTableView) -> None:
 
 
 def add_popup_shadow(widget: QtWidgets.QWidget) -> None:
-    """Install the app's ONE drop shadow — floating popups/menus only (the
+    """Install the app's ONE drop shadow, on floating popups/menus only (the
     FLOATING layer): offset (0, 8), blur 24, ink rgba(1,4,9,0.55). Each popup
     gets its own effect instance (a QGraphicsEffect can only serve one widget);
     the parameters here are the single source of truth."""
@@ -682,14 +682,14 @@ def apply_theme(app: QtWidgets.QApplication, scale: float = 1.0) -> None:
 
 
 def set_scale(app: QtWidgets.QApplication, scale: float) -> None:
-    """Re-scale the whole UI off one factor — the application font's point size
+    """Re-scale the whole UI off one factor: the application font's point size
     (`BASE_FONT_PT * scale`), refracted through the type roles.
 
     A global stylesheet pins each widget's font at polish time, so `app.setFont()`
-    alone doesn't reach widgets already on screen (the size used to change only after
-    a restart). Earlier this was forced through by re-applying the stylesheet, but
-    that synchronously re-polishes *every* widget (all hidden tabs included) — the
-    lag. Instead we push the new role font straight onto each live widget: that only
+    alone doesn't reach widgets already on screen (the size would change only after
+    a restart). Re-applying the stylesheet would force it through, but that
+    synchronously re-polishes *every* widget (all hidden tabs included), which
+    lags. So we push the new role font straight onto each live widget: that only
     marks them dirty, so Qt defers the actual relayout to the visible ones and never
     re-runs the QSS cascade. Live AND cheap. Per-class application fonts cover
     widgets created *after* the rescale (dialogs, popups). The stylesheet is

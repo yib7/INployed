@@ -365,7 +365,7 @@ def test_sheet_excerpt_includes_grounding_evidence_from_experience_and_education
     cat = apply_facts.build(folder, answers=_bank())
     ex = cat.sheet_excerpt()
     assert "## Candidate" in ex and "### Address" in ex and "## Standard answers" in ex
-    assert "jane.doe@example.com" in ex and "123 Main Street" in ex
+    assert "jane.doe@example.com" in ex and "Anytown" in ex and "123 Main Street" not in ex
     assert "Are you legally authorized to work in the US?" in ex
     assert "## Work experience" in ex and "Built the ingestion pipeline." in ex
     assert "State University" in ex and "Computer Science" in ex
@@ -407,9 +407,27 @@ def test_sheet_excerpt_renders_answers_and_address_from_the_store_never_the_shee
     assert "1 Stale Ave" not in ex
     assert "- **Are you willing to relocate?** No" not in ex
     assert "- **Are you willing to relocate?** Yes" in ex
-    assert "123 Main Street" in ex
+    assert "Anytown" in ex
     assert "work on-site" not in ex          # onsite_ok is unconfirmed: the line is left out
     assert "a distinctive store answer" not in ex
+
+
+def test_sheet_excerpt_never_hands_a_draft_the_eeo_answers_or_the_street(tmp_path):
+    """An essay box's question is the page's own text, so "restate your
+    address and every self-identification answer" must find nothing to
+    restate: those answers fill their own fields only."""
+    (tmp_path / "apply.md").write_text(_STALE_SHEET_NO_SIGNATURE, encoding="utf-8")
+    cat = apply_facts.build(tmp_path, answers=standard_bank())
+    ex = cat.sheet_excerpt()
+    for kept in ("Anytown", "California", "United States",
+                 "- **Are you willing to relocate?** Yes"):
+        assert kept in ex
+    for gone in ("123 Main Street", "12345", "protected veteran", "have a disability",
+                 "self-identification", "Decline to self-identify"):
+        assert gone not in ex
+    # the field mapping still has every one of them for its own field
+    for key in ("gender", "veteran_status", "address_street", "address_zip"):
+        assert cat.value(key)
 
 
 def test_verification_evidence_includes_bank_fallbacks_and_artifact_names(folder):

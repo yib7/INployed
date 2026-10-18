@@ -121,6 +121,14 @@ _NAMED_BANK_IDS = frozenset((
     "address_street", "address_city", "address_state", "address_zip", "address_country",
 ))
 
+# Bank ids `sheet_excerpt` leaves out of every drafting and grounding call:
+# the EEO self-identification answers and the street and ZIP lines. Each fills
+# its own field through the field mapping, and no free-text reply needs one.
+NOT_FOR_DRAFTS = frozenset((
+    "gender", "race_ethnicity", "veteran_status", "disability_status",
+    "address_street", "address_zip",
+))
+
 # parse_apply_md lowercases the sheet's labels; these are the ones it emits.
 _CANDIDATE_LABELS = {"full_name": "name", "email": "email", "phone": "phone",
                      "location": "location", "linkedin_url": "linkedin",
@@ -241,17 +249,21 @@ class FactCatalog:
         cut at the cap)."""
         from resume_tailor import apply_data  # lazy: config.py loads .env at import
         sections = _h2_sections(self._sheet_text)
+        # the page writes its own questions, so an essay box must not be
+        # able to draw out what fills only its own field (NOT_FOR_DRAFTS)
+        bank = [e for e in self._bank
+                if not (isinstance(e, dict) and e.get("id") in NOT_FOR_DRAFTS)]
         parts = []
         for name in ("candidate", "standard answers", "education",
                     "work experience", "projects", "leadership"):
             if name not in sections:
                 continue
             if name == "candidate":
-                address = apply_data._address_lines(self._bank).strip()
+                address = apply_data._address_lines(bank).strip()
                 candidate = _strip_nested_address(sections[name])
                 parts.append(candidate + (f"\n\n{address}" if address else ""))
             elif name == "standard answers":
-                parts.append(apply_data._standard_answer_lines(self._bank).strip())
+                parts.append(apply_data._standard_answer_lines(bank).strip())
             else:
                 parts.append(sections[name])
         text = "\n\n".join(parts).strip()

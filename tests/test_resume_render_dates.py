@@ -16,7 +16,7 @@ _BULLETS = {"a1": "Built a thing", "p1": "Shipped a tool", "l1": "Led a team"}
 
 def _meta(monkeypatch, **extra):
     blocks = {
-        "experience": [{"name": "Acme Analytics", "title": "Data Science Intern", "location": "NYC",
+        "experience": [{"name": "Acme Analytics", "title": "Analyst Intern", "location": "Springfield",
                         "dates": "2025-06 / 2025-07", **extra}],
         "projects": [{"name": "Proj", "dates": "2026-05 / 2026-08", **extra}],
         "leadership": [{"name": "Club", "dates": "2024-03 / 2026-05", **extra}],

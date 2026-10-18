@@ -61,8 +61,8 @@ _MASTER = textwrap.dedent("""
       - name: Sandbox
         dates: "2024-01 / 2024-05"
         achievements:
-          - {id: s_over, what: "Built a data-analysis web platform that turns plain requests into runnable Python workflows"}
-          - {id: s_audit, what: "A re-audit five weeks after the v1.4.0 release closed 2 bypasses of the static pre-check"}
+          - {id: s_over, what: "Built a warehouse inventory web app that turns plain requests into printable stock reports"}
+          - {id: s_audit, what: "A re-audit six weeks after the v1.4.0 release closed 2 gaps in the input check"}
     leadership:
       - org: Example Club
         dates: "2023-09 / 2024-05"
@@ -72,21 +72,21 @@ _MASTER = textwrap.dedent("""
 
 # The bullet as it ships before any fill: a direct re-phrase of `s_over`'s own words,
 # so every token traces trivially.
-ORIGINAL = ("Built a data-analysis web platform that turns plain requests into runnable "
-           "Python workflows.")
+ORIGINAL = ("Built a warehouse inventory web app that turns plain requests into printable "
+           "stock reports.")
 
 # A fill that introduces "Deloitte" -- a token neither atom supports, even counting the
 # spare `s_audit` the augmented group adds. "v1.4.0" is IN this text too, but it is
 # grounded (it is `s_audit`'s own figure); "Deloitte" is the only unseen token.
-UNGROUNDED_FILL = ("Built a data-analysis web platform that turns plain requests into "
-                   "runnable Python workflows, audited by Deloitte after the v1.4.0 "
+UNGROUNDED_FILL = ("Built a warehouse inventory web app that turns plain requests into "
+                   "printable stock reports, audited by Deloitte after the v1.4.0 "
                    "release.")
 
 # A fill that folds in ONLY `s_audit`'s own material -- including its dotted version
 # string. Must commit both before and after this task; it is the guard that the new
 # gate does not over-reject a legitimate fill.
-GROUNDED_FILL = ("Built a data-analysis web platform that turns plain requests into "
-                 "runnable Python workflows, re-audited five weeks after the v1.4.0 "
+GROUNDED_FILL = ("Built a warehouse inventory web app that turns plain requests into "
+                 "printable stock reports, re-audited six weeks after the v1.4.0 "
                  "release.")
 
 

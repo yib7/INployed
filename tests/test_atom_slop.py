@@ -217,9 +217,9 @@ def test_the_exception_s_own_carve_outs_still_fire(tmp_path, capsys, word):
 # A long sentence of the shape an atom takes. A word-list match calls this slop;
 # it is a reproducible test rig a candidate built and wrote down.
 CORPUS_HARNESS_NOUN = (
-    "Shipped a Flask dashboard that streams build logs line-by-line over "
-    "WebSockets (with a CLI sharing the same core), and a reproducible "
-    "evaluation harness that drove the parser and ranking fixes.")
+    "Shipped a Django admin panel that charts queue depth per region "
+    "(with a CLI sharing the same core), and a repeatable "
+    "evaluation harness that guided the cache and retry fixes.")
 
 
 @pytest.mark.parametrize("text", [

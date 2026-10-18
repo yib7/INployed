@@ -326,8 +326,8 @@ def test_a_unit_suffix_is_not_read_as_a_magnitude(monkeypatch):
 
 
 _VERSION_ATOMS = {
-    "a1": {"what": "a re-audit five weeks after the v1.4.0 release closed "
-                   "2 bypasses",
+    "a1": {"what": "a re-audit six weeks after the v1.4.0 release closed "
+                   "2 gaps",
            "_block": "Globex"},
 }
 

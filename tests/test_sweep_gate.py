@@ -323,3 +323,12 @@ def test_the_rule_names_every_tell_jev_can_raise():
         assert name in sweep._SWEEP_FLAG_RULE
     assert "PHRASING" in sweep._SWEEP_FLAG_RULE
     assert sweep._SWEEP_FLAG_CLOSING.startswith(sweep._SWEEP_CLOSING)
+
+
+def test_the_rule_names_every_flag_the_resume_scan_can_raise():
+    # the scan's flags ride in the same judge_flags list: a rule's tell, an
+    # "other: ..." tell and an "unnamed tell" each have to read as a tell to fix
+    for name in sweep._SCAN_TELLS:
+        assert name in sweep._SWEEP_FLAG_RULE
+    assert sweep._SCAN_OTHER.strip() in sweep._SWEEP_FLAG_RULE
+    assert sweep._SCAN_UNNAMED in sweep._SWEEP_FLAG_RULE

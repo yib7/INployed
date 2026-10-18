@@ -297,13 +297,9 @@ _SWEEP_SYSTEM = (
 # without this rule a call made for a flag alone would change nothing. Held to the
 # same rules as the prompts above (tests/test_sweep_gate.py scans it directly). An
 # item with no flag, and every item when no read ran, is sent the system prompt above
-# byte for byte.
-_SWEEP_FLAG_RULE = (
-    "\nJUDGE FLAGS. A bullet may also carry a 'judge_flags' list: tells a judge read "
-    "in that bullet, each one of " + ", ".join(jev_assist.SWEEP_QUESTIONS) + ". "
-    "Treat each flag as part of that bullet's PHRASING list and repair it by the same "
-    "rules."
-)
+# byte for byte. It is built below the scan's names, which it lists too: a flag from
+# the résumé scan can be a rule's tell, "other: ..." or "unnamed tell", and a rule
+# that named only Jev's tells left the call no way to read those.
 
 # The re-ask. Its opening sentence is also what the transport stub in
 # tests/test_item_sweep.py dispatches on, and what a reader greps for.
@@ -338,6 +334,16 @@ _SCAN_RULE_TELLS = (
 )
 _SCAN_TELLS = _SCAN_JEV_TELLS + _SCAN_RULE_TELLS
 _SCAN_OTHER = "other: "
+
+_SWEEP_FLAG_RULE = (
+    "\nJUDGE FLAGS. A bullet may also carry a 'judge_flags' list: tells a judge read "
+    "in that bullet, each one of " + ", ".join(jev_assist.SWEEP_QUESTIONS) + ", or "
+    "one of " + ", ".join(_SCAN_RULE_TELLS) + " (each the numbered rule of that "
+    "name). A flag that opens with \"" + _SCAN_OTHER + "\" names a tell of those "
+    "rules in a few words. A flag reading \"" + _SCAN_UNNAMED + "\" means the "
+    "judge saw a tell it did not name: find it by those rules. Treat each flag as "
+    "part of that bullet's PHRASING list and repair it by the same rules."
+)
 # The rules' own headings ("5. REAL AND ACTUAL INFLATION."), in order, each read as
 # the name its rule is listed under, so a model that copies a heading still gets
 # the listed name in the report.

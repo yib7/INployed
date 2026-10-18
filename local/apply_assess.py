@@ -1165,6 +1165,8 @@ def run(job_ids: list[str], *, all_queued: bool = False, judge,
     # the lifetime counter: a reset of usage() elsewhere never hides this spend
     usd0 = jev.total_usage()["usd"]
     code = 0
+    stop: int | None = None     # the exit code of a check that stopped early
+    i = 0
     try:
         for i, entry in enumerate(chosen, 1):
             jid = str(entry.get("job_posting_id") or "")
@@ -1178,23 +1180,27 @@ def run(job_ids: list[str], *, all_queued: bool = False, judge,
                 except profile_lock.ProfileBusy:
                     # the run holds the sentinel, so only Chrome's own lock gets here
                     print(PROFILE_BUSY, file=sys.stderr)
-                    return 2 if i == 1 else 1
+                    stop = 2 if i == 1 else 1
+                    break
                 except Exception as e:      # noqa: BLE001  (Chrome and the bundled build both failed)
                     # a browser that will not start for one job will not for the next
                     print(NO_BROWSER.format(why=type(e).__name__), file=sys.stderr)
-                    return 1
+                    stop = 1
+                    break
             usd_before = jev.total_usage()["usd"]
             try:
                 result, why = check_job(entry, context=ctx, judge=counted, answers=answers,
                                         settings=settings, entries=entries, log=log)
             except jev.JudgeOutage as e:
                 _say(f"[{i}/{len(chosen)}] {name}: Jev is down ({e}); the check stops here")
-                return 1
+                stop = 1
+                break
             except Exception as e:      # noqa: BLE001  (one line; the frames go to the log)
                 if apply_outcome._closed_error(e):
                     _say(f"[{i}/{len(chosen)}] {name}: the browser window was closed; the "
                          f"check stops here")
-                    return 1
+                    stop = 1
+                    break
                 result, why = None, f"{type(e).__name__} at {apply_page.error_step(e)}"
                 log.error("job %s: %s; traceback (the message left out):\n  %s", jid, why,
                           "\n  ".join(apply_page.error_frames(e)))
@@ -1230,9 +1236,15 @@ def run(job_ids: list[str], *, all_queued: bool = False, judge,
                  f"{running}")
     except KeyboardInterrupt:
         _say(INTERRUPTED)
-        return 1
+        stop = 1
+    kind = "queued" if all_queued else "selected"
+    if stop is not None:
+        # the job it stopped on was not checked either
+        unreached = len(chosen) - max(i, 1) + 1 + left
+        _say(f"{unreached} {kind} {'job was' if unreached == 1 else 'jobs were'} not "
+             f"checked; click Check difficulty again once the problem above is fixed.")
+        return stop
     if left:
-        kind = "queued" if all_queued else "selected"
         _say(f"{left} more {kind} {'job was' if left == 1 else 'jobs were'} not checked; "
              f"select them and click Check difficulty again.")
     return code

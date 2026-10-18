@@ -1372,14 +1372,16 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                 self._set_note("Checking the selected job's difficulty in a new terminal.")
             return
         if ids:
-            # every queued job selected: `--all` keeps the command line short
-            # (Windows caps it near 32,767 characters, about 900 ids). Past the
-            # check's cap the ids go as they are, so its first jobs are the
-            # table's, not the queue file's.
+            # every queued job selected: `--all` keeps the command line short.
+            # Past the check's cap only the first MAX_JOBS_PER_CHECK ids go, in
+            # the table's order (not the queue file's): the check takes no more,
+            # and every id past it only lengthened a command line Windows caps
+            # near 32,767 characters (about 900 ids).
             queued_ids = {str(e.get("job_posting_id") or "") for e in self._jobs
                           if e.get("status") == "queued"}
-            every = set(ids) == queued_ids and len(ids) <= apply_assess.MAX_JOBS_PER_CHECK
-            if self._launch_check([] if every else ids):
+            cap = apply_assess.MAX_JOBS_PER_CHECK
+            every = set(ids) == queued_ids and len(ids) <= cap
+            if self._launch_check([] if every else ids[:cap]):
                 self._set_note(_checking_note(len(ids), "selected"))
             return
         queued = self._queued_count()

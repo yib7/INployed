@@ -2214,7 +2214,10 @@ def test_a_selection_past_the_cap_says_which_jobs_the_check_takes(qtbot, tmp_pat
     picked = [str(k) for k in range(1, 33)]          # 32 of the 33 queued
     _multi(p, *picked)
     p.check_difficulty_btn.click()
-    assert len(calls) == 1 and sorted(calls[0], key=int) == picked
+    # only the 30 the check takes, in the table's order: an id past the cap
+    # only lengthened a command line Windows caps near 900 ids
+    assert len(calls) == 1 and calls[0] == p._selected_job_ids()[:30]
+    assert set(calls[0]) < set(picked)
     assert p.status_label.text() == (
         "Checking the first 30 of 32 selected jobs, one at a time, in a new terminal (at "
         "most 30 per click). To check the other 2, select them and click Check difficulty "
@@ -2233,7 +2236,7 @@ def test_every_queued_job_selected_past_the_cap_names_the_ids_in_table_order(qtb
     every = [str(k) for k in range(1, 33)]
     _multi(p, *every)
     p.check_difficulty_btn.click()
-    assert calls == [p._selected_job_ids()] and sorted(calls[0], key=int) == every
+    assert calls == [p._selected_job_ids()[:30]] and set(calls[0]) < set(every)
 
 
 def test_the_confirm_for_every_queued_job_says_one_at_a_time(qtbot, tmp_path, monkeypatch):

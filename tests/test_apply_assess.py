@@ -1495,3 +1495,31 @@ def test_a_profile_chrome_still_holds_stops_the_run(seq, capsys, held_from, code
     assert [kw.get("channel") for _, kw in chromium.calls][-1] == "chrome"   # no fallback
     assert seq.trace().count("open") == held_from - 1
     assert profile_lock.sentinel_held(aa.default_profile_dir()) is False
+
+
+def test_a_check_that_stops_early_says_how_many_it_never_reached(seq, capsys):
+    """The job it stopped on, the rest of the 30 and the ones past the cap."""
+    ids = seq.jobs(32)
+    seq.browser()
+
+    def down(jid):
+        if jid == "2":
+            raise jev.JudgeOutage("ConnectError")
+    seq.check(down)
+    assert seq.main(*ids) == 1
+    out = capsys.readouterr().out
+    assert ("31 selected jobs were not checked; click Check difficulty again once the "
+            "problem above is fixed.") in out
+    assert "more selected jobs were not checked; select" not in out
+
+
+def test_ctrl_c_in_the_first_pause_counts_the_next_job_as_not_checked(seq, capsys):
+    ids = seq.jobs(3)
+    seq.browser()
+    seq.check()
+
+    def interrupted(seconds):
+        raise KeyboardInterrupt
+    seq.monkeypatch.setattr(aa, "time", _time_with(interrupted))
+    assert seq.main(*ids) == 1
+    assert "2 selected jobs were not checked" in capsys.readouterr().out

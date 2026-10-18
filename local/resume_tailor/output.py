@@ -15,6 +15,12 @@ from . import assets, config
 
 _ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
+# Windows device names: a folder can't be called any of these, with or
+# without an extension (NUL, nul.txt, COM1). The superscript digits count too.
+_RESERVED = frozenset({"CON", "PRN", "AUX", "NUL",
+                       *(f"{dev}{n}" for dev in ("COM", "LPT")
+                         for n in "0123456789¹²³")})
+
 # Serialize directory resolution and remember every folder handed out this process
 # so two parallel tailor jobs for the SAME company+title get DISTINCT folders. The
 # résumé file isn't written until much later in tailor(), so the on-disk check alone
@@ -33,6 +39,8 @@ def sanitize(name: str, *, max_len: int = 80) -> str:
         import hashlib
         digest = hashlib.sha1(name.encode("utf-8", "replace")).hexdigest()[:6]
         name = name[:max_len - 7].rstrip(". ") + "~" + digest
+    if name.split(".")[0].strip().upper() in _RESERVED:
+        name = "_" + name
     return (name or "Unknown")
 
 

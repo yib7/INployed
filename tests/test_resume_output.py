@@ -93,3 +93,20 @@ def test_tailor_reset_usage_gate(monkeypatch):
     with pytest.raises(RuntimeError):
         run_mod.tailor(job, reset_usage=True)
     assert calls == [1]                    # default still resets
+
+
+@pytest.mark.parametrize("name", ["NUL", "nul", "Con", "AUX", "PRN", "COM1", "lpt9",
+                                  "COM¹", "NUL.txt", "con .inc", "Nul  "])
+def test_a_windows_device_name_never_becomes_a_folder_name(name):
+    """A company or title named NUL (or CON, COM1, NUL.txt) is a device on
+    Windows, not a folder: mkdir under it fails and that job's tailor dies.
+    The name gets a leading underscore and stays readable."""
+    got = output.sanitize(name)
+    stem = got.split(".")[0].strip().upper()
+    assert stem not in output._RESERVED
+    assert got.startswith("_") and name.strip().rstrip(". ").lower() in got.lower()
+
+
+@pytest.mark.parametrize("name", ["Console", "Nullify Labs", "COM10", "Auxilium", "Acme"])
+def test_names_that_only_start_like_a_device_are_kept(name):
+    assert output.sanitize(name) == name

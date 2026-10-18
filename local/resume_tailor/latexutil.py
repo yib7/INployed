@@ -184,12 +184,27 @@ def _smart_quotes(text: str) -> str:
     return _OPEN_SINGLE.sub("`", text)
 
 
+# Control characters TeX cannot take as text: DEL is an invalid character (the
+# compile stops), a form feed is LaTeX's \outer paragraph break (fatal inside an
+# argument), and the rest are unprintable. A CR is handled before this: TeX
+# reads it as the end of the line and drops what follows it.
+_TEX_CONTROL_RE = re.compile(r"[\x00-\x09\x0b-\x1f\x7f]")
+
+
+def _no_controls(text: str) -> str:
+    """`text` with each CR or CRLF as a line break and every other control
+    character but the line break as a space."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return _TEX_CONTROL_RE.sub(" ", text)
+
+
 def to_latex(text: str) -> str:
     """The single safe transform for any model-emitted text (bullets, skills):
     escape LaTeX specials, render known unicode math glyphs, then ASCII-fold the
     rest so an unlisted character can never kill the compile. Straight quotes
-    become TeX quotes first (_smart_quotes)."""
-    return _ascii_fallback(_math_to_latex(escape_latex(_smart_quotes(str(text)))))
+    become TeX quotes first (_smart_quotes), and control characters are gone
+    before anything (_no_controls)."""
+    return _ascii_fallback(_math_to_latex(escape_latex(_smart_quotes(_no_controls(str(text))))))
 
 
 def clean_bullet(text: str) -> str:

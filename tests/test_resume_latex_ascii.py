@@ -7,6 +7,7 @@ project name, degree, school, honors, skill label) only ran ``escape_latex`` —
 so a stray U+2212 MINUS SIGN (or an accent, or a smart quote) in any of them
 crashed the compile with "Unicode character ... not set up for use with LaTeX".
 """
+import re
 import sys
 from pathlib import Path
 
@@ -117,3 +118,18 @@ def test_bullets_and_fields_go_through_the_same_chokepoint():
     assert r"\input{" not in bullet
     edu = [{"school": f"U{FW_BACKSLASH}openout", "degree": "B.S.", "dates": "2020/2024"}]
     assert r"\openout" not in render._education(edu)
+
+
+def test_control_characters_never_reach_pdflatex():
+    """TeX reads DEL as an invalid character (the compile stops), a form feed
+    as LaTeX's \\outer paragraph break (fatal inside an argument) and a
+    carriage return as the end of the line, dropping the rest of it, closing
+    brace included. Model or scraped text holding one becomes a space; a CR
+    or CRLF becomes a line break."""
+    from resume_tailor.latexutil import clean_bullet
+    bad = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+    for ch in [chr(c) for c in range(0x20) if c != 0x0a] + ["\x7f"]:
+        for out in (to_latex(f"a{ch}b}}"), clean_bullet(f"a{ch}b}}")):
+            assert not bad.search(out), (repr(ch), out)
+            assert out.startswith("a") and "b" in out and out.rstrip(".").endswith(r"\}")
+    assert to_latex("one\r\ntwo\rthree\n") == "one\ntwo\nthree\n"

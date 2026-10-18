@@ -1,4 +1,4 @@
-"""Same-day, same-label runs each get their own run file (SP5).
+"""Same-day, same-label runs each get their own run file.
 
 A second run with the same date and label used to overwrite
 `<label>/linkedin_jobs_<date>_<label>.csv`. The scorer then skipped it because

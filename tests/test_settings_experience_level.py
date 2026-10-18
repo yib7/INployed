@@ -1,5 +1,5 @@
 """Settings rows for the experience level (now several levels) and the title words
-every search leaves out (cycle 29).
+every search leaves out.
 
 The scraper reads both keys from search_config.json (pipeline/scraper.py
 load_search_config / title_exclude_terms_for). Everything here runs against tmp

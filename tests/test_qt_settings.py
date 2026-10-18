@@ -3326,7 +3326,7 @@ def test_naming_a_model_in_the_rate_limit_rows_clears_its_warning(qtbot, tmp_pat
     assert _note(form, "stage2_models") == ""
 
 
-# --- experience level (several levels) + Leave out job titles with (cycle 29) ------
+# --- experience level (several levels) + Leave out job titles with ------------
 
 def test_a_stored_plain_level_opens_as_one_ticked_box_and_clean(qtbot, tmp_path):
     """Every existing search_config.json holds the level as a plain string.

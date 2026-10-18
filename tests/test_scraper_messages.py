@@ -1,7 +1,7 @@
 """The scraper says what went wrong, why it matters and what to do.
 
 The dashboard reads the scraper's output after Find new jobs and shows the user
-every problem (SP4). The contract it parses:
+every problem. The contract it parses:
   - a non-fatal problem is ONE line starting "WARNING: ";
   - a fatal problem ends the run with ONE line starting "ERROR: " and exit 1,
     after the traceback (stderr, for the log).

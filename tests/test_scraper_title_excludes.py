@@ -1,4 +1,4 @@
-"""The experience level picks the title words every search leaves out (cycle 29, SP2).
+"""The experience level picks the title words every search leaves out.
 
 Bright Data's experience_level input does nothing: LinkedIn's logged-out search
 ignores it (2026-10-14 A/B: Entry level, Director and no filter returned 24-25 of
@@ -7,7 +7,7 @@ the same 25 jobs). A NOT in the keyword does work, on titles:
 senior titles. So the level now decides which title words each keyword NOTs
 (TITLE_EXCLUDE_BY_LEVEL, a user override in title_exclude_terms, a hand-edit map
 in title_exclude_by_level), build_inputs sends the expanded keywords, and the
-skip lists (SP1) follow them.
+skip lists follow them.
 """
 import asyncio
 import json

@@ -1,4 +1,4 @@
-"""Skip lists understand NOT keywords (cycle 29, SP1).
+"""Skip lists understand NOT keywords.
 
 LinkedIn's logged-out search ignores Bright Data's experience_level input, but a
 NOT in the keyword works on TITLES: `"Software Engineer" NOT Senior NOT Sr` came

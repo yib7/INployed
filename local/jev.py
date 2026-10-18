@@ -180,7 +180,7 @@ def usd_for(tokens: int | float) -> float:
 
 # --- the request's size ----------------------------------------------------------
 
-# Jev's limits (docs/superpowers/jev-complete-guide.md, "Limits & price"): 32k
+# Jev's published limits ("Limits & price" in the TypeSafe docs): 32k
 # tokens for the state and the single longest question, 64k for the state and
 # every question. The estimate is the compact JSON's length over
 # CHARS_PER_TOKEN, a low ratio for JSON (English prose runs about 4), and a

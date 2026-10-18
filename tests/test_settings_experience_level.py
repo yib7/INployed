@@ -126,6 +126,11 @@ def test_absent_key_loads_the_default_list(tmp_path):
     (["Entry level"], ["Entry level"]),
     (["Internship", "Entry level"], ["Internship", "Entry level"]),
     ([], []),
+    # A hand edit in another case: the scraper reads it, so the boxes must too,
+    # or the next Save of any setting writes "" (no level, nothing left out).
+    ("Entry Level", ["Entry level"]),
+    ("entry  level", ["Entry level"]),
+    (["mid-senior LEVEL", "internship"], ["Mid-Senior level", "Internship"]),
 ])
 def test_stored_level_loads_as_a_list_without_a_problem(tmp_path, stored, loaded):
     _write_search(tmp_path, {"experience_level": stored})

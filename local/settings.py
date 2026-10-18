@@ -159,11 +159,25 @@ FORM_ONE_AS_TEXT = "one-as-text"
 FORM_WORDS = "words"
 
 
+def _as_choice(f: Field, item: Any) -> Any:
+    """`item` as the listed choice it names ignoring case and spaces
+    ("entry  Level" -> "Entry level"), else unchanged. The scraper reads a
+    hand-edited level in any case; the boxes tick only an exact choice, so an
+    unmatched one opened with none ticked and the next Save wrote ""."""
+    if not isinstance(item, str):
+        return item
+    key = " ".join(item.split()).casefold()
+    return next((c for c in f.choices or () if " ".join(c.split()).casefold() == key),
+                item.strip())
+
+
 def _from_file(f: Field, raw: Any) -> Any:
     """A stored value as the form's type, per `f.file_form`. A value of any other
     shape comes back untouched, so validate() still names it."""
     if f.file_form == FORM_ONE_AS_TEXT and isinstance(raw, str):
-        return [raw.strip()] if raw.strip() else []
+        return [_as_choice(f, raw)] if raw.strip() else []
+    if f.file_form == FORM_ONE_AS_TEXT and isinstance(raw, list):
+        return [_as_choice(f, item) for item in raw]
     if f.file_form == FORM_WORDS:
         if raw is None:
             return ""

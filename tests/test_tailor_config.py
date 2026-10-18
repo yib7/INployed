@@ -1269,3 +1269,14 @@ def test_parallel_jobs_key_is_a_settings_field():
     f = {f.key: f for f in settings.SETTINGS_SCHEMA}["tailor_parallel_jobs"]
     assert (f.type, f.default, f.target) == ("int", config.PARALLEL_JOBS_DEFAULT, "config")
     assert (f.min, f.max) == (1, config.PARALLEL_JOBS_MAX)
+
+
+@pytest.mark.parametrize("text", ["[1, 2]", "null", '"text"', "7"])
+def test_a_config_json_that_is_not_an_object_reads_as_empty(text, tmp_path, monkeypatch):
+    # a hand edit that leaves an array (or any non-object) in config.json raised
+    # AttributeError out of every .get caller, the citizenship line among them
+    cfg = tmp_path / "config.json"
+    cfg.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(config, "CONFIG_JSON", cfg)
+    assert config._config_json() == {}
+    assert config.show_citizenship() is False

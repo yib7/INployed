@@ -155,11 +155,13 @@ def _one_model(mode_env: str, all_env: str) -> str:
 
 
 def _config_json() -> dict:
-    """local/config.json (shared with the dashboard), {} when unreadable."""
+    """local/config.json (shared with the dashboard), {} when unreadable or when
+    it holds something other than an object (every caller reads it with .get)."""
     try:
-        return json.loads(CONFIG_JSON.read_text(encoding="utf-8"))
+        data = json.loads(CONFIG_JSON.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
+    return data if isinstance(data, dict) else {}
 
 
 # ── Resume layout (per-bullet line targets for the constant blocks) ───────────

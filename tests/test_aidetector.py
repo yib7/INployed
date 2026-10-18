@@ -92,6 +92,8 @@ def test_no_node_means_no_findings(monkeypatch):
     {"returncode": 2, "stdout": ""},
     {"stdout": "not json"},
     {"stdout": "[]"},                       # JSON, but not the result object
+    {"stdout": '{"issues": 5}'},            # the result object, issues not a list
+    {"stdout": '{"issues": true}'},
     {"raises": subprocess.TimeoutExpired("node", 20)},
     {"raises": FileNotFoundError("node")},
 ])

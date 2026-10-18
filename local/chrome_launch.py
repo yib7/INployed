@@ -1,7 +1,7 @@
 """Open job / resume links in Chrome under the configured Google profile.
 
 Toolkit-agnostic (no Tk/Qt) so any UI can launch URLs through it. The account
-comes from LINKEDIN_CHROME_ACCOUNT (loaded from scrape_data/.env by the app);
+comes from LINKEDIN_CHROME_ACCOUNT (loaded from the repo root's .env by the app);
 falls back to the default browser when Chrome or the profile can't be resolved.
 """
 from __future__ import annotations

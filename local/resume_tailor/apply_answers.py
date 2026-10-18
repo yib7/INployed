@@ -46,7 +46,7 @@ __all__ = [
 ]
 
 PKG_DIR = Path(__file__).resolve().parent          # local/resume_tailor
-REPO_ROOT = PKG_DIR.parent.parent                  # scrape_data
+REPO_ROOT = PKG_DIR.parent.parent                  # the repo root
 STORE_PATH = REPO_ROOT / "apply_answers.json"
 
 VERSION = 2

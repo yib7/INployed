@@ -16,7 +16,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-# Load scrape_data/.env so LINKEDIN_CHROME_ACCOUNT and other local values are
+# Load the repo root's .env so LINKEDIN_CHROME_ACCOUNT and other local values are
 # populated before chrome/settings read them. The VM never runs the UI, so a
 # missing python-dotenv is harmless. Mirrors scraper.py / the old ui.py.
 try:

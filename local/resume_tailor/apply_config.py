@@ -21,7 +21,7 @@ from typing import Any, Dict
 
 # settings.py / config.py treat the repo root as two levels up from this package.
 PKG_DIR = Path(__file__).resolve().parent          # local/resume_tailor
-REPO_ROOT = PKG_DIR.parent.parent                  # scrape_data
+REPO_ROOT = PKG_DIR.parent.parent                  # the repo root
 APPLY_CONFIG = REPO_ROOT / "apply_config.json"
 
 # The candidate is a US citizen / green-card holder, so no visa sponsorship is

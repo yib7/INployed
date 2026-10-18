@@ -50,7 +50,7 @@ def _scratch_dir(prefix: str) -> str:
 
 os.environ["LOCALAPPDATA"] = _scratch_dir("inployed-test-appdata-")
 
-# Isolate the suite from the developer's REAL scrape_data/.env.
+# Isolate the suite from the developer's REAL <repo>/.env.
 #
 # Four modules call load_dotenv(<repo>/.env) at IMPORT time — local/app.py,
 # local/resume_tailor/config.py, score_jobs.py and scraper.py — so merely

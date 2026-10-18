@@ -14,10 +14,10 @@ from typing import Any
 
 # ── Locations ────────────────────────────────────────────────────────────────
 PKG_DIR = Path(__file__).resolve().parent              # local/resume_tailor
-SCRAPE_DIR = PKG_DIR.parent.parent                     # scrape_data
+SCRAPE_DIR = PKG_DIR.parent.parent                     # the repo root
 
-# Optional: load scrape_data/.env so GCP project / candidate / keys live outside
-# the repo. Missing python-dotenv is fine — env vars still work without it.
+# Optional: load the repo root's .env (git-ignored) so GCP project / candidate / keys
+# stay out of git. Missing python-dotenv is fine: env vars still work without it.
 try:
     from dotenv import load_dotenv
 

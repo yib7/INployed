@@ -852,7 +852,7 @@ def test_console_command_keeps_a_hostile_checkout_path_literal():
     """A checkout under a folder named with `$`, a backtick or `[` reaches the
     console byte for byte: single quotes are PowerShell's literal string, and a
     quote inside the path is doubled, the one escape that string knows."""
-    root = Path("C:/Users/o'brien/$HOME/`x/[1]/scrape_data")
+    root = Path("C:/Users/o'brien/$HOME/`x/[1]/INployed")
     cmd = aqp._console_command(root, "drain")
     literal = str(root).replace("'", "''")
     assert cmd == f"Set-Location -LiteralPath '{literal}'; python local/apply_run.py drain"

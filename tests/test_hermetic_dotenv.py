@@ -1,4 +1,4 @@
-"""Guard: the suite must never read the developer's real scrape_data/.env.
+"""Guard: the suite must never read the developer's real <repo>/.env.
 
 `local/app.py`, `local/resume_tailor/config.py`, `score_jobs.py` and `scraper.py`
 each call `load_dotenv(<repo>/.env)` at IMPORT time. Without a guard, importing

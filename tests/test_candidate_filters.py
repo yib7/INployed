@@ -1386,6 +1386,12 @@ def test_a_clearance_named_without_asking_for_one_does_not_block(text):
     "Active Secret clearance required if selected.",
     "Many of our engineers hold clearances; this position requires an active Secret "
     "clearance.",
+    # A contract clause about something else leaves a held clearance required.
+    "Must hold an active TS/SCI clearance and be willing to take a polygraph if "
+    "required by the program.",
+    "Active Secret clearance required, with the ability to upgrade to Top Secret if "
+    "required by the contract.",
+    "Most roles require an active Secret clearance and this one does as well.",
 ])
 def test_a_real_clearance_requirement_beside_a_waiver_still_blocks(text):
     assert sj.requires_clearance(text) is True

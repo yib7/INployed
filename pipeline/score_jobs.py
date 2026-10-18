@@ -1730,7 +1730,12 @@ _CLEARANCE_REQUIRED_RE = re.compile(
 # asks for one, as does "Many of our positions require a clearance, and this
 # position requires one too."
 _LATER_CLEARANCE_RE = re.compile(r"\b(?:must|obtain\w*|within|after|once)\b", re.I)
-_THIS_POSITION_RE = re.compile(r"\b(?:this|the)\s+(?:position|role|job)\b", re.I)
+_THIS_POSITION_RE = re.compile(
+    r"\b(?:(?:this|the)\s+(?:position|role|job)|this\s+one)\b", re.I)
+# A clearance the candidate must already hold: "Must hold an active TS/SCI
+# clearance ... if required by the program" asks for one now, whatever the
+# contract clause says about the polygraph after it.
+_HELD_CLEARANCE_RE = re.compile(r"\b(?:active|current(?:ly)?|hold\w*|possess\w*)\b", re.I)
 
 
 def _clearance_sentences(text: str):
@@ -1759,7 +1764,11 @@ def _clearance_waived(text: str, start: int, sentence: str, rank: int,
     if none and not _LATER_CLEARANCE_RE.search(sentence, none.end()):
         return True
     if _CONTRACT_CONDITIONAL_RE.search(sentence):
-        return True
+        # Waived unless the rest of the sentence demands a clearance held now
+        # (a required word and a held word outside the contract clause).
+        rest = _NOT_REQUIRED_RE.sub(" ", _CONTRACT_CONDITIONAL_RE.sub(" ", sentence))
+        if not (_CLEARANCE_REQUIRED_RE.search(rest) and _HELD_CLEARANCE_RE.search(rest)):
+            return True
     if _SOME_POSITIONS_RE.search(sentence) and not _THIS_POSITION_RE.search(sentence):
         return True
     stated = _NOT_REQUIRED_RE.sub(" ", sentence)

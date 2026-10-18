@@ -15,35 +15,33 @@ through a file.
    blocklisted companies, and appends what is new to the master CSV.
 2. **Scoring** (`pipeline/score_jobs.py`) reads the new rows in two stages: a cheap first pass
    drops the clear misses, and a deeper second pass gives each job left a 1 to 10 fit score, a
-   main factor and a recommendation. Gemini does the reading, with Jev (a small judge model)
-   first when it is switched on. The VM then copies the master to Google Drive.
+   main factor and a recommendation. Gemini (or the Claude Code CLI, on the PC) does the
+   reading, with Jev (a small judge model) first when it is switched on. Code filters run
+   before either stage: years, advanced degree, clearance, and postings outside the US. The
+   VM then copies the master to Google Drive.
 3. **The dashboard** (`local/app.py` + `local/qt/`) runs on your Windows machine. It reads the
    synced master, lists the high scores, keeps the tracker of what you applied to, and drives
    the **résumé engine** (`local/resume_tailor/`), which turns your experience file into a
    tailored LaTeX résumé, a cover letter and an apply sheet (`apply.md`) in one folder per job.
 4. **Auto-apply** (`local/apply_run.py` + the `apply_*` modules) takes the jobs you queued from
-   the dashboard, opens each posting in its own Chromium profile, reads every page with Jev,
+   the dashboard, opens each posting in the run's own browser profile (Google Chrome, or
+   Playwright's Chromium when Chrome will not start), reads every page with Jev,
    fills the form from your apply sheet and saved answers, and either sends the application
    through the submit gate or parks the job for you.
 
 ### The data flow
 
-```
-Bright Data --scrape--> new rows --score--> master CSV on the VM --copy--> Google Drive
-                                                                              |
-                                                       dashboard reads it  <--+
-                                                              |  you pick a job
-                                                              v
-                                   tailor: résumé PDF, cover letter, apply.md (job folder)
-                                                              |  you queue it
-                                                              v
-                                                   the apply queue (apply_queue.py)
-                                                              |  Start
-                                                              v
-                                drain (apply_run.py): per page read, judge, fill, gate
-                                                              |
-                                                              v
-                       apply_record.md beside the sheet, and the queue entry finished
+```mermaid
+flowchart TD
+    BD["Bright Data"] -->|scrape| NR["new rows"] -->|filter + score| MV[("master CSV on the VM")]
+    MV -->|copy| GD[("Google Drive")]
+    GD -->|dashboard reads it| DB["dashboard"]
+    DB -->|you pick a job| TL["tailor: résumé PDF, cover letter,<br/>apply.md (job folder)"]
+    TL -->|you queue it| Q["the apply queue (apply_queue.py)"]
+    Q -->|Start| DR["drain (apply_run.py):<br/>per page read, judge, fill, gate"]
+    DR --> RC["apply_record.md beside the sheet,<br/>and the queue entry finished"]
+    DB -->|Find new jobs, Add job by hand| OB["outbox/*.csv.gz"]
+    OB -->|scp to ~/incoming, merged before the next scrape| MV
 ```
 
 A job you add by hand, or a scrape you run from the dashboard, goes the other way: its rows
@@ -1248,7 +1246,7 @@ it runs out of droppable bullets and returns the over-length PDF.
 `CompileResult.pages` carries the final page count so `run.tailor()` records a warning for
 that case. See "Run reporting" below.
 
-## Data flow, end to end
+## Résumé data flow, end to end
 ```mermaid
 flowchart LR
     JOB["job (CSV row)"] --> SEL["select"]

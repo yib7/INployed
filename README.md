@@ -18,16 +18,17 @@ Two rules keep it to what you wrote, and code enforces both:
   every required field is filled from your data and read back. Anything less pauses for
   your answer or parks the job with the reason.
 
-17,366 postings collected as of September 2026. 8% earn a second-stage recommendation
-and 5% come back *apply*, so that is all you read.
+45,458 postings collected from June 6 to October 16, 2026. 6% earn a second-stage
+recommendation and 5% come back *apply*, so that is all you read.
 
-Every push runs the full test suite on Windows, the pipeline and the auto-apply browser
-tests on Linux, and a clean-room job that installs from this README's own setup steps.
+Every push to `main` or a release branch runs the full test suite on Windows, the pipeline
+and the auto-apply browser tests on Linux, and a clean-room job that installs from this
+README's own setup steps.
 
 Four pieces do the work:
 
-1. **Discovery** (`pipeline/scraper.py`) collects postings from Bright Data and drops
-   every one it has collected before.
+1. **Discovery** (`pipeline/scraper.py`) collects postings from Bright Data. Each search
+   sends its own skip list, so a posting already collected is not bought again.
 2. **Scoring** (`pipeline/score_jobs.py`) ranks each job in two stages on Gemini or
    Claude, with TypeSafe's Jev model making the calls first when it is on.
 3. **The dashboard** (`local/app.py`, PySide6/Qt) is where you triage and track. It runs
@@ -43,7 +44,7 @@ Four pieces do the work:
 
 | Triage: **High Score** | Apply: **Auto-apply** |
 |---|---|
-| ![The High Score tab. Thirteen ranked postings, each row tinted by recommendation and carrying a score badge, a deep-score bar, and an Apply, Consider, Tailored or Tailor failed pill; a legend under the table maps the tints back to those states. The selected job's detail card shows the model's reason, strengths and gaps beside the Tailor résumé and Apply buttons.](docs/dashboard.png) | ![The Auto-apply tab. A Waiting for you card at the top asks one question a run could not answer from the saved answers, with its options as radio buttons, a Save for future runs box, and the Fill and continue, I filled it in the browser, and Park it buttons. Below it the queue table lists each job's company, title, status pill, attempts, missing answers and a Difficulty score from 1 to 10. Start auto-apply run sits above the table, and Check difficulty sits under the selected job's details.](docs/auto-apply.png) |
+| ![The High Score tab. Thirteen ranked postings, each row tinted by recommendation and carrying a score badge, a deep-score bar, and an Apply, Consider, Tailored or Tailor failed pill; a legend under the table maps the tints back to those states. The selected job's detail card shows the model's reason, strengths and gaps beside the Tailor résumé and Apply buttons.](docs/dashboard.png) | ![The Auto-apply tab. A Waiting for you card at the top asks one question a run could not answer from the saved answers, with its options as radio buttons, a Save for future runs box, and the Fill and continue, I filled it in the browser, continue, and Park it buttons. Below it the queue table lists each job's company, title, status pill, attempts, missing answers and a Difficulty score from 1 to 10. Start auto-apply run sits above the table, and Check difficulty sits under the selected job's details.](docs/auto-apply.png) |
 | Your source of truth: **Resume Data** | Follow through: **Tracker** |
 | ![The Resume Data tab. A form editor over master_experience.yaml: name, email, phone, location, LinkedIn and GitHub above an Experience entry whose achievement is broken into what, angles and impact atom fields. A banner warns that resume.md is older than this data.](docs/resume-data.png) | ![The Tracker tab. Filter chips count five applications by state: Applied 2, Interviewing 1, Offer 1, Rejected 1, Follow-up due 1. The table lists status, updated and applied dates, days elapsed and follow-up state, and the detail card for the oldest application, unanswered for 88 days, spells out a NEXT STEP: send a follow-up note.](docs/tracker.png) |
 
@@ -56,26 +57,32 @@ and placeholder keys.)*
 
 ```mermaid
 flowchart TD
+    BD[("Bright Data<br/>billed per posting")]
     subgraph Cloud["GCP VM (cron, on the schedule you set)"]
-        M["merge_incoming.py<br/>fold in rows from the PC"] --> A["scraper.py<br/>job discovery"] --> B["score_jobs.py<br/>2-stage scorer"]
+        M["merge_incoming.py<br/>fold in rows from the PC"] --> A["scraper.py<br/>job discovery"] --> B["score_jobs.py<br/>filters, then 2-stage scorer"]
     end
+    BD -->|new postings only| A
     B -->|scored master| C[("Google Drive")]
-    C -->|Drive desktop sync| E
+    C -->|Drive desktop sync,<br/>a local copy when Drive is off| E
     subgraph Desktop["Windows PC"]
+        L["Find new jobs<br/>the same scrape + score, run here"] -->|shown at once| E
         E["dashboard (Qt)<br/>triage, tracker, stats"] -->|Tailor resume| F["resume_tailor/<br/>select, rephrase, verify, LaTeX<br/>PDF, cover letter, apply.md"]
         F -->|Queue for auto-apply| R["apply_run.py drain<br/>Jev reads each page,<br/>code fills it from apply.md"]
         R --> G{"submit gate"}
         G -->|passes| S["submitted"]
         G -->|fails| K["paused for you,<br/>or parked with the reason"]
         S -->|Mark applied| T[("Tracker<br/>local SQLite")]
-        E -->|Find new jobs| L["local scrape<br/>outbox/*.csv.gz"]
+        L --> O["outbox/*.csv.gz"]
     end
-    M ---|rows from the PC, by scp| L
-    Cloud -.-|the dashboard sets schedule, pause,<br/>config, key rotation| E
+    BD -.->|new postings only| L
+    O -->|scp, before the next VM scrape| M
+    E -.-|the dashboard sets schedule, pause,<br/>config, key rotation| Cloud
 ```
 
 One master CSV, two writers. The VM owns it. Anything found on the PC rides the outbox
-up and is merged before the next scrape, so a posting is paid for once.
+up and is merged before the next scrape, so a posting is paid for once. The dashboard
+keeps description text in an on-disk cache (`local/desc_cache.py`) and reads it per job,
+so a 45,000-row list loads in a few seconds.
 
 The scorer's Gemini calls go through one key pool: free-tier keys first, metered per key
 and model, and a paid Cloud project only when every free pair is spent. The tailor joins
@@ -218,18 +225,24 @@ names whichever piece is still missing.
 
 ## What it does
 
-- **Discover:** on the VM's cron schedule, or on demand with **Find new jobs**. The
-  exclude list sent to Bright Data holds up to 10,000 ids, ranked by the day each job was
-  last collected, so a posting you already have is not bought again.
-- **Score:** a cheap first stage drops the clear misses; a deeper second stage gives the
-  rest a 1 to 10 fit, strengths, gaps and apply / consider / skip. **About you** (school
-  status, graduation month, clearance) feeds both stages.
+- **Discover:** on the VM's cron schedule, or on demand with **Find new jobs**. Each
+  search carries its own skip list of up to 10,000 known jobs its keyword can return,
+  newest by the day each was last collected, so a posting you already have is not bought
+  again. **Experience level** leaves senior titles out of the search (`NOT Senior NOT Sr
+  NOT Lead NOT Principal` for entry level).
+- **Score:** code filters run first. They drop postings outside the U.S. and those that
+  require your years cutoff or more, an advanced degree, or a clearance you lack. A cheap
+  first stage drops the clear misses; a deeper second stage gives the rest a 1 to 10 fit,
+  strengths, gaps and apply / consider / skip. **About you** (school status, graduation
+  month, clearance) feeds both stages.
 - **Triage:** **High Score** lists unseen postings scoring 4 or more, tinted by
   recommendation. A repost of a job you already marked stays out.
 - **Tailor:** one click writes a one-page LaTeX résumé, a cover letter, an ATS keyword
-  report, an interview-prep sheet and `apply.md`. Batches run in parallel.
+  report, an interview-prep sheet and `apply.md`. A batch tailors 4 at a time by default
+  (1 to 10). **Bullets by strength** gives the best-matching projects more bullets and
+  lines, and the contact line can carry "U.S. Citizen".
 - **Check difficulty:** Jev reads a queued job's first application page, typing nothing,
-  and scores it 1 to 10. Up to 10 jobs check at once.
+  and scores it 1 to 10. Jobs are read one at a time, up to 30 per click.
 - **Auto-apply:** **Start auto-apply run** works through the queue in the run's own Chrome
   profile. A question it needs you for shows up as a **Waiting for you** card. Each job
   gets an `apply_record.md` of what was typed where.
@@ -265,13 +278,16 @@ and the data every bullet comes from.
   deploy yourself.
 - **It costs money at volume.** Bright Data bills per collected posting, Gemini per token
   (the tailor bills your Cloud project by default), and Jev $0.042 per million input
-  tokens for scoring, tailoring, the difficulty check and every auto-apply page.
+  tokens for scoring, tailoring, the difficulty check and every auto-apply page. Leaving
+  senior titles out makes Bright Data match keywords in the description too, so expect
+  about twice the jobs billed per search.
 - **Auto-apply knows the pages it has met.** LinkedIn Easy Apply jobs are left to you, a
   CAPTCHA or payment page parks the job, and a required question your answers don't
   cover pauses the run, then parks. A portal that changes its pages can park jobs that
   used to go through.
-- **One master password for every job site:** the run signs up and signs in with it, so
-  a fake posting's sign-up page would learn it. Use a password you keep for job
+- **One master password for every job site.** The run types it only over https into a
+  password box on the application's own site, but a fake posting that runs its own
+  careers site counts as that site and would learn it. Use a password you keep for job
   applications only.
 - **The scorer's prompts describe one candidate:** early-career, data and engineering
   roles, authorized to work in the U.S. **About you** covers school status and clearance;
@@ -280,6 +296,8 @@ and the data every bullet comes from.
   lowercase words passes, a bare `30m` reads as thirty million, and two- and three-letter
   acronyms are its weakest match (`MS` traces to `systems`). Read the output before you
   send it.
+- **Next:** per-site passwords for auto-apply, and splitting the three largest modules
+  (`score_jobs.py`, `scraper.py`, `jobsdata.py`) along the seams they already have.
 
 ---
 
@@ -293,7 +311,8 @@ The engine (`local/resume_tailor/`) can only select and re-phrase:
    It can only choose from your atoms.
 2. **rephrase:** write one bullet per group from that group's facts alone.
 3. **bullet passes:** verb dedupe, an underfull bullet filled from a spare fact in its
-   own entry, a deterministic style gate, and an AI-writing sweep over each whole entry.
+   own entry, a deterministic style gate, and an AI-writing sweep over each whole entry
+   that a check flags.
 4. **layout:** fit each bullet to a printed-line budget measured from real Times glyph
    widths. No pass can grow an entry's line count.
 5. **compile:** render LaTeX and enforce one page.
@@ -368,6 +387,8 @@ Jev answers questions and writes nothing. Code decides what happens on the page:
   sheet. One unsupported sentence drops the draft, and the field is left for you.
 - **Emailed codes come only from the job's own senders**, and Chrome runs with its
   sandbox on and takes no downloads.
+- **A posting's text stays text.** The apply sheet viewer and the Ask AI chat load no
+  image or file that scraped or model-written markdown points at.
 
 Switch **Submit when verified** off and every job stops at its submit step. The full park
 policy: [docs/USER_GUIDE.md](docs/USER_GUIDE.md#auto-apply-batch-jev-judged).
@@ -398,8 +419,8 @@ does not disarm them and a "no credentials" run bills a real collection. Set
 ```
 Open INployed Dashboard.cmd  double-click to launch the dashboard (no terminal)
 pipeline/            the headless scripts the VM runs, flat so they run standalone:
-                     scraper.py, score_jobs.py + jev_score.py, keypool.py, claude_cli.py,
-                     merge_incoming.py, prune_master.py
+                     scraper.py, score_jobs.py + jev_score.py + us_location.py,
+                     keypool.py, claude_cli.py, merge_incoming.py, prune_master.py
 local/app.py         the PySide6/Qt dashboard; its UI is local/qt/
 local/resume_tailor/ the résumé engine: selection, compose, verify.py (the gate), LaTeX
 local/apply_run.py   the auto-apply drain; each apply_*.py holds one concern

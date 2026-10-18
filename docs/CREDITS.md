@@ -52,7 +52,8 @@ This project stands on a lot of other people's work.
   for this pipeline.
 
 ## Services & APIs
-- **Google Gemini** via **Vertex AI**: job relevance scoring and résumé composition.
+- **Google Gemini**, through API keys and **Vertex AI**: job relevance scoring and résumé
+  composition.
 - **Bright Data**: LinkedIn job dataset collection.
 - **Google Drive** + **rclone**: syncing scraped results from the VM to the desktop.
 - **MiKTeX** (`pdflatex`): LaTeX to PDF compilation.

@@ -20,6 +20,12 @@ second model call), and `apply.md` (a self-contained apply sheet you paste into
 Claude-in-Chrome). The cover letter's plain text lives in `apply.md`'s `## Cover letter`
 section, which is what you paste into an application's cover-letter box.
 
+The résumé header's LinkedIn and GitHub links, `apply.md` and the apply panel all use the
+full `https://www.linkedin.com/...` and `https://www.github.com/...` form, because some
+application forms reject a profile URL without it; the printed résumé text stays short.
+**Show "U.S. Citizen" on the résumé** (Settings → Resume, off by default) adds it to the
+end of the contact line under your name; turn it on only if you are a U.S. citizen.
+
 ### Write a grounded cover letter
 Add `--cover-letter` to the tailor CLI (or tick the box in the dashboard) and the engine
 writes the letter as narrative prose built from the atoms the tailor selected for that job.
@@ -57,7 +63,9 @@ comma-separated list of per-bullet printed-line counts. For example, `2, 2, 1` m
 bullets sized 2 / 2 / 1 lines (each 1 to 3, up to 5 bullets), and the one-page tailor
 honors it. A **"Bullets by strength"** box sizes projects by how strongly each ranks for
 *this* job, overriding the flat count: type tiers as `projects:bullets` pairs (e.g.
-`2:3, 2:2, 1:1`) and the strongest-matching projects earn the extra bullets. A master
+`2:3, 2:2, 1:1`) and the strongest-matching projects earn the extra bullets. The right side
+can instead list each bullet's printed lines: `1:2-2-1` gives the top project three bullets
+of 2, 2 and 1 lines, and `1:2-` one bullet of 2 lines. A master
 **"Apply custom bullet layout"** checkbox turns the whole feature on or off: unchecked,
 the engine uses its built-in defaults but your saved targets are kept, so you can
 **A/B test** whether your custom layout helps without throwing the configuration away.
@@ -91,6 +99,10 @@ follow-up nudges, and run stats. A few behaviors to know:
   bullets`), so a multi-minute run is never a silent freeze.
 - The Step 4 get-started panel lists its three next actions (Open Settings · Find new jobs ·
   Set up Resume Data) and is replaced by the job table as soon as you have scored jobs.
+- The job list loads without description text: descriptions sit in an on-disk cache,
+  `%LOCALAPPDATA%\linkedin_watcher\descriptions.db`, and a job's description is read when
+  you select it. The cache rebuilds itself, so deleting the file only makes the next load
+  slower.
 
 Each job tab keeps a tidy filter bar: a search box plus a **Filters** button that holds
 min-score / day / time / recommendation / Easy-Apply (on the Tracker, also *Follow-up due
@@ -665,6 +677,12 @@ required" do not count as an advanced-degree requirement. A senior role the hire
 or grows into, a title with "II" on an Entry level posting and "Member of Technical Staff"
 do not mark a posting too senior. These filters only keep more jobs; the scorer rates the
 extra ones.
+
+**Jobs outside the US.** Every search asks Bright Data for US jobs, but some runs return
+postings from other countries. A posting whose location names another country is dropped
+before scoring (`filter_non_us`, from `pipeline/us_location.py`), and High Score hides the
+same rows for jobs scored before the filter existed. A blank or unrecognised location stays,
+and a job you added by hand always shows.
 
 When you hold a clearance or tick the checkbox, the scoring prompts state it as well, which
 catches wording the filter misses. A job that needs an active clearance you do not hold
@@ -1487,6 +1505,6 @@ acts on a single job.
 
 **One check or run at a time.** A run, **Sign in to sites** and the difficulty check all use
 the same browser profile, so only one of them can have it open (a check of several jobs
-holds the profile for its whole run, though its windows use the copies). While one does, the others
+holds the profile for its whole run). While one does, the others
 refuse to start and say "The auto-apply browser is open: a run, a sign-in or a difficulty
 check holds its profile." Close that window, or wait for it to finish.

@@ -329,3 +329,20 @@ def test_a_lock_is_not_mistaken_for_corruption(db, tmp_path, monkeypatch):
         holder.close()
     # the existing cache survived the busy error
     assert desc_cache.lookup("1", str(src)) == {"job_summary": "s"}
+
+
+def test_a_write_sqlite_already_rolled_back_raises_its_own_error(tmp_path):
+    """SQLite ends the transaction itself on SQLITE_FULL and its kin; the
+    ROLLBACK after it raised "no transaction is active" in place of the real
+    error, which _run then judged for corruption."""
+    import sqlite3
+
+    con = sqlite3.connect(tmp_path / "t.db", isolation_level=None)
+    try:
+        with pytest.raises(ValueError, match="the real error"):
+            with desc_cache._write(con):
+                con.execute("ROLLBACK")          # what SQLite did on its own
+                raise ValueError("the real error")
+        assert not con.in_transaction
+    finally:
+        con.close()

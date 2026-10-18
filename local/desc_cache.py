@@ -80,7 +80,14 @@ def _write(con: sqlite3.Connection) -> Iterator[None]:
     try:
         yield
     except BaseException:
-        con.execute("ROLLBACK")
+        # SQLite rolls back by itself on some errors (SQLITE_FULL, IOERR, NOMEM);
+        # a ROLLBACK then raises "no transaction is active" and hides the real
+        # error from _run's _is_broken check.
+        if con.in_transaction:
+            try:
+                con.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
         raise
     con.execute("COMMIT")
 

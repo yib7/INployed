@@ -172,6 +172,17 @@ def test_gitattributes_forces_line_endings_for_the_scripts_that_break_without_it
             f"{pattern} is a Windows launcher and PowerShell 5.1 needs CRLF"
 
 
+def test_gitattributes_marks_the_binary_types_the_repo_writes_as_binary():
+    """A PDF or a gzip can pass git's NUL probe and be normalized as text, which
+    corrupts it; the types this repo writes or captures are named outright."""
+    text = (REPO / ".gitattributes").read_text(encoding="utf-8")
+    rules = {ln.split()[0]: ln for ln in text.splitlines()
+             if ln.strip() and not ln.lstrip().startswith("#")}
+    for ext in ("png", "gif", "ico", "jpg", "jpeg", "webp", "pdf", "gz", "zip"):
+        rule = rules.get(f"*.{ext}", "")
+        assert "binary" in rule, f"*.{ext} needs a binary rule in .gitattributes"
+
+
 _BINARY_PROBE = 8000     # the bytes git reads to tell a binary file (a NUL among them)
 # the byte order marks: UTF-8's, UTF-16's (LE, BE) and UTF-32 BE's (UTF-32
 # LE's starts with UTF-16 LE's)

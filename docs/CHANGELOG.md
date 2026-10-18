@@ -70,6 +70,16 @@ All notable changes to INployed are recorded here. The format follows
   0.7.5 and `ruff` 0.17.1; the VM pin set takes the same `aiohttp` and `google-genai`.
   The pinned interpreter is Python 3.14.8, a security release (six CVEs in `ssl`,
   `zipfile`, `tarfile` and `urllib`).
+- **`requirements.txt` pins every package it installs.** It pinned only the 19 direct
+  dependencies, so the 54 packages under them (`numpy`, `pydantic` and `cryptography`
+  among them) resolved to whatever was newest on install day. A block at the end now pins all of them
+  to the set CI tests (two lines carry a Windows marker, two a Linux one).
+- **A fresh `.env` leaves the keys blank.** `scripts/setup.ps1` seeded
+  `your-bright-data-api-token`, `your-bright-data-dataset-id` and `your-gcp-project-id`
+  from `.env.example`, so a new install's Settings tab showed the Bright Data token as set,
+  **Check setup** sent the placeholder token to Bright Data and reported it rejected, and
+  the tailor took the placeholder for a Google Cloud project instead of saying none is set.
+  The three lines are now empty.
 
 ### Removed
 

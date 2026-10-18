@@ -165,13 +165,15 @@ def _ascii_fallback(text: str) -> str:
     return "".join(ch if ch.isascii() else _fold_char(ch) for ch in text)
 
 
-# A straight quote that OPENS a quotation: at the start, or after whitespace or an
-# opening bracket. TeX prints a straight ' as a closing quote, so 'mimeosomes'
+# A straight quote that OPENS a quotation: at the start, or after whitespace, an
+# opening bracket, a colon, a slash or a dash (said:"hi", A/"B", an em dash
+# before a quote). TeX prints a straight ' as a closing quote, so 'mimeosomes'
 # came out with two closing quotes; the opener has to be ` (and `` for "). A '
-# before a digit stays an apostrophe ('90s), and one inside a word (don't) is
-# never at an opening position.
-_OPEN_SINGLE = re.compile(r"(^|(?<=[\s(\[{]))'(?!\d)")
-_OPEN_DOUBLE = re.compile(r"(^|(?<=[\s(\[{]))\"")
+# right after an opener opens too ("'inner'" nests). A ' before a digit stays an
+# apostrophe ('90s), and one inside a word (don't) is never at an opening position.
+_OPENS_AFTER = r"-\s(\[{:/\u2013\u2014"
+_OPEN_SINGLE = re.compile(r"(^|(?<=[" + _OPENS_AFTER + r"`]))'(?!\d)")
+_OPEN_DOUBLE = re.compile(r"(^|(?<=[" + _OPENS_AFTER + r"]))\"")
 
 
 def _smart_quotes(text: str) -> str:

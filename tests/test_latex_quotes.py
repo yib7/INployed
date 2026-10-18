@@ -33,3 +33,19 @@ def test_curly_quotes_still_map_the_same_way():
 
 def test_a_bullet_keeps_its_quotes_and_its_full_stop():
     assert clean_bullet("Fixed the 'cameo' bug") == "Fixed the `cameo' bug."
+
+
+@pytest.mark.parametrize("text, tex", [
+    ('labelled:"urgent"', "labelled:``urgent''"),
+    ('A/"B" test', "A/``B'' test"),
+    ('Python---"fast"', "Python---``fast''"),
+    ("ranking —'top'", "ranking ---`top'"),
+])
+def test_a_quote_after_a_colon_slash_or_dash_opens(text, tex):
+    """An opener used to be found only after whitespace or a bracket, so
+    said:"hi" printed two closing quotes."""
+    assert to_latex(text) == tex
+
+
+def test_a_single_quote_inside_a_double_one_opens_too():
+    assert to_latex("\"'inner'\"") == "``" + "`inner'" + "''"

@@ -121,6 +121,49 @@ def test_trigger_url_cannot_carry_an_injected_query_parameter(monkeypatch):
     assert f"limit_per_input={scraper.LIMIT_PER_INPUT}" in seen["url"]
 
 
+def test_a_limit_past_the_settings_maximum_is_held_at_it(monkeypatch, tmp_path, capsys):
+    """Settings caps Postings per search at 500, but search_config.json is a
+    hand-editable file and the scraper bills keywords x types x this number:
+    5000 there billed up to ten times what the form allows. It is held at the
+    maximum with a warning, in the config and at the billed trigger."""
+    import asyncio
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    _write_config(tmp_path, {"limit_per_input": 5000})
+    assert scraper.load_search_config()["limit_per_input"] == scraper.MAX_LIMIT_PER_INPUT == 500
+    assert "500" in capsys.readouterr().out
+    _write_config(tmp_path, {"limit_per_input": 500})
+    assert scraper.load_search_config()["limit_per_input"] == 500
+
+    seen = {}
+
+    class _Resp:
+        status = 200
+
+        async def text(self, *a, **k):
+            return '{"snapshot_id": "s1"}'
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _Session:
+        def post(self, url, json=None):
+            seen["url"] = url
+            return _Resp()
+
+    asyncio.run(scraper.trigger(_Session(), {}, 5000))
+    assert "limit_per_input=500" in seen["url"] and "5000" not in seen["url"]
+
+
+def test_the_scraper_maximum_matches_the_settings_form():
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "local"))
+    import settings
+    field = next(f for f in settings.SETTINGS_SCHEMA if f.key == "limit_per_input")
+    assert field.max == scraper.MAX_LIMIT_PER_INPUT
+
+
 # --- exclude_window_days ------------------------------------------------------
 # exclude_window_days has no Settings row: the user sets it by hand in
 # search_config.json, and scraper.exclude_window_days() reads it there as well as from the

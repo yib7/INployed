@@ -111,6 +111,10 @@ def require_credentials() -> None:
 CHUNK = 2000  # Chunked streaming row count for append_to_master (memory bounded)
 
 LIMIT_PER_INPUT = 100
+# The most postings one search may ask for: the Settings form's maximum
+# (local/settings.py), held here too because search_config.json is a
+# hand-editable file and every search bills up to this many postings.
+MAX_LIMIT_PER_INPUT = 500
 POLL_INTERVAL = 10
 MAX_WAIT_MINUTES = 60
 MAX_POLL_FAILURES = 5
@@ -493,6 +497,20 @@ def _positive_int(value, default: int) -> int:
     return n if n >= 1 else default
 
 
+def _limit_per_input(value) -> int:
+    """`limit_per_input` as `_positive_int` reads it, held at MAX_LIMIT_PER_INPUT
+    with a warning: 5000 in a hand-edited file would bill up to ten times what
+    the Settings form allows, on every search of the run."""
+    n = _positive_int(value, LIMIT_PER_INPUT)
+    if n <= MAX_LIMIT_PER_INPUT:
+        return n
+    warn_once(f"limit_per_input={n} is over the most a search may collect "
+              f"({MAX_LIMIT_PER_INPUT}), so this run collects up to "
+              f"{MAX_LIMIT_PER_INPUT} per search. Lower it in Settings or "
+              f"{SEARCH_CONFIG_FILE}.", key=f"limit_per_input:{n}")
+    return MAX_LIMIT_PER_INPUT
+
+
 def _keyword_cap(value: int) -> int:
     """`max_keywords` as a slice length, with a negative collapsed to 1.
 
@@ -546,7 +564,7 @@ def load_search_config() -> dict:
     return {
         "keywords": _as_list(raw.get("keywords"), KEYWORDS),
         "remote_types": _as_list(raw.get("remote_types"), REMOTE_TYPES),
-        "limit_per_input": _positive_int(raw.get("limit_per_input"), LIMIT_PER_INPUT),
+        "limit_per_input": _limit_per_input(raw.get("limit_per_input")),
         "location": raw.get("location", BASE_FILTERS["location"]),
         "country": raw.get("country", BASE_FILTERS["country"]),
         "time_range": raw.get("time_range", BASE_FILTERS["time_range"]),
@@ -2294,7 +2312,7 @@ async def trigger(session: aiohttp.ClientSession, payload: dict,
     # quote() every interpolated value (dataset_id and the limit): a malformed
     # value then fails as a clean API error and never rewrites the query
     # string of a billed collection.
-    limit = _positive_int(limit_per_input, LIMIT_PER_INPUT)
+    limit = _limit_per_input(limit_per_input)
     url = (
         "https://api.brightdata.com/datasets/v3/scrape"
         f"?dataset_id={urllib.parse.quote(str(DATASET_ID), safe='')}"
@@ -2589,7 +2607,7 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
         if capped != limit_per_input:
             warn(f"--limit={limit_per_input} is not a positive count, so using "
                  f"{capped}. A bad value never lifts a spend guard.")
-        limit_per_input = capped
+        limit_per_input = _limit_per_input(capped)   # and never past the maximum
 
     _RUN_CONTEXT.update(snapshot_id=snapshot_id, run_label=run_label)
     raw_rows: Path | None = None

@@ -301,11 +301,13 @@ def test_nothing_trimmed_prints_no_cap_line(sandbox, capsys):
 
 
 def test_below_the_floor_warns_once_per_run(sandbox, capsys):
+    # the config holds limit_per_input at MAX_LIMIT_PER_INPUT, where the floor
+    # is out of reach; a caller handing build_inputs a larger one still meets it
     _config(sandbox, keywords=['"Software Engineer"', '"Data Scientist"', '"Quant"'],
-            remote_types=["Hybrid", "On-site"], limit_per_input=30_000)
+            remote_types=["Hybrid", "On-site"])
     known = _known([(i, "Software Engineer Data Scientist Quant", "")
                     for i in _ids(0, 500)])
-    inputs = scraper.build_inputs(known)
+    inputs = scraper.build_inputs(known, limit_per_input=30_000)
     out = capsys.readouterr().out
     assert len(_problem_lines(out, "WARNING")) == 1, out
     assert "limit_per_input" in out

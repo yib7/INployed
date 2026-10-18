@@ -123,3 +123,33 @@ def test_fuller_check_reads_multiple_chunks(tmp_path, registry, monkeypatch):
     registry.mark(["100"])
     assert watcher.has_unseen_high_score(
         p, 4, registry=registry, cfg={"repost_window_days": 30}) is False
+
+
+# High Score also hides jobs outside the US, jobs the user deleted and blocked
+# companies. With nothing yet marked in seen.db the watcher used to answer
+# "launch" before reading a row, onto an empty High Score tab.
+
+def test_only_a_job_abroad_does_not_launch_even_with_nothing_marked(tmp_path, registry):
+    p = tmp_path / "master.csv.gz"
+    _write_master(p, [_row("400", 8, "no", location="Toronto, Ontario, Canada")])
+    assert watcher.has_unseen_high_score(p, 4, registry=registry, cfg={}) is False
+
+
+def test_only_a_deleted_job_does_not_launch(tmp_path, registry, monkeypatch):
+    p = tmp_path / "master.csv.gz"
+    _write_master(p, [_row("500", 8, "no")])
+    monkeypatch.setattr(jobsdata, "load_removed_jobs", lambda: {"500"})
+    assert watcher.has_unseen_high_score(p, 4, registry=registry, cfg={}) is False
+
+
+def test_only_a_blocked_company_does_not_launch(tmp_path, registry, monkeypatch):
+    p = tmp_path / "master.csv.gz"
+    _write_master(p, [_row("600", 8, "no", company="Initech")])
+    monkeypatch.setattr(jobsdata, "load_local_blocklist", lambda paths: ["initech"])
+    assert watcher.has_unseen_high_score(p, 4, registry=registry, cfg={}) is False
+
+
+def test_an_unseen_us_job_still_launches_with_nothing_marked(tmp_path, registry):
+    p = tmp_path / "master.csv.gz"
+    _write_master(p, [_row("700", 8, "no")])
+    assert watcher.has_unseen_high_score(p, 4, registry=registry, cfg={}) is True

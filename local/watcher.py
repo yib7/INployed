@@ -281,19 +281,19 @@ _HIGH_SCORE_COLS = ("job_posting_id", "score", "is_seen",
 def _high_score_would_show(path: Path, min_score: int, registry, cfg: dict) -> bool:
     """Run the dashboard's own High Score filter over the rows that can matter.
 
-    Mirrors main_window._apply_df_views: seen.db ORed into is_seen
-    (csv_io.reconcile_is_seen), then jobsdata.filter_high_unseen_with_count
-    with the registry's mark dates and the configured repost window. Only two
-    kinds of row can change that answer, so a chunked read keeps just those:
-    candidates (unseen, score >= min_score) and rows marked in seen.db, which
-    are the only ones `blocked_repost_keys` reads. Raises on any problem; the
-    caller falls back to the probe's answer."""
+    Mirrors the dashboard: the jobs the user deleted and the blocked
+    companies left out (load_files, main_window._load_frames), seen.db ORed into
+    is_seen (csv_io.reconcile_is_seen), then jobsdata.filter_high_unseen_with_count
+    (reposts, jobs outside the US) with the registry's mark dates and the
+    configured repost window. Only two kinds of row can change that answer, so a
+    chunked read keeps just those: candidates (unseen, score >= min_score) and
+    rows marked in seen.db, which are the only ones `blocked_repost_keys` reads.
+    Raises on any problem; the caller falls back to the probe's answer."""
     import jobsdata
     from csv_io import reconcile_is_seen
 
     marked_at = registry.marked_at_all()
-    if not marked_at:
-        return True   # nothing marked: no seen.db flip and no repost block
+    removed = jobsdata.load_removed_jobs()
     window_days = jobsdata.load_repost_window_days(cfg=cfg)
     kept = []
     with pd.read_csv(path, usecols=lambda c: c in _HIGH_SCORE_COLS,
@@ -303,8 +303,10 @@ def _high_score_would_show(path: Path, min_score: int, registry, cfg: dict) -> b
             chunk["is_seen"] = chunk["is_seen"].fillna("no")   # as read_csv_gz does
             marked = chunk["job_posting_id"].astype(str).isin(marked_at.keys())
             candidate = (score >= min_score) & (chunk["is_seen"] == "no")
-            kept.append(chunk.loc[marked | candidate])
+            gone = chunk["job_posting_id"].astype(str).isin(removed)
+            kept.append(chunk.loc[(marked | candidate) & ~gone])
     df = pd.concat(kept, ignore_index=True)
+    df = jobsdata.drop_blocklisted(df, jobsdata.load_local_blocklist([path]))
     df, _ = reconcile_is_seen(df, registry)
     shown, hidden = jobsdata.filter_high_unseen_with_count(
         df, min_score, marked_at=marked_at, window_days=window_days)

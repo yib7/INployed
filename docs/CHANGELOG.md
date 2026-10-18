@@ -64,6 +64,12 @@ All notable changes to INployed are recorded here. The format follows
   flagged about a quarter of the bullets and caught real contrast framing, but most of its
   rewrites were small word swaps. With Jev on, Jev's own read still gates the sweep and no
   scan runs.
+- **Dependencies moved to current stable releases.** `pypdf` 6.21.1 (four releases of
+  input bounds on crafted PDFs), `aiohttp` 3.14.5 (cookie, request-target and WebSocket
+  parsing hardened in 3.14.4), `google-genai` 2.31.0, `PySide6` 6.12.0, `typesafe-sdk`
+  0.7.5 and `ruff` 0.17.1; the VM pin set takes the same `aiohttp` and `google-genai`.
+  The pinned interpreter is Python 3.14.8, a security release (six CVEs in `ssl`,
+  `zipfile`, `tarfile` and `urllib`).
 
 ### Removed
 

@@ -1,5 +1,5 @@
 # Local Windows side (Python 3.14, see .python-version): watcher, dashboard,
-# resume tailor, and tests. Pins re-verified against PyPI stable on 2026-10-03
+# resume tailor, and tests. Pins re-verified against PyPI stable on 2026-10-18
 # (every pin below is the newest installable stable release on PyPI, and pip-audit
 # reports no known vulnerability against this set). The one pin that is not the
 # newest version number is pytest-timeout: see the note at that line.
@@ -15,19 +15,21 @@
 # The VM has its own pin set: see scripts/requirements-vm.txt.
 
 pandas==3.0.6
-google-genai==2.28.0   # unified with scripts/requirements-vm.txt: the VM has run the 2.x line
+google-genai==2.31.0   # unified with scripts/requirements-vm.txt: the VM has run the 2.x line
                        # production since 2026-06 on the same genai.Client surface, so the
-                       # old "hold at 1.x" reason no longer applies (re-verified 2026-10-03;
-                       # 2.18 through 2.28 are additive -- audio transcription modes,
+                       # old "hold at 1.x" reason no longer applies (re-verified 2026-10-18;
+                       # 2.18 through 2.31 are additive -- audio transcription modes,
                        # environment files, httpx2 client injection, a streaming `destination`
                        # on client.files.download, in 2.22.0 the gemini-3.8-flash model
                        # entry, and in 2.23.0 environment copying plus a live-API turn
                        # status, in 2.24.0 to 2.28.0 new Interactions/agent-platform resources,
                        # request labels, continuation tokens and a fix that reaps aiohttp
-                       # sessions of closed event loops -- with no breaking change in the
+                       # sessions of closed event loops, in 2.29.0 to 2.31.0 continuation
+                       # resumption (off by default), higher default HTTP timeouts and mTLS
+                       # endpoint fixes -- with no breaking change in the
                        # changelog and no removal from the genai.Client surface we call)
 markdownify==1.2.3
-pypdf==6.19.0          # security: this is the text-extraction path resume_tailor runs over the
+pypdf==6.21.1          # security: this is the text-extraction path resume_tailor runs over the
                        # user's PDF resume, so it stays on the newest release. 6.15.0 fixed
                        # CVE-2026-71852 and CVE-2026-71870 (crafted-PDF resource exhaustion in
                        # font width / /ToUnicode parsing); 6.16.0 and 6.16.1 added two more
@@ -40,6 +42,10 @@ pypdf==6.19.0          # security: this is the text-extraction path resume_tailo
                        # config constants; this project only calls PdfReader, so nothing here
                        # is on that path. 6.19.0 (2026-09-16) bounds alphabetical page-label
                        # size (SEC) and deprecates PdfWriter.add_js, which nothing here calls.
+                       # 6.20.0 through 6.21.1 (2026-10-09..17) are all SEC: limits on
+                       # per-stream filter count and decoding effort, a tree cycle check,
+                       # bounded field and stream parsing work, and /DCTDecode data opened
+                       # only with Pillow's JPEG plugin. No deprecation or breaking change.
 PyYAML==6.0.3
 ruamel.yaml==0.19.1
 python-dotenv==1.2.4   # auto-loads .env so secrets stay out of the repo. 1.2.3 strips a leading
@@ -52,18 +58,20 @@ python-dotenv==1.2.4   # auto-loads .env so secrets stay out of the repo. 1.2.3 
 tzdata==2026.5         # IANA tz database for zoneinfo on Windows (Pacific RPD reset); data refresh 2026-10-03
 
 # desktop UI (local dashboard); abi3 wheels run on Python 3.14
-PySide6==6.11.2
+PySide6==6.12.0
 Send2Trash==2.1.0      # deleting a job moves its tailored-résumé folder to the Recycle Bin
 keyring==25.7.0        # ATS master password lives in the Windows Credential Manager (ats_accounts.py)
-typesafe-sdk==0.7.2    # the Jev judge behind auto-apply runs (local/jev.py). Imported lazily,
+typesafe-sdk==0.7.5    # the Jev judge behind auto-apply runs (local/jev.py). Imported lazily,
                        # so everything else runs without it; needs TYPESAFE_API_KEY in .env.
                        # 0.7.0 (2026-09-18) is the first pydantic-based release and the one
                        # whose answer objects local/jev.py translates; 0.7.1 validates the key
                        # early and keeps it out of logged exceptions, 0.7.2 adds an optional
-                       # http2 extra (not used here). Pinned exactly like every other line.
+                       # http2 extra (not used here), 0.7.3 fixes async TLS crashes, 0.7.4
+                       # sends non-finite numbers as strings, 0.7.5 turns on zstd request
+                       # compression (api.typesafe.ai accepts it) and adds image/Box answers. Pinned exactly like every other line.
 
 # only needed to run scraper.py locally (it normally runs on the VM)
-aiohttp==3.14.3
+aiohttp==3.14.5   # 3.14.4 hardens cookie, request-target and WebSocket parsing
 
 # fetches the posting when you paste a URL into "Add job by hand" (local/manual_add.py).
 # Also pulled in transitively by google-genai; pinned here because we import it directly.
@@ -75,11 +83,17 @@ requests==2.34.2
 #     Chromium in one command: scripts\setup.ps1 -AutoApply, which pins
 #     playwright==1.61.0 into the venv. Hold it at 1.61.0 (checked 2026-10-03):
 #     on 1.62.0 and 1.63.0, closing a page that a second failed load left on
-#     Chrome's error page never returns, so a run can hang. The everyday
+#     Chrome's error page never returns, so a run can hang. Re-checked
+#     2026-10-18 on 1.64.0: that hang is gone, but two tests fail that pass
+#     on 1.61.0 (a screenshot of a page whose load never fires is taken
+#     instead of skipped, and the hydration_beacon flow's Next click reads
+#     as doing nothing), so the hold stays. The everyday
 #     per-job Apply flow does not need it; "Check setup" reports it when missing.
 #   * Pillow (maintainers only): regenerates the desktop icon
 #     (python local/assets/make_icon.py) and composes the README media
 #     (scripts/build_demo_media.py, build_social_preview.py, build_walkthrough.py).
+#     CI installs Pillow 13.0.0, which fixes one critical and five high CVEs
+#     that 12.3.0 carries.
 #     The auto-apply trace tests read their masked screenshots with it and skip
 #     those pixel checks without it; CI installs it in the browser test step.
 #   * imageio-ffmpeg (maintainers only): supplies the ffmpeg binary that
@@ -108,7 +122,7 @@ pytest-timeout==2.4.0  # per-test timeout in CI: a hung test fails fast with a t
                        # Revisit when 2.5.1 or later ships (re-checked 2026-09-04: 2.5.0 is
                        # still the only 2.5.x on PyPI and both its files are still yanked;
                        # re-checked again 2026-09-15 and 2026-10-03, unchanged).
-ruff==0.16.10          # the lint command (python -m ruff check .); declared here so CI and a
+ruff==0.17.1           # the lint command (python -m ruff check .); declared here so CI and a
                        # fresh clone lint with the same version instead of whatever is global.
                        # The rule selection lives in pyproject.toml because 0.16 widened ruff's
                        # built-in default rule set -- see the comment at the top of that file.

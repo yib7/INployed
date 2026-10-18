@@ -237,10 +237,12 @@ names whichever piece is still missing.
   month, clearance) feeds both stages.
 - Triage: **High Score** lists unseen postings scoring 4 or more, tinted by
   recommendation. A repost of a job you already marked stays out.
-- Tailor: one click writes a one-page LaTeX résumé, a cover letter, an ATS keyword
-  report, an interview-prep sheet and `apply.md`. A batch tailors 4 at a time by default
-  (1 to 10). **Bullets by strength** gives the best-matching projects more bullets and
-  lines, and the contact line can carry "U.S. Citizen".
+- Tailor: one click writes a one-page LaTeX résumé, an ATS keyword report and `apply.md`,
+  plus a cover letter when you say yes to it. The interview-prep sheet comes from the
+  Tracker's **Interview prep** button, or from every run once you turn it on in Settings.
+  A batch tailors 4 at a time by default (1 to 10). **Bullets by strength** gives the
+  best-matching projects more bullets and lines, and the contact line can carry
+  "U.S. Citizen".
 - Check difficulty: Jev reads a queued job's first application page, typing nothing,
   and scores it 1 to 10. Jobs are read one at a time, up to 30 per click.
 - Auto-apply: **Start auto-apply run** works through the queue in the run's own Chrome
@@ -403,8 +405,8 @@ ruff.
 
 ## Tests
 ```bash
-python -m pytest -n auto    # unit, regression, Qt UI and auto-apply harness suite (Qt runs headless by itself)
-python tests/smoke_qt.py    # Qt dashboard smoke test
+venv/Scripts/python.exe -m pytest -n auto    # unit, regression, Qt UI and auto-apply harness suite (Qt runs headless by itself)
+venv/Scripts/python.exe tests/smoke_qt.py    # Qt dashboard smoke test
 ```
 The suite sets `QT_QPA_PLATFORM=offscreen` itself, keeps off the network, and replays
 recorded Jev answers, so it needs no key. The VM-script tests need a working `bash`: they

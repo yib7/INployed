@@ -38,7 +38,8 @@ from apply_page import (_BUTTON_HOME_JS, _button_text, field_named_in, _fields_s
                         _label_key, _message_key, _record_verification, settled_words,
                         _spare_judged)
 from apply_account_flow import (_fills_the_application, _names_password, _NEW_PASSWORD,
-                                page_problem, _page_words)
+                                page_problem, _page_words, _password_form_sends,
+                                PASSWORD_NEW_WINDOW_REASON)
 from apply_route import (_ACTED, buttons_moved, _draft_key, _drafts, form_entry_choice, form_route,
                          new_fields, _park_on_stuck, pick_holds, _picks, place_words, review_route,
                          _same_text, _shaped, shaped_holds, _typed_box)
@@ -1269,6 +1270,7 @@ class _FormSteps:
             box_url = self._frame_address(frame) if frame is not None else ""
             box_host = _host(box_url)
             loc, kind, posts_to, action = None, "", "", ""
+            sends, away = [], False
             try:
                 loc = apply_form.resolve(self.page, pf.locator).first
                 kind, action = loc.evaluate(
@@ -1278,11 +1280,16 @@ class _FormSteps:
                     posts_to = _host(action)    # a `javascript:` action is no destination
                 else:
                     action = ""
+                # a submit control's own `formaction` posts the form elsewhere,
+                # and a `target` window is one the navigation guard never sees
+                sends, away = _password_form_sends(loc)
+                posts_to = next((_host(u) for u in [action, *sends]
+                                 if u and not self._password_ok(u)), posts_to)
             except Exception:       # noqa: BLE001  (a box or frame that went away takes nothing)
                 loc = None
             # the page, the box's frame and the form's action: an unencrypted
             # address first, then a page or frame off the application
-            plain = self._secret_refusal(u for u in (str(self.page.url), box_url, action)
+            plain = self._secret_refusal(u for u in (str(self.page.url), box_url, action, *sends)
                                          if _insecure(u))
             outside = self._secret_refusal([str(self.page.url), box_url or str(self.page.url)])
             if not stored:
@@ -1297,6 +1304,8 @@ class _FormSteps:
                 # the application's own site only: LinkedIn, the inbox and a
                 # job board are allowed to load and never take the password
                 why = f"the password box's form posts to {posts_to}, outside the allowed sites"
+            elif away:
+                why = PASSWORD_NEW_WINDOW_REASON
             else:
                 if frame is not None:
                     guard.frames.add(id(frame))

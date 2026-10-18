@@ -149,15 +149,45 @@ _FORM_ACTION_JS = """el => {
 }"""
 
 
-def _form_action(loc) -> str:
-    """The absolute action URL of the form a box sits in; "" for a box with
-    no form or no action, a script action (`javascript:`), or a box that
-    cannot be read."""
+# Where the form holding a password box can send it: its action and every
+# submit control's own `formaction`, and whether a send opens another
+# window (the form's `target`, a `<base target>`, a control's `formtarget`).
+# The navigation guard routes this page's frames only, so a post into a new
+# window is one it never sees.
+_PASSWORD_FORM_SENDS_JS = """el => {
+  const form = el.form || el.closest('form');
+  if (!form) return {urls: [], away: false};
+  const abs = raw => { try { return new URL(raw, document.baseURI).href; } catch (e) { return ''; } };
+  const own = t => ['', '_self', '_top', '_parent'].includes(String(t || '').trim().toLowerCase());
+  const base = document.querySelector('base[target]');
+  const target = form.hasAttribute('target') ? form.getAttribute('target')
+                                             : (base ? base.getAttribute('target') : '');
+  const urls = [abs(form.getAttribute('action') ?? '')];
+  let away = !own(target);
+  for (const c of Array.from(form.elements)) {
+    const type = (c.getAttribute('type') || (c.tagName === 'BUTTON' ? 'submit' : '')).toLowerCase();
+    if (type !== 'submit' && type !== 'image') continue;
+    if (c.hasAttribute('formaction')) urls.push(abs(c.getAttribute('formaction')));
+    if (c.hasAttribute('formtarget') && !own(c.getAttribute('formtarget'))) away = true;
+  }
+  return {urls, away};
+}"""
+
+
+def _password_form_sends(loc) -> tuple[list[str], bool]:
+    """(the http(s) addresses the box's form can post to, whether a post
+    opens another window). A box that cannot be read gives ([], False): the
+    fill acts on that box and fails with it."""
     try:
-        action = str(loc.evaluate(_FORM_ACTION_JS, timeout=5_000) or "")
+        got = loc.evaluate(_PASSWORD_FORM_SENDS_JS, timeout=5_000) or {}
     except Exception:       # noqa: BLE001  (a box or frame that went away)
-        return ""
-    return action if urlsplit(action).scheme.lower() in ("http", "https") else ""
+        return [], False
+    urls = [str(u) for u in (got.get("urls") or [])
+            if urlsplit(str(u)).scheme.lower() in ("http", "https")]
+    return urls, bool(got.get("away"))
+
+
+PASSWORD_NEW_WINDOW_REASON = "the password box's form sends it into a new window"
 
 
 def _credential_form(digest) -> bool:
@@ -656,6 +686,7 @@ class _Accounts:
             # form's action
             password_urls = [str(page.url)]
             action_urls: list[str] = []
+            new_window = False
             box_frames: list = []
             for field in digest.fields:
                 loc = apply_form.resolve(page, field.locator).first
@@ -675,7 +706,9 @@ class _Accounts:
                     if frame is not None:
                         guard.frames.add(id(frame))
                         password_urls.append(self.run._frame_address(frame))
-                    action_urls.append(_form_action(loc))
+                    sends, away = _password_form_sends(loc)
+                    action_urls.extend(sends)
+                    new_window = new_window or away
                 elif _is_email_box(field):
                     emails.append(loc)
                     if 0 <= idx < len(frames):
@@ -737,6 +770,16 @@ class _Accounts:
                     raise _Parked("needs_human",
                                   f"a sign-in on {outside[0]}, outside the application site",
                                   LOGIN_NOTE)
+                # the form step's rule too: a form whose action sends what
+                # is typed to another host never takes the password
+                posts = sorted({_host(u) for u in action_urls
+                                if _host(u) and not self.run._password_ok(u)})
+                if posts:
+                    raise _Parked("needs_human",
+                                  f"the account form posts to {posts[0]}, outside the "
+                                  f"application site", LOGIN_NOTE)
+                if new_window:
+                    raise _Parked("needs_human", PASSWORD_NEW_WINDOW_REASON, LOGIN_NOTE)
                 if signup or password_step(digest) == "signup":
                     self.run._check_password_rules(digest, host)
                 kind = "signup" if signup else "login"

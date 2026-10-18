@@ -6,6 +6,48 @@ All notable changes to INployed are recorded here. The format follows
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-18
+
+Find new jobs stops paying again for jobs it already has: each search carries its own skip
+list of the known jobs its keyword can return, dated by the last day any run collected them,
+and **Experience level** leaves senior titles out of the search. The scorer drops jobs outside
+the US before it reads them, and the dashboard keeps job descriptions in an on-disk cache, so
+it loads in about 2.4 seconds and holds about a quarter of the memory. The résumé gains
+per-bullet line lengths and an optional U.S. Citizen line, and a signed-out Claude CLI now
+says so and offers **Sign in to Claude**. A release review fixed bugs across the scraper,
+scorer, dashboard and résumé engine, closed six security gaps in auto-apply and the
+dashboard, pinned every installed package, and redrew the dashboard's arrows, check marks
+and low-contrast text.
+
+It is a minor release, and a v2.0.0 setup keeps working. After upgrading: run
+`pip install -r requirements.txt` again; copy `pipeline/scraper.py`, `pipeline/score_jobs.py`
+and the new `pipeline/us_location.py` to the VM before you resume it; and if you saved
+Settings before, pick `claude-haiku-5-5` in the two rows named under Changed. The one
+command-line change is `apply_assess.py --parallel`, which is gone (see Removed).
+
+### Added
+
+- **Sign in to Claude from the dashboard.** When the Claude Code CLI is signed out, a tailor
+  run failed with a bare "claude exited 1". It now says the CLI is signed out, and the
+  dialog's **Sign in to Claude** button opens a console running `claude auth login`, which
+  finishes in the browser. No credential passes through the dashboard.
+- **"U.S. Citizen" on the résumé, if you want it.** Settings → Resume → **Show "U.S.
+  Citizen" on the résumé**, off by default, ends the contact line under your name with
+  "U.S. Citizen".
+- **Per-bullet line lengths in Bullets by strength.** A tier can list each bullet's printed
+  lines: `1:2-2-2, 1:2-2-1, 1:2-2` gives the strongest project three 2-line bullets, the
+  second three bullets with a 1-line last one, and the third two. The list length is the
+  bullet count. Plain `2:3` tiers work as before, and a per-project layout box still
+  overrides its tier.
+- **`resume_dates` for dates the PDF prints as written.** Experience, leadership and
+  education entries may carry an optional `resume_dates` that the PDF prints in place of
+  `dates` (see `master_experience.example.yaml`).
+- **An opt-in upstream AI-writing detector for the cover letter.** Settings → Resume → **Run
+  the upstream AI-writing detector on the cover letter**, off by default, runs the
+  avoid-ai-writing project's own detector (v3.38.0, bundled unmodified with its MIT license)
+  through Node.js while the letter's AI-writing check is on. Without Node.js it reports
+  nothing. The letter and résumé rule sets also take the rules upstream added since v3.18.0.
+
 ### Changed
 
 - **Experience level now leaves senior titles out of the search.** About half of the
@@ -81,6 +123,22 @@ All notable changes to INployed are recorded here. The format follows
   the tailor took the placeholder for a Google Cloud project instead of saying none is set.
   The three lines are now empty.
 
+- **The dashboard loads faster and holds far less memory.** Job descriptions now live in an
+  on-disk cache, `%LOCALAPPDATA%\linkedin_watcher\descriptions.db`, and a job's description
+  is read when you open it, so the job table no longer carries every description. On 43,235
+  real rows a warm load takes about 2.4 s (5.7 s on v2.0.0), and the dashboard stays near
+  650 MB after a dozen reloads, where v2.0.0 passed 2.5 GB after three. The first start
+  after upgrading builds the cache, about 8 s. Marking jobs seen keeps it, and a damaged
+  cache rebuilds itself.
+- **LinkedIn and GitHub links carry `www.`** in `apply.md`, the apply panel and the
+  résumé's link targets, since some application forms mark a profile URL without it as
+  wrong. The printed résumé text stays short.
+- **One search per keyword when every workplace type is wanted.** Bright Data mostly ignores
+  the remote filter: on 2026-10-13 a keyword's On-site and Hybrid searches returned 85% the
+  same jobs, and each copy was billed. Ticking all three types (or none) now runs one
+  unfiltered search per keyword, which cost 1.02 collected records per unique job in a test
+  the same day, against 1.53 for the split.
+
 ### Removed
 
 - **The Difficulty checks at once setting and the parallel check.** `apply_assess.py`
@@ -88,7 +146,8 @@ All notable changes to INployed are recorded here. The format follows
   `auto_apply_check_parallel` in `config.json` is ignored. The profile copies an older
   parallel check left under `%LOCALAPPDATA%\linkedin_watcher\assess_profiles` (they hold
   your sign-ins) are deleted the next time the dashboard starts or the auto-apply browser
-  opens.
+  opens. **Upgrading:** a shortcut or script that runs `apply_assess.py --parallel N` now
+  stops with "unrecognized arguments"; drop the flag.
 
 ### Fixed
 
@@ -225,6 +284,53 @@ All notable changes to INployed are recorded here. The format follows
   queue's Updated column shows `2026-10-18 10:11` instead of a cut-off timestamp. In the
   signed-out dialog, **Sign in to Claude** is the main button.
 
+- **Opening quotes and typed dates print right on the PDF.** A straight `'` or `"` that
+  opens a quotation, including one after a colon, a slash or a dash, reaches LaTeX as an
+  opening quote, so 'mimeosomes' no longer prints with two closing quotes, and a single
+  quote inside a double one opens. Dates that are not `YYYY`, `YYYY-MM` or `YYYY-MM-DD`
+  print as written ("2024 -- 2026" printed as "2024"), and `2025-6`, `06/2025` and a range
+  joined by a dash read as dates.
+- **Find new jobs keeps the jobs it paid for when a reply is odd.** A reply holding a
+  Unicode line separator inside a description or one bad UTF-8 byte, a progress or download
+  reply that is not JSON, and a job with no id no longer cost the collection, and the Ctrl+C
+  line names the file that holds the collected rows. A hand-edited
+  `"remote_types": "Remote"` (one string) ran six billed searches, one per letter, and
+  `"keywords": null` crashed the run; both now read as lists, and a config with no searches
+  stops before it sends anything.
+- **The US filter keeps US jobs it read as abroad:** "Washington, D.C.", "Cincinnati, OH
+  Metropolitan Area", "St. Louis, MO-IL", "New York, NY (Hybrid)", "Chicago, IL 60601" and
+  "Portland-Vancouver Area".
+- **A contract clause no longer waives a clearance the job needs now.** "Must hold an active
+  TS/SCI clearance ... if required by the program" read as contract-conditional, so a
+  candidate with no clearance had the job kept and scored.
+- **Sign in to Claude opens the sign-in under PowerShell's default policy.** The console ran
+  `claude` by name, which PowerShell resolves to npm's `claude.ps1`, a script the default
+  execution policy refuses; it now runs the CLI by its path.
+- **A Claude reply that corrects itself keeps the whole answer.** A last object that was a
+  one-item note or an empty echo of the schema replaced the full answer; a correction now
+  has to draw its keys from the longest answer. A reply that is valid JSON but not an object
+  is a bad reply instead of a crash.
+- **Dashboard and watcher.** A half-synced run file no longer fails the whole load. Marking
+  jobs seen no longer writes an older read of the master over a newer one that Google Drive
+  pulled in during the read. A run's problems note shows on that run's reload only. The
+  watcher also leaves out deleted jobs, blocked companies and jobs abroad before it opens
+  the dashboard. The job card's STRENGTHS lines no longer overlap in a short window at a
+  large interface size.
+- **Résumé.** A one-bullet tier with a line count (`1:2-`) can be typed and keeps its lines
+  through Save. The AI-writing repair call now reads every flag the résumé scan can raise,
+  so an entry flagged by a rule name, an "other" note or an unnamed tell gets a real repair.
+  A detector reply whose issues are not a list counts as a failed check, and a
+  `config.json` that is not a JSON object reads as empty instead of breaking every setting
+  it holds.
+- **Settings and Check difficulty.** A hand-edited level such as `Entry Level` now ticks its
+  box, where the next Save wrote a blank level that left no title words out. Past the 30-job
+  cap, Check difficulty sent every selected id on the command line, which fails to start
+  past about 900; it now passes only the jobs it takes, and a check that stops early says
+  how many it never reached.
+- **Dated backup copies stay out of git.** `.gitignore` matched `*.bak` only, so a
+  hand-made `master_experience.yaml.bak-2026-10-05` sat untracked and unignored;
+  `*.bak-*` and `*.bak.*` are now ignored too.
+
 ### Security
 
 - **The master password goes only into a form that posts to the application's site in the
@@ -252,6 +358,22 @@ All notable changes to INployed are recorded here. The format follows
   become spaces before LaTeX; a job title holding `} -->` keeps the apply sheet's job id; the
   Sign in to Claude console quotes a `claude` path holding a typographic apostrophe; queue
   updates clean the company, title and apply URL as new entries do.
+
+### Docs
+
+- The README, User Guide and Architecture doc describe this release: the per-keyword skip
+  lists, the Experience level title words and what they do to billing, the code filters
+  before scoring (US location, years, advanced degree, clearance), Check difficulty one job
+  at a time, the tailor batch size, the description cache, and where the master password
+  may go. The corpus figure is now 45,458 postings collected from June 6 to October 16,
+  2026. The data flow in the Architecture doc is a diagram.
+- Quick start names Python 3.14.8, asks for a short clone path (the venv's deepest PySide6
+  files need it with Windows long paths off), and lists the optional Claude Code CLI with
+  its sign-in. `.env.example` lists every variable the code reads, and the User Guide's
+  "What leaves your machine" table adds LinkedIn and the job boards, your webmail and
+  Google Drive.
+- The screenshots, the demo GIF and the social preview card are re-shot on the current
+  interface.
 
 ## [2.0.0] - 2026-10-05
 
@@ -2475,6 +2597,7 @@ First public release: an end-to-end job-discovery and résumé-tailoring pipelin
 - Cross-platform dashboard + engine (Windows / macOS / Linux); the setup scripts and VM
   automation are Windows-first.
 
+[2.1.0]: https://github.com/yib7/INployed/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/yib7/INployed/compare/v1.13.0...v2.0.0
 [1.13.0]: https://github.com/yib7/INployed/compare/v1.12.1...v1.13.0
 [1.12.1]: https://github.com/yib7/INployed/compare/v1.12.0...v1.12.1

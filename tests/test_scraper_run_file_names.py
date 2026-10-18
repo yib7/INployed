@@ -16,6 +16,14 @@ import score_jobs
 import scraper
 
 
+class _FixedClock(datetime):
+    """`datetime` with `now()` pinned to an ordinary afternoon."""
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls(2026, 3, 4, 15, 30, tzinfo=tz)
+
+
 @pytest.fixture
 def fake_run(monkeypatch, tmp_path):
     """main() end to end on the recovery path (no trigger, no network), writing
@@ -38,6 +46,9 @@ def fake_run(monkeypatch, tmp_path):
         return list(rows)
 
     monkeypatch.setattr(scraper, "download", fake_download)
+    # One fixed clock for the scraper and the test, so a run that crosses
+    # midnight cannot name its file for one day and look for it under the next.
+    monkeypatch.setattr(scraper, "datetime", _FixedClock)
 
     def go(ids):
         rows[:] = [{"job_posting_id": i, "job_title": f"T{i}"} for i in ids]
@@ -49,7 +60,7 @@ def fake_run(monkeypatch, tmp_path):
 
 
 def _today() -> str:
-    return datetime.now().strftime("%Y-%m-%d")
+    return _FixedClock.now().strftime("%Y-%m-%d")
 
 
 def _scored(path, ids=("0",)) -> None:

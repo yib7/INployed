@@ -78,13 +78,14 @@ A fifth license arrives without a pin: imageio-ffmpeg downloads its own **FFmpeg
 and nothing else from that list, is committed here.
 
 None of these are redistributed with this project; `pip` installs each from PyPI under
-its own license. Across the full pinned dependency tree the licenses are MIT, BSD-2/3,
-0BSD, Apache-2.0, PSF, Zlib, CC0-1.0 and MPL-2.0 (certifi); the Zlib, CC0-1.0 and 0BSD
+its own license. Across the full pinned dependency tree the licenses are MIT, MIT-0
+(cffi, under google-auth's cryptography), BSD-2/3, 0BSD, Apache-2.0, PSF, Zlib, CC0-1.0
+and MPL-2.0 (certifi); the Zlib, CC0-1.0 and 0BSD
 arms come from numpy's composite `BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0`,
 pulled in under pandas. All of them are permissive, and the MIT release license permits
 every one.
-The one copyleft dependency is **PySide6** (with PySide6-Essentials, PySide6-Addons and
-shiboken6), licensed LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only, or commercially from
+The one copyleft dependency is **PySide6** (with PySide6-Essentials, PySide6-Addons,
+PySide6-Pdf, PySide6-WebEngine and shiboken6), licensed LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only, or commercially from
 The Qt Company. See the License section of the README for why a source-only distribution
 satisfies the LGPL here.
 

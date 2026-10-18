@@ -421,9 +421,10 @@ No dependency is redistributed here. The repo is source only, and `pip` fetches 
 one from PyPI under its own license when you run Step 2.
 
 Across the tree `pip` actually installs, direct pins and transitive ones together, the
-licenses are MIT, BSD-2/3, 0BSD, Apache-2.0, PSF, Zlib, CC0-1.0 and MPL-2.0 (certifi,
-pulled in by requests and httpx; the Zlib, CC0-1.0 and 0BSD arms come from numpy's
-composite expression, under pandas). All of those permit an MIT release.
+licenses are MIT, MIT-0, BSD-2/3, 0BSD, Apache-2.0, PSF, Zlib, CC0-1.0 and MPL-2.0
+(certifi, pulled in by requests and httpx; MIT-0 is cffi, under google-auth's
+cryptography; the Zlib, CC0-1.0 and 0BSD arms come from numpy's composite expression,
+under pandas). All of those permit an MIT release.
 `docs/CREDITS.md` lists the same set per library.
 
 The one copyleft dependency is **PySide6/Qt**, which is LGPL-3.0-only OR GPL-2.0-only OR

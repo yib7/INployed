@@ -96,6 +96,24 @@ half (Qt dashboard, résumé engine, VM control). `scripts/` is ops and maintain
 `tests/` the suite, `docs/` the prose (the changelog is `docs/CHANGELOG.md`),
 `resume_tailor_files/` your résumé source data.
 
+What is in `scripts/`:
+
+| File | What it is for |
+| --- | --- |
+| `setup.ps1` | First-run setup (README Step 3): seeds `.env`, `local/config.json` and your `master_experience.yaml` from the examples; `-AutoApply` adds the browser half. |
+| `run_scraper.sh` | The VM's cron entry: merge, scrape, score, prune, then copy the master to Drive. |
+| `requirements-vm.txt` | The VM venv's own pin set (Python 3.11 on Debian). |
+| `atom_audit.py` | Hygiene audit of your experience atoms (see "Atom hygiene" below). |
+| `apply_matrix.py` | Runs every auto-apply fixture flow under the fake and noisy judges and prints the success matrix. |
+| `replay_check.py` | Release gate: replays the runner tests against the committed Jev answer cache. |
+| `jev_record.ps1` | Records or replays live Jev answers for a fixture set. Recording spends money. |
+| `jev_thresholds.py` | Prints recorded Jev answers next to `apply_judge.py`'s thresholds, for tuning after a record run. |
+| `jev_score_calibrate.py` | Compares Jev's job scores with the Gemini scores in a master. Spends money; refuses without `--live`. |
+| `ui_screenshots.py` | Offscreen screenshots of every tab on synthetic data, into the gitignored `.screenshots/`. |
+| `build_demo_media.py` | Stamps the four README stills from those screenshots and renders `docs/demo.gif` from the walkthrough's storyboard. |
+| `build_walkthrough.py` | Renders the README walkthrough video from the real window on synthetic data. |
+| `build_social_preview.py` | Builds GitHub's 1280x640 social preview card from `docs/dashboard.png`. |
+
 ## The four subsystems
 
 ### 1. Job discovery (`pipeline/scraper.py`)
@@ -234,6 +252,21 @@ function here, and the most heavily tested; see `tests/test_min_required_years.p
 Locally the scorer can also run through the Claude Code CLI (Settings → Scoring provider); the VM
 always scores with Gemini. A `claude` provider that falls back to Gemini also switches the
 stage model chains to the Gemini models, so the fallback never sends a Claude id to Gemini.
+
+**The mechanical filters** (`add_filter_columns`) run in code before stage 1 and mark a row
+`filtered_out` so no model reads it: a junk title or description, too many required years, a
+required clearance the candidate cannot hold, a required master's or PhD (off for a graduate
+student), Easy Apply when `DROP_EASY_APPLY` is on, an internship title once the candidate has
+finished school, and a location outside the United States. Each writes its own `filter_*`
+column, all False when the check does not apply, so the scored-CSV schema never changes. The
+location check is `pipeline/us_location.py` (`is_non_us_location`): Bright Data sometimes
+ignores the scrape's US location on an input and returns jobs from anywhere, so a row whose
+`job_location` names another country, or a foreign city or metro, gets `filter_non_us`. The
+rule leans toward keeping a job: a blank or unrecognised single name stays. The module is pure
+stdlib with no repo imports, so it ships beside `score_jobs.py` on the VM, and the dashboard
+loads the same file (`jobsdata.outside_us`) to hide those rows from High Score for jobs scored
+before the filter existed. A description under 40 characters is marked filtered too, so the
+rescore pass does not retry it forever.
 
 **Jev scoring** (`pipeline/jev_score.py`). When Jev is on, `score_jobs.py` asks Jev
 first for each job's stage, and the LLM stage runs only for the jobs Jev returned `None` on.
@@ -433,6 +466,13 @@ detail card for a right-side **Apply panel** (copyable doc paths + the apply she
 close, every turn on a worker thread. It answers only from that job's apply sheet and posting, so it
 declines when the sheet does not cover a question; an untailored job still gets a JD-only
 conversation.
+When the Claude Code CLI's sign-in has lapsed, every `claude -p` call fails with no tokens
+spent, and `pipeline/claude_cli.py` classifies that reply as kind `signed_out`. The tailor and
+cover-letter failure dialogs then carry a **Sign in to Claude** button
+(`qt/claude_signin.py`), which opens a new PowerShell console running `claude auth login`, the
+CLI's own browser sign-in. The console runs the CLI by its resolved path (`shutil.which`), so
+PowerShell never picks npm's `claude.ps1` shim that the default execution policy refuses. No
+credential passes through the dashboard.
 
 Between VM drops, `local/watcher.py` closes the loop with **no polling**: a one-shot fired by
 Windows Task Scheduler (Logon / Unlock / Resume plus six scheduled fires around the VM's Drive
@@ -1270,4 +1310,13 @@ flowchart LR
   miss, divergence from the fake or failed test. It never records and never spends: the
   record, capture, prune and dry-run switches and the judge's key are dropped from its child.
   Run it before tagging a release; a miss names the tests to re-record.
+- `tests/test_scraper_per_keyword.py`, `tests/test_scraper_not_keywords.py`,
+  `tests/test_scraper_ledger.py`, `tests/test_settings_experience_level.py`: the per-keyword
+  skip lists, the NOT-word title terms, the collection ledger and the Experience level setting.
+- `tests/test_us_location.py`: the non-US location rule and its `filter_non_us` column.
+- `tests/test_desc_cache.py`, `tests/test_load_files_desc_cache.py`: the description cache and
+  the trimmed frame `load_files` returns with it.
+- `tests/test_qt_claude_signin.py`, `tests/test_claude_cli_signed_out.py`: the signed-out
+  classification and the Sign in to Claude console.
+- `tests/test_aidetector.py`: the vendored Node detector bridge, with and without Node.
 - `tests/smoke_qt.py`: Qt dashboard smoke (run directly with `QT_QPA_PLATFORM=offscreen`, not under pytest).

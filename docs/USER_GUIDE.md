@@ -826,8 +826,9 @@ The ATS master password lives in the Windows Credential Manager. It leaves it to
 typed into a password box on the job's own application site, or copied to the
 clipboard when you ask (the copy is kept out of Windows clipboard history and the
 cloud clipboard). Auto-apply types it only on an `https` page and only on the
-application's own site: a plain-HTTP password page, or a move to another company's
-site on the same ATS, parks the job with a plain reason. **One password is used on
+application's own site, into a form that posts back to that site in the same window: a
+plain-HTTP password page, a form that sends it to another host or into a new window,
+or a move to another company's site on the same ATS, parks the job with a plain reason. **One password is used on
 every application site**, so a site that stores it badly, or a fake sign-in page on
 an admitted site, exposes your account on the others. Use a password you use nowhere
 else. Per-site passwords are planned.

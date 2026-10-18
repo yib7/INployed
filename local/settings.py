@@ -570,15 +570,10 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("title_exclude_terms", "Leave out job titles with", "str", "", "Scraper", "search",
           help="Blank = automatic: Internship and Entry level leave out Senior, Sr, Lead "
                "and Principal; other levels leave out nothing. Or type your own words, "
-               "comma-separated (e.g. Senior, Sr, Lead, Staff), or none to leave nothing "
-               "out. The words match job titles only. A search whose keyword holds a word "
-               "keeps it. Staff is not automatic, so Member of Technical Staff jobs come "
-               "through. Heads-up: leaving out any word also changes how keywords match. "
-               "Bright Data then matches a keyword anywhere in the posting, description "
-               "included, not just the title (on 2026-10-16, 16% of results had the "
-               "keyword in the title, against 100% before). Expect about twice the jobs, "
-               "the same job found by several keywords, and more postings billed. Type "
-               "none to go back to title-only matching.",
+               "comma-separated (e.g. Senior, Staff), or none. The words match job "
+               "titles only. Heads-up: with any word left out, Bright Data also matches "
+               "keywords in the description, so expect more jobs billed. Type none to go "
+               "back to title-only matching.",
           optional=True, file_form=FORM_WORDS),
     Field("drop_easy_apply", "Drop Easy Apply jobs before scoring", "bool", False,
           "Scraper", "scoring",

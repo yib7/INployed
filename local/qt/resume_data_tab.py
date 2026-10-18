@@ -60,7 +60,8 @@ def _parse_tiers(text: str) -> list[dict]:
 
     The right side may instead be each bullet's printed lines, joined by '-' or
     spaces: '1:2-2-1' is one project with three bullets of 2, 2 and 1 lines
-    ({'projects': 1, 'bullets': 3, 'lines': [2, 2, 1]})."""
+    ({'projects': 1, 'bullets': 3, 'lines': [2, 2, 1]}). A trailing '-' makes a
+    single number a line count: '1:2-' is one bullet of 2 lines."""
     out: list[dict] = []
     for tok in text.replace(";", ",").split(","):
         parts = tok.strip().split(":")
@@ -71,7 +72,8 @@ def _parse_tiers(text: str) -> list[dict]:
             sizes = [int(n) for n in parts[1].replace("-", " ").replace("/", " ").split()]
         except ValueError:
             continue
-        if len(sizes) == 1:
+        joined = "-" in parts[1] or "/" in parts[1]
+        if len(sizes) == 1 and not joined:
             out.append({"projects": projects, "bullets": sizes[0]})
         elif sizes:
             out.append({"projects": projects, "bullets": len(sizes), "lines": sizes})
@@ -80,11 +82,14 @@ def _parse_tiers(text: str) -> list[dict]:
 
 def _tiers_to_text(tiers: list) -> str:
     """Render saved tier dicts back into the 'projects:bullets, ...' box text
-    ('projects:2-2-1' for a tier with per-bullet lines)."""
+    ('projects:2-2-1' for a tier with per-bullet lines, 'projects:2-' for one
+    bullet of 2 lines)."""
     def right(t: dict) -> str:
         lines = t.get("lines")
         if isinstance(lines, list) and len(lines) > 1:
             return "-".join(str(n) for n in lines)
+        if isinstance(lines, list) and len(lines) == 1:
+            return f"{lines[0]}-"
         return str(t["bullets"])
     return ", ".join(f"{t['projects']}:{right(t)}" for t in (tiers or [])
                      if isinstance(t, dict) and "projects" in t and "bullets" in t)

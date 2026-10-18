@@ -104,3 +104,13 @@ def test_box_text_round_trips():
 
 def test_box_still_drops_junk():
     assert rdt._parse_tiers("2:3, 1:x-2, junk, 1:") == [{"projects": 2, "bullets": 3}]
+
+
+def test_one_bullet_with_a_set_line_count_round_trips():
+    """'1:2-' is one bullet of 2 lines. Without the trailing '-' form a saved
+    one-bullet tier with lines rendered as '1:1' and the next Save dropped them."""
+    tiers = rdt._parse_tiers("1:2-, 1:2")
+    assert tiers == [{"projects": 1, "bullets": 1, "lines": [2]},
+                     {"projects": 1, "bullets": 2}]
+    assert rdt._tiers_to_text(tiers) == "1:2-, 1:2"
+    assert rdt._parse_tiers(rdt._tiers_to_text(tiers)) == tiers

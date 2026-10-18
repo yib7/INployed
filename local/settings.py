@@ -218,6 +218,16 @@ TEXT_TYPES = ("str", "path", "editable_choice")
 # keypool.LIMITS carries a 15/500 row for it (read from the account's AI Studio
 # dashboard), the same gate the old default had, so the swap costs no throughput.
 #
+# Re-read 2026-10-18. Vertex's lifecycle table gives gemini-3.5-flash,
+# 3.5-flash-lite, 3.1-flash-lite and 3.8-flash at least twelve months (no
+# retirement before May 19, 2027 for 3.5-flash), so both defaults stay. The Gemini
+# API's deprecation table now routes the gemini-3.5-flash endpoint to
+# gemini-3.6-flash with no shutdown date, so a free-tier call keeps working under
+# the same id. gemini-3.6-flash and gemini-3.7-flash are the short-lived ones:
+# Vertex retires them November 19, 2026 and January 28, 2027, replacement
+# gemini-3.8-flash. They stay listed only so a stored config naming one resolves;
+# pick 3.8-flash for a newer flash.
+#
 # The newer flash ids (3.8-flash, 3.7-flash, 3.6-flash) are offered as opt-in
 # choices, and the defaults deliberately stay on the flash-lite/flash pair the VM
 # scores with. Price alone would argue for moving the
@@ -255,6 +265,11 @@ GEMINI_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-f
 #
 # claude-sonnet-5-5 is an option in all six Claude dropdowns and no tier's
 # default.
+#
+# Re-checked 2026-10-18 against the same table: all six ids are Active, none
+# deprecated. claude-haiku-4-5-20251001 has passed its "not sooner than October
+# 15, 2026" date and is still Active with no deprecation notice; it is no tier's
+# default now, only the fallback for a CLI too old for claude-haiku-5-5.
 #
 # Re-checked 2026-10-03 against the same table: all five ids are Active, none
 # deprecated. claude-haiku-4-5-20251001 still reads "Not sooner than October 15,

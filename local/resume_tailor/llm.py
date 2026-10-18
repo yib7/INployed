@@ -78,7 +78,8 @@ class LLMError(RuntimeError):
     unusable), "config" (missing credentials or provider), "cli_too_old" (the
     installed `claude` CLI refuses the model and its one fallback already ran;
     raised at once, never retried), "unrecognized_model" (the CLI does not know
-    the model's name; same handling as "cli_too_old"). None = unclassified.
+    the model's name; same handling as "cli_too_old"), "signed_out" (the CLI's
+    sign-in lapsed; raised at once, never retried). None = unclassified.
     """
 
     def __init__(self, *args, kind: Optional[str] = None):
@@ -768,6 +769,11 @@ def _call_claude(
         except Exception as exc:  # noqa: BLE001
             last_err = exc
             kind = getattr(exc, "kind", "")
+            if kind == "signed_out":
+                # Every model and every retry meets the same lapsed sign-in.
+                raise LLMError(
+                    "The `claude` CLI is signed out. Sign in with `claude auth login` "
+                    f"in a terminal, then try again: {exc}", kind=kind) from exc
             if kind in ("cli_too_old", "unrecognized_model"):
                 # run_claude already ran the model's one fallback (when it has
                 # one), and another attempt meets the same installed CLI. Fail now.

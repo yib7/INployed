@@ -547,6 +547,24 @@ def test_call_claude_unrecognized_model_fails_fast_with_no_retry(monkeypatch, cl
     assert recorded == []               # no sleeps of any kind
 
 
+def test_call_claude_signed_out_fails_fast_and_says_to_sign_in(monkeypatch, claude_env):
+    """A CLI whose sign-in lapsed fails every call the same way, so the tailor
+    stops at once and tells the user how to sign back in."""
+    recorded, _ = claude_env
+    signed_out = ClaudeCLIErrorLike(
+        "claude exited 1: Failed to authenticate: OAuth session expired and could "
+        "not be refreshed", kind="signed_out")
+    fake, seen = _invoke_claude_seq([signed_out] * 99)
+    monkeypatch.setattr(llm, "_invoke_claude", fake)
+    with pytest.raises(llm.LLMError) as ei:
+        llm._call_claude("sys", "user", "claude-sonnet-5-5")
+    assert ei.value.kind == "signed_out"
+    msg = str(ei.value)
+    assert "signed out" in msg and "claude auth login" in msg and "OAuth session expired" in msg
+    assert seen == [180]                # one attempt, no escalation
+    assert recorded == []               # no sleeps of any kind
+
+
 def test_usage_names_the_model_that_ran_after_a_swap(monkeypatch, claude_env):
     """A call claude_cli answered on the fallback is booked
     under the fallback, never under the model the tailor asked for."""

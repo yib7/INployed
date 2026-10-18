@@ -336,7 +336,8 @@ def test_compress_skills_returns_four_labeled_lines():
     assert all(ln["items"].strip() for ln in lines)
     targets = compose.layout.skill_targets()
     for ln in lines:                                   # never exceed best-N per line
-        assert len(ln["items"].split(", ")) <= targets[ln["label"]]
+        # counted as the code counts: "LLM APIs (Gemini, OpenAI)" is one item
+        assert len(skills._split_skill_tokens(ln["items"])) <= targets[ln["label"]]
 
 
 def test_skill_targets_methods_default_is_seven():

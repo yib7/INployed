@@ -18,7 +18,7 @@ import errmsg
 import jobsdata
 import osopen
 import settings
-from qt import workers
+from qt import claude_signin, workers
 from qt.chat_dialog import JobChatDialog
 from qt.plaintext import literal
 
@@ -320,7 +320,8 @@ class _TailorActions:
                           "dir": out, "error": None, "warnings": warnings}
             except Exception as exc:  # noqa: BLE001 - capture per-job; report in the summary
                 result = {"id": job.get("job_posting_id"), "label": label,
-                          "dir": None, "error": errmsg.for_user(exc), "warnings": warnings}
+                          "dir": None, "error": errmsg.for_user(exc), "warnings": warnings,
+                          "kind": getattr(exc, "kind", None)}
             with done_lock:
                 done += 1
             # Queued to the UI thread: the registry records this job NOW, so an
@@ -388,8 +389,12 @@ class _TailorActions:
             text = f"Tailored {len(oks)} of {total} resume(s).\n\nFailed:\n{lines}"
             if degraded:
                 text += f"\n\nFinished with warnings:\n{_tailor_warning_lines(degraded)}"
-            QtWidgets.QMessageBox.warning(self, "Tailor resume", literal(text))
-            status = f"Tailored {len(oks)} of {total}; {len(fails)} failed (see dialog)."
+            if any(r.get("kind") == "signed_out" for r in fails):
+                text += f"\n\n{claude_signin.SIGNIN_HINT}"
+                claude_signin.warn_with_signin(self, "Tailor resume", literal(text))
+            else:
+                QtWidgets.QMessageBox.warning(self, "Tailor resume", literal(text))
+            status =f"Tailored {len(oks)} of {total}; {len(fails)} failed (see dialog)."
             if degraded:
                 status += f" {len(degraded)} with warnings."
             self._set_status(status)
@@ -416,7 +421,12 @@ class _TailorActions:
     def _finish_tailor_error(self, exc) -> None:
         self._tailoring = False
         self.btn_tailor.setEnabled(True)
-        QtWidgets.QMessageBox.warning(self, "Tailor resume", literal(f"Tailoring failed: {errmsg.for_user(exc)}"))
+        text = f"Tailoring failed: {errmsg.for_user(exc)}"
+        if getattr(exc, "kind", None) == "signed_out":
+            claude_signin.warn_with_signin(
+                self, "Tailor resume", literal(f"{text}\n\n{claude_signin.SIGNIN_HINT}"))
+        else:
+            QtWidgets.QMessageBox.warning(self, "Tailor resume", literal(text))
         self._set_status(f"Tailor failed: {errmsg.for_user(exc)}")
 
     # ---- cover letter for an already-tailored job (right-click) ---------------
@@ -484,8 +494,12 @@ class _TailorActions:
 
     def _finish_cover_error(self, exc) -> None:
         self._covering = False
-        QtWidgets.QMessageBox.warning(self, "Cover letter",
-                                      literal(f"Cover letter failed: {errmsg.for_user(exc)}"))
+        text = f"Cover letter failed: {errmsg.for_user(exc)}"
+        if getattr(exc, "kind", None) == "signed_out":
+            claude_signin.warn_with_signin(
+                self, "Cover letter", literal(f"{text}\n\n{claude_signin.SIGNIN_HINT}"))
+        else:
+            QtWidgets.QMessageBox.warning(self, "Cover letter", literal(text))
         self._set_status(f"Cover letter failed: {errmsg.for_user(exc)}")
 
     def _payload_with_master_fallback(self, jid: str) -> dict | None:

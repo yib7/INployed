@@ -71,8 +71,9 @@ class ClaudeCLIError(RuntimeError):
     installed CLI refuses the model until it is updated; run_claude has already
     tried the model's MODEL_FALLBACKS entry, so never retriable),
     'unrecognized_model' (the installed CLI does not know the model's name at
-    all; same fallback and same no-retry rule as 'cli_too_old'), 'error'
-    (anything else).
+    all; same fallback and same no-retry rule as 'cli_too_old'), 'signed_out'
+    (the CLI's sign-in lapsed; every model fails the same way until the user
+    signs in again, so never retriable and no fallback), 'error' (anything else).
     """
 
     def __init__(self, msg: str, *, kind: str = "error"):
@@ -130,6 +131,21 @@ def is_unrecognized_model_message(text: str | None, model: str | None) -> bool:
         return False
     name = re.compile(rf"(?<![\w.-]){re.escape(model)}(?![\w.-])", re.IGNORECASE)
     return name.search(t) is not None
+
+
+# Phrases the CLI uses when its sign-in is missing or has lapsed. 2.1.292
+# signed out answers every call with "Failed to authenticate: OAuth session
+# expired and could not be refreshed"; the others are its "/login" prompts.
+_SIGNED_OUT_PHRASES = (
+    "failed to authenticate", "not logged in", "please run /login",
+    "oauth token has expired", "oauth session expired",
+)
+
+
+def is_signed_out_message(text: str | None) -> bool:
+    """True if `text` is the CLI saying it is not signed in."""
+    t = (text or "").lower()
+    return any(s in t for s in _SIGNED_OUT_PHRASES)
 
 
 # The kinds that mean the installed CLI refused the model itself. Another
@@ -218,7 +234,11 @@ def _refusal_kind(text: str | None, model: str) -> str | None:
 
 
 def _error_kind(text: str, model: str = "") -> str:
-    # The refusals come first: a required version such as 2.1.429 carries "429".
+    # Signed out comes first: 2.1.283 signed out also printed the
+    # unrecognized_model marker, and swapping to a fallback cannot help.
+    if is_signed_out_message(text):
+        return "signed_out"
+    # The refusals come next: a required version such as 2.1.429 carries "429".
     refusal = _refusal_kind(text, model)
     if refusal is not None:
         return refusal
@@ -384,9 +404,15 @@ def _run_once(
         except OSError:  # already gone, or still held open: leave it in the temp folder
             pass
     if proc.returncode != 0:
-        err = (proc.stderr or proc.stdout or "")[:400]
-        kind = _error_kind(err, model)
-        if kind not in REFUSAL_KINDS:
+        # The envelope opens with usage counters, so its `result`, the CLI's own
+        # account of the failure, sits past any short slice of stdout.
+        said = _envelope_result(proc.stdout)
+        err = (proc.stderr.strip() if proc.stderr else "") or said or (proc.stdout or "")
+        err = err[:400]
+        if said and said[:400] not in err:
+            err = f"{err} ({said[:400]})"
+        kind = _error_kind(f"{err}\n{said}", model)
+        if kind not in REFUSAL_KINDS and kind != "signed_out":
             # the refusal may ride stdout beside unrelated stderr
             kind = _refusal_kind(proc.stdout, model) or kind
         raise ClaudeCLIError(f"claude exited {proc.returncode}: {err}", kind=kind)
@@ -413,6 +439,17 @@ def _run_once(
         int(usage.get("cache_creation_input_tokens") or 0),
         model=model,
     )
+
+
+def _envelope_result(stdout: str | None) -> str:
+    """The `result` text of a JSON envelope on `stdout`, or '' when there is none."""
+    try:
+        envelope = json.loads(stdout or "")
+    except ValueError:
+        return ""
+    if not isinstance(envelope, dict):
+        return ""
+    return str(envelope.get("result") or "").strip()
 
 
 def extract_json_text(text: str) -> str:
@@ -622,7 +659,7 @@ class ClaudePool:
                 self._claude_calls += 1  # successful generates only
                 return _Resp(text, res.input_tokens, res.output_tokens)
             except ClaudeCLIError as exc:
-                if exc.kind == "not_found" or exc.kind in REFUSAL_KINDS:
+                if exc.kind in ("not_found", "signed_out") or exc.kind in REFUSAL_KINDS:
                     raise  # never retriable (run_claude already tried the fallback)
                 if exc.kind == "rate_limit":
                     if rl >= self.RATE_LIMIT_RETRIES:

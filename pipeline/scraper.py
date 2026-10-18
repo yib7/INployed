@@ -465,6 +465,18 @@ TITLE_EXCLUDE_BY_LEVEL: dict[str, list[str]] = {
 SEARCH_CONFIG_FILE = "search_config.json"
 
 
+def _as_list(value, default: list) -> list:
+    """A hand-edited list setting as a list. One string is one item (iterated
+    as-is, "Remote" became six one-letter searches, each billed); a missing or
+    null value, or one of another type, is the built-in default. The items pass
+    through unchanged: build_inputs copes with an odd one on its own."""
+    if isinstance(value, str):
+        return [value]
+    if not isinstance(value, list):
+        return list(default)
+    return value
+
+
 def _positive_int(value, default: int) -> int:
     """Coerce a config value to a positive int, falling back to `default`.
 
@@ -532,8 +544,8 @@ def load_search_config() -> dict:
     levels = _experience_levels(raw.get("experience_level"))
     by_level = raw.get("title_exclude_by_level")
     return {
-        "keywords": raw.get("keywords", KEYWORDS),
-        "remote_types": raw.get("remote_types", REMOTE_TYPES),
+        "keywords": _as_list(raw.get("keywords"), KEYWORDS),
+        "remote_types": _as_list(raw.get("remote_types"), REMOTE_TYPES),
         "limit_per_input": _positive_int(raw.get("limit_per_input"), LIMIT_PER_INPUT),
         "location": raw.get("location", BASE_FILTERS["location"]),
         "country": raw.get("country", BASE_FILTERS["country"]),
@@ -2595,6 +2607,12 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
                 known = load_known_jobs()
                 inputs = build_inputs(known, max_keywords=max_keywords,
                                       limit_per_input=limit_per_input)
+                if not inputs:
+                    # An empty trigger is a request Bright Data can only refuse.
+                    warn("there is no search to run: the keyword list is empty (or "
+                         "--max-keywords is 0), so nothing was collected or billed. "
+                         "Add keywords in Settings > Search keywords.")
+                    return
                 _print_line(_skip_list_summary(run_label, len(known), inputs))
                 excludes = _title_excludes_line(cfg)
                 if excludes:

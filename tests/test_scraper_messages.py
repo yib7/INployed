@@ -1029,3 +1029,21 @@ def test_a_429_while_polling_is_still_retried(run, capsys):
     assert len([u for u in run.get_calls if "/progress/" in u]) == scraper.MAX_POLL_FAILURES
     line, _ = _final_error(capsys)
     assert "--snapshot sd_busy" in line
+
+
+def test_no_keywords_means_no_trigger_and_one_warning(run, monkeypatch, capsys):
+    """An empty keyword list (or --max-keywords 0) used to POST an empty input
+    list, a request Bright Data can only refuse, and end on its error."""
+    triggered = []
+
+    async def spy_trigger(session, payload, limit_per_input=None):
+        triggered.append(payload)
+        raise AssertionError("no search, so nothing may be sent")
+
+    monkeypatch.setattr(scraper, "trigger", spy_trigger)
+    assert run.go("--max-keywords", "0") == 0
+    out = capsys.readouterr().out
+    _assert_well_formed(out)
+    assert triggered == []
+    (warning,) = _problem_lines(out, "WARNING")
+    assert "Search keywords" in warning and "nothing was collected or billed" in warning

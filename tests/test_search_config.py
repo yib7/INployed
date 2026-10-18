@@ -257,3 +257,22 @@ def test_a_bom_does_not_discard_the_external_exclude_ids(monkeypatch, tmp_path):
     p.write_text(json.dumps(["a", "b"]), encoding="utf-8-sig")
     monkeypatch.setattr(scraper, "EXTERNAL_EXCLUDE_FILE", p)
     assert scraper.load_external_exclude_ids() == ["a", "b"]
+
+
+# A hand-edited list setting written as one string or as null. Iterated as-is,
+# "Remote" became six one-letter searches, each billed; null crashed the run.
+
+def test_a_string_where_a_list_belongs_is_one_item(monkeypatch, tmp_path):
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    _write_config(tmp_path, {"keywords": '"Data Analyst"', "remote_types": "Remote"})
+    cfg = scraper.load_search_config()
+    assert cfg["keywords"] == ['"Data Analyst"']
+    assert cfg["remote_types"] == ["Remote"]
+
+
+def test_a_null_list_setting_falls_back_to_the_default(monkeypatch, tmp_path):
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    _write_config(tmp_path, {"keywords": None, "remote_types": None})
+    cfg = scraper.load_search_config()
+    assert cfg["keywords"] == scraper.KEYWORDS
+    assert cfg["remote_types"] == scraper.REMOTE_TYPES

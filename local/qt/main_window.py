@@ -104,6 +104,31 @@ _DISK_CACHE_TTL_S = 20.0
 _DISK_CACHE_MAX = 512
 
 
+class _ScaleReadout(Label):
+    """The "100%" beside the slider, always as wide as "150%" in its current
+    font, so the bar does not shift as the value changes. A fixed 38px floor
+    did that at 100% and clipped "150%" to "150" at 150%, where it needs 49."""
+
+    def sizeHint(self) -> QtCore.QSize:  # noqa: N802 (Qt naming)
+        return QtCore.QSize(self.fontMetrics().horizontalAdvance("150%") + 2,
+                            super().sizeHint().height())
+
+    def minimumSizeHint(self) -> QtCore.QSize:  # noqa: N802 (Qt naming)
+        return self.sizeHint()
+
+
+class _ScaleSlider(QtWidgets.QSlider):
+    """The Interface size slider: 140px when the bar has room, down to 64px
+    when it does not (it used to be fixed at 140, which left the bar no way to
+    fit a 1000px window but to clip its own labels)."""
+
+    def sizeHint(self) -> QtCore.QSize:  # noqa: N802 (Qt naming)
+        return QtCore.QSize(140, super().sizeHint().height())
+
+    def minimumSizeHint(self) -> QtCore.QSize:  # noqa: N802 (Qt naming)
+        return QtCore.QSize(64, super().minimumSizeHint().height())
+
+
 class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _QueueActions,
                  _TrackerActions):
     """Top-level window. `csv_paths` are the scored run files to load."""
@@ -350,20 +375,26 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         h = QtWidgets.QHBoxLayout(bar)
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(4)
-        h.addWidget(Label("Interface size"))
+        # The caption is the first thing this bar gives up when the window runs
+        # out of width (at the 1000px minimum, or 150% on a 1280px screen): it
+        # is hidden whole (`_fit_scale_caption`) rather than read "Interface si",
+        # and the slider keeps the name as its accessible name and tooltip.
+        self._scale_caption = Label("Interface size")
+        h.addWidget(self._scale_caption)
         minus = QtWidgets.QPushButton("-")
         minus.setProperty("compact", True)  # zero side padding so the glyph fits
         minus.setFixedWidth(26)
         minus.setToolTip("Smaller (-10%)")
+        minus.setAccessibleName("Smaller interface size")
         minus.clicked.connect(lambda: self._nudge_scale(-10))
         h.addWidget(minus)
-        self._scale_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self._scale_slider = _ScaleSlider(QtCore.Qt.Orientation.Horizontal)
         self._scale_slider.setAccessibleName("Interface size")
+        self._scale_slider.setToolTip("Interface size")
         self._scale_slider.setMinimum(75)
         self._scale_slider.setMaximum(150)
         self._scale_slider.setSingleStep(10)
         self._scale_slider.setPageStep(10)
-        self._scale_slider.setFixedWidth(140)
         self._scale_slider.setValue(self._ui_scale_pct)
         self._scale_slider.valueChanged.connect(self._on_scale_slider)
         h.addWidget(self._scale_slider)
@@ -371,10 +402,10 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         plus.setProperty("compact", True)  # zero side padding so the glyph fits
         plus.setFixedWidth(26)
         plus.setToolTip("Larger (+10%)")
+        plus.setAccessibleName("Larger interface size")
         plus.clicked.connect(lambda: self._nudge_scale(10))
         h.addWidget(plus)
-        self._scale_readout = Label(f"{self._ui_scale_pct}%")
-        self._scale_readout.setMinimumWidth(38)
+        self._scale_readout = _ScaleReadout(f"{self._ui_scale_pct}%")
         h.addWidget(self._scale_readout)
         # A short debounce so dragging the slider stays smooth (apply once it settles).
         self._scale_debounce = QtCore.QTimer(self)
@@ -404,6 +435,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         self._ui_scale_pct = pct
         theme.set_scale(QtWidgets.QApplication.instance(), pct / 100.0)
         self._rescale_geometry(pct / previous if previous else 1.0)
+        self._fit_scale_caption()
         if hasattr(self, "_scale_slider"):
             self._scale_slider.blockSignals(True)
             self._scale_slider.setValue(pct)
@@ -413,6 +445,26 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
             jobsdata.save_ui_scale_pct(pct)
         except OSError:
             pass  # a failed persist must never break live scaling
+
+    def _fit_scale_caption(self) -> None:
+        """Show the "Interface size" caption only while the bottom bar has room
+        for it at its minimum. Measured against the window's width rather than
+        the bar's own, so hiding it can never be what makes room to show it."""
+        cap = getattr(self, "_scale_caption", None)
+        bar = getattr(self, "_action_bar", None)
+        if cap is None or bar is None:
+            return
+        bar.invalidate()
+        need = bar.minimumSize().width()
+        if cap.isHidden():
+            need += cap.sizeHint().width() + self._scale_bar_layout.spacing()
+        margins = self.centralWidget().layout().contentsMargins()
+        room = self.width() - margins.left() - margins.right()
+        cap.setHidden(room < need)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        super().resizeEvent(event)
+        self._fit_scale_caption()
 
     def _restart_app(self) -> None:
         """Close and reopen the dashboard. We only flag the intent and close the
@@ -635,9 +687,11 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         sep.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
         bar.addWidget(sep)
         scale_bar = self._build_scale_bar()
-        # Never squeeze the scale control: at a 1024-wide window the label used
-        # to clip to "Inter" and the readout to "110".
-        scale_bar.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed,
+        # The scale control gives ground only through its caption (hidden whole)
+        # and its slider (down to `_ScaleSlider`'s minimum); the -/+ buttons and
+        # the readout keep their width, so the "110" readout never clips again.
+        self._scale_bar_layout = scale_bar.layout()
+        scale_bar.setSizePolicy(QtWidgets.QSizePolicy.Policy.Maximum,
                                 QtWidgets.QSizePolicy.Policy.Preferred)
         bar.addWidget(scale_bar)
         self.btn_restart = button("Restart", self._restart_app)
@@ -672,8 +726,13 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
         self.tracker_tab.add_toolbar_button("Mark followed up", self._tracker_followed_up)
         self.tracker_tab.add_toolbar_button("Interview prep", self._tracker_prep)
         self.tracker_tab.add_toolbar_button("Remove", self._tracker_remove)
-        self.tracker_tab.add_toolbar_button("Export tracker…", self._export_tracker)
-        self.tracker_tab.add_toolbar_button("Import tracker…", self._import_tracker)
+        # "Export…" / "Import…": the tab already says what they move, and the
+        # longer "Export tracker…" pair pushed this bar past a 1280px window at
+        # 150% interface size, clipping every button in it.
+        self.tracker_tab.add_toolbar_button("Export…", self._export_tracker).setToolTip(
+            "Save your application history (the tracker database) to a file")
+        self.tracker_tab.add_toolbar_button("Import…", self._import_tracker).setToolTip(
+            "Merge a saved tracker database into this one (newer statuses win)")
 
     # ---- data ----------------------------------------------------------------
 

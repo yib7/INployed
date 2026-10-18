@@ -159,7 +159,7 @@ All Jobs toolbar) saves a posting you found yourself and tailors your résumé f
 kicks off a fresh discovery + score on demand; it asks first (a *small test run* or a
 *full run*) because finding jobs costs real money / API credits.
 
-The **Tracker** tab has **Export tracker… / Import tracker…** buttons. Your whole
+The **Tracker** tab has **Export… / Import…** buttons. Your whole
 application history (seen-state, statuses, and tailored-résumé links) lives in a local
 SQLite file, so export a backup and import it on another machine. Import **merges** (a
 more recent status wins; nothing is deleted). The **Stats** tab shows a **freshness

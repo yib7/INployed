@@ -154,7 +154,10 @@ class JobsTab(QtWidgets.QWidget):
         self.search.setPlaceholderText("Search title / company…")
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._debounced_filter)
-        bar.addWidget(Label("Search:"))
+        # No "Search:" caption: the placeholder says what the box searches, and
+        # the caption's width was what pushed the Tracker bar (five extra
+        # buttons) past a 1280px window at 150% interface size.
+        self.search.setAccessibleName("Search title or company")
         bar.addWidget(self.search, 1)
 
         self.search_col = QtWidgets.QComboBox()

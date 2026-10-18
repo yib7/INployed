@@ -176,6 +176,51 @@ def test_scale_slider_is_named_and_the_bar_never_shrinks(qtbot):
     win = MainWindow(csv_paths=[], registry=reg)
     qtbot.addWidget(win)
     assert win._scale_slider.accessibleName() == "Interface size"
-    bar = win._scale_slider.parentWidget()
-    assert (bar.sizePolicy().horizontalPolicy()
-            == QtWidgets.QSizePolicy.Policy.Fixed)
+    # The bar gives ground only through its slider and its caption; the
+    # readout never clips (it once read "110" at a 1024-wide window).
+    readout = win._scale_readout
+    assert readout.minimumSizeHint().width() >= readout.fontMetrics().horizontalAdvance("150%")
+    assert win._scale_slider.minimumSizeHint().width() < win._scale_slider.sizeHint().width()
+
+
+def _bar_window(qtbot):
+    reg = MagicMock()
+    reg.resume_paths.return_value = {}
+    reg.status_rows.return_value = []
+    win = MainWindow(csv_paths=[], registry=reg)
+    qtbot.addWidget(win)
+    win.show()
+    return win
+
+
+def _settle(win, width, pct=100):
+    win._apply_scale(pct)
+    win.resize(width, 800)
+    QtWidgets.QApplication.processEvents()
+    QtWidgets.QApplication.processEvents()
+
+
+def test_the_scale_caption_is_hidden_whole_when_the_bar_runs_out_of_width(qtbot, monkeypatch):
+    # Measured against the bar's own minimum rather than fixed pixel widths:
+    # text metrics differ between machines (the offscreen platform has no
+    # system fonts unless QT_QPA_FONTDIR points at them).
+    monkeypatch.setattr("jobsdata.save_ui_scale_pct", lambda pct: None)
+    win = _bar_window(qtbot)
+    win.setMinimumWidth(0)       # the probe widths may sit under the 1000px floor
+    try:
+        for pct in (100, 150):
+            _settle(win, 4000, pct)
+            cap = win._scale_caption
+            assert not cap.isHidden()
+            margins = win.centralWidget().layout().contentsMargins()
+            need = win._action_bar.minimumSize().width() + margins.left() + margins.right()
+            _settle(win, need, pct)
+            assert not cap.isHidden(), pct               # exactly enough room: shown
+            _settle(win, need - 1, pct)
+            assert cap.isHidden(), pct                   # one pixel short: hidden whole
+            _settle(win, need, pct)
+            assert not cap.isHidden(), pct               # and it comes back
+            ro = win._scale_readout
+            assert ro.width() >= ro.fontMetrics().horizontalAdvance(f"{pct}%")
+    finally:
+        theme.set_scale(QtWidgets.QApplication.instance(), 1.0)

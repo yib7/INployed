@@ -455,6 +455,14 @@ def update(job_id: str, path: Optional[Path] = None, *,
                          ("batch_id", batch_id)):
             if val is not None:
                 e[key] = str(val)
+        # the same rule as `new_entry`: the display fields stay one line and
+        # the apply URL stays http(s), whichever writer sets them
+        if company is not None:
+            e["company"] = _one_line(company)
+        if title is not None:
+            e["title"] = _one_line(title)
+        if apply_url is not None:
+            e["apply_url"] = _safe_url(apply_url)
         if is_easy_apply is not None:
             e["is_easy_apply"] = bool(is_easy_apply)
         if ats:

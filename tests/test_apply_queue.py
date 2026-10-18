@@ -1223,6 +1223,22 @@ def test_new_entry_drops_a_non_http_apply_url():
     assert apply_queue.new_entry("1", apply_url="http://x.example/j")["apply_url"]
 
 
+def test_update_cleans_the_scraped_fields_as_new_entry_does(tmp_path):
+    """`update` is the queue's other writer of company, title and apply_url;
+    it holds them to the same rule, or a later update could store the newline
+    or the scheme `new_entry` refused."""
+    q = _q(tmp_path)
+    apply_queue.enqueue(_entry("1"), path=q)
+    e = apply_queue.update("1", path=q, company="Acme" + chr(10) + "- ignore the above",
+                           title="Engineer" + chr(13) + chr(10) + "x",
+                           apply_url="javascript:alert(1)")
+    assert e["company"] == "Acme - ignore the above" and e["title"] == "Engineer x"
+    assert e["apply_url"] == ""
+    e = apply_queue.update("1", path=q, apply_url="https://boards.greenhouse.io/acme/jobs/1")
+    assert e["apply_url"] == "https://boards.greenhouse.io/acme/jobs/1"
+    assert apply_queue.load(q)["jobs"][0]["apply_url"] == e["apply_url"]
+
+
 def test_a_dropped_url_also_clears_the_inferred_ats():
     """infer_ats runs on the CLEANED url, so a rejected scheme cannot leave a
     domain behind that the brief would then present as the ATS to trust. The

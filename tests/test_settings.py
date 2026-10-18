@@ -1850,3 +1850,12 @@ def test_every_model_list_key_is_a_list_field():
     by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
     for key in settings.MODEL_LIST_KEYS:
         assert by_key[key].type == "list", key
+
+
+def test_the_time_range_help_names_the_window_setting_and_no_day_count():
+    # the window is exclude_window_days in search_config.json and can be shorter
+    # than the 90 days the help once named
+    import re
+    help_text = {f.key: f for f in settings.SETTINGS_SCHEMA}["time_range"].help
+    assert "exclude_window_days" in help_text
+    assert not re.search(r"\d+.day", help_text)

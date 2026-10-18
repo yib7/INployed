@@ -217,8 +217,10 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
             self._paint_follow_up(painter, rect, text, font, muted)
         elif cid == "url":
             if text.strip():
+                # The accent pill's ink, a step lighter than ACCENT: ACCENT itself
+                # measured 3.68 to 4.47:1 on the tinted rows it shares.
                 self._draw_text(painter, rect, "Open ↗", font,
-                                self._color(theme.ACCENT))
+                                self._color(theme.SEMANTICS["accent"]["pill_fg"]))
         elif cid in _NUMERIC_RIGHT:
             self._draw_text(painter, rect, text, self._font(font, "mono"),
                             self._color(theme.TEXT_SECONDARY),
@@ -262,8 +264,13 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
         box = QtCore.QRectF(rect.left(), rect.center().y() - h / 2 + 1, w, h)
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
         painter.setPen(QtCore.Qt.PenStyle.NoPen)
-        painter.setBrush(self._color(color_hex, bg_a))
         r = theme.RADII["badge"] * s
+        # The badge sits on PANEL whatever the row's tint, as a selected row's
+        # pills do: its own tint over a tinted row put the ink at 3.14 to
+        # 4.48:1 (score 1 on a selected Apply row was the worst).
+        painter.setBrush(self._color(theme.PANEL))
+        painter.drawRoundedRect(box, r, r)
+        painter.setBrush(self._color(color_hex, bg_a))
         painter.drawRoundedRect(box, r, r)
         painter.setPen(self._color(color_hex))
         painter.setFont(self._font(font, "mono_bold"))

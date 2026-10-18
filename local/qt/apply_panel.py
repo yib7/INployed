@@ -111,6 +111,7 @@ class ApplyPanel(QtWidgets.QWidget):
         top.addWidget(self._title, 1)
         close = QtWidgets.QPushButton("✕")
         close.setToolTip("Close (back to the score preview)")
+        close.setAccessibleName("Close the apply panel")
         close.clicked.connect(lambda: self._on_close())
         top.addWidget(close)
         v.addLayout(top)

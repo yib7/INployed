@@ -37,7 +37,7 @@ import settings
 import settings_archive
 import vm_sync
 from qt import theme
-from qt.widgets import CollapsibleSection
+from qt.widgets import CollapsibleSection, SpinBox
 from qt.plaintext import Label, literal
 
 SECTION_HELP = {
@@ -1228,7 +1228,7 @@ class SettingsForm(QtWidgets.QWidget):
         point, and also why `_flag_a_rewritten_int` exists: what the widget cannot
         be driven to, it silently CLAMPS to on the way in.
         """
-        spin = QtWidgets.QSpinBox()
+        spin = SpinBox()
         # A schema int without bounds is not a thing today; the fallbacks keep a
         # future one from inheriting QSpinBox's stock 0..99 ceiling, which would
         # clamp almost anything.

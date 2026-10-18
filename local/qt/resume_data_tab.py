@@ -23,7 +23,7 @@ import jobsdata
 import resume_md
 import settings
 from qt import workers
-from qt.widgets import CollapsibleSection
+from qt.widgets import CollapsibleSection, SpinBox
 from qt.plaintext import Label, literal
 from resume_tailor import config, master_edit, master_validate
 
@@ -524,7 +524,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         box = QtWidgets.QGroupBox("Projects on the résumé")
         form = QtWidgets.QFormLayout(box)
 
-        self._projects_count_spin = QtWidgets.QSpinBox()
+        self._projects_count_spin = SpinBox()
         self._projects_count_spin.setRange(1, 6)
         self._projects_count_spin.setValue(n)
         form.addRow(Label("How many projects"), self._projects_count_spin)
@@ -603,6 +603,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
             drop = QtWidgets.QToolButton()
             drop.setText("✕")
             drop.setToolTip("Remove this stale entry (no longer in your résumé data)")
+            drop.setAccessibleName(f"Remove the stale layout entry {nm}")
             hl.addWidget(drop)
             label = f"{nm}  (removed from résumé data)"
             form.addRow(Label(label), field)

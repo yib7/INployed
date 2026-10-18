@@ -18,6 +18,8 @@ Design rules baked in here:
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6 import QtGui, QtWidgets
 
 # --- interface scaling -----------------------------------------------------
@@ -59,7 +61,12 @@ TEXT = "#e6edf3"           # primary
 TEXT_SECONDARY = "#c8d1da"
 MUTED = "#8b949e"
 FAINT = "#7d8590"        # 5.07:1 on WINDOW — the dimmest tier still AA-legible
-TEXT_DISABLED = "#484f58"
+# Disabled text is exempt from WCAG's 4.5:1, but it still has to be readable:
+# #484f58 measured 2.09:1 on the PANEL a disabled button sits on, so "Undo
+# seen" and "Restore backup" all but vanished on a laptop panel. #606873 is
+# 3.07:1 there (3.36:1 on WINDOW) and still well under FAINT's 5.07:1, so a
+# disabled control never reads as a live one.
+TEXT_DISABLED = "#606873"
 
 # --- semantic families ---------------------------------------------------------
 # Each family: base / hover / row-tint alpha / selected-row alpha / pill alphas.
@@ -103,7 +110,8 @@ SCORE_BADGES = {
     4: ("#9ccc3d", 0.14),
     3: ("#d29922", 0.14),
     2: ("#e8703a", 0.14),
-    1: ("#f85149", 0.14),
+    # Brighter than DANGER: #f85149 measured 4.39:1 on its own badge tint.
+    1: ("#ff6359", 0.14),
 }
 
 # --- metrics -------------------------------------------------------------------
@@ -172,7 +180,9 @@ GOOD_HOVER = SEMANTICS["success"]["hover"]      # #56d364
 AMBER = SEMANTICS["warning"]["base"]
 DANGER = SEMANTICS["danger"]["base"]
 SEL = ACCENT
-SEL_TEXT = "#ffffff"
+# Dark ink on the accent selection, as on the filled buttons: white on ACCENT
+# measured 3.20:1 in every selected text run; ACCENT_INK is 5.85:1.
+SEL_TEXT = ACCENT_INK
 
 # Per-row tints for the jobs tables (JobsTableModel BackgroundRole fallback,
 # legend swatches, tests). Flat hex, pre-composed over PANEL at the semantic
@@ -249,13 +259,35 @@ def _dark_palette() -> QtGui.QPalette:
     p.setColor(Role.ToolTipText, C(TEXT))
     p.setColor(Role.PlaceholderText, C(FAINT))
     p.setColor(Role.Highlight, C(ACCENT))
-    p.setColor(Role.HighlightedText, C("#ffffff"))
+    p.setColor(Role.HighlightedText, C(SEL_TEXT))
     p.setColor(Role.Link, C(ACCENT))
     disabled = QtGui.QPalette.ColorGroup.Disabled
     p.setColor(disabled, Role.Text, C(TEXT_DISABLED))
     p.setColor(disabled, Role.ButtonText, C(TEXT_DISABLED))
     p.setColor(disabled, Role.WindowText, C(TEXT_DISABLED))
     return p
+
+
+# The combo and spin-box arrows and the check/radio marks: one SVG per colour,
+# since QSS cannot tint an image. Each file's colour is the token beside it
+# (MUTED for live arrows, TEXT_DISABLED for a disabled control or a spin box at
+# its limit); test_theme_contrast pins every file to its token.
+ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
+ARROW_ICONS = {
+    "down": ("arrow-down.svg", MUTED),
+    "up": ("arrow-up.svg", MUTED),
+    "down_disabled": ("arrow-down-disabled.svg", TEXT_DISABLED),
+    "up_disabled": ("arrow-up-disabled.svg", TEXT_DISABLED),
+    # Ticked check box / chosen radio: ACCENT_INK on the ACCENT fill, so "on"
+    # reads from a mark as well as from the fill.
+    "check": ("check.svg", ACCENT_INK),
+    "radio": ("radio-dot.svg", ACCENT_INK),
+}
+
+
+def _icon(name: str) -> str:
+    """Forward-slash path of an arrow SVG, the form QSS `url()` reads."""
+    return (ASSETS_DIR / ARROW_ICONS[name][0]).as_posix()
 
 
 def _qss() -> str:
@@ -353,14 +385,31 @@ def _qss() -> str:
     QLineEdit[error="true"], QPlainTextEdit[error="true"], QTextEdit[error="true"],
     QSpinBox[error="true"], QDoubleSpinBox[error="true"], QComboBox[error="true"] {{
         border-color: {DANGER}; }}
-    QComboBox::drop-down {{ subcontrol-origin: padding; subcontrol-position: center right;
-        border: 0; width: 22px; }}
-    QComboBox::down-arrow {{ width: 0; height: 0; margin-right: 8px;
-        border-left: 5px solid transparent; border-right: 5px solid transparent;
-        border-top: 6px solid {MUTED}; }}
-    QComboBox::down-arrow:hover {{ border-top-color: {TEXT}; }}
-    QComboBox::down-arrow:on {{ border-top: 0;
-        border-bottom: 6px solid {TEXT}; }}
+    /* Arrows are drawn from the SVGs in local/assets (see `ARROW_ICONS`). The
+       CSS border-triangle trick this replaced does not work in QSS: Qt joins
+       the borders square, so the combo arrow painted as a flat grey bar, and
+       a bordered spin box loses its native arrows altogether. */
+    QComboBox::drop-down, QDateEdit::drop-down {{ subcontrol-origin: padding;
+        subcontrol-position: center right; border: 0; width: 22px; }}
+    QComboBox::down-arrow, QDateEdit::down-arrow {{ image: url("{_icon("down")}");
+        width: 10px; height: 6px; margin-right: 8px; }}
+    QComboBox::down-arrow:on {{ image: url("{_icon("up")}"); }}
+    QComboBox::down-arrow:disabled, QDateEdit::down-arrow:disabled {{
+        image: url("{_icon("down_disabled")}"); }}
+    QAbstractSpinBox::up-button {{ subcontrol-origin: border;
+        subcontrol-position: top right; width: 18px; border: 0;
+        background: transparent; margin: 3px 3px 0 0; }}
+    QAbstractSpinBox::down-button {{ subcontrol-origin: border;
+        subcontrol-position: bottom right; width: 18px; border: 0;
+        background: transparent; margin: 0 3px 3px 0; }}
+    QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover {{
+        background: {RAISED}; border-radius: 3px; }}
+    QAbstractSpinBox::up-arrow {{ image: url("{_icon("up")}"); width: 8px; height: 5px; }}
+    QAbstractSpinBox::down-arrow {{ image: url("{_icon("down")}"); width: 8px; height: 5px; }}
+    QAbstractSpinBox::up-arrow:disabled, QAbstractSpinBox::up-arrow:off {{
+        image: url("{_icon("up_disabled")}"); }}
+    QAbstractSpinBox::down-arrow:disabled, QAbstractSpinBox::down-arrow:off {{
+        image: url("{_icon("down_disabled")}"); }}
     QComboBox QAbstractItemView {{ background: {FLOATING}; color: {TEXT};
         border: 1px solid {BORDER}; selection-background-color: {rgba(ACCENT, 0.16)};
         selection-color: {TEXT}; outline: 0; }}
@@ -378,13 +427,15 @@ def _qss() -> str:
     QCheckBox {{ spacing: 7px; }}
     QCheckBox::indicator {{ width: 16px; height: 16px; border: 1px solid {BORDER_INPUT};
         border-radius: {RADII["checkbox"]}px; background: {WINDOW}; }}
-    QCheckBox::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT}; }}
+    QCheckBox::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT};
+        image: url("{_icon("check")}"); }}
     /* A radio button's ring, drawn like the check box's square: Fusion's own
        ring was dark on the dark ground and did not show. */
     QRadioButton {{ spacing: 7px; }}
     QRadioButton::indicator {{ width: 16px; height: 16px; border: 1px solid {BORDER_INPUT};
         border-radius: 9px; background: {WINDOW}; }}
-    QRadioButton::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT}; }}
+    QRadioButton::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT};
+        image: url("{_icon("radio")}"); }}
 
     QGroupBox {{ border: 1px solid {BORDER}; border-radius: 8px; margin-top: 10px;
         padding: 10px; }}
@@ -426,10 +477,12 @@ def _qss() -> str:
     QWidget[chipbar="true"] {{ background: transparent; }}
     /* The global `QWidget {{ background: WINDOW }}` rule would paint WINDOW
        patches over PANEL cards — plain containers/labels inside a card (or a
-       warning callout) go transparent instead. Inputs/buttons keep their own
-       surfaces (their type rules stay untouched). */
+       warning callout) go transparent instead. A splitter is a QFrame,
+       which `.QWidget` does not match, so it is named. Inputs and
+       buttons keep their own surfaces (their type rules stay untouched). */
     QFrame[card="true"] QLabel, QFrame[card="true"] QCheckBox,
     QFrame[card="true"] QSlider, QFrame[card="true"] .QWidget,
+    QFrame[card="true"] QSplitter,
     QFrame[callout="warning"] QLabel, QFrame[callout="warning"] .QWidget,
     QFrame[callout="warning"] QCheckBox, QFrame[callout="warning"] QRadioButton {{
         background: transparent; }}
@@ -568,6 +621,21 @@ def _role_for(widget: QtWidgets.QWidget) -> str:
     return "body"
 
 
+def _font_owner(widget: QtWidgets.QWidget) -> QtWidgets.QWidget:
+    """The widget whose type role sets `widget`'s font: a scroll area's
+    viewport takes its area's, everything else its own.
+
+    A viewport is a plain child QWidget, so on its own it resolves to "body".
+    The header paints its section labels on its viewport, so after a rescale
+    the labels came out at body size (10pt) inside sections measured for the
+    caption font (8.5pt) they carried at startup, and "Attempts" and
+    "Applicants" lost their first and last letters on every rescale."""
+    parent = widget.parentWidget()
+    if isinstance(parent, QtWidgets.QAbstractScrollArea) and parent.viewport() is widget:
+        return parent
+    return widget
+
+
 def _apply_table_metrics(view: QtWidgets.QTableView, scale: float) -> None:
     """Fixed row heights + header height from the SIZES tokens x scale.
     Views tagged `rowSize="compact"` get the compact row height."""
@@ -638,6 +706,7 @@ def set_scale(app: QtWidgets.QApplication, scale: float) -> None:
                 "QHeaderView")
     for w in app.allWidgets():
         # override stylesheet-pinned fonts
-        w.setFont(_with_qss_weight(font_for(_role_for(w), scale), widget=w))
+        owner = _font_owner(w)
+        w.setFont(_with_qss_weight(font_for(_role_for(owner), scale), widget=owner))
         if isinstance(w, QtWidgets.QTableView):
             _apply_table_metrics(w, scale)

@@ -176,6 +176,19 @@ class ElidedLabel(Label):
             super().setText(elided)
 
 
+class SpinBox(QtWidgets.QSpinBox):
+    """A QSpinBox whose number sits inset like every other input's text.
+
+    The stylesheet's input padding never reaches a spin box's inner line edit
+    (Qt positions it at the frame's left edge), so the digit sat on the border
+    while a line edit beside it was inset by 8px. A text margin on that line
+    edit puts it back in line."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.lineEdit().setTextMargins(7, 0, 0, 0)
+
+
 class _LegendSwatch(QtWidgets.QWidget):
     """One legend swatch, painted as a miniature of the row it stands for.
 

@@ -95,8 +95,11 @@ def _format_value(value: str) -> str:
         return ""
     if _BARE_SAFE_RE.match(value):
         return value
-    if "'" not in value:
-        # Single quotes are literal in dotenv → safe for spaces and backslashes.
+    if "'" not in value and "\\\\" not in value and not value.endswith("\\"):
+        # Single quotes are literal in dotenv for spaces and lone backslashes.
+        # Not for all of them: python-dotenv reads a backslash before the
+        # closing quote as an escaped quote (the line no longer parses) and
+        # two backslashes as one, so those values take the escaped form below.
         return f"'{value}'"
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'

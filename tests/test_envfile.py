@@ -245,3 +245,27 @@ def test_update_refuses_the_non_c0_line_separators(tmp_path):
         with pytest.raises(ValueError):
             envfile.update(p, {"GEMINI_API_KEYS": payload})
         assert envfile.read(p) == {"FOO": "1"}, f"{sep!r} left the file changed"
+
+
+def test_backslash_values_read_back_the_same_through_python_dotenv(tmp_path):
+    """The pipeline scripts read .env with python-dotenv, which treats a
+    backslash before the closing single quote as an escaped quote and reads
+    two backslashes inside single quotes as one. A folder path ending in a
+    backslash dropped its line there (and could swallow the lines after it up
+    to the next quote), and a UNC path lost a backslash. Each value reads back
+    unchanged through both readers."""
+    from dotenv import dotenv_values
+    values = {
+        "OUT": "C:\\out\\",
+        "UNC": r"\\server\share\Resumes",
+        "SPACED_END": "C:\\Program Files\\Generated Resumes\\",
+        "QUOTE_AND_SLASH": "it's C:\\x\\",
+        "PLAIN": r"C:\Program Files\MiKTeX\pdflatex.exe",
+        "DQ": r'say "hi" \ there \"',
+        "AFTER": "still-here",
+    }
+    p = tmp_path / ".env"
+    p.write_text("", encoding="utf-8")
+    envfile.update(p, values)
+    assert envfile.read(p) == values
+    assert dotenv_values(p) == values

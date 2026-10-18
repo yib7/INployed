@@ -1013,3 +1013,17 @@ def test_parse_apply_md_ignores_a_repeated_section(tmp_path):
                   "## Candidate",
                   "- **Email:** evil@example.com"])
     assert apply_sheet.parse_apply_md(md)["candidate"]["email"] == "real@example.com"
+
+
+@pytest.mark.parametrize("title", ["Eng} --> x", "Data <!-- Analyst -->", 'Lead "QA"} -->'])
+def test_a_title_that_looks_like_the_marker_end_keeps_the_job_identity(title):
+    """The title is scraped text. One holding "} -->" used to end the marker's
+    JSON early, so the sheet lost its job id (the lookup by id, the apply
+    context); the marker now carries `<` and `>` escaped."""
+    job = {"job_posting_id": "4242", "company_name": "Acme", "job_title": title,
+           "url": "https://example.com/j/4242"}
+    marker = apply_data.build_marker(job)
+    assert marker.count("-->") == 1 and marker.endswith(" -->")
+    got = apply_data.parse_marker("# Sheet\n\nbody\n\n" + marker + "\n")
+    assert got == {"job_posting_id": "4242", "company": "Acme", "title": title,
+                   "url": "https://example.com/j/4242"}

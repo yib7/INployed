@@ -51,7 +51,11 @@ def build_marker(job: Dict[str, str]) -> str:
         "title": job.get("job_title", "") or "",
         "url": job.get("url", "") or "",
     }
-    return f"<!-- {_MARKER_PREFIX} {json.dumps(meta, ensure_ascii=False)} -->"
+    # `<` and `>` only ever sit inside a JSON string here, so their \u escapes
+    # keep the same value and a scraped title holding "} -->" cannot end the
+    # comment (or the marker's JSON) early
+    body = json.dumps(meta, ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e")
+    return f"<!-- {_MARKER_PREFIX} {body} -->"
 
 
 def parse_marker(text: str) -> Dict[str, str]:

@@ -32,6 +32,19 @@ def test_the_console_runs_the_cli_by_its_path_not_the_ps1_shim(monkeypatch):
         "& 'C:\\Users\\o''brien\\AppData\\Roaming\\npm\\claude.CMD' auth login")
 
 
+def test_a_typographic_apostrophe_in_the_path_stays_inside_the_quotes(monkeypatch):
+    """PowerShell ends a single-quoted string at any of the four typographic
+    single quotes too, so a user folder named O’Brien broke the line, and a
+    path holding one could run what followed it. Each is doubled like '."""
+    path = "C:\\Users\\o\u2019brien; calc; \u2018\\npm\\claude.CMD"
+    monkeypatch.setattr(claude_signin.shutil, "which", lambda name: path)
+    assert _decode(claude_signin.signin_argv()) == (
+        "& 'C:\\Users\\o\u2019\u2019brien; calc; \u2018\u2018\\npm\\claude.CMD' auth login")
+    for mark in ("\u201a", "\u201b"):
+        monkeypatch.setattr(claude_signin.shutil, "which", lambda name, m=mark: f"C:\\a{m}b")
+        assert _decode(claude_signin.signin_argv()) == f"& 'C:\\a{mark}{mark}b' auth login"
+
+
 def test_open_signin_starts_a_new_console(monkeypatch):
     monkeypatch.setattr(claude_signin.shutil, "which", lambda name: None)
     seen = {}

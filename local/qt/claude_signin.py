@@ -34,8 +34,14 @@ def signin_script() -> str:
     path = shutil.which("claude")
     if not path:
         return SIGNIN_COMMAND       # not installed: the console says so itself
-    quoted = "'" + path.replace("'", "''") + "'"
+    # PowerShell closes a single-quoted string at ' and at the four
+    # typographic single quotes alike, and reads any of them doubled as one
+    # literal mark, so each is doubled (a folder named O’Brien included)
+    quoted = "'" + "".join(c * 2 if c in _PS_SINGLE_QUOTES else c for c in path) + "'"
     return f"& {quoted} {SIGNIN_COMMAND.split(' ', 1)[1]}"
+
+
+_PS_SINGLE_QUOTES = "'‘’‚‛"
 
 
 def signin_argv() -> list[str]:

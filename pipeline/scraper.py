@@ -206,12 +206,10 @@ DEFAULT_EXCLUDE_WINDOW_DAYS = 90
 # 4,714, which keeps its newest ~3,350. Each list is capped on its own, and the
 # run log gets one line naming every keyword that was trimmed.
 MAX_EXCLUDE_PAYLOAD_BYTES = 14_100_000  # ~ 10,000 ids x 14 bytes x 100 children
-# The width that budget was derived from: '"4444097977", ', the shape a 10-digit
-# posting id takes once aiohttp's json.dumps has written it. cap_exclude_ids does
-# not USE this -- it measures the ids actually in hand, so an 11-digit id can
-# never quietly overflow the budget -- but the number is what MAX_EXCLUDE_PAYLOAD
-# _BYTES above was computed from, so it stays as the record of that arithmetic.
-BYTES_PER_EXCLUDE_ID = 14
+# 14 bytes is '"4444097977", ', the shape a 10-digit posting id takes once
+# aiohttp's json.dumps has written it. cap_exclude_ids does not assume that
+# width: it measures the ids actually in hand, so an 11-digit id can never
+# quietly overflow the budget.
 MIN_EXCLUDE_IDS = 50           # never exclude nothing: that re-bills every posting
 # The default target, the most ids sent when the byte budget allows it. Overridable
 # by max_exclude_ids in search_config.json or the MAX_EXCLUDE_IDS env var (env >
@@ -1816,10 +1814,10 @@ def cap_exclude_ids(exclude_ids: list[str], limit_per_input: int) -> list[str]:
     search those are the only ids that can resurface, so trimming the head
     instead would keep precisely the ids that cannot recur.
 
-    The per-id width is MEASURED off the ids in hand, not assumed: the
-    BYTES_PER_EXCLUDE_ID constant bakes in a 10-digit LinkedIn posting id, ids are
-    at 4.4e9 now, and the first 11-digit id would silently push the real payload
-    past the cap with nothing noticing.
+    The per-id width is MEASURED off the ids in hand, not assumed: the 14 bytes
+    per id behind MAX_EXCLUDE_PAYLOAD_BYTES fit a 10-digit LinkedIn posting id,
+    ids are at 4.4e9 now, and the first 11-digit id would silently push the real
+    payload past the cap with nothing noticing.
 
     Every id that reaches here is a known job inside the window, so a trim is a
     cost: it goes to the log with the setting that would avoid it. Not a WARNING,

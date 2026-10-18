@@ -1315,19 +1315,9 @@ def _repost_keys_vectorized(df: pd.DataFrame) -> pd.Series:
     return _repost_keys_pandas(df)
 
 
-def _id_greater(a: str, b: str) -> bool:
-    """Is `a` the 'higher' job_posting_id than `b`? Digit-only ids compare
-    numerically (so "10" beats "9"); anything else falls back to a plain
-    string comparison. Scalar reference for `_id_sort_rank` below."""
-    if a.isdigit() and b.isdigit():
-        return int(a) > int(b)
-    return a > b
-
-
 def _id_sort_rank(ids: pd.Series) -> pd.Series:
-    """A numeric rank that sorts a whole Series of ids the way `_id_greater`
-    orders a pair: digit-only ids by their integer value (so "10" ranks above
-    "9"); anything else ranks below every digit id, in which case the caller's
+    """A numeric rank for a whole Series of ids: digit-only ids by their
+    integer value (so "10" ranks above "9"); anything else ranks below every digit id, in which case the caller's
     sort falls through to a plain string tie-break on `ids` itself."""
     return pd.to_numeric(ids, errors="coerce").fillna(float("-inf"))
 
@@ -1336,7 +1326,7 @@ def _pick_repost_winners(candidates: pd.DataFrame) -> pd.Index:
     """Vectorised replacement for a per-group Python loop: among rows sharing
     a `key`, keep the one with the newest `extracted` (NaT always loses to a
     real date; if a whole group is NaT the id tie-break still applies), ties
-    broken by the higher `id` (`_id_greater`, digit-aware). A `groupby("key")`
+    broken by the higher `id` (`_id_sort_rank`, digit-aware). A `groupby("key")`
     + a Python-level winner pick per group was the actual cost on a realistic
     30k-row frame with many small duplicate groups (~700ms, dwarfing the
     string key computation): the cost sat entirely in pandas' per-group
@@ -1425,7 +1415,7 @@ def suppress_reposts(df: pd.DataFrame, marked_at: dict[str, str], window_days: i
     A row within `window_days` of its own mark blocks every UNSEEN row of `df`
     sharing its repost key; among the unseen rows left, duplicates sharing a
     non-empty key collapse to the one with the newest `extracted_date` (ties
-    keep the higher `job_posting_id`; see `_id_greater`). `window_days <= 0`
+    keep the higher `job_posting_id`; see `_id_sort_rank`). `window_days <= 0`
     disables both steps and returns `df` untouched. Returns `(kept_df, hidden_count)`
     with the original index and column set intact; view-time only, so nothing
     here is ever written back to disk.

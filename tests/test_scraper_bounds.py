@@ -733,8 +733,8 @@ def test_an_absurd_limit_keeps_the_payload_legal_and_says_why(capsys):
 
 
 def test_the_cap_measures_the_ids_it_has_rather_than_assuming_a_width():
-    """BYTES_PER_EXCLUDE_ID bakes in today's 10-digit posting ids. Ids are at
-    4.4e9; the first 11-digit one would have quietly pushed the real payload past
+    """The 14 bytes per id behind MAX_EXCLUDE_PAYLOAD_BYTES fit today's 10-digit
+    posting ids. Ids are at 4.4e9; the first 11-digit one would have quietly pushed the real payload past
     the cap with nothing noticing, because nothing measured it."""
     wide = [str(44_000_000_000 + n) for n in range(_HUGE)]      # 11 digits
     kept = scraper.cap_exclude_ids(wide, 150)

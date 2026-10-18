@@ -14,7 +14,6 @@ import html
 from PySide6 import QtCore, QtGui, QtWidgets
 
 PLAIN = QtCore.Qt.TextFormat.PlainText
-RICH = QtCore.Qt.TextFormat.RichText
 
 
 class Label(QtWidgets.QLabel):

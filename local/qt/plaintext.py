@@ -33,3 +33,25 @@ def literal(text) -> str:
         return text
     return ('<qt><p style="white-space:pre-wrap">'
             + html.escape(text, quote=False) + "</p></qt>")
+
+
+class ReaderBrowser(QtWidgets.QTextBrowser):
+    """A read-only markdown viewer that follows no link and loads no resource.
+
+    The apply sheet and the Ask AI transcript render scraped and model text.
+    `MarkdownNoHTML` stops an `<img>` tag, but markdown's own `![](url)` still
+    asks `loadResource` for the URL, and on Windows a `file://host/share/x.png`
+    is a UNC path: opening it connects to that host over SMB with the user's
+    Windows sign-in. Nothing these viewers show needs an image, so every
+    resource is refused. The refusal is an empty value, never None: on None
+    the document falls back to reading a local or UNC file itself."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setOpenLinks(False)          # a reader, not a browser
+        self.setOpenExternalLinks(False)
+
+    def loadResource(self, kind, name):  # noqa: N802 (Qt override)
+        if kind == int(QtGui.QTextDocument.ResourceType.ImageResource):
+            return QtGui.QImage()
+        return QtCore.QByteArray()

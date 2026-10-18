@@ -29,7 +29,7 @@ from PySide6 import QtGui, QtWidgets
 
 import errmsg
 from qt import workers
-from qt.plaintext import Label
+from qt.plaintext import Label, ReaderBrowser
 
 
 class JobChatDialog(QtWidgets.QDialog):
@@ -73,10 +73,8 @@ class JobChatDialog(QtWidgets.QDialog):
         hint.setWordWrap(True)
         v.addWidget(hint)
 
-        self.transcript = QtWidgets.QTextBrowser()
+        self.transcript = ReaderBrowser()   # follows no link, loads no image
         self.transcript.setAccessibleName("Chat transcript")
-        self.transcript.setOpenLinks(False)          # a reader, not a browser
-        self.transcript.setOpenExternalLinks(False)
         v.addWidget(self.transcript, 1)
 
         self.input = QtWidgets.QPlainTextEdit()

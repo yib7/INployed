@@ -14,12 +14,12 @@ from pathlib import Path
 from typing import Any, Callable, Dict
 
 from PySide6 import QtCore, QtGui, QtWidgets
-from qt.plaintext import Label
+from qt.plaintext import Label, ReaderBrowser
 
 import osopen
 
 
-class SheetViewer(QtWidgets.QTextBrowser):
+class SheetViewer(ReaderBrowser):
     """The rendered apply sheet: a read-only markdown viewer that copies as text.
 
     A rendered list copies with no `- ` markers, so pasted bullets run together.
@@ -27,13 +27,9 @@ class SheetViewer(QtWidgets.QTextBrowser):
     and blocks are separated by a blank line. Only the selected part of the first
     and last block is taken. The `- ` goes on only when the selection reaches back
     to the start of the block; a selection that starts mid-bullet is a quote of
-    the words, so it gets no marker. Links are not followed.
+    the words, so it gets no marker. Links are not followed and no image loads
+    (`ReaderBrowser`).
     """
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.setOpenLinks(False)
-        self.setOpenExternalLinks(False)
 
     def selected_text(self) -> str:
         """The selection as plain text with `- ` bullets and blank-line breaks."""

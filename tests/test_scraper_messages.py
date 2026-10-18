@@ -75,7 +75,7 @@ class _Resp:
         self._body = body
         self._payload = payload
 
-    async def text(self):
+    async def text(self, *a, **k):
         return self._body
 
     async def json(self):

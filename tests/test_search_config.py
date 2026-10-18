@@ -100,7 +100,7 @@ def test_trigger_url_cannot_carry_an_injected_query_parameter(monkeypatch):
     class _Resp:
         status = 200
 
-        async def text(self):
+        async def text(self, *a, **k):
             # trigger() reads text(), not json(): a collection that finishes
             # inside the sync window answers with NDJSON, which json() cannot read.
             return '{"snapshot_id": "s1"}'

@@ -466,7 +466,7 @@ class _StatusResp:
         self.status = status
         self._body = body
 
-    async def text(self):
+    async def text(self, *a, **k):
         return self._body
 
     async def __aenter__(self):
@@ -517,7 +517,7 @@ def test_preflight_fails_open_on_server_error():
 
 def _trigger_session(status, body):
     class _Resp:
-        async def text(self):
+        async def text(self, *a, **k):
             return body
 
         async def __aenter__(self):

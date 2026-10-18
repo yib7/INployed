@@ -2074,7 +2074,7 @@ async def preflight(session: aiohttp.ClientSession) -> None:
             STATUS_URL, timeout=aiohttp.ClientTimeout(total=PREFLIGHT_TIMEOUT)
         ) as resp:
             status = resp.status
-            body = (await resp.text())[:200]
+            body = (await resp.text(errors="replace"))[:200]
     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
         warn(f"could not reach Bright Data's account check ({_exc_text(e)}), so the "
              f"token was not checked. The run went ahead anyway; if it fails next, "
@@ -2259,7 +2259,10 @@ def _parse_collection_body(body: str, status: int | None = None) -> Collection:
             f"Bright Data answered 202 Accepted (collection still running) "
             f"but the body carries no snapshot_id to poll: {text[:200]!r}")
     rows: list = []
-    for n, line in enumerate(text.splitlines(), 1):
+    # split("\n"), not splitlines(): splitlines() also breaks on U+2028, U+2029
+    # and \x85, which JSON carries raw inside a string (a job description pasted
+    # from Word), and cutting a record there threw the whole billed set away.
+    for n, line in enumerate(text.split("\n"), 1):
         line = line.strip()
         if not line:
             continue
@@ -2288,7 +2291,7 @@ async def trigger(session: aiohttp.ClientSession, payload: dict,
     )
     async with session.post(url, json=payload) as resp:
         if resp.status >= 400:
-            body = await resp.text()
+            body = await resp.text(errors="replace")
             head = f"Trigger failed {resp.status}: {_quoted(body)}"
             # Backstop for when preflight failed open (probe down) but the account
             # is the real problem: 401/403 here means the same thing it does there.
@@ -2306,7 +2309,10 @@ async def trigger(session: aiohttp.ClientSession, payload: dict,
             raise TriggerRefused(head, resp.status, body)
         # text(), not json(): a collection that beat the sync window comes back
         # as NDJSON, which json() cannot read. See _parse_collection_body.
-        return _parse_collection_body(await resp.text(), status=resp.status)
+        # errors="replace": one bad byte in a description must not throw the
+        # billed records away with a UnicodeDecodeError.
+        return _parse_collection_body(await resp.text(errors="replace"),
+                                      status=resp.status)
 
 
 # Phrases that mean the request was too big. input_size also covers
@@ -2450,7 +2456,9 @@ async def wait_until_ready(session: aiohttp.ClientSession, snapshot_id: str) -> 
                 resp.raise_for_status()
                 data = await resp.json()
             failures = 0
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
+            # ValueError: a body that is not JSON (a proxy's error page). It is
+            # retried like a 5xx, not allowed to end a billed run.
             _raise_if_permanent(e, snapshot_id)
             # One transient 5xx must not abort a snapshot that's already billed.
             failures += 1
@@ -2467,7 +2475,7 @@ async def wait_until_ready(session: aiohttp.ClientSession, snapshot_id: str) -> 
                     f"{MAX_WAIT_MINUTES} minutes ({_exc_text(e)})") from e
             await asyncio.sleep(POLL_INTERVAL)
             continue
-        status = data.get("status")
+        status = data.get("status") if isinstance(data, dict) else None
         print(f"  status: {status}")
         if status == "ready":
             # "ready" is not the same as "worked" -- see _assert_collected_something.
@@ -2505,9 +2513,10 @@ async def download(session: aiohttp.ClientSession, snapshot_id: str) -> list[dic
                 resp.raise_for_status()
                 data = await resp.json()
             failures = 0
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
             _raise_if_permanent(e, snapshot_id)
-            # Transient network/5xx errors: retry a bounded number of times.
+            # Transient network/5xx errors and a body that is not JSON: retry a
+            # bounded number of times.
             failures += 1
             if failures >= MAX_POLL_FAILURES:
                 raise SnapshotNotFetched(
@@ -2612,6 +2621,9 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
                           f"(no snapshot issued, nothing to poll)")
                     if results:
                         raw_rows = _keep_raw_rows(results, run_label)
+                        if raw_rows is not None:
+                            # for run()'s Ctrl+C line, which gets a fresh exception
+                            _RUN_CONTEXT["raw_rows"] = f"{run_label}/{raw_rows.name}"
                     else:
                         # The /progress payload is where input-rejection codes live,
                         # and this branch never fetches one, so say plainly that the
@@ -2645,11 +2657,13 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
                 if isinstance(e, MasterNotUpdated):
                     # The run CSV holds the jobs; the ERROR line names it.
                     _drop_raw_rows(raw_rows)
+                    _RUN_CONTEXT.pop("raw_rows", None)
                 else:
                     _tag(e, raw_rows=f"{run_label}/{raw_rows.name}")
             raise
         if raw_rows is not None:
             _drop_raw_rows(raw_rows)
+            _RUN_CONTEXT.pop("raw_rows", None)
     except BaseException as e:  # Ctrl+C too: run() names the paid snapshot either way
         # Whatever failed, the ERROR line needs the paid snapshot (if one exists
         # by now) to tell the user how to fetch it again for free. See run().
@@ -2799,6 +2813,17 @@ def _save_results(results: list[dict], run_label: str) -> None:
     up), so any later failure is a MasterNotUpdated naming that file, never an
     offer to fetch the snapshot again."""
     df = pd.json_normalize(results)
+    if "job_posting_id" in df.columns:
+        # A record with no id is no job (an error record, or a malformed row):
+        # filed, it would put a blank key in the run file and the master.
+        no_id = (df["job_posting_id"].isna()
+                 | (df["job_posting_id"].astype(str).str.strip() == ""))
+        if no_id.any():
+            warn(f"{int(no_id.sum())} record(s) from Bright Data had no job_posting_id "
+                 f"and were left out. They are not jobs (most likely Bright Data error "
+                 f"records), so no job is lost. If it happens on every run, check the "
+                 f"Bright Data dashboard.")
+            df = df[~no_id].reset_index(drop=True)
     if df.empty:
         # Write nothing: a columnless CSV would crash the scoring step, and the
         # rest of run_scraper.sh (master upload) should still proceed.
@@ -2984,12 +3009,19 @@ def _fatal_message(e: BaseException) -> str:
     """The plain-English reason a run failed and what to do, for the ERROR line,
     plus where rows that came back with the POST were kept, when they were."""
     msg = _fatal_reason(e)
-    kept = getattr(e, "raw_rows", None)
-    if kept:
-        msg += (f" The jobs Bright Data sent back with the request are kept in {kept}. "
-                f"Keep that file: this collection has no snapshot, so it cannot be "
-                f"downloaded again.")
-    return msg
+    return msg + _raw_rows_note(e)
+
+
+def _raw_rows_note(e: BaseException) -> str:
+    """Where rows that came back with the POST were kept, or "" when none were.
+    From the exception's tag or, for a Ctrl+C that asyncio re-raised as a fresh
+    KeyboardInterrupt, from _RUN_CONTEXT."""
+    kept = getattr(e, "raw_rows", None) or _RUN_CONTEXT.get("raw_rows")
+    if not kept:
+        return ""
+    return (f" The jobs Bright Data sent back with the request are kept in {kept}. "
+            f"Keep that file: this collection has no snapshot, so it cannot be "
+            f"downloaded again.")
 
 
 def _fatal_reason(e: BaseException) -> str:
@@ -3084,7 +3116,7 @@ def _stopped_message(e: BaseException) -> str:
     if sid:
         msg += (f" Its collection is already paid for. To fetch its jobs without paying "
                 f"again, run: {_rerun_command(sid, label)}")
-    return msg
+    return msg + _raw_rows_note(e)
 
 
 def run(snapshot_id: str | None = None, run_label: str | None = None,

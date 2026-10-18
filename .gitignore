@@ -63,6 +63,8 @@ apply_answers.json
 # why so broad: `*.log` also covers the pipeline's runtime logs (scraper.log,
 # watcher.log, open_dashboard crash log); no log file in this project is committed.
 *.log
+# why `*.synctex.gz` when compile.py never asks for one: TeXworks, the editor MiKTeX
+# installs, writes it whenever someone compiles resume_template.tex by hand.
 *.synctex.gz
 *.out
 
@@ -143,6 +145,9 @@ docs/walkthrough.mp4
 apply_record.md
 apply_trace/
 apply_drain-*.md
+# why `assess_profiles/` after the parallel difficulty check was removed: an older
+# install left its profile copies (signed-in cookies) there, and they stay on disk until
+# profile_lock.drop_old_check_copies deletes them.
 assess_profiles/
 browser_profile/
 

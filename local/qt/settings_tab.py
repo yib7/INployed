@@ -2251,12 +2251,14 @@ class SettingsForm(QtWidgets.QWidget):
     def load_from_snapshot(self, snap_path) -> None:
         """Fill the form from a saved snapshot for review. Nothing is written until
         the user clicks Save. A snapshot only carries the secrets it actually had,
-        so a key the snapshot didn't include is left at its current value."""
+        so a key the snapshot didn't include is left at its current value. Every
+        secret box stays masked, as it opens: a restore is no reason to put the
+        keys on screen (untick Hide to read one)."""
         vals = settings_archive.load_snapshot(snap_path, self.targets)
         self._repopulate(lambda f: vals.get(f.key, f.default))
         snap_secrets = settings_archive.snapshot_secrets(snap_path, self.targets)
         for key, edit in self._secret_edits.items():
-            self._secret_hides[key].setChecked(False)
+            self._secret_hides[key].setChecked(True)
             if key in snap_secrets:
                 edit.setText(snap_secrets[key])
         self.status.setText("Loaded snapshot; review the fields, then Save to apply.")

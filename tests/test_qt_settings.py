@@ -614,7 +614,7 @@ def test_save_forwards_the_archive_mode_to_prune(qtbot, tmp_path, monkeypatch):
     assert len(settings_archive.list_snapshots(targets)) == 1
 
 
-def test_restore_loads_values_and_shows_secret(qtbot, tmp_path, monkeypatch):
+def test_restore_loads_values_and_the_secret_masked(qtbot, tmp_path, monkeypatch):
     targets = _targets(tmp_path)
     # Build a snapshot that differs from the live state in a normal field and a secret.
     settings.save({"min_score": 5}, targets)
@@ -627,7 +627,12 @@ def test_restore_loads_values_and_shows_secret(qtbot, tmp_path, monkeypatch):
     qtbot.addWidget(form)
     form.load_from_snapshot(snap)
     assert form._getters["min_score"]() == "5"                       # value loaded for review
-    assert form._secret_edits["GEMINI_API_KEYS"].text() == "snap-key"  # snapshot secret shown
+    assert form._secret_edits["GEMINI_API_KEYS"].text() == "snap-key"  # snapshot secret loaded
+    # loaded but still dots: a restore on a shared screen shows no key
+    password = QtWidgets.QLineEdit.EchoMode.Password
+    for key, edit in form._secret_edits.items():
+        assert edit.echoMode() == password, key
+        assert form._secret_hides[key].isChecked(), key
 
     _quiet_info(monkeypatch)
     assert form.save() is True

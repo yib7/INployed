@@ -423,6 +423,12 @@ def _run_once(
             f"claude emitted a non-JSON envelope: {(proc.stdout or '')[:300]}",
             kind="bad_json",
         ) from exc
+    if not isinstance(envelope, dict):
+        raise ClaudeCLIError(
+            f"claude emitted an envelope that is not an object: "
+            f"{(proc.stdout or '')[:300]}",
+            kind="bad_json",
+        )
     result = str(envelope.get("result") or "")
     if envelope.get("is_error"):
         raise ClaudeCLIError(
@@ -527,19 +533,37 @@ def settled_json_value(text: str) -> tuple[bool, object]:
     A model that checks its work in its reply (the Claude CLI at low effort has no
     hidden reasoning) writes an answer, a line of prose ("Correction: ... Final:"),
     and a corrected answer. With two or more line values, the answer is the last
-    one of the longest one's type, so a short value of another type is never taken
-    for a correction. A single line value is the answer only when no JSON opens
-    before it; otherwise it may be the tail of a broken answer that the span
-    fallback reads whole. Shared with `resume_tailor.llm._extract_json`."""
+    one shaped like the longest one (`_same_shape`), so a short value of another
+    type, an object with other keys (a one-bullet fix after the whole answer) or
+    an empty echo of the schema is never taken for a correction. A single line
+    value is the answer only when no JSON opens before it; otherwise it may be
+    the tail of a broken answer that the span fallback reads whole. Shared with
+    `resume_tailor.llm._extract_json`."""
     values = line_json_values(text)
     if len(values) >= 2:
-        kind = type(max(values, key=lambda v: v[1] - v[0])[2])
-        return True, [v[2] for v in values if type(v[2]) is kind][-1]
+        longest = max(values, key=lambda v: v[1] - v[0])[2]
+        return True, [v[2] for v in values if _same_shape(v[2], longest)][-1]
     if len(values) == 1:
         first = _ANY_OPENER.search(text)
         if first is not None and first.start() == values[0][0]:
             return True, values[0][2]
     return False, None
+
+
+def _same_shape(value: object, longest: object) -> bool:
+    """Can `value` stand in for `longest` as a corrected answer? Same type; for an
+    object, top-level keys drawn from `longest`'s (a correction may drop an echoed
+    key, never swap in a different object) and not emptied out (every value blank
+    where `longest` has content). `longest` itself always qualifies."""
+    if value is longest:
+        return True
+    if type(value) is not type(longest):
+        return False
+    if not isinstance(value, dict):
+        return True
+    if not value or not set(value) <= set(longest):
+        return False
+    return any(value.values()) or not any(longest.values())
 
 
 class _Resp:

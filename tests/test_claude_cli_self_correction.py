@@ -150,3 +150,20 @@ def test_the_pool_parses_a_self_corrected_reply_on_the_first_attempt(monkeypatch
     assert json.loads(resp.text) == {"score": 7,
                                      "reason": "Python data pipelines match the role."}
     assert calls["n"] == 1 and slept == []
+
+
+def test_a_one_item_fix_after_the_whole_answer_does_not_replace_it():
+    """A second object with other keys is a note on one part of the answer,
+    never the corrected answer: taking it threw the whole answer away."""
+    reply = ('{"bullets": [{"gkey": "a1", "text": "Built the loader."}, '
+             '{"gkey": "a2", "text": "Cut cost."}]}\n\n'
+             'The second bullet needs its number. Fixed:\n\n'
+             '{"gkey": "a2", "text": "Cut cost 65%."}')
+    got = _read(reply)
+    assert [b["gkey"] for b in got["bullets"]] == ["a1", "a2"]
+
+
+def test_an_empty_echo_of_the_schema_does_not_replace_the_answer():
+    reply = ('{"bullets": [{"gkey": "a1", "text": "Built the loader."}]}\n\n'
+             'Schema:\n\n{"bullets": []}')
+    assert _read(reply)["bullets"] == [{"gkey": "a1", "text": "Built the loader."}]

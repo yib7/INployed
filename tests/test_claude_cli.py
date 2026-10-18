@@ -863,3 +863,13 @@ def test_the_typesafe_key_never_reaches_the_claude_child(monkeypatch, tmp_path):
     monkeypatch.setattr(claude_cli.subprocess, "run", fake_run)
     claude_cli.run_claude("sys", "user", "m")
     assert "synthetic-secret" not in captured["env"].values()
+
+
+@pytest.mark.parametrize("stdout", ["null", "[1, 2]", '"text"'])
+def test_run_claude_an_envelope_that_is_not_an_object_raises_bad_json(
+        monkeypatch, fake_exe, stdout):
+    monkeypatch.setattr(claude_cli.subprocess, "run",
+                        lambda argv, **kw: _proc(stdout=stdout))
+    with pytest.raises(claude_cli.ClaudeCLIError) as exc_info:
+        claude_cli.run_claude("sys", "user", "m")
+    assert exc_info.value.kind == "bad_json"

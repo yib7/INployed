@@ -9,6 +9,7 @@ credential passes through the dashboard.
 from __future__ import annotations
 
 import base64
+import shutil
 import subprocess
 
 from PySide6 import QtWidgets
@@ -22,10 +23,25 @@ SIGNIN_HINT = (
 )
 
 
+def signin_script() -> str:
+    """The PowerShell line that runs SIGNIN_COMMAND.
+
+    The CLI's own path when it is on PATH: a bare `claude` makes PowerShell pick
+    npm's claude.ps1 shim before claude.cmd, and under Windows' default
+    execution policy (Restricted) that script is refused, so the console showed
+    "running scripts is disabled" and no sign-in. `shutil.which` follows PATHEXT,
+    which names .cmd and .exe and never .ps1."""
+    path = shutil.which("claude")
+    if not path:
+        return SIGNIN_COMMAND       # not installed: the console says so itself
+    quoted = "'" + path.replace("'", "''") + "'"
+    return f"& {quoted} {SIGNIN_COMMAND.split(' ', 1)[1]}"
+
+
 def signin_argv() -> list[str]:
     """The argv that opens a new PowerShell console running SIGNIN_COMMAND.
     -NoExit keeps the console open so the user sees how the sign-in ended."""
-    encoded = base64.b64encode(SIGNIN_COMMAND.encode("utf-16-le")).decode("ascii")
+    encoded = base64.b64encode(signin_script().encode("utf-16-le")).decode("ascii")
     return ["powershell", "-NoExit", "-EncodedCommand", encoded]
 
 

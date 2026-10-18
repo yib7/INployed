@@ -16,13 +16,24 @@ def _decode(argv):
     return base64.b64decode(argv[argv.index("-EncodedCommand") + 1]).decode("utf-16-le")
 
 
-def test_signin_argv_opens_a_console_running_claude_auth_login():
+def test_signin_argv_opens_a_console_running_claude_auth_login(monkeypatch):
+    monkeypatch.setattr(claude_signin.shutil, "which", lambda name: None)
     argv = claude_signin.signin_argv()
     assert argv[0] == "powershell" and "-NoExit" in argv
     assert _decode(argv) == "claude auth login"
 
 
+def test_the_console_runs_the_cli_by_its_path_not_the_ps1_shim(monkeypatch):
+    """A bare `claude` in PowerShell resolves to npm's claude.ps1, which the
+    default execution policy refuses; the path `which` finds is claude.cmd."""
+    path = r"C:\Users\o'brien\AppData\Roaming\npm\claude.CMD"
+    monkeypatch.setattr(claude_signin.shutil, "which", lambda name: path)
+    assert _decode(claude_signin.signin_argv()) == (
+        "& 'C:\\Users\\o''brien\\AppData\\Roaming\\npm\\claude.CMD' auth login")
+
+
 def test_open_signin_starts_a_new_console(monkeypatch):
+    monkeypatch.setattr(claude_signin.shutil, "which", lambda name: None)
     seen = {}
     monkeypatch.setattr(claude_signin.subprocess, "Popen",
                         lambda argv, **k: seen.update(argv=argv, **k))

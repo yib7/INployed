@@ -10,7 +10,6 @@ preview. Nothing here submits.
 """
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Callable, Dict
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -244,7 +243,7 @@ class ApplyPanel(QtWidgets.QWidget):
 
     def _open_folder(self) -> None:
         folder = self._folder
-        if folder and Path(folder).exists():
+        if osopen.can_open(folder):
             try:
                 osopen.open_path(folder)
             except OSError:

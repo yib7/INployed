@@ -1294,7 +1294,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
     def _open_artifact(self, key: str, friendly: str) -> None:
         e = self._selected_entry()
         path = str(((e or {}).get("artifacts") or {}).get(key) or "")
-        if not path or not Path(path).exists():
+        if not osopen.can_open(path):
             self._set_note(f"No {friendly} on disk for the selected job.")
             return
         try:

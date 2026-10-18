@@ -173,7 +173,7 @@ class _TrackerActions:
             self._set_status("Select a row to open its resume folder.")
             return
         path = self.registry.resume_path(ids[0])
-        if not path or not Path(path).exists():
+        if not osopen.can_open(path):
             self._set_status("No tailored resume recorded; use 'Tailor resume' first.")
             return
         try:

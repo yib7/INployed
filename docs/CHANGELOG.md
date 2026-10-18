@@ -216,6 +216,14 @@ All notable changes to INployed are recorded here. The format follows
   drops those jobs before scoring as `filter_non_us`. The High Score list hides foreign jobs
   scored before the filter existed. Hand-added jobs are never hidden. On the VM, copy
   `pipeline/us_location.py` next to `score_jobs.py`.
+- **Dashboard rough edges.** Drop-down, date and number boxes show their arrows again,
+  ticked boxes and chosen options carry a mark, and table headings no longer lose letters
+  after you change the interface size. Greyed-out text, selected text in a box, score
+  badges and the table's Open links are easier to read. At the 1000px minimum width, or at
+  150% on a 1280px screen, the bottom bar hides its "Interface size" caption instead of
+  cutting it off, and the Tracker buttons read **Export…** and **Import…**. The auto-apply
+  queue's Updated column shows `2026-10-18 10:11` instead of a cut-off timestamp. In the
+  signed-out dialog, **Sign in to Claude** is the main button.
 
 ### Security
 

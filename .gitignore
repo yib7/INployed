@@ -18,8 +18,11 @@ credentials.json
 secrets.json
 *.secrets.json
 # Backups written next to atomically-saved configs (.env.bak holds secrets;
-# config.json.bak etc. mirror git-ignored configs); never commit them.
+# config.json.bak etc. mirror git-ignored configs); never commit them. The dated
+# forms cover hand-made copies such as master_experience.yaml.bak-2026-10-05.
 *.bak
+*.bak-*
+*.bak.*
 
 # ── Personal / user-supplied content (commit the *.example templates instead) ─
 # the scorer's résumé text (resume_md.py rebuilds it) and the résumé engine's master

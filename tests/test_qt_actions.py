@@ -1813,3 +1813,30 @@ def test_pipeline_error_names_the_script_not_a_flag_value(qtbot):
     assert w._cmd_label(w.scraper_cmd(False)) == "scraper.py"
     assert w._cmd_label(w.scorer_cmd()) == "score_jobs.py"
     assert w._cmd_label([]) == "command"                          # never IndexError
+
+
+def test_a_reload_that_applies_at_once_shows_the_problems_note_then_drops_it(
+        qtbot, monkeypatch, tmp_path):
+    """With no source on disk the reload applies before reload_data_async
+    returns. The note was set after it, so it rode the next, unrelated reload."""
+    w = _win(qtbot)
+    monkeypatch.setattr(mw.jobsdata, "local_run_files", lambda *a, **k: [])
+    monkeypatch.setattr(w, "reload_data_async",
+                        lambda: w._apply_frames(mw.LoadedFrames(pd.DataFrame(), {}, None, 36)))
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", staticmethod(lambda *a, **k: None))
+    w._after_scrape(mw_pipeline.RunReport(warnings=("a.",), log_path=tmp_path / "scrape.log"))
+    status = w.statusBar().currentMessage()
+    assert "1 problem" in status and "jobs" in status         # the note plus the summary
+    w._apply_frames(mw.LoadedFrames(pd.DataFrame(), {}, None, 36))
+    assert "problem" not in w.statusBar().currentMessage()
+
+
+def test_a_failed_reload_drops_the_problems_note(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    monkeypatch.setattr(mw.jobsdata, "local_run_files", lambda *a, **k: [])
+    monkeypatch.setattr(w, "reload_data_async", lambda: None)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", staticmethod(lambda *a, **k: None))
+    w._after_scrape(mw_pipeline.RunReport(warnings=("a.",), log_path=tmp_path / "scrape.log"))
+    w._on_load_error(OSError("drive gone"))
+    w._apply_frames(mw.LoadedFrames(pd.DataFrame(), {}, None, 36))
+    assert "problem" not in w.statusBar().currentMessage()

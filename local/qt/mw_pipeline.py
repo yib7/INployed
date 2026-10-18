@@ -525,10 +525,10 @@ class _PipelineActions:
         for p in jobsdata.local_run_files():
             if p not in self.csv_paths:
                 self.csv_paths.append(p)
-        self.reload_data_async()
         warnings = tuple(getattr(result, "warnings", ()) or ())
         scoring = getattr(result, "kind", "search") == "score"
         if not warnings:
+            self.reload_data_async()
             self._set_status("Scoring complete; dashboard refreshed." if scoring
                              else "Job search + score complete; dashboard refreshed.")
             return
@@ -539,10 +539,14 @@ class _PipelineActions:
         problems = f"{n} problem{'' if n == 1 else 's'}"
         note = (f"Scoring finished with {problems}" if scoring
                 else f"Job search + score finished with {problems}")
-        self._set_status(f"{note}; dashboard refreshed.")
-        # The reload just started ends by writing its summary over the status bar;
-        # _apply_frames puts this note back in front of it, once.
+        # Set before the reload starts: the reload ends by writing its summary over
+        # the status bar, and _apply_frames puts this note back in front of it,
+        # once. Set after, a reload that applies at once (no source on disk yet)
+        # had already run, and the note rode the next, unrelated reload.
         self._status_note_after_reload = note
+        self.reload_data_async()
+        if getattr(self, "_status_note_after_reload", None) is not None:
+            self._set_status(f"{note}; dashboard refreshed.")
         these = "this problem" if n == 1 else "these problems"
         what = "The scoring run" if scoring else "The run"
         QtWidgets.QMessageBox.warning(

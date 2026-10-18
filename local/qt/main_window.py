@@ -889,6 +889,7 @@ class MainWindow(QtWidgets.QMainWindow, _PipelineActions, _TailorActions, _Queue
     def _on_load_error(self, exc: BaseException) -> None:
         # A load failure must never kill the window; surface it and stay usable.
         self._loading = False
+        self._status_note_after_reload = None   # it belonged to this reload
         self._set_status(f"Could not load jobs: {errmsg.for_user(exc)}")
         if self._reload_pending:
             self.reload_data_async()

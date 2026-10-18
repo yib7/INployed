@@ -295,7 +295,9 @@ Hand-added jobs (`manual-*` ids) are never scored: `rows_needing_rescore` skips 
 **Operator note: VM redeploy.** Hand-added rows reach the VM master through the outbox. The
 VM's older `score_jobs.py` reads their blank scores as rescore candidates (billed calls) and its
 older `prune_master.py` blanks their description after 3 days. Before the next cron run after
-an upgrade, copy the new `pipeline/score_jobs.py` and `pipeline/prune_master.py` to the VM.
+an upgrade, copy the new `pipeline/score_jobs.py`, `pipeline/us_location.py` and
+`pipeline/prune_master.py` to the VM. Without `us_location.py`, `score_jobs.py` prints a
+warning and scores jobs outside the US instead of filtering them (`filter_non_us` all False).
 `pipeline/jev_score.py` is optional there: `score_jobs.py` wraps its import and prints "Jev
 scoring off (jev_score.py is not beside score_jobs.py)." without it, and the VM has no
 `local/jev.py` or `local/config.json`, so it stays on Gemini either way. Never wholesale-copy

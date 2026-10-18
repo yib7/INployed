@@ -193,6 +193,13 @@ All notable changes to INployed are recorded here. The format follows
 - **Tailor, cover letter, interview prep and Ask AI start faster on scraped jobs.** A job
   that already carries its description no longer waits a second or two while the dashboard
   searches the full job master for it.
+- **Jobs outside the US no longer reach the apply list.** The scrape asks Bright Data for
+  United States jobs, but some runs return whole inputs with a worldwide mix (the 2026-10-06
+  afternoon run had 95 jobs from Jakarta, London, Singapore and elsewhere, several scored
+  Apply). `pipeline/us_location.py` reads LinkedIn's location string, and `score_jobs.py` now
+  drops those jobs before scoring as `filter_non_us`. The High Score list hides foreign jobs
+  scored before the filter existed. Hand-added jobs are never hidden. On the VM, copy
+  `pipeline/us_location.py` next to `score_jobs.py`.
 
 ## [2.0.0] - 2026-10-05
 

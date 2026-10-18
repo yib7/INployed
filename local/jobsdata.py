@@ -47,6 +47,11 @@ from vm_schedule import RUN_LABELS  # noqa: E402  (shared run-label set)
 # local/). A LOCAL "Run scraper" lands in <REPO_ROOT>/<label>/, NOT the synced
 # Drive folder the dashboard normally reads — local_run_files() bridges that.
 REPO_ROOT = HERE.parent
+# pipeline/us_location.py is the one US-location rule the scorer filters with;
+# appended (not prepended) so no pipeline module can shadow a local/ one.
+if str(REPO_ROOT / "pipeline") not in sys.path:
+    sys.path.append(str(REPO_ROOT / "pipeline"))
+from us_location import is_non_us_location  # noqa: E402
 
 APPDATA = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))) / "linkedin_watcher"
 APPDATA.mkdir(parents=True, exist_ok=True)
@@ -1488,6 +1493,15 @@ def _is_manual_row(ids: pd.Series) -> pd.Series:
     return ids.astype(str).map(is_manual_job_id)
 
 
+def outside_us(df: pd.DataFrame) -> pd.Series:
+    """True for each row whose job_location is outside the United States
+    (`us_location.is_non_us_location`, evaluated once per distinct location)."""
+    if "job_location" not in df.columns:
+        return pd.Series(False, index=df.index)
+    loc = df["job_location"]
+    return loc.isin([v for v in loc.dropna().unique() if is_non_us_location(v)])
+
+
 def filter_high_unseen_with_count(
         df: pd.DataFrame, min_score: int = 4, *,
         marked_at: dict[str, str] | None = None,
@@ -1509,6 +1523,9 @@ def filter_high_unseen_with_count(
     manual = (_is_manual_row(df["job_posting_id"]) if "job_posting_id" in df.columns
               else pd.Series(False, index=df.index))
     score_mask = (score >= min_score) | manual
+    # A job outside the US never reaches the apply list, even one scored before
+    # the scorer's filter_non_us existed. Hand-added jobs are the user's call.
+    score_mask &= ~outside_us(df) | manual
     hidden = 0
     if marked_at is not None and window_days > 0:
         # key_source=df (the FULL frame, every score) so a job marked seen or

@@ -54,6 +54,16 @@ except Exception as _jev_import_error:  # noqa: BLE001
 else:
     JEV_IMPORT_ERROR = ""
 
+# The US-only location check. us_location.py sits beside this file; a VM copy
+# without it scores foreign jobs as before (the dashboard still hides them) and
+# says so once per run instead of failing.
+try:
+    from us_location import is_non_us_location
+except ModuleNotFoundError as _loc_import_error:
+    if _loc_import_error.name != "us_location":
+        raise
+    is_non_us_location = None
+
 # Data root: the directory holding .env, resume.md, the master CSV and the
 # per-run-label output dirs. In the repo this script lives in pipeline/ and the
 # data root is the repo root one level up; on the VM the pipeline scripts are
@@ -2461,7 +2471,7 @@ SCORE_COLS = [
     "score", "reason", "deep_score", "strengths", "gaps", "recommendation",
     "filter_junk_title", "filter_junk_desc", "filter_too_many_years",
     "filter_clearance", "filter_degree", "filter_easy_apply", "filter_internship",
-    "filtered_out", "is_seen",
+    "filter_non_us", "filtered_out", "is_seen",
     "score_reused", "score_reused_from",
 ]
 MASTER_CSV = OUTPUT_DIR / "linkedin_jobs_master.csv"
@@ -2603,6 +2613,16 @@ def save_output(df: pd.DataFrame, input_csv: Path) -> Path:
     return out_path
 
 
+_warned_no_us_location = False
+
+
+def _warn_no_us_location() -> None:
+    global _warned_no_us_location
+    _warned_no_us_location = True
+    print("WARNING: us_location.py is not beside score_jobs.py; jobs outside the "
+          "US are scored instead of filtered. Copy pipeline/us_location.py over too.")
+
+
 def add_filter_columns(df: pd.DataFrame, desc_col: str, title_col: str | None,
                        drop_easy_apply: bool | None = None,
                        profile: CandidateProfile | None = None) -> pd.DataFrame:
@@ -2651,10 +2671,21 @@ def add_filter_columns(df: pd.DataFrame, desc_col: str, title_col: str | None,
         df["filter_internship"] = df[title_col].apply(is_internship_title)
     else:
         df["filter_internship"] = False
+    # Bright Data sometimes ignores the scrape's United States location on an
+    # input and returns jobs from anywhere; the candidate works only in the US.
+    # Added UNCONDITIONALLY (all-False without the module or a location column)
+    # so the scored-CSV and master schema is stable either way.
+    loc_col = pick_col(df, ("job_location", "location"))
+    if loc_col and is_non_us_location is not None:
+        df["filter_non_us"] = df[loc_col].map(is_non_us_location).astype(bool)
+    else:
+        if loc_col and not _warned_no_us_location:
+            _warn_no_us_location()
+        df["filter_non_us"] = False
     df["filtered_out"] = (
         df["filter_junk_title"] | df["filter_junk_desc"] | df["filter_too_many_years"]
         | df["filter_clearance"] | df["filter_degree"] | df["filter_easy_apply"]
-        | df["filter_internship"]
+        | df["filter_internship"] | df["filter_non_us"]
     )
     # An unscoreable (empty/missing) description would otherwise be retried by
     # the rescore pass forever — park it as filtered.
@@ -3533,6 +3564,9 @@ async def main() -> None:
             n_easy = int(df["filter_easy_apply"].sum())
             if n_easy > 0:
                 print(f"Easy Apply drop: {n_easy} job(s) filtered before scoring")
+            n_non_us = int(df["filter_non_us"].sum())
+            if n_non_us > 0:
+                print(f"Outside the US: {n_non_us} job(s) filtered before scoring")
             n_intern = int(df["filter_internship"].sum())
             if n_intern > 0:
                 print(f"Dropped {n_intern} internship / co-op titles (finished school)")

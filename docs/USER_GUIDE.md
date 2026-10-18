@@ -677,10 +677,12 @@ you row, the dashboard's **Push config to VM?** prompt (VM features on) offers t
 `scoring_config.json`, and it adds a note with the upload command:
 
 ```
-gcloud compute scp pipeline/score_jobs.py <user>@<vm>:~ --zone=<zone>
+gcloud compute scp pipeline/score_jobs.py pipeline/us_location.py <user>@<vm>:~ --zone=<zone>
 ```
 
-Upload `score_jobs.py` once. There is no automated code push, and until it is uploaded the
+Upload `score_jobs.py` and `us_location.py` once. Without `us_location.py` the VM scores jobs
+outside the US instead of filtering them, and the run log says so; the dashboard still keeps
+them off the High Score list. There is no automated code push, and until it is uploaded the
 VM keeps scoring with the defaults, whatever `scoring_config.json` says. `jev_score.py` is
 optional there: the VM has no `local/jev.py` or `local/config.json`, so it scores with Gemini
 either way.

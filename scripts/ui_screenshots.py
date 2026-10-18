@@ -26,6 +26,17 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 if os.name == "nt":
     windir = os.environ.get("WINDIR", r"C:\Windows")
     os.environ.setdefault("QT_QPA_FONTDIR", str(Path(windir) / "Fonts"))
+    # That freetype database opens a C stdio stream per font face it loads, and
+    # the C runtime allows 512 by default. A run that walks every tab at three
+    # scales passes that limit, after which faces silently fail to open: the
+    # Tracker's check mark turned into a box at 100% and the 150% pass fell
+    # back to a serif font full of boxes. Raise the limit before Qt loads a font.
+    try:
+        import ctypes
+
+        ctypes.CDLL("ucrtbase")._setmaxstdio(8192)
+    except (OSError, AttributeError):
+        pass
 REPO = Path(__file__).resolve().parent.parent
 
 # Keep the maintainer's real `.env` out of this process, BEFORE anything under
@@ -439,9 +450,15 @@ def _sanitize_personal_tabs(tmp_dir: Path) -> None:
         "address_city": "Springfield", "address_state": "Illinois", "address_zip": "00000",
         "address_country": "United States", "how_did_you_hear": "LinkedIn",
     }
+    # Every answer that has a value is marked Confirmed, as a set-up user's store
+    # is: the apply sheet and the run read only confirmed answers, so without this
+    # the sheet's Address block and Standard answers came out empty and every
+    # Apply Answers row said "Forms will get nothing until you confirm".
     for e in answers:
         if e["id"] in fictional:
             e["answer"] = fictional[e["id"]]
+        if str(e.get("answer") or "").strip():
+            e["confirmed"] = True
     _apply_answers.save(answers, path=store)
     _apply_answers.STORE_PATH = store
     # Settings tab: read every backing file from the temp dir, never the real

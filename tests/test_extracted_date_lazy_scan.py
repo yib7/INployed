@@ -124,3 +124,17 @@ def test_run_scan_skips_a_run_file_without_ids(tmp_path, monkeypatch):
               pd.DataFrame({"job_posting_id": ["a"]}))
     monkeypatch.setattr(jobsdata, "_RUN_FILE_IDS", {})
     assert jobsdata.extraction_dates_from_runs([master]) == {"a": "2026-07-05"}
+
+
+def test_run_scan_skips_a_half_synced_run_file(tmp_path, monkeypatch):
+    """A truncated .gz (Drive still syncing it) raises EOFError, which is no
+    OSError or ValueError: it used to escape the scan and fail the whole load."""
+    master = tmp_path / "linkedin_jobs_master.csv.gz"
+    _write_gz(master, pd.DataFrame({"job_posting_id": ["a"]}))
+    whole = tmp_path / "morning" / "linkedin_jobs_2026-07-05_morning_scored.csv.gz"
+    _write_gz(whole, pd.DataFrame({"job_posting_id": ["a"]}))
+    cut = tmp_path / "evening" / "linkedin_jobs_2026-07-04_evening_scored.csv.gz"
+    _write_gz(cut, pd.DataFrame({"job_posting_id": [str(n) for n in range(2000)]}))
+    cut.write_bytes(cut.read_bytes()[:-40])
+    monkeypatch.setattr(jobsdata, "_RUN_FILE_IDS", {})
+    assert jobsdata.extraction_dates_from_runs([master]) == {"a": "2026-07-05"}

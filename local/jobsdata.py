@@ -186,7 +186,9 @@ def extraction_dates_from_runs(paths: list[Path]) -> dict[str, str]:
                         # only the ids: every other column (the description
                         # text above all) was read and thrown away
                         rdf = read_csv_gz(f, usecols=_is_id_column)
-                    except (OSError, ValueError):
+                    except Exception:  # noqa: BLE001 - one unreadable run file
+                        # (a half-synced .gz raises EOFError) costs its dates,
+                        # never the whole load
                         continue
                     if "job_posting_id" not in rdf.columns:
                         continue
@@ -296,7 +298,7 @@ def _refresh_mirror(p: Path, before: os.stat_result) -> None:
 
 
 def _read_offline_copy(p: Path, offline: list | None,
-                       reader: Callable | None = None) -> pd.DataFrame | None:
+                       reader: Callable) -> pd.DataFrame | None:
     """The saved copy of source `p` when its folder is gone (Drive not running).
 
     Only when the FOLDER is missing: a folder that exists without the file is a
@@ -309,7 +311,7 @@ def _read_offline_copy(p: Path, offline: list | None,
     copy = mirror_path(p)
     try:
         saved_at = copy.stat().st_mtime
-        df = reader(copy, str(p)) if reader is not None else read_csv_gz(copy)
+        df = reader(copy, str(p))
         if "job_posting_id" not in df.columns:
             raise ValueError("no job_posting_id column")
     except Exception:  # noqa: BLE001 - a copy that cannot be read is no copy

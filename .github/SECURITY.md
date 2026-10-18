@@ -23,7 +23,7 @@ most relevant to it:
 
 - Secrets handling: keys live in a git-ignored `.env` (and, by the user's choice, in the local
   `settings_archive/` snapshots, also git-ignored). A path that logs, prints, transmits, or
-  commits a secret is in scope.
+  commits a secret, or shows it unmasked in the Settings form, is in scope.
 - The one path that sends a key off the machine on purpose: **Settings → VM → Credentials**
   copies a single key to the user's own GCP VM, over `scp`, into a mode-600 file that
   `run_scraper.sh` sources. A way to make it stage the value somewhere else, leave it readable,
@@ -34,16 +34,25 @@ most relevant to it:
 - The résumé/apply pipeline reading untrusted input (a pasted job description or URL, a scraped
   posting) in a way that escapes its sandbox, runs unintended code, or writes outside the
   intended output folder. LaTeX is compiled with `-no-shell-escape`; a bypass is in scope.
+  So is scraped or model text that makes the dashboard fetch a remote or network resource
+  (the apply sheet and Ask AI viewers load no images) or open anything other than a local
+  folder or document.
 - Auto-apply, which fills in and submits real job applications. Text on an employer's page or
   in an emailed code (a question, a label, a button, a hidden field) that steers what the
   runner types, clicks or sends is in scope. So is a send from anywhere other than the submit
   gate (`local/apply_gate.py`), and the master password or an answer reaching a site other
-  than the job's own application platform, or a password box served over plain HTTP.
+  than the job's own application platform, or the password going into a box served over
+  plain HTTP, a form that posts to another host, or a form that sends into a new window. An
+  EEO answer or the street address reaching a drafted free-text reply is in scope too.
 - The dashboard or VM controls performing an action the user did not confirm.
 
+Known and documented, so not a new report: auto-apply uses one master password for every job
+site, and a fake posting that runs its own careers site counts as the application's site, so
+it would receive that password (README, Limitations). Per-site passwords are planned.
+
 Out of scope: anything requiring a key the user themselves supplied to misbehave against its
-own intended service (Vertex AI, Bright Data, TypeSafe, Anthropic), and the security of those
-third-party services.
+own intended service (Gemini and Vertex AI, Bright Data, TypeSafe, Anthropic), and the security
+of those third-party services.
 
 ## Supported versions
 

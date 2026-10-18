@@ -105,3 +105,47 @@ def test_a_failing_restamp_is_silent(env, monkeypatch):
     _write_is_seen(["1"], "yes", {master})                # does not raise
     assert jobsdata.load_files([master])[0].set_index(
         "job_posting_id").loc["1", "is_seen"] == "yes"
+
+
+def _replace_with_a_newer_master(path: Path) -> None:
+    """What Drive does mid-read: a newer master, with a row ours lacks."""
+    pd.DataFrame([
+        {"job_posting_id": "1", "job_title": "Analyst", "is_seen": "no"},
+        {"job_posting_id": "2", "job_title": "Engineer", "is_seen": "no"},
+        {"job_posting_id": "3", "job_title": "New from the VM", "is_seen": "no"},
+    ]).to_csv(path, index=False, compression="gzip")
+    st = os.stat(path)
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 7_000_000_000))
+
+
+def test_a_file_replaced_during_the_read_is_read_again_not_overwritten(env, monkeypatch):
+    master = _master(env)
+    real = mw_tracker.read_csv_gz
+    calls = []
+
+    def first_read_races(path, *a, **k):
+        df = real(path, *a, **k)
+        calls.append(1)
+        if len(calls) == 1:
+            _replace_with_a_newer_master(path)
+        return df
+    monkeypatch.setattr(mw_tracker, "read_csv_gz", first_read_races)
+    _write_is_seen(["1"], "yes", {master})
+    got = pd.read_csv(master, dtype=str).set_index("job_posting_id")
+    assert "3" in got.index                      # the newer file's row survived
+    assert got.loc["1", "is_seen"] == "yes"      # and the mark landed on it
+    assert len(calls) == 2
+
+
+def test_a_file_that_keeps_changing_is_left_alone(env, monkeypatch):
+    master = _master(env)
+    real = mw_tracker.read_csv_gz
+
+    def every_read_races(path, *a, **k):
+        df = real(path, *a, **k)
+        _replace_with_a_newer_master(path)
+        return df
+    monkeypatch.setattr(mw_tracker, "read_csv_gz", every_read_races)
+    _write_is_seen(["1"], "yes", {master})
+    got = pd.read_csv(master, dtype=str).set_index("job_posting_id")
+    assert "3" in got.index and got.loc["1", "is_seen"] == "no"

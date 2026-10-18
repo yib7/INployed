@@ -63,18 +63,29 @@ class _TrackerActions:
             paths = {self.id_to_path[i] for i in ids if i in self.id_to_path}
         for path in paths:
             try:
-                pre = os.stat(path)
-                df = read_csv_gz(path)
-                untouched = _stamp(os.stat(path)) == _stamp(pre)
-                df["job_posting_id"] = df["job_posting_id"].astype(str)
-                mask = df["job_posting_id"].isin(idset)
-                if mask.any():
-                    df.loc[mask, "is_seen"] = value
-                    write_csv_gz_atomic(df, path)
-                    if untouched:
-                        _restamp_descriptions(path, pre)
+                _TrackerActions._write_is_seen_to(path, idset, value)
             except (OSError, ValueError):
                 pass
+
+    @staticmethod
+    def _write_is_seen_to(path, idset: set[str], value: str, tries: int = 2) -> None:
+        """One file's is_seen rewrite, from a read the file did not change under.
+        A file replaced mid-read (Drive pulling a newer master) is read again;
+        writing the older read back would drop the newer file's rows. If it
+        keeps changing the write is skipped: the mark is in seen.db already and
+        the next reconcile carries it to the file."""
+        for _ in range(tries):
+            pre = os.stat(path)
+            df = read_csv_gz(path)
+            if _stamp(os.stat(path)) != _stamp(pre):
+                continue
+            df["job_posting_id"] = df["job_posting_id"].astype(str)
+            mask = df["job_posting_id"].isin(idset)
+            if mask.any():
+                df.loc[mask, "is_seen"] = value
+                write_csv_gz_atomic(df, path)
+                _restamp_descriptions(path, pre)
+            return
 
     def _apply_seen_locally(self, ids: list[str], value: str) -> None:
         """Optimistic seen-flip: update the in-memory frame + views instantly, then

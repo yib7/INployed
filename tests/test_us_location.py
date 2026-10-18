@@ -27,6 +27,13 @@ US = [
     "Washington DC-Baltimore Area", "Dallas-Fort Worth Metroplex", "Greater Boston",
     "Charlotte Metro", "Utica-Rome Area", "Georgia", "San Juan, Puerto Rico",
     "Paris, TX", "Dublin, OH", "Melbourne, FL", "", None, float("nan"),
+    # Shapes the first version dropped as foreign: D.C. with dots, a state code
+    # before the area word, multi-state metros, text after the state, and a US
+    # metro named for a city that shares its name with a foreign one.
+    "Washington, D.C.", "Washington, D.C. Metropolitan Area",
+    "Cincinnati, OH Metropolitan Area", "St. Louis, MO-IL", "Kansas City, MO-KS",
+    "Washington, DC-MD-VA", "New York, NY (Hybrid)", "Chicago, IL 60601",
+    "Portland-Vancouver Area",
 ]
 ABROAD = [
     "West Jakarta, Jakarta, Indonesia", "London Area, United Kingdom",
@@ -35,6 +42,7 @@ ABROAD = [
     "Brazil", "Canada", "Türkiye", "European Union", "Greater Bengaluru Area",
     "Pune/Pimpri-Chinchwad Area", "Metro Manila", "Greater Paris Metropolitan Region",
     "Mexico City Metropolitan Area", "Cracow Metropolitan Area", "Lisbon Metropolitan Area",
+    "Vancouver, British Columbia, Canada", "Toronto, ON (Hybrid)", "Calgary, AB-ON",
 ]
 
 

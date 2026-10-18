@@ -36,7 +36,7 @@ _US_NAMES = frozenset((
     "north dakota", "ohio", "oklahoma", "oregon", "pennsylvania", "rhode island",
     "south carolina", "south dakota", "tennessee", "texas", "utah", "vermont", "virginia",
     "washington", "west virginia", "wisconsin", "wyoming", "district of columbia",
-    "washington dc", "washington d.c.", "puerto rico", "guam", "u.s. virgin islands",
+    "washington dc", "washington d.c.", "d.c.", "puerto rico", "guam", "u.s. virgin islands",
     "us virgin islands", "american samoa", "northern mariana islands",
     "united states", "united states of america", "usa", "u.s.", "u.s.a.", "us",
 ))
@@ -83,10 +83,11 @@ _FOREIGN_COUNTRIES = frozenset((
 
 # Foreign cities LinkedIn names in a bare metro ("Greater Bengaluru Area",
 # "Hanoi Capital Region"). Cities that share a name with a US place (London,
-# Paris, Dublin, Rome, Melbourne, Vienna, Berlin, Milan, Lima) are left out:
-# "Utica-Rome Area" is in New York.
+# Paris, Dublin, Rome, Melbourne, Vienna, Berlin, Milan, Lima, Vancouver) are
+# left out: "Utica-Rome Area" is in New York, "Portland-Vancouver Area" in
+# Oregon and Washington.
 _FOREIGN_CITIES = (
-    "toronto", "montreal", "vancouver", "calgary", "ottawa", "edmonton", "winnipeg",
+    "toronto", "montreal", "calgary", "ottawa", "edmonton", "winnipeg",
     "mexico city", "guadalajara", "monterrey", "sao paulo", "rio de janeiro",
     "buenos aires", "bogota", "medellin", "santiago de chile",
     "greater london", "greater paris", "ile-de-france", "madrid", "barcelona",
@@ -109,6 +110,9 @@ _FOREIGN_CITY_RE = re.compile(
 # state name sits in front of the area word.
 _AREA_SUFFIX_RE = re.compile(r"\s+(?:metropolitan\s+)?(?:area|region|metroplex|metro)$")
 _SPACES_RE = re.compile(r"\s+")
+# Text after the state that says nothing about the country: "New York, NY
+# (Hybrid)", "Chicago, IL 60601".
+_TRAILER_RE = re.compile(r"\s*\([^)]*\)\s*$|\s+\d{5}(?:-\d{4})?$")
 
 
 def _fold(text: str) -> str:
@@ -118,11 +122,18 @@ def _fold(text: str) -> str:
     return _SPACES_RE.sub(" ", text).strip().lower()
 
 
+def _is_us_code(text: str) -> bool:
+    """A state code, or several joined by hyphens ("MO-KS", "DC-MD-VA")."""
+    codes = text.upper().split("-")
+    return all(len(c) == 2 and c in _US_CODES for c in codes)
+
+
 def _is_us_part(part: str) -> bool:
-    if part.upper() in _US_CODES and len(part) == 2:
-        return True
+    part = _TRAILER_RE.sub("", part).strip()
     folded = _fold(part)
-    return folded in _US_NAMES or _AREA_SUFFIX_RE.sub("", folded) in _US_NAMES
+    bare = _AREA_SUFFIX_RE.sub("", folded)
+    return (_is_us_code(part) or _is_us_code(bare)
+            or folded in _US_NAMES or bare in _US_NAMES)
 
 
 def is_non_us_location(location) -> bool:

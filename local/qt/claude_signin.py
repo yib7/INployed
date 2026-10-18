@@ -14,12 +14,16 @@ import subprocess
 
 from PySide6 import QtWidgets
 
+from qt import theme
+
 SIGNIN_COMMAND = "claude auth login"
 SIGNIN_BUTTON = "Sign in to Claude"
+# Quotes, not backticks: this is dialog text, and a backtick in a message box
+# prints as itself.
 SIGNIN_HINT = (
-    f"Click {SIGNIN_BUTTON} to open a console that runs `{SIGNIN_COMMAND}`, finish "
+    f'Click {SIGNIN_BUTTON} to open a console that runs "{SIGNIN_COMMAND}", finish '
     "the sign-in in the browser it opens, then tailor again. Without the button: "
-    f"open a terminal and run `{SIGNIN_COMMAND}`."
+    f'open a terminal and run "{SIGNIN_COMMAND}".'
 )
 
 
@@ -67,11 +71,17 @@ def warn_with_signin(parent, title: str, text: str) -> bool:
     box = QtWidgets.QMessageBox(QtWidgets.QMessageBox.Icon.Warning, title, text,
                                 QtWidgets.QMessageBox.StandardButton.Ok, parent)
     signin = box.addButton(SIGNIN_BUTTON, QtWidgets.QMessageBox.ButtonRole.ActionRole)
+    # Signing in is the way out of this error, so it is the primary button and
+    # the one Enter presses; OK only dismisses.
+    signin.setProperty("accent", True)
+    # addButton already polished the button, so the accent rule needs a repolish.
+    theme.repolish(signin)
+    box.setDefaultButton(signin)
     box.exec()
     if box.clickedButton() is not signin:
         return False
     if not open_signin():
         QtWidgets.QMessageBox.warning(
-            parent, title, f"Could not open a console. Open a terminal and run "
-            f"`{SIGNIN_COMMAND}`.")
+            parent, title,
+            f'Could not open a console. Open a terminal and run "{SIGNIN_COMMAND}".')
     return True

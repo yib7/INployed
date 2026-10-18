@@ -772,7 +772,7 @@ def _call_claude(
             if kind == "signed_out":
                 # Every model and every retry meets the same lapsed sign-in.
                 raise LLMError(
-                    "The `claude` CLI is signed out. Sign in with `claude auth login` "
+                    'The claude CLI is signed out. Sign in with "claude auth login" '
                     f"in a terminal, then try again: {exc}", kind=kind) from exc
             if kind in ("cli_too_old", "unrecognized_model"):
                 # run_claude already ran the model's one fallback (when it has

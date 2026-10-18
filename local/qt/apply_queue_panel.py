@@ -294,6 +294,15 @@ UPLOAD_HINT = "an upload: put the file in the job folder"
 FAILED_CELL = "check failed"
 
 
+def _updated_text(stamp: Any) -> str:
+    """The Updated cell: "2026-10-18 10:11", the stored ISO stamp without its
+    "T" and seconds. The full stamp ran 19 characters of monospace and elided
+    to "2026-10-18T10:11:..." at every window width; the details panel under
+    the table still prints it whole."""
+    text = str(stamp or "")
+    return text[:16].replace("T", " ") if len(text) >= 16 and text[10:11] == "T" else text
+
+
 def _difficulty_text(d: Dict[str, Any]) -> str:
     """The Difficulty cell: "N/10", with the age of a result older than a
     week; "check failed" for a job whose only check read nothing; "" for a
@@ -988,7 +997,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                     str(e.get("attempts", 0)),
                     str(len(missing) if isinstance(missing, list) else missing),
                     _difficulty_text(difficulty),
-                    str(e.get("updated_at", "")),
+                    _updated_text(e.get("updated_at", "")),
                     str(e.get("notes", "")),
                 )
                 status = str(e.get("status", ""))

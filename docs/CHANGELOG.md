@@ -207,6 +207,34 @@ All notable changes to INployed are recorded here. The format follows
   scored before the filter existed. Hand-added jobs are never hidden. On the VM, copy
   `pipeline/us_location.py` next to `score_jobs.py`.
 
+### Security
+
+- **The master password goes only into a form that posts to the application's site in the
+  same window.** A sign-in or sign-up form whose action, or a submit button's `formaction`,
+  points at another host stops the job with "the account form posts to ..." (or "the password
+  box's form posts to ..."), and one that sends into a new window (`target`, `formtarget`,
+  `<base target>`) stops it with "the password box's form sends it into a new window". Nothing
+  is typed in either case.
+- **A drafted reply never sees your EEO answers or street address.** The free-text drafts and
+  their grounding check get your city, state and country and the rest of the apply sheet, but
+  not the gender, race, veteran and disability answers or the street and ZIP lines, which only
+  fill their own fields. An essay box that asks for them gets nothing to restate.
+- **The apply sheet and the Ask AI window load no images.** A Markdown image link in scraped or
+  model text (`![](file://host/share/x.png)`) could make Windows connect to that host with your
+  sign-in.
+- **Open buttons open only local folders and documents** (PDF, Markdown, text, TeX, Word). A
+  path from an imported tracker backup or the queue that names a program, a shortcut or a
+  network share is refused before Windows touches it.
+- **Loading a settings snapshot keeps the secret boxes masked.** It used to untick every Hide box.
+- **Postings per search is held at 500 by the scraper too**, the Settings maximum, so a
+  hand-edited `search_config.json` cannot bill more per search than the form allows.
+- Smaller fixes: a `.env` path ending in a backslash, or a UNC path, now reads back the same in
+  the pipeline scripts (python-dotenv dropped the line); a company or job title named `NUL`,
+  `CON` or `COM1` gets a leading underscore as a folder name; control characters in model text
+  become spaces before LaTeX; a job title holding `} -->` keeps the apply sheet's job id; the
+  Sign in to Claude console quotes a `claude` path holding a typographic apostrophe; queue
+  updates clean the company, title and apply URL as new entries do.
+
 ## [2.0.0] - 2026-10-05
 
 Auto-apply now sends applications itself, from one submit gate in code: TypeSafe's Jev judges

@@ -2,7 +2,7 @@
 
 Run:  QT_QPA_PLATFORM=offscreen python tests/smoke_qt.py
 
-Exits 0 and prints 'SMOKE TEST OK' when the seven-tab window constructs cleanly.
+Exits 0 and prints 'SMOKE TEST OK' when the eight-tab window constructs cleanly.
 """
 import os
 import sys

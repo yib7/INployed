@@ -411,7 +411,10 @@ the VM keeps running unchanged.
 > **Claude backend (optional).** The résumé tailor and the local job scorer can each run
 > on your Claude Code CLI subscription. Set **Resume tailor provider** or
 > **Scoring provider** to `claude` (both default to `gemini`). The Claude path drives the
-> headless CLI with your subscription auth (no API key) and prompt caching; left on `tiers`
+> headless CLI with your subscription auth (no API key) and prompt caching. The CLI must be
+> signed in (`claude auth login`); when a tailor or cover letter finds it signed out, the
+> error dialog's **Sign in to Claude** button opens a console that runs that command, and the
+> sign-in finishes in your browser. Left on `tiers`
 > (the default), the tailor stages map fast → `claude-haiku-5-5` (Haiku 5.5), standard →
 > `claude-sonnet-5`, deep → `claude-opus-5-5` (Opus 5.5). Sonnet 5.5
 > (`claude-sonnet-5-5`) is one pick away in every Claude model dropdown. On a CLI too old

@@ -165,7 +165,7 @@ jobs:
           printf '  %s\n' "${modules[@]}"
           python -m pytest -q -rs -n auto "${modules[@]}"
 
-  # Runs the README's "Getting started" steps VERBATIM on a clean runner. This job
+  # Runs the README's "Quick start" steps VERBATIM on a clean runner. This job
   # exists because a fresh-clone breakage slipped through once: the documented
   # `powershell -ExecutionPolicy Bypass -File scripts\setup.ps1` invocation failed on a
   # machine that had never run the project, while every convenient approximation of it

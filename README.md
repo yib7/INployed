@@ -87,7 +87,8 @@ tailoring and auto-apply, and Gemini or Claude writes the text.
 ## Quick start
 
 **You need:** Windows 11, **Git** ([download](https://git-scm.com/downloads)), and **Python
-3.14** ([download](https://www.python.org/downloads/)). Nothing else. Everything the dashboard
+3.14** ([download](https://www.python.org/downloads/); 3.14.8, the version in
+`.python-version`, is the one CI tests). Nothing else. Everything the dashboard
 needs installs with `pip` in Step 2. Steps 1-4 take about five minutes and end with a running
 app; Steps 5-7 connect it to your own data and accounts.
 
@@ -111,6 +112,8 @@ app; Steps 5-7 connect it to your own data and accounts.
 git clone https://github.com/yib7/INployed.git
 cd INployed
 ```
+Clone into a short path such as your user folder. A few PySide6 files sit 174 characters deep
+inside the venv, and Windows refuses paths over 260 characters unless long paths are turned on.
 
 ### Step 2: Install the dependencies into a project venv
 ```powershell
@@ -118,22 +121,19 @@ python -m venv venv
 venv\Scripts\python.exe -m pip install --upgrade pip
 venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
-Everything is version-pinned in `requirements.txt`, so you get the exact set CI tests. Calling
-the venv's `python.exe` by path means you never have to activate it, which Windows' default
-execution policy blocks. The launcher in Step 4 finds this `venv` on its own. The pip upgrade
-comes first because `python -m venv` seeds whatever pip shipped with your interpreter, and that
-varies by patch release: 3.14.0 seeds 25.2, 3.14.7 seeds 26.2.1. Six advisories against pip 25.2
-are fixed by 26.2, among them path traversal in entry-point names, a symlink escape in its
-fallback tar extractor, and a doubly-encoded index URL it resolved wrong. Running the upgrade
-gets you a fixed pip whichever patch you installed.
+`requirements.txt` pins every package it installs, its dependencies' dependencies included,
+so you get the exact set CI tests. Calling the venv's `python.exe` by path means you never have
+to activate it, which Windows' default execution policy blocks. The launcher in Step 4 finds this
+`venv` on its own. The pip upgrade comes first because `python -m venv` seeds the pip your Python
+shipped with: 3.14.0 seeds pip 25.2, which has six advisories that pip 26.2 fixes.
 
 ### Step 3: Create your local config files
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
 ```
 This writes a git-ignored `.env` (your keys), `local/config.json` (dashboard
-preferences), and a starter `resume_tailor_files/master_experience.yaml`. It fills in
-placeholders only; you set the real values in Step 5, from the app. Re-run it any time;
+preferences), and a starter `resume_tailor_files/master_experience.yaml`. It leaves every
+key blank; you set the real values in Step 5, from the app. Re-run it any time;
 nothing is overwritten without `-Force`.
 
 ### Step 4: Launch the dashboard
@@ -159,6 +159,7 @@ You need an account for each feature you want:
 | LLM scoring + résumé tailoring | **Gemini API keys** (free tier, from [Google AI Studio](https://aistudio.google.com/apikey); keys from separate Google accounts add up) and/or a **Google Cloud** project with Vertex AI enabled (billed) |
 | Finding your own jobs | a **Bright Data** account + LinkedIn dataset |
 | Auto-apply, and Jev's help with scoring and tailoring | a **TypeSafe** API key for Jev, the model that judges each form page (from `console.typesafe.ai/keys`; billed per input token), plus the browser install in Step 7 |
+| Claude in place of Gemini *(optional)* | the **Claude Code CLI** on your Claude plan, signed in with `claude auth login`. When a tailor or cover letter finds it signed out, the error dialog's **Sign in to Claude** button runs that command for you |
 | Discovery on a schedule *(optional)* | a **GCP Compute Engine VM** you create, plus the gcloud CLI from Step 7, signed in |
 
 **What bills and what does not.** The scorer uses your API keys first and bills the
